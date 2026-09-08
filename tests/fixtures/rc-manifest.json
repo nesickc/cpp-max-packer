@@ -1,0 +1,318 @@
+{
+  "schema_version": 1,
+  "source": "rc reference models",
+  "units": "mm (user-confirmed)",
+  "permission": "user-supplied for local tests; distribution permission unknown",
+  "records": [
+    {
+      "path": "rc/containers/10_kg_np.stl",
+      "role": "container",
+      "units": "mm (user-confirmed)",
+      "interior_volume_semantics": "whole closed container volume; user-confirmed (geometry validity unverified)",
+      "format": "binary",
+      "bytes": 684,
+      "sha256": "357e06464e7190e9c53d1263985ee507842b760302a061c719986431eea53c1a",
+      "triangles": 12,
+      "finite_coordinates": true,
+      "bounds_source_units": [
+        [
+          38.444854736328125,
+          388.4448547363281
+        ],
+        [
+          -159.96527099609375,
+          240.03472900390625
+        ],
+        [
+          0.0,
+          285.0
+        ]
+      ],
+      "edge_multiplicity": {
+        "2": 18
+      },
+      "boundary_edges": 0,
+      "nonmanifold_edges": 0,
+      "topology_indicators_are_not_solid_validation": true
+    },
+    {
+      "path": "rc/containers/15_kg_np_long.stl",
+      "role": "container",
+      "units": "mm (user-confirmed)",
+      "interior_volume_semantics": "whole closed container volume; user-confirmed (geometry validity unverified)",
+      "format": "binary",
+      "bytes": 684,
+      "sha256": "84f7104016fda2df255d0f23da4a84d63bf3303287c17d0bec432e51739832f9",
+      "triangles": 12,
+      "finite_coordinates": true,
+      "bounds_source_units": [
+        [
+          -119.43677520751953,
+          230.563232421875
+        ],
+        [
+          -552.37890625,
+          47.621124267578125
+        ],
+        [
+          0.0,
+          285.0
+        ]
+      ],
+      "edge_multiplicity": {
+        "2": 18
+      },
+      "boundary_edges": 0,
+      "nonmanifold_edges": 0,
+      "topology_indicators_are_not_solid_validation": true
+    },
+    {
+      "path": "rc/containers/20_kg_np.stl",
+      "role": "container",
+      "units": "mm (user-confirmed)",
+      "interior_volume_semantics": "whole closed container volume; user-confirmed (geometry validity unverified)",
+      "format": "binary",
+      "bytes": 684,
+      "sha256": "637584abe7d47c808109c5af0b8f8034aa6d0a0199140c0abb7ce026df133f19",
+      "triangles": 12,
+      "finite_coordinates": true,
+      "bounds_source_units": [
+        [
+          337.9312744140625,
+          737.9312744140625
+        ],
+        [
+          -1054.1146240234375,
+          -584.1146240234375
+        ],
+        [
+          0.0,
+          420.0
+        ]
+      ],
+      "edge_multiplicity": {
+        "2": 18
+      },
+      "boundary_edges": 0,
+      "nonmanifold_edges": 0,
+      "topology_indicators_are_not_solid_validation": true
+    },
+    {
+      "path": "rc/containers/30_kg_np.stl",
+      "role": "container",
+      "units": "mm (user-confirmed)",
+      "interior_volume_semantics": "whole closed container volume; user-confirmed (geometry validity unverified)",
+      "format": "binary",
+      "bytes": 684,
+      "sha256": "8184c24b6318d78da33a167f5d7bf8e481904dcbbc6f777bf3742829a63513ff",
+      "triangles": 12,
+      "finite_coordinates": true,
+      "bounds_source_units": [
+        [
+          462.6029052734375,
+          862.6029052734375
+        ],
+        [
+          -381.32177734375,
+          318.67822265625
+        ],
+        [
+          0.0,
+          420.0
+        ]
+      ],
+      "edge_multiplicity": {
+        "2": 18
+      },
+      "boundary_edges": 0,
+      "nonmanifold_edges": 0,
+      "topology_indicators_are_not_solid_validation": true
+    },
+    {
+      "path": "rc/containers/30_kg_np_cubic.stl",
+      "role": "container",
+      "units": "mm (user-confirmed)",
+      "interior_volume_semantics": "whole closed container volume; user-confirmed (geometry validity unverified)",
+      "format": "binary",
+      "bytes": 684,
+      "sha256": "b6f6ecf8dc303a01e998ea8a275c27fb13bebdb1a84ef3cdf8526555a9d6c711",
+      "triangles": 12,
+      "finite_coordinates": true,
+      "bounds_source_units": [
+        [
+          267.7869873046875,
+          767.7869873046875
+        ],
+        [
+          -1848.057373046875,
+          -1348.057373046875
+        ],
+        [
+          0.0,
+          480.0
+        ]
+      ],
+      "edge_multiplicity": {
+        "2": 18
+      },
+      "boundary_edges": 0,
+      "nonmanifold_edges": 0,
+      "topology_indicators_are_not_solid_validation": true
+    },
+    {
+      "path": "rc/containers/5_kg_np.stl",
+      "role": "container",
+      "units": "mm (user-confirmed)",
+      "interior_volume_semantics": "whole closed container volume; user-confirmed (geometry validity unverified)",
+      "format": "binary",
+      "bytes": 684,
+      "sha256": "3756f92497289e19760239281b69b436442fc0dbb9b3fb091f7b25ec2c691698",
+      "triangles": 12,
+      "finite_coordinates": true,
+      "bounds_source_units": [
+        [
+          19.704299926757812,
+          259.70428466796875
+        ],
+        [
+          -1075.107666015625,
+          -675.107666015625
+        ],
+        [
+          0.0,
+          200.0
+        ]
+      ],
+      "edge_multiplicity": {
+        "2": 18
+      },
+      "boundary_edges": 0,
+      "nonmanifold_edges": 0,
+      "topology_indicators_are_not_solid_validation": true
+    },
+    {
+      "path": "rc/items/pryanik_1.STL",
+      "role": "item",
+      "units": "mm (user-confirmed)",
+      "interior_volume_semantics": null,
+      "format": "binary",
+      "bytes": 4241084,
+      "sha256": "01f934646c4e3c112e6aeadb55a9a85d1d8882ba22246461c766808b2414be7b",
+      "triangles": 84820,
+      "finite_coordinates": true,
+      "bounds_source_units": [
+        [
+          5.587935447692871e-05,
+          60.86787033081055
+        ],
+        [
+          5.4016709327697754e-05,
+          61.091068267822266
+        ],
+        [
+          0.0,
+          17.5
+        ]
+      ],
+      "edge_multiplicity": {
+        "2": 127230
+      },
+      "boundary_edges": 0,
+      "nonmanifold_edges": 0,
+      "topology_indicators_are_not_solid_validation": true
+    },
+    {
+      "path": "rc/items/pryanik_2.STL",
+      "role": "item",
+      "units": "mm (user-confirmed)",
+      "interior_volume_semantics": null,
+      "format": "binary",
+      "bytes": 6960684,
+      "sha256": "6e69e7606566b608155d193c3db9baa920fff3507907f88ce12243887cfd62ac",
+      "triangles": 139212,
+      "finite_coordinates": true,
+      "bounds_source_units": [
+        [
+          0.0,
+          85.68016052246094
+        ],
+        [
+          8.009374141693115e-05,
+          61.334556579589844
+        ],
+        [
+          1.0268858671188354,
+          19.026885986328125
+        ]
+      ],
+      "edge_multiplicity": {
+        "2": 208818
+      },
+      "boundary_edges": 0,
+      "nonmanifold_edges": 0,
+      "topology_indicators_are_not_solid_validation": true
+    },
+    {
+      "path": "rc/items/pryanik_simplified.stl",
+      "role": "item",
+      "units": "mm (user-confirmed)",
+      "interior_volume_semantics": null,
+      "format": "binary",
+      "bytes": 189884,
+      "sha256": "60592a7a798426947ae18448b959ced33fc91eddce6b4311c47f07344054e6a4",
+      "triangles": 3796,
+      "finite_coordinates": true,
+      "bounds_source_units": [
+        [
+          14.035743713378906,
+          92.05464172363281
+        ],
+        [
+          -65.33870697021484,
+          -3.2975196838378906
+        ],
+        [
+          0.00011251860996708274,
+          28.300811767578125
+        ]
+      ],
+      "edge_multiplicity": {
+        "2": 5694
+      },
+      "boundary_edges": 0,
+      "nonmanifold_edges": 0,
+      "topology_indicators_are_not_solid_validation": true
+    },
+    {
+      "path": "rc/items/ulamok_2kg_simplified.stl",
+      "role": "item",
+      "units": "mm (user-confirmed)",
+      "interior_volume_semantics": null,
+      "format": "binary",
+      "bytes": 38484,
+      "sha256": "39bcc1c3a5849176fc83473ce191ec5106854ea68836aed412c7c93b11b5bb7e",
+      "triangles": 768,
+      "finite_coordinates": true,
+      "bounds_source_units": [
+        [
+          -84.85090637207031,
+          5.609241485595703
+        ],
+        [
+          -91.96244049072266,
+          -1.5022964477539062
+        ],
+        [
+          0.1884765625,
+          105.69591522216797
+        ]
+      ],
+      "edge_multiplicity": {
+        "2": 1152
+      },
+      "boundary_edges": 0,
+      "nonmanifold_edges": 0,
+      "topology_indicators_are_not_solid_validation": true
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+# Local agent diagnostics, backups, and scratch work.
+/.local/
+
+# Python fixture-tool test artifacts.
+__pycache__/
+*.pyc
