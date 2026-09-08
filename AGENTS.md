@@ -40,6 +40,8 @@ Primary: **Astra Ultra** handles coordination, final interface decisions, integr
 
 ## Shared product rules
 
+- Deliver one ticket/task per `feature/<requirement-or-AT-ID>-<short-description>` branch. Incremental commits and pushes to the configured feature remote are authorized. The user opens the change request and performs review/testing/merge; do not merge or create the change request automatically. **Wait for prerequisite merges before starting dependent branches; do not stack them.** See [delivery queue](doc/DELIVERY.md).
+
 - C++20 owns geometry/packing; Tauri/Rust owns desktop integration; React/Three.js presents state. CPU pocketfft and Vulkan VkFFT are the selected compute paths. No CUDA/HIP/ROCm dependency.
 - Authoritative accepted solids determine validity/export. LODs, voxels, FFT scores, and screenshots cannot authorize a placement. Only `valid` may replace the incumbent; `indeterminate` is rejected.
 - Preserve rigid physical dimensions, millimeters, Z-up frames, separate pair/wall clearances, and STL interior-volume semantics. Results are `best_found`, never an optimality claim.

@@ -1,9 +1,10 @@
 # Spec-linked test plan
 
-The product acceptance cases below are **planned**, not passing tests. Executable fixture-tool checks are listed in [README.md](README.md); they do not establish engine correctness. Read the canonical [spec §10](../doc/spectrapack-spec.md#10-acceptance-tests) for the full gates.
+The product acceptance cases below are **planned**, not passing tests. Executable foundation checks are listed in [README.md](README.md); they do not establish engine correctness. Read the canonical [spec §10](../doc/spectrapack-spec.md#10-acceptance-tests) for the full gates.
 
 ## Test-first work order
 
+0. QA-01: native/Python test runners, small analytic fixture builders, an independent direct integer correlation oracle, and bounded reference timing reports. Implemented on `feature/QA-01-test-foundation`; verify its evidence in [project status](../doc/PROJECT_STATUS.md). Dependent tasks wait for this branch to merge.
 1. M0: schema examples and CLI/stdio envelopes, error codes, request identity, and a clean CPU build. Settle the contracts before backend/frontend implementation diverges.
 2. M1: STL content detection, units/source frames, diagnostics/accepted repairs, independent solid overlap/containment/clearance, and display isolation. Start with analytic small solids; then run every applicable `rc/` asset through the same public boundary.
 3. M2: physical AABB baseline, conservative fields, direct integer correlation oracle, CPU FFT, and validated result/export round trips.
