@@ -1,0 +1,19 @@
+# ADR 0003: Pinned CPU dependency build
+
+Date: 2026-09-08. Scope: T-001, SYS-01/SYS-02 groundwork for AT-01. Accepted build design; qualification evidence is recorded separately.
+
+QA-01 is merged at `067f1e52be1cbb21f2b58dc0de37745bc34c70e8`. T-001 adds the selected CPU dependencies, reproducible build checks and a relocatable diagnostic package. It does not introduce an empty engine, product-library stubs or protocol interfaces. Schemas and the engine handshake remain T-002 work.
+
+Use three private CMake dependency bundles for geometry, CPU compute and JSON/I/O. The native diagnostic calls Manifold's double mesh/Boolean API, FCL double mesh queries, meshoptimizer, pocketfft and nlohmann/json against small analytic expectations. These characterize actual third-party integration. They are not authoritative geometry validation, a packing solver, or complete AT-12 evidence. Product libraries will consume the relevant bundle privately when their first production operation is implemented.
+
+Keep vcpkg baseline `271a5b8850aa50f9a40269cbf3cf414b36e333d6`. Direct and transitive sources, port revisions, selected features and checksums are recorded in `cmake/dependencies.lock.json` and checked against installed metadata. The vcpkg executable identity is recorded separately from the port baseline. Retain the baseline Manifold port's unconditional TBB and clipper2 dependencies; no custom port or speculative version update is needed.
+
+Choose `x64-windows-static` with matching static MSVC CRT settings (`/MTd` Debug, `/MT` Release). This changes QA-01's default linkage, so native dependencies must be rebuilt or restored from a matching binary cache. Verify actual compile flags and runtime closure. The CPU presets explicitly disable Vulkan; requesting the unimplemented GPU path fails. No CUDA, HIP, ROCm or Vulkan SDK/loader is required by this diagnostic build.
+
+Use exact named toolchain profiles in `cmake/toolchains.lock.json`. Select the required installed Visual Studio toolset and Windows SDK before configuring; compare the actual compiler, CMake, Ninja and vcpkg identities with the selected profile. A discovery report is not an admitted build, and a mismatch cannot silently rewrite the lock. Runner image identity is provenance rather than a substitute for tool versions. The hosted candidate profile is based on the prior project's successful CI compiler log and its [versioned image inventory](https://github.com/actions/runner-images/blob/win25-vs2026/20260824.214/images/windows/Windows2025-VS2026-Readme.md); this feature's CI must verify the actual profile again.
+
+The `cpu-diagnostics` install component contains the test executable under `diagnostics/`, build/dependency metadata under `share/spectrapack/`, and required license texts under `share/licenses/`. Exercise the staged executable outside the source/build directories with development paths removed, inspect PE imports and record actual loaded modules. Reject GPU dependencies and undeclared non-system DLLs; never copy Windows system DLLs. This is a diagnostic package, not the final offline installer or standalone packing CLI.
+
+New profile, dependency-lock and runtime-audit behavior requires observed failing regression tests followed by fixes. Library smoke checks are honest characterization tests; missing headers or failed dependency downloads are provisioning failures. Retain the existing bounded reference benchmark as informational evidence. Changing CRT/toolchain requires a new compatible timing baseline.
+
+Compatibility: no asset bytes, geometry semantics, schemas, exports, protocol contracts or public C++ ABI change. M0 remains incomplete until its contract/handshake obligations are implemented; full AT-01 additionally requires the complete offline product workflows on Windows 10 and 11.

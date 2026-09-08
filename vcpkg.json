@@ -3,6 +3,11 @@
   "version-string": "0.0.0",
   "builtin-baseline": "271a5b8850aa50f9a40269cbf3cf414b36e333d6",
   "dependencies": [
-    { "name": "catch2", "version>=": "3.11.0" }
+    { "name": "catch2", "version>=": "3.11.0" },
+    { "name": "manifold", "version>=": "3.2.1" },
+    { "name": "fcl", "version>=": "0.7.0" },
+    { "name": "meshoptimizer", "version>=": "0.25" },
+    { "name": "pocketfft", "version>=": "2023-09-25" },
+    { "name": "nlohmann-json", "version>=": "3.12.0" }
   ]
 }

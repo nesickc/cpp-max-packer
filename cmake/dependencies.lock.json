@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "baseline": "271a5b8850aa50f9a40269cbf3cf414b36e333d6",
+  "vcpkg_tool": {
+    "version": "2025-10-16-71538f2694db93da4668782d094768ba74c45991",
+    "release": "2025-10-16",
+    "sha256": "30430c3d3f58f9710c4e0671db5cf4ebe8445760fe8452ac8f9365ac990beae0"
+  },
+  "triplet": "x64-windows-static",
+  "dependencies": [
+    {"name":"catch2","version":"3.11.0","features":[],"triplet":"x64-windows-static","port_identity":"catch2:x64-windows-static@3.11.0","port_tree_hash":"5f7385233a249ddbcc48f261b4e4c20f42297360","source_sha512":"a95495142f915d6e9c2a23e80fe360343e9097680066a2f9d3037a070ba5f81ee5559a0407cc9e972dc2afae325873f1fc7ea07a64012c0f01aac6e549f03e3f"},
+    {"name":"ccd","version":"2.1#4","features":[],"triplet":"x64-windows-static","port_identity":"ccd:x64-windows-static@2.1#4","port_tree_hash":"a6cd46396151b69680100934c824c290c7057379","source_sha512":"ff037d9c4df50f09600cf9b3514b259b2850ff43f74817853f5665d22812891168f70bd3cc3969b2c9e3c706f6254991a65421476349607fbd04d894b217456d"},
+    {"name":"clipper2","version":"1.5.4","features":[],"triplet":"x64-windows-static","port_identity":"clipper2:x64-windows-static@1.5.4","port_tree_hash":"efcc6cdefc2176e0bdcc990d41d0d43601d20e20","source_sha512":"39153f35630ddc455ad4955a8b9b35f05bf3fad2a33c6e7232300b674a5172794a57c7bd18f96dd0a90d4607a44ecb32c92b0cacc7060d840d568032efaddf19"},
+    {"name":"eigen3","version":"3.4.1#1","features":[],"triplet":"x64-windows-static","port_identity":"eigen3:x64-windows-static@3.4.1#1","port_tree_hash":"ea6ed04401cca325eff95c17cc0d01326a3c6a85","source_sha512":"15b540d2fad25de837d7612456ea65b7fcfa25f886c48dcb3de025e079f5f43f45f1c0bd9a8435430d0e2fb9f0a6129719626dd4fd45dc61fc480f97762b2f56"},
+    {"name":"fcl","version":"0.7.0#4","features":[],"triplet":"x64-windows-static","port_identity":"fcl:x64-windows-static@0.7.0#4","port_tree_hash":"c579ae1dd0494bc4ce7266fb3f4063cf06017fda","source_sha512":"95612476f4706fcd60812204ec7495a956c4e318cc6ace9526ac93dc765605ddf73b2d0d9ff9f4c9c739e43c5f8e24670113c86e02868a2949ab234c3bf82374"},
+    {"name":"manifold","version":"3.2.1#1","features":[],"triplet":"x64-windows-static","port_identity":"manifold:x64-windows-static@3.2.1#1","port_tree_hash":"2352b67bd30ff162a551367458f0732e5f35adc3","source_sha512":"22ff2236b97fd15463c231b3ce61baeefc6f651b145804480f80146ba83dc4b15d57e5f73ff788604153ec61eace416a409d2a9e7c1327c05cba89a95e2fc536"},
+    {"name":"meshoptimizer","version":"0.25","features":[],"triplet":"x64-windows-static","port_identity":"meshoptimizer:x64-windows-static@0.25","port_tree_hash":"51139145d67f8e07d8360138f2185e56fb20c04c","source_sha512":"c00f2357c9c8d17804047c3c678f253bf13aa467b1dadc099a7958787e1725c501bd92a7837494d4831dd7c3428bbeb92353b70fd45ec71e88d753036318ab2f"},
+    {"name":"nlohmann-json","version":"3.12.0#1","features":[],"triplet":"x64-windows-static","port_identity":"nlohmann-json:x64-windows-static@3.12.0#1","port_tree_hash":"f89a58e6478ca1e39120e93e7ed535c4aaf8198c","source_sha512":"6cc1e86261f8fac21cc17a33da3b6b3c3cd5c116755651642af3c9e99bb3538fd42c1bd50397a77c8fb6821bc62d90e6b91bcdde77a78f58f2416c62fc53b97d"},
+    {"name":"octomap","version":"1.10.0","features":[],"triplet":"x64-windows-static","port_identity":"octomap:x64-windows-static@1.10.0","port_tree_hash":"ff492e256718daa9fb2245c135959d6a812f938d","source_sha512":"1cbee4f6b3569587986774447ad9ec4190f597310c4d6865ffa7cd8865ece2492e4a42fa369b633d9d7a9da782560d49deaa62a18601ea4f56396bdf1a6a5f52"},
+    {"name":"pocketfft","version":"2023-09-25","features":[],"triplet":"x64-windows-static","port_identity":"pocketfft:x64-windows-static@2023-09-25","port_tree_hash":"46ffdbd8c95362eee33d5cdf0dce36c77f332a7f","source_sha512":"e8c2b65b23feb53f1077b3ae1e0e20d21d8f55601bd1216443af0fbc916638c3649527494ec2f23bed42d562341e0cf1fcde54c37068333161f289d23d8a9009"},
+    {"name":"tbb","version":"2022.2.0","features":[],"triplet":"x64-windows-static","port_identity":"tbb:x64-windows-static@2022.2.0","port_tree_hash":"a3b9fc4c8d2641949c25b590c6225328c3a152d7","source_sha512":"d87c67514ca17c9769910194a8fac912e183952ad5c408dbceb48edc8aef13375df3d4c9120a7366206c8ab72699ed953df65c11c261e19d8e9d273c73d073f3"}
+  ],
+  "host_tools": [
+    {"name":"vcpkg-cmake","version":"2025-08-07","features":[],"triplet":"x64-windows","port_identity":"vcpkg-cmake:x64-windows@2025-08-07"},
+    {"name":"vcpkg-cmake-config","version":"2024-05-23","features":[],"triplet":"x64-windows","port_identity":"vcpkg-cmake-config:x64-windows@2024-05-23"}
+  ]
+}
