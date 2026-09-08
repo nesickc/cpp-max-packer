@@ -2,7 +2,7 @@
 
 A planned Windows application for packing rigid copies of one STL solid into a fixed box or STL interior volume. The specification selects a C++20 engine with CPU/Vulkan compute and a Tauri/React desktop UI.
 
-This repository contains the specification, agent setup, initial architecture, reference-fixture inventory, and executable fixture-tool tests. There is no packing application, C++ build system, or measured packing performance yet.
+This repository contains the specification, agent setup, initial architecture, reference-fixture inventory, and a C++20/Python test foundation. There is no packing application or measured packing performance yet.
 
 - [Product specification](doc/spectrapack-spec.md)
 - [Current status and next milestone](doc/PROJECT_STATUS.md)
@@ -10,6 +10,7 @@ This repository contains the specification, agent setup, initial architecture, r
 - [Agent configuration and verification](doc/AGENT_SETUP.md)
 - [Initial architecture](doc/ARCHITECTURE.md) and [architecture decision](spec/decisions/0001-initial-architecture.md)
 - [Executable fixture checks](tests/README.md) and [spec-linked TDD plan](tests/TEST_PLAN.md)
+- [Native build instructions](docs/BUILDING.md), [reference timings](benchmarks/README.md), and [feature delivery queue](doc/DELIVERY.md)
 - [Original setup guide](doc/codex-local-agent-setup-guide.md)
 
 From PowerShell, retrieve only the relevant spec text:

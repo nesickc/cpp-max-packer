@@ -1,0 +1,60 @@
+name: Test foundation
+
+on:
+  push:
+    branches: [main, 'feature/**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-reference-tests:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.12'
+      - name: Python fixture and performance-harness tests
+        run: |
+          New-Item -ItemType Directory -Force .local/ci | Out-Null
+          python -m unittest discover -s tests -p 'test_*.py' *> .local/ci/python.log
+          $testResult = $LASTEXITCODE
+          Get-Content .local/ci/python.log -Tail 30
+          exit $testResult
+      - name: Prepare pinned vcpkg
+        run: |
+          $baseline = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git .local/vcpkg
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git -C .local/vcpkg checkout --detach $baseline
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .local/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build and run native Release tests
+        run: |
+          & ./tools/Invoke-NativeTests.ps1 -Preset windows-ninja-release -VcpkgRoot "$PWD/.local/vcpkg" -VsWherePath "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe" *> .local/ci/native.log
+          $testResult = $LASTEXITCODE
+          Get-Content .local/ci/native.log -Tail 45
+          exit $testResult
+      - name: Bounded reference timings
+        run: |
+          python benchmarks/run_reference.py --executable out/build/windows-ninja-release/bin/spectrapack_reference_benchmark.exe --output .local/ci/reference.json --samples 5 --warmup 1 --timeout-seconds 60
+          exit $LASTEXITCODE
+      - name: Retain test and timing evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-test-foundation
+          path: |
+            .local/ci/*.log
+            .local/ci/reference.json
+            out/build/windows-ninja-release/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+          retention-days: 14
