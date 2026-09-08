@@ -31,7 +31,9 @@ jobs:
       - name: Prepare pinned vcpkg
         run: |
           $baseline = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
-          git clone --filter=blob:none https://github.com/microsoft/vcpkg.git .local/vcpkg
+          # Versioned ports need historical blobs during dependency resolution.
+          # Fetch them here instead of triggering lazy Git fetches inside vcpkg.
+          git clone https://github.com/microsoft/vcpkg.git .local/vcpkg
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           git -C .local/vcpkg checkout --detach $baseline
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -82,6 +84,7 @@ jobs:
             ${{ runner.temp }}/spectrapack-cpu-package/
             out/build/windows-ninja-*/build-metadata.json
             out/build/windows-ninja-*/installed-dependencies.json
+            out/build/windows-ninja-*/vcpkg-manifest-install.log
             out/build/windows-ninja-*/Testing/Temporary/LastTest.log
           if-no-files-found: warn
           retention-days: 14
