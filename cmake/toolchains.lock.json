@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "local-windows-2026": {
+      "source": "local measured profile 2026-09-08",
+      "architecture": "x64",
+      "vs_version": "18.8.12105.206",
+      "toolset": "14.51.36231",
+      "compiler": "19.51.36252.0",
+      "windows_sdk": "10.0.26100.0",
+      "cmake": "4.2.3",
+      "ninja": "1.13.2",
+      "triplet": "x64-windows-static",
+      "msvc_runtime": "static"
+    },
+    "hosted-windows-2025": {
+      "source": "windows-2025-vs2026 20260824.214.3 runner image readme",
+      "architecture": "x64",
+      "vs_version": "18.9.12112.369",
+      "toolset": "14.51.36231",
+      "compiler": "19.51.36256.0",
+      "windows_sdk": "10.0.26100.0",
+      "cmake": "4.4.2",
+      "ninja": "1.13.2",
+      "triplet": "x64-windows-static",
+      "msvc_runtime": "static"
+    }
+  }
+}

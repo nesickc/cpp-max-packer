@@ -6,8 +6,8 @@ The spec's `T-001`–`T-008` are initial implementation tasks; `AT-01`–`AT-17`
 
 | Task | Branch | Prerequisite / boundary |
 | --- | --- | --- |
-| QA-01 test foundation | `feature/QA-01-test-foundation` | First reviewable feature; native tests, analytic/reference helpers, bounded performance reporting |
-| T-001 CPU build and dependency lock | `feature/AT-01-windows-cpu-build` | Test foundation merged; complete product toolchain/dependency and adapter groundwork |
+| QA-01 test foundation | `feature/QA-01-test-foundation` | Merged through PR #1 at `067f1e52`; native tests, analytic/reference helpers, bounded performance reporting |
+| [T-001 CPU build and dependency lock](T-001.md) | `feature/AT-01-windows-cpu-build` | Implemented from merged QA-01; local checks pass, hosted CI pending |
 | T-002 schemas and service envelopes | `feature/AT-13-protocol-contracts` | T-001 merged; versioned schemas, common decoding, asset IDs, CLI/service handshake |
 | T-003 STL/units/diagnostics | `feature/AT-03-stl-import` | Build/contracts merged; test-first authoritative import pipeline |
 | T-004 independent solid validator | `feature/AT-06-solid-validator` | Import merged; adversarial overlap, containment, cavity and clearance gates |
