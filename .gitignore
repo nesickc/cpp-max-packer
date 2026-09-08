@@ -4,3 +4,7 @@
 # Python fixture-tool test artifacts.
 __pycache__/
 *.pyc
+
+# Local CMake builds and manifest-installed dependencies.
+/out/
+/vcpkg_installed/

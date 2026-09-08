@@ -1,0 +1,7 @@
+add_executable(spectrapack_reference_benchmark native/reference_benchmark.cpp)
+target_link_libraries(spectrapack_reference_benchmark PRIVATE spectrapack_test_support)
+target_compile_features(spectrapack_reference_benchmark PRIVATE cxx_std_20)
+
+set_target_properties(spectrapack_reference_benchmark PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
