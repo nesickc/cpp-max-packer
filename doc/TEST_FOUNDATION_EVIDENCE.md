@@ -34,6 +34,6 @@ Astra Extra High completed the code review and targeted closure checks with no r
 
 Local native configuration uses Windows x64, CMake 4.2.3, MSVC 19.51.36252.0 and Catch2 3.11.0 through the recorded vcpkg baseline. Commands are in [BUILDING.md](../docs/BUILDING.md); performance-report commands and comparison rules are in [benchmarks/README.md](../benchmarks/README.md).
 
-The Windows CI workflow runs Python checks, native Release checks and bounded reference timings, retaining named logs and JSON reports. Hosted success must be reported from an actual run, separately from local results.
+The Windows CI workflow runs Python checks, native Release checks and bounded reference timings, retaining named logs and JSON reports. [Run 34267341679](https://github.com/nesickc/cpp-max-packer/actions/runs/34267341679) completed successfully for implementation head `18fc3e72b3c412f334378321adeefcfb4a644ba0` on 2026-09-08. This hosted result is separate from the local Debug/Release evidence; it still covers testing infrastructure only.
 
 After user review/testing and merge, continue with T-001 from the merged default branch. [DELIVERY.md](DELIVERY.md) records the task queue and prerequisite rule.
