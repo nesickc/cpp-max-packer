@@ -63,6 +63,17 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & .local/vcpkg/bootstrap-vcpkg.bat -disableMetrics
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Inventory hosted Windows build tools
+        run: |
+          New-Item -ItemType Directory -Force .local/ci | Out-Null
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio/Installer/vswhere.exe'
+          $vs = @()
+          if (Test-Path $vswhere) { $vs = @(& $vswhere -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -format json | ConvertFrom-Json | ForEach-Object { [pscustomobject]@{installationVersion=$_.installationVersion;installationPath=$_.installationPath} }) }
+          $msvc = @()
+          foreach ($installation in $vs) { $tools = Join-Path $installation.installationPath 'VC/Tools/MSVC'; Get-ChildItem $tools -Directory -ErrorAction SilentlyContinue | ForEach-Object { $p = Join-Path $_.FullName 'bin/Hostx64/x64/cl.exe'; if (Test-Path $p) { $msvc += [pscustomobject]@{toolsetName=$_.Name;path=$p;version=(Get-Item $p).VersionInfo.FileVersion} } } }
+          $sdk = @(Get-ChildItem 'C:/Program Files (x86)/Windows Kits/10/Include' -Directory -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name)
+          $cmake = (cmake --version | Select-Object -First 1); $ninja = (ninja --version | Select-Object -First 1)
+          [pscustomobject]@{image=$env:ImageOS;image_version=$env:ImageVersion;visual_studio=$vs;msvc_toolsets=$msvc;windows_sdk_include=$sdk;cmake=$cmake;ninja=$ninja} | ConvertTo-Json -Depth 8 | Set-Content .local/ci/hosted-tools.json
       - name: Build and run native Debug and Release tests
         run: |
           foreach ($configuration in @('debug', 'release')) {

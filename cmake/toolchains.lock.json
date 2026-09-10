@@ -14,13 +14,13 @@
       "msvc_runtime": "static"
     },
     "hosted-windows-2025": {
-      "source": "windows-2025-vs2026 20260824.214.3 runner image readme",
+      "source": "windows-2025-vs2026 20260907.229.1 runner image readme; qualification tracked in doc/T-002.md",
       "architecture": "x64",
-      "vs_version": "18.9.12112.369",
+      "vs_version": "18.9.12120.119",
       "toolset": "14.51.36231",
       "compiler": "19.51.36256.0",
       "windows_sdk": "10.0.26100.0",
-      "cmake": "4.4.2",
+      "cmake": "4.4.3",
       "ninja": "1.13.2",
       "triplet": "x64-windows-static",
       "msvc_runtime": "static"
