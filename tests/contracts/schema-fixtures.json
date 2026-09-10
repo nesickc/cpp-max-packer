@@ -1,0 +1,3714 @@
+[
+  {
+    "name": "settings-requested-positive",
+    "kind": "settings",
+    "value": {
+      "settings_version": 1,
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "clearance_mm": {
+        "pair": 0,
+        "wall": 0
+      },
+      "orientation": {
+        "mode": "fixed",
+        "quaternion_xyzw": [
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "search": {
+        "preset": "synthetic-v1",
+        "seed": "0",
+        "deterministic": true,
+        "work_budget": {
+          "max_candidate_evaluations": 1,
+          "max_search_passes": 1
+        }
+      },
+      "resolution": {
+        "mode": "manual",
+        "pitch_mm": 1
+      },
+      "compute": {
+        "backend": "cpu"
+      },
+      "object_asset_id": "asset-0123456789abcdef0123456789abcdef-1"
+    },
+    "schema_valid": true,
+    "semantic_valid": true
+  },
+  {
+    "name": "settings-resolved-positive",
+    "kind": "settings",
+    "value": {
+      "settings_version": 1,
+      "object_asset": {
+        "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "clearance_mm": {
+        "pair": 0,
+        "wall": 0
+      },
+      "orientation": {
+        "mode": "fixed",
+        "quaternion_xyzw": [
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "search": {
+        "preset": "synthetic-v1",
+        "seed": "0",
+        "deterministic": true,
+        "work_budget": {
+          "max_candidate_evaluations": 1,
+          "max_search_passes": 1
+        }
+      },
+      "resolution": {
+        "mode": "manual",
+        "pitch_mm": 1
+      },
+      "compute": {
+        "backend": "cpu"
+      },
+      "resolved": {
+        "pitch_mm": 1,
+        "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "orientation_catalog_version": 1,
+        "backend": "cpu",
+        "thread_count": 1
+      }
+    },
+    "schema_valid": true,
+    "semantic_valid": true
+  },
+  {
+    "name": "assets-accepted-positive",
+    "kind": "assets",
+    "value": {
+      "schema_version": 1,
+      "role": "object",
+      "state": "accepted",
+      "source": {
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "path": "assets/object.stl",
+        "units": "mm",
+        "unit_scale_mm": 1
+      },
+      "frame": {
+        "source_bounds": {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        },
+        "source_to_local": [
+          [
+            1,
+            0,
+            0,
+            -0.5
+          ],
+          [
+            0,
+            1,
+            0,
+            -0.5
+          ],
+          [
+            0,
+            0,
+            1,
+            -0.5
+          ],
+          [
+            0,
+            0,
+            0,
+            1
+          ]
+        ]
+      },
+      "dimensions_mm": [
+        1,
+        1,
+        1
+      ],
+      "diagnostics": {
+        "status": "valid",
+        "messages": []
+      },
+      "accepted_solid": {
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "path": "assets/object.ply",
+        "format": "binary_little_endian_ply_f64_u32",
+        "vertex_count": 8,
+        "triangle_count": 12
+      },
+      "repair_record": null
+    },
+    "schema_valid": true,
+    "semantic_valid": true
+  },
+  {
+    "name": "assets-inspected-positive",
+    "kind": "assets",
+    "value": {
+      "schema_version": 1,
+      "role": "object",
+      "state": "inspected",
+      "source": {
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "path": "assets/object.stl",
+        "units": "mm",
+        "unit_scale_mm": 1
+      },
+      "frame": {
+        "source_bounds": {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        },
+        "source_to_local": [
+          [
+            1,
+            0,
+            0,
+            -0.5
+          ],
+          [
+            0,
+            1,
+            0,
+            -0.5
+          ],
+          [
+            0,
+            0,
+            1,
+            -0.5
+          ],
+          [
+            0,
+            0,
+            0,
+            1
+          ]
+        ]
+      },
+      "dimensions_mm": [
+        1,
+        1,
+        1
+      ],
+      "diagnostics": {
+        "status": "valid",
+        "messages": []
+      }
+    },
+    "schema_valid": true,
+    "semantic_valid": true
+  },
+  {
+    "name": "results-zero-positive",
+    "kind": "results",
+    "value": {
+      "schema_version": 1,
+      "label": "best_found",
+      "job_id": "job-zero-copy",
+      "solution_revision": 0,
+      "created_at": "2026-09-10T00:00:00Z",
+      "engine": {
+        "version": "synthetic-fixture",
+        "commit": "0000000"
+      },
+      "assets": {
+        "object": {
+          "schema_version": 1,
+          "role": "object",
+          "state": "accepted",
+          "source": {
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "path": "assets/object.stl",
+            "units": "mm",
+            "unit_scale_mm": 1
+          },
+          "frame": {
+            "source_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                1,
+                1,
+                1
+              ]
+            },
+            "source_to_local": [
+              [
+                1,
+                0,
+                0,
+                -0.5
+              ],
+              [
+                0,
+                1,
+                0,
+                -0.5
+              ],
+              [
+                0,
+                0,
+                1,
+                -0.5
+              ],
+              [
+                0,
+                0,
+                0,
+                1
+              ]
+            ]
+          },
+          "dimensions_mm": [
+            1,
+            1,
+            1
+          ],
+          "diagnostics": {
+            "status": "valid",
+            "messages": []
+          },
+          "accepted_solid": {
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "path": "assets/object.ply",
+            "format": "binary_little_endian_ply_f64_u32",
+            "vertex_count": 8,
+            "triangle_count": 12
+          },
+          "repair_record": null
+        }
+      },
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "constraints": {
+        "clearance_mm": {
+          "pair": 0,
+          "wall": 0
+        },
+        "orientation": {
+          "mode": "fixed",
+          "quaternion_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "search": {
+        "resolved_settings": {
+          "settings_version": 1,
+          "object_asset": {
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "container": {
+            "kind": "box",
+            "dimensions_mm": [
+              10,
+              10,
+              10
+            ]
+          },
+          "clearance_mm": {
+            "pair": 0,
+            "wall": 0
+          },
+          "orientation": {
+            "mode": "fixed",
+            "quaternion_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ]
+          },
+          "search": {
+            "preset": "synthetic-v1",
+            "seed": "0",
+            "deterministic": true,
+            "work_budget": {
+              "max_candidate_evaluations": 1,
+              "max_search_passes": 1
+            }
+          },
+          "resolution": {
+            "mode": "manual",
+            "pitch_mm": 1
+          },
+          "compute": {
+            "backend": "cpu"
+          },
+          "resolved": {
+            "pitch_mm": 1,
+            "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "orientation_catalog_version": 1,
+            "backend": "cpu",
+            "thread_count": 1
+          }
+        },
+        "pitch_levels_mm": [
+          1
+        ],
+        "seed": "0",
+        "work_counts": {
+          "candidate_evaluations": 0,
+          "search_passes": 0
+        },
+        "run_segments": [
+          {
+            "segment_id": "segment-0",
+            "parent_solution_revision": null,
+            "seed": "0",
+            "backend": "cpu",
+            "elapsed_seconds": 0,
+            "work_counts": {
+              "candidate_evaluations": 0,
+              "search_passes": 0
+            },
+            "search_state_reset": false,
+            "rng": {
+              "algorithm": "synthetic",
+              "state": "initial"
+            },
+            "resolved_settings": {
+              "settings_version": 1,
+              "object_asset": {
+                "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "container": {
+                "kind": "box",
+                "dimensions_mm": [
+                  10,
+                  10,
+                  10
+                ]
+              },
+              "clearance_mm": {
+                "pair": 0,
+                "wall": 0
+              },
+              "orientation": {
+                "mode": "fixed",
+                "quaternion_xyzw": [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "search": {
+                "preset": "synthetic-v1",
+                "seed": "0",
+                "deterministic": true,
+                "work_budget": {
+                  "max_candidate_evaluations": 1,
+                  "max_search_passes": 1
+                }
+              },
+              "resolution": {
+                "mode": "manual",
+                "pitch_mm": 1
+              },
+              "compute": {
+                "backend": "cpu"
+              },
+              "resolved": {
+                "pitch_mm": 1,
+                "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "orientation_catalog_version": 1,
+                "backend": "cpu",
+                "thread_count": 1
+              }
+            }
+          }
+        ],
+        "backend_transitions": [],
+        "elapsed_seconds": 0
+      },
+      "count": 0,
+      "placements": [],
+      "validation": {
+        "status": "valid",
+        "tolerance_mm": 0,
+        "authoritative_geometry_sha256": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        "validator_version": "synthetic",
+        "kernel_version": "synthetic",
+        "checks": {
+          "pair": "valid",
+          "containment": "valid",
+          "clearance": "valid"
+        }
+      },
+      "metrics": {
+        "solid_volume_mm3": 1,
+        "container_volume_mm3": 1000,
+        "utilization": 0,
+        "time_to_best_seconds": 0,
+        "peak_host_bytes": 0,
+        "peak_device_bytes": 0,
+        "termination_reason": "budget_exhausted"
+      }
+    },
+    "schema_valid": true,
+    "semantic_valid": true
+  },
+  {
+    "name": "results-one-positive",
+    "kind": "results",
+    "value": {
+      "schema_version": 1,
+      "label": "best_found",
+      "job_id": "job-one-copy",
+      "solution_revision": 1,
+      "created_at": "2026-09-10T00:00:00Z",
+      "engine": {
+        "version": "synthetic-fixture",
+        "commit": "0000000"
+      },
+      "assets": {
+        "object": {
+          "schema_version": 1,
+          "role": "object",
+          "state": "accepted",
+          "source": {
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "path": "assets/object.stl",
+            "units": "mm",
+            "unit_scale_mm": 1
+          },
+          "frame": {
+            "source_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                1,
+                1,
+                1
+              ]
+            },
+            "source_to_local": [
+              [
+                1,
+                0,
+                0,
+                -0.5
+              ],
+              [
+                0,
+                1,
+                0,
+                -0.5
+              ],
+              [
+                0,
+                0,
+                1,
+                -0.5
+              ],
+              [
+                0,
+                0,
+                0,
+                1
+              ]
+            ]
+          },
+          "dimensions_mm": [
+            1,
+            1,
+            1
+          ],
+          "diagnostics": {
+            "status": "valid",
+            "messages": []
+          },
+          "accepted_solid": {
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "path": "assets/object.ply",
+            "format": "binary_little_endian_ply_f64_u32",
+            "vertex_count": 8,
+            "triangle_count": 12
+          },
+          "repair_record": null
+        }
+      },
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "constraints": {
+        "clearance_mm": {
+          "pair": 0,
+          "wall": 0
+        },
+        "orientation": {
+          "mode": "fixed",
+          "quaternion_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "search": {
+        "resolved_settings": {
+          "settings_version": 1,
+          "object_asset": {
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "container": {
+            "kind": "box",
+            "dimensions_mm": [
+              10,
+              10,
+              10
+            ]
+          },
+          "clearance_mm": {
+            "pair": 0,
+            "wall": 0
+          },
+          "orientation": {
+            "mode": "fixed",
+            "quaternion_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ]
+          },
+          "search": {
+            "preset": "synthetic-v1",
+            "seed": "0",
+            "deterministic": true,
+            "work_budget": {
+              "max_candidate_evaluations": 1,
+              "max_search_passes": 1
+            }
+          },
+          "resolution": {
+            "mode": "manual",
+            "pitch_mm": 1
+          },
+          "compute": {
+            "backend": "cpu"
+          },
+          "resolved": {
+            "pitch_mm": 1,
+            "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "orientation_catalog_version": 1,
+            "backend": "cpu",
+            "thread_count": 1
+          }
+        },
+        "pitch_levels_mm": [
+          1
+        ],
+        "seed": "0",
+        "work_counts": {
+          "candidate_evaluations": 0,
+          "search_passes": 0
+        },
+        "run_segments": [
+          {
+            "segment_id": "segment-0",
+            "parent_solution_revision": null,
+            "seed": "0",
+            "backend": "cpu",
+            "elapsed_seconds": 0,
+            "work_counts": {
+              "candidate_evaluations": 0,
+              "search_passes": 0
+            },
+            "search_state_reset": false,
+            "rng": {
+              "algorithm": "synthetic",
+              "state": "initial"
+            },
+            "resolved_settings": {
+              "settings_version": 1,
+              "object_asset": {
+                "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "container": {
+                "kind": "box",
+                "dimensions_mm": [
+                  10,
+                  10,
+                  10
+                ]
+              },
+              "clearance_mm": {
+                "pair": 0,
+                "wall": 0
+              },
+              "orientation": {
+                "mode": "fixed",
+                "quaternion_xyzw": [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "search": {
+                "preset": "synthetic-v1",
+                "seed": "0",
+                "deterministic": true,
+                "work_budget": {
+                  "max_candidate_evaluations": 1,
+                  "max_search_passes": 1
+                }
+              },
+              "resolution": {
+                "mode": "manual",
+                "pitch_mm": 1
+              },
+              "compute": {
+                "backend": "cpu"
+              },
+              "resolved": {
+                "pitch_mm": 1,
+                "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "orientation_catalog_version": 1,
+                "backend": "cpu",
+                "thread_count": 1
+              }
+            }
+          }
+        ],
+        "backend_transitions": [],
+        "elapsed_seconds": 0
+      },
+      "count": 1,
+      "placements": [
+        {
+          "copy_id": "copy-1",
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "quaternion_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "local_to_world": [
+            [
+              1,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              1
+            ]
+          ]
+        }
+      ],
+      "validation": {
+        "status": "valid",
+        "tolerance_mm": 0,
+        "authoritative_geometry_sha256": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        "validator_version": "synthetic",
+        "kernel_version": "synthetic",
+        "checks": {
+          "pair": "valid",
+          "containment": "valid",
+          "clearance": "valid"
+        }
+      },
+      "metrics": {
+        "solid_volume_mm3": 1,
+        "container_volume_mm3": 1000,
+        "utilization": 0.001,
+        "time_to_best_seconds": 0,
+        "peak_host_bytes": 0,
+        "peak_device_bytes": 0,
+        "termination_reason": "budget_exhausted"
+      }
+    },
+    "schema_valid": true,
+    "semantic_valid": true
+  },
+  {
+    "name": "protocol-request-positive",
+    "kind": "protocol",
+    "value": {
+      "protocol_version": 1,
+      "request_id": "req-1",
+      "method": "pack",
+      "params": {}
+    },
+    "schema_valid": true,
+    "semantic_valid": true
+  },
+  {
+    "name": "protocol-error-null-id-positive",
+    "kind": "protocol",
+    "value": {
+      "protocol_version": 1,
+      "request_id": null,
+      "ok": false,
+      "error": {
+        "code": "INVALID_JSON",
+        "message": "invalid JSON",
+        "details": {},
+        "recoverable": true
+      }
+    },
+    "schema_valid": true,
+    "semantic_valid": true
+  },
+  {
+    "name": "benchmark-completed-positive",
+    "kind": "benchmark-summary",
+    "value": {
+      "schema_version": 1,
+      "suite_id": "synthetic",
+      "created_at": "2026-09-10T00:00:00Z",
+      "engine": {
+        "version": "synthetic-fixture",
+        "commit": "0000000"
+      },
+      "host": {
+        "cpu": "synthetic",
+        "gpu": null,
+        "driver": null,
+        "os_build": "synthetic",
+        "thread_count": 1
+      },
+      "dependency_revisions": {
+        "spectrapack": "synthetic"
+      },
+      "configuration": {
+        "method": "aabb",
+        "settings": {
+          "settings_version": 1,
+          "object_asset": {
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "container": {
+            "kind": "box",
+            "dimensions_mm": [
+              10,
+              10,
+              10
+            ]
+          },
+          "clearance_mm": {
+            "pair": 0,
+            "wall": 0
+          },
+          "orientation": {
+            "mode": "fixed",
+            "quaternion_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ]
+          },
+          "search": {
+            "preset": "synthetic-v1",
+            "seed": "0",
+            "deterministic": true,
+            "work_budget": {
+              "max_candidate_evaluations": 1,
+              "max_search_passes": 1
+            }
+          },
+          "resolution": {
+            "mode": "manual",
+            "pitch_mm": 1
+          },
+          "compute": {
+            "backend": "cpu"
+          },
+          "resolved": {
+            "pitch_mm": 1,
+            "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "orientation_catalog_version": 1,
+            "backend": "cpu",
+            "thread_count": 1
+          }
+        },
+        "cache_state": "cold"
+      },
+      "runs": [
+        {
+          "seed": "0",
+          "status": "completed",
+          "settings": {
+            "settings_version": 1,
+            "object_asset": {
+              "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "container": {
+              "kind": "box",
+              "dimensions_mm": [
+                10,
+                10,
+                10
+              ]
+            },
+            "clearance_mm": {
+              "pair": 0,
+              "wall": 0
+            },
+            "orientation": {
+              "mode": "fixed",
+              "quaternion_xyzw": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "search": {
+              "preset": "synthetic-v1",
+              "seed": "0",
+              "deterministic": true,
+              "work_budget": {
+                "max_candidate_evaluations": 1,
+                "max_search_passes": 1
+              }
+            },
+            "resolution": {
+              "mode": "manual",
+              "pitch_mm": 1
+            },
+            "compute": {
+              "backend": "cpu"
+            },
+            "resolved": {
+              "pitch_mm": 1,
+              "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "orientation_catalog_version": 1,
+              "backend": "cpu",
+              "thread_count": 1
+            }
+          },
+          "count": 0,
+          "result": {
+            "path": "results/zero.json",
+            "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          },
+          "validation_failures": 0,
+          "timings": {
+            "preprocessing_seconds": 0,
+            "search_seconds": 0,
+            "validation_seconds": 0,
+            "export_seconds": 0,
+            "cold_end_to_end_seconds": 0
+          },
+          "peak_host_bytes": 0,
+          "peak_device_bytes": 0,
+          "improvements": [],
+          "backend_transitions": []
+        }
+      ],
+      "summary": {
+        "successful_runs": 1,
+        "failed_runs": 0,
+        "best_count": 0,
+        "median_count": 0,
+        "worst_count": 0
+      }
+    },
+    "schema_valid": true,
+    "semantic_valid": true
+  },
+  {
+    "name": "benchmark-failed-positive",
+    "kind": "benchmark-summary",
+    "value": {
+      "schema_version": 1,
+      "suite_id": "synthetic",
+      "created_at": "2026-09-10T00:00:00Z",
+      "engine": {
+        "version": "synthetic-fixture",
+        "commit": "0000000"
+      },
+      "host": {
+        "cpu": "synthetic",
+        "gpu": null,
+        "driver": null,
+        "os_build": "synthetic",
+        "thread_count": 1
+      },
+      "dependency_revisions": {
+        "spectrapack": "synthetic"
+      },
+      "configuration": {
+        "method": "aabb",
+        "settings": {
+          "settings_version": 1,
+          "object_asset": {
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "container": {
+            "kind": "box",
+            "dimensions_mm": [
+              10,
+              10,
+              10
+            ]
+          },
+          "clearance_mm": {
+            "pair": 0,
+            "wall": 0
+          },
+          "orientation": {
+            "mode": "fixed",
+            "quaternion_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ]
+          },
+          "search": {
+            "preset": "synthetic-v1",
+            "seed": "0",
+            "deterministic": true,
+            "work_budget": {
+              "max_candidate_evaluations": 1,
+              "max_search_passes": 1
+            }
+          },
+          "resolution": {
+            "mode": "manual",
+            "pitch_mm": 1
+          },
+          "compute": {
+            "backend": "cpu"
+          },
+          "resolved": {
+            "pitch_mm": 1,
+            "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "orientation_catalog_version": 1,
+            "backend": "cpu",
+            "thread_count": 1
+          }
+        },
+        "cache_state": "cold"
+      },
+      "runs": [
+        {
+          "seed": "1",
+          "status": "failed",
+          "settings": null,
+          "count": null,
+          "result": null,
+          "validation_failures": 0,
+          "timings": {
+            "preprocessing_seconds": 0,
+            "search_seconds": 0,
+            "validation_seconds": 0,
+            "export_seconds": 0,
+            "cold_end_to_end_seconds": 0
+          },
+          "peak_host_bytes": 0,
+          "peak_device_bytes": 0,
+          "improvements": [],
+          "backend_transitions": [],
+          "error": {
+            "code": "MEMORY_LIMIT",
+            "message": "memory limit",
+            "details": {},
+            "recoverable": true
+          }
+        }
+      ],
+      "summary": {
+        "successful_runs": 0,
+        "failed_runs": 1,
+        "best_count": null,
+        "median_count": null,
+        "worst_count": null
+      }
+    },
+    "schema_valid": true,
+    "semantic_valid": true
+  },
+  {
+    "name": "requested-object-asset-id-not-an-asset",
+    "kind": "settings",
+    "value": {
+      "settings_version": 1,
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "clearance_mm": {
+        "pair": 0,
+        "wall": 0
+      },
+      "orientation": {
+        "mode": "fixed",
+        "quaternion_xyzw": [
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "search": {
+        "preset": "synthetic-v1",
+        "seed": "0",
+        "deterministic": true,
+        "work_budget": {
+          "max_candidate_evaluations": 1,
+          "max_search_passes": 1
+        }
+      },
+      "resolution": {
+        "mode": "manual",
+        "pitch_mm": 1
+      },
+      "compute": {
+        "backend": "cpu"
+      },
+      "object_asset_id": "not-an-asset"
+    },
+    "schema_valid": true,
+    "semantic_valid": false
+  },
+  {
+    "name": "requested-seed-uint64-overflow",
+    "kind": "settings",
+    "value": {
+      "settings_version": 1,
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "clearance_mm": {
+        "pair": 0,
+        "wall": 0
+      },
+      "orientation": {
+        "mode": "fixed",
+        "quaternion_xyzw": [
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "search": {
+        "preset": "synthetic-v1",
+        "seed": "18446744073709551616",
+        "deterministic": true,
+        "work_budget": {
+          "max_candidate_evaluations": 1,
+          "max_search_passes": 1
+        }
+      },
+      "resolution": {
+        "mode": "manual",
+        "pitch_mm": 1
+      },
+      "compute": {
+        "backend": "cpu"
+      },
+      "object_asset_id": "asset-0123456789abcdef0123456789abcdef-1"
+    },
+    "schema_valid": true,
+    "semantic_valid": false
+  },
+  {
+    "name": "requested-fixed-quaternion-nonunit",
+    "kind": "settings",
+    "value": {
+      "settings_version": 1,
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "clearance_mm": {
+        "pair": 0,
+        "wall": 0
+      },
+      "orientation": {
+        "mode": "fixed",
+        "quaternion_xyzw": [
+          0,
+          0,
+          0,
+          2
+        ]
+      },
+      "search": {
+        "preset": "synthetic-v1",
+        "seed": "0",
+        "deterministic": true,
+        "work_budget": {
+          "max_candidate_evaluations": 1,
+          "max_search_passes": 1
+        }
+      },
+      "resolution": {
+        "mode": "manual",
+        "pitch_mm": 1
+      },
+      "compute": {
+        "backend": "cpu"
+      },
+      "object_asset_id": "asset-0123456789abcdef0123456789abcdef-1"
+    },
+    "schema_valid": true,
+    "semantic_valid": false
+  },
+  {
+    "name": "resolved-fixed-quaternion-negative-sign",
+    "kind": "settings",
+    "value": {
+      "settings_version": 1,
+      "object_asset": {
+        "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "clearance_mm": {
+        "pair": 0,
+        "wall": 0
+      },
+      "orientation": {
+        "mode": "fixed",
+        "quaternion_xyzw": [
+          0,
+          0,
+          0,
+          -1
+        ]
+      },
+      "search": {
+        "preset": "synthetic-v1",
+        "seed": "0",
+        "deterministic": true,
+        "work_budget": {
+          "max_candidate_evaluations": 1,
+          "max_search_passes": 1
+        }
+      },
+      "resolution": {
+        "mode": "manual",
+        "pitch_mm": 1
+      },
+      "compute": {
+        "backend": "cpu"
+      },
+      "resolved": {
+        "pitch_mm": 1,
+        "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "orientation_catalog_version": 1,
+        "backend": "cpu",
+        "thread_count": 1
+      }
+    },
+    "schema_valid": true,
+    "semantic_valid": false
+  },
+  {
+    "name": "accepted-asset-unit-scale-mismatch",
+    "kind": "assets",
+    "value": {
+      "schema_version": 1,
+      "role": "object",
+      "state": "accepted",
+      "source": {
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "path": "assets/object.stl",
+        "units": "mm",
+        "unit_scale_mm": 25.4
+      },
+      "frame": {
+        "source_bounds": {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        },
+        "source_to_local": [
+          [
+            1,
+            0,
+            0,
+            -0.5
+          ],
+          [
+            0,
+            1,
+            0,
+            -0.5
+          ],
+          [
+            0,
+            0,
+            1,
+            -0.5
+          ],
+          [
+            0,
+            0,
+            0,
+            1
+          ]
+        ]
+      },
+      "dimensions_mm": [
+        1,
+        1,
+        1
+      ],
+      "diagnostics": {
+        "status": "valid",
+        "messages": []
+      },
+      "accepted_solid": {
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "path": "assets/object.ply",
+        "format": "binary_little_endian_ply_f64_u32",
+        "vertex_count": 8,
+        "triangle_count": 12
+      },
+      "repair_record": null
+    },
+    "schema_valid": true,
+    "semantic_valid": false
+  },
+  {
+    "name": "accepted-asset-custom-units-positive",
+    "kind": "assets",
+    "value": {
+      "schema_version": 1,
+      "role": "object",
+      "state": "accepted",
+      "source": {
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "path": "assets/object.stl",
+        "units": "custom",
+        "unit_scale_mm": 2
+      },
+      "frame": {
+        "source_bounds": {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        },
+        "source_to_local": [
+          [
+            2,
+            0,
+            0,
+            -1
+          ],
+          [
+            0,
+            2,
+            0,
+            -1
+          ],
+          [
+            0,
+            0,
+            2,
+            -1
+          ],
+          [
+            0,
+            0,
+            0,
+            1
+          ]
+        ]
+      },
+      "dimensions_mm": [
+        2,
+        2,
+        2
+      ],
+      "diagnostics": {
+        "status": "valid",
+        "messages": []
+      },
+      "accepted_solid": {
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "path": "assets/object.ply",
+        "format": "binary_little_endian_ply_f64_u32",
+        "vertex_count": 8,
+        "triangle_count": 12
+      },
+      "repair_record": null
+    },
+    "schema_valid": true,
+    "semantic_valid": true
+  },
+  {
+    "name": "accepted-asset-unknown-units",
+    "kind": "assets",
+    "value": {
+      "schema_version": 1,
+      "role": "object",
+      "state": "accepted",
+      "source": {
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "path": "assets/object.stl",
+        "units": "bananas",
+        "unit_scale_mm": 1
+      },
+      "frame": {
+        "source_bounds": {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        },
+        "source_to_local": [
+          [
+            1,
+            0,
+            0,
+            -0.5
+          ],
+          [
+            0,
+            1,
+            0,
+            -0.5
+          ],
+          [
+            0,
+            0,
+            1,
+            -0.5
+          ],
+          [
+            0,
+            0,
+            0,
+            1
+          ]
+        ]
+      },
+      "dimensions_mm": [
+        1,
+        1,
+        1
+      ],
+      "diagnostics": {
+        "status": "valid",
+        "messages": []
+      },
+      "accepted_solid": {
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "path": "assets/object.ply",
+        "format": "binary_little_endian_ply_f64_u32",
+        "vertex_count": 8,
+        "triangle_count": 12
+      },
+      "repair_record": null
+    },
+    "schema_valid": false,
+    "semantic_valid": false
+  },
+  {
+    "name": "inspected-state-without-solid",
+    "kind": "assets",
+    "value": {
+      "schema_version": 1,
+      "role": "object",
+      "state": "accepted",
+      "source": {
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "path": "assets/object.stl",
+        "units": "mm",
+        "unit_scale_mm": 1
+      },
+      "frame": {
+        "source_bounds": {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        },
+        "source_to_local": [
+          [
+            1,
+            0,
+            0,
+            -0.5
+          ],
+          [
+            0,
+            1,
+            0,
+            -0.5
+          ],
+          [
+            0,
+            0,
+            1,
+            -0.5
+          ],
+          [
+            0,
+            0,
+            0,
+            1
+          ]
+        ]
+      },
+      "dimensions_mm": [
+        1,
+        1,
+        1
+      ],
+      "diagnostics": {
+        "status": "valid",
+        "messages": []
+      }
+    },
+    "schema_valid": false,
+    "semantic_valid": false
+  },
+  {
+    "name": "one-result-utilization-mismatch",
+    "kind": "results",
+    "value": {
+      "schema_version": 1,
+      "label": "best_found",
+      "job_id": "job-one-copy",
+      "solution_revision": 1,
+      "created_at": "2026-09-10T00:00:00Z",
+      "engine": {
+        "version": "synthetic-fixture",
+        "commit": "0000000"
+      },
+      "assets": {
+        "object": {
+          "schema_version": 1,
+          "role": "object",
+          "state": "accepted",
+          "source": {
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "path": "assets/object.stl",
+            "units": "mm",
+            "unit_scale_mm": 1
+          },
+          "frame": {
+            "source_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                1,
+                1,
+                1
+              ]
+            },
+            "source_to_local": [
+              [
+                1,
+                0,
+                0,
+                -0.5
+              ],
+              [
+                0,
+                1,
+                0,
+                -0.5
+              ],
+              [
+                0,
+                0,
+                1,
+                -0.5
+              ],
+              [
+                0,
+                0,
+                0,
+                1
+              ]
+            ]
+          },
+          "dimensions_mm": [
+            1,
+            1,
+            1
+          ],
+          "diagnostics": {
+            "status": "valid",
+            "messages": []
+          },
+          "accepted_solid": {
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "path": "assets/object.ply",
+            "format": "binary_little_endian_ply_f64_u32",
+            "vertex_count": 8,
+            "triangle_count": 12
+          },
+          "repair_record": null
+        }
+      },
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "constraints": {
+        "clearance_mm": {
+          "pair": 0,
+          "wall": 0
+        },
+        "orientation": {
+          "mode": "fixed",
+          "quaternion_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "search": {
+        "resolved_settings": {
+          "settings_version": 1,
+          "object_asset": {
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "container": {
+            "kind": "box",
+            "dimensions_mm": [
+              10,
+              10,
+              10
+            ]
+          },
+          "clearance_mm": {
+            "pair": 0,
+            "wall": 0
+          },
+          "orientation": {
+            "mode": "fixed",
+            "quaternion_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ]
+          },
+          "search": {
+            "preset": "synthetic-v1",
+            "seed": "0",
+            "deterministic": true,
+            "work_budget": {
+              "max_candidate_evaluations": 1,
+              "max_search_passes": 1
+            }
+          },
+          "resolution": {
+            "mode": "manual",
+            "pitch_mm": 1
+          },
+          "compute": {
+            "backend": "cpu"
+          },
+          "resolved": {
+            "pitch_mm": 1,
+            "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "orientation_catalog_version": 1,
+            "backend": "cpu",
+            "thread_count": 1
+          }
+        },
+        "pitch_levels_mm": [
+          1
+        ],
+        "seed": "0",
+        "work_counts": {
+          "candidate_evaluations": 0,
+          "search_passes": 0
+        },
+        "run_segments": [
+          {
+            "segment_id": "segment-0",
+            "parent_solution_revision": null,
+            "seed": "0",
+            "backend": "cpu",
+            "elapsed_seconds": 0,
+            "work_counts": {
+              "candidate_evaluations": 0,
+              "search_passes": 0
+            },
+            "search_state_reset": false,
+            "rng": {
+              "algorithm": "synthetic",
+              "state": "initial"
+            },
+            "resolved_settings": {
+              "settings_version": 1,
+              "object_asset": {
+                "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "container": {
+                "kind": "box",
+                "dimensions_mm": [
+                  10,
+                  10,
+                  10
+                ]
+              },
+              "clearance_mm": {
+                "pair": 0,
+                "wall": 0
+              },
+              "orientation": {
+                "mode": "fixed",
+                "quaternion_xyzw": [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "search": {
+                "preset": "synthetic-v1",
+                "seed": "0",
+                "deterministic": true,
+                "work_budget": {
+                  "max_candidate_evaluations": 1,
+                  "max_search_passes": 1
+                }
+              },
+              "resolution": {
+                "mode": "manual",
+                "pitch_mm": 1
+              },
+              "compute": {
+                "backend": "cpu"
+              },
+              "resolved": {
+                "pitch_mm": 1,
+                "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "orientation_catalog_version": 1,
+                "backend": "cpu",
+                "thread_count": 1
+              }
+            }
+          }
+        ],
+        "backend_transitions": [],
+        "elapsed_seconds": 0
+      },
+      "count": 1,
+      "placements": [
+        {
+          "copy_id": "copy-1",
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "quaternion_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "local_to_world": [
+            [
+              1,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              1
+            ]
+          ]
+        }
+      ],
+      "validation": {
+        "status": "valid",
+        "tolerance_mm": 0,
+        "authoritative_geometry_sha256": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        "validator_version": "synthetic",
+        "kernel_version": "synthetic",
+        "checks": {
+          "pair": "valid",
+          "containment": "valid",
+          "clearance": "valid"
+        }
+      },
+      "metrics": {
+        "solid_volume_mm3": 1,
+        "container_volume_mm3": 1000,
+        "utilization": 0.5,
+        "time_to_best_seconds": 0,
+        "peak_host_bytes": 0,
+        "peak_device_bytes": 0,
+        "termination_reason": "budget_exhausted"
+      }
+    },
+    "schema_valid": true,
+    "semantic_valid": false
+  },
+  {
+    "name": "result-artifact-double-slash-path",
+    "kind": "results",
+    "value": {
+      "schema_version": 1,
+      "label": "best_found",
+      "job_id": "job-one-copy",
+      "solution_revision": 1,
+      "created_at": "2026-09-10T00:00:00Z",
+      "engine": {
+        "version": "synthetic-fixture",
+        "commit": "0000000"
+      },
+      "assets": {
+        "object": {
+          "schema_version": 1,
+          "role": "object",
+          "state": "accepted",
+          "source": {
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "path": "assets/object.stl",
+            "units": "mm",
+            "unit_scale_mm": 1
+          },
+          "frame": {
+            "source_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                1,
+                1,
+                1
+              ]
+            },
+            "source_to_local": [
+              [
+                1,
+                0,
+                0,
+                -0.5
+              ],
+              [
+                0,
+                1,
+                0,
+                -0.5
+              ],
+              [
+                0,
+                0,
+                1,
+                -0.5
+              ],
+              [
+                0,
+                0,
+                0,
+                1
+              ]
+            ]
+          },
+          "dimensions_mm": [
+            1,
+            1,
+            1
+          ],
+          "diagnostics": {
+            "status": "valid",
+            "messages": []
+          },
+          "accepted_solid": {
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "path": "assets/object.ply",
+            "format": "binary_little_endian_ply_f64_u32",
+            "vertex_count": 8,
+            "triangle_count": 12
+          },
+          "repair_record": null
+        }
+      },
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "constraints": {
+        "clearance_mm": {
+          "pair": 0,
+          "wall": 0
+        },
+        "orientation": {
+          "mode": "fixed",
+          "quaternion_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "search": {
+        "resolved_settings": {
+          "settings_version": 1,
+          "object_asset": {
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "container": {
+            "kind": "box",
+            "dimensions_mm": [
+              10,
+              10,
+              10
+            ]
+          },
+          "clearance_mm": {
+            "pair": 0,
+            "wall": 0
+          },
+          "orientation": {
+            "mode": "fixed",
+            "quaternion_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ]
+          },
+          "search": {
+            "preset": "synthetic-v1",
+            "seed": "0",
+            "deterministic": true,
+            "work_budget": {
+              "max_candidate_evaluations": 1,
+              "max_search_passes": 1
+            }
+          },
+          "resolution": {
+            "mode": "manual",
+            "pitch_mm": 1
+          },
+          "compute": {
+            "backend": "cpu"
+          },
+          "resolved": {
+            "pitch_mm": 1,
+            "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "orientation_catalog_version": 1,
+            "backend": "cpu",
+            "thread_count": 1
+          }
+        },
+        "pitch_levels_mm": [
+          1
+        ],
+        "seed": "0",
+        "work_counts": {
+          "candidate_evaluations": 0,
+          "search_passes": 0
+        },
+        "run_segments": [
+          {
+            "segment_id": "segment-0",
+            "parent_solution_revision": null,
+            "seed": "0",
+            "backend": "cpu",
+            "elapsed_seconds": 0,
+            "work_counts": {
+              "candidate_evaluations": 0,
+              "search_passes": 0
+            },
+            "search_state_reset": false,
+            "rng": {
+              "algorithm": "synthetic",
+              "state": "initial"
+            },
+            "resolved_settings": {
+              "settings_version": 1,
+              "object_asset": {
+                "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "container": {
+                "kind": "box",
+                "dimensions_mm": [
+                  10,
+                  10,
+                  10
+                ]
+              },
+              "clearance_mm": {
+                "pair": 0,
+                "wall": 0
+              },
+              "orientation": {
+                "mode": "fixed",
+                "quaternion_xyzw": [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "search": {
+                "preset": "synthetic-v1",
+                "seed": "0",
+                "deterministic": true,
+                "work_budget": {
+                  "max_candidate_evaluations": 1,
+                  "max_search_passes": 1
+                }
+              },
+              "resolution": {
+                "mode": "manual",
+                "pitch_mm": 1
+              },
+              "compute": {
+                "backend": "cpu"
+              },
+              "resolved": {
+                "pitch_mm": 1,
+                "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "orientation_catalog_version": 1,
+                "backend": "cpu",
+                "thread_count": 1
+              }
+            }
+          }
+        ],
+        "backend_transitions": [],
+        "elapsed_seconds": 0
+      },
+      "count": 1,
+      "placements": [
+        {
+          "copy_id": "copy-1",
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "quaternion_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "local_to_world": [
+            [
+              1,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              1
+            ]
+          ]
+        }
+      ],
+      "validation": {
+        "status": "valid",
+        "tolerance_mm": 0,
+        "authoritative_geometry_sha256": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        "validator_version": "synthetic",
+        "kernel_version": "synthetic",
+        "checks": {
+          "pair": "valid",
+          "containment": "valid",
+          "clearance": "valid"
+        }
+      },
+      "metrics": {
+        "solid_volume_mm3": 1,
+        "container_volume_mm3": 1000,
+        "utilization": 0.001,
+        "time_to_best_seconds": 0,
+        "peak_host_bytes": 0,
+        "peak_device_bytes": 0,
+        "termination_reason": "budget_exhausted"
+      },
+      "artifacts": [
+        {
+          "kind": "assembled_stl",
+          "path": "artifacts//result.stl",
+          "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      ]
+    },
+    "schema_valid": true,
+    "semantic_valid": false
+  },
+  {
+    "name": "result-artifact-empty-directory-path",
+    "kind": "results",
+    "value": {
+      "schema_version": 1,
+      "label": "best_found",
+      "job_id": "job-one-copy",
+      "solution_revision": 1,
+      "created_at": "2026-09-10T00:00:00Z",
+      "engine": {
+        "version": "synthetic-fixture",
+        "commit": "0000000"
+      },
+      "assets": {
+        "object": {
+          "schema_version": 1,
+          "role": "object",
+          "state": "accepted",
+          "source": {
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "path": "assets/object.stl",
+            "units": "mm",
+            "unit_scale_mm": 1
+          },
+          "frame": {
+            "source_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                1,
+                1,
+                1
+              ]
+            },
+            "source_to_local": [
+              [
+                1,
+                0,
+                0,
+                -0.5
+              ],
+              [
+                0,
+                1,
+                0,
+                -0.5
+              ],
+              [
+                0,
+                0,
+                1,
+                -0.5
+              ],
+              [
+                0,
+                0,
+                0,
+                1
+              ]
+            ]
+          },
+          "dimensions_mm": [
+            1,
+            1,
+            1
+          ],
+          "diagnostics": {
+            "status": "valid",
+            "messages": []
+          },
+          "accepted_solid": {
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "path": "assets/object.ply",
+            "format": "binary_little_endian_ply_f64_u32",
+            "vertex_count": 8,
+            "triangle_count": 12
+          },
+          "repair_record": null
+        }
+      },
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "constraints": {
+        "clearance_mm": {
+          "pair": 0,
+          "wall": 0
+        },
+        "orientation": {
+          "mode": "fixed",
+          "quaternion_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "search": {
+        "resolved_settings": {
+          "settings_version": 1,
+          "object_asset": {
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "container": {
+            "kind": "box",
+            "dimensions_mm": [
+              10,
+              10,
+              10
+            ]
+          },
+          "clearance_mm": {
+            "pair": 0,
+            "wall": 0
+          },
+          "orientation": {
+            "mode": "fixed",
+            "quaternion_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ]
+          },
+          "search": {
+            "preset": "synthetic-v1",
+            "seed": "0",
+            "deterministic": true,
+            "work_budget": {
+              "max_candidate_evaluations": 1,
+              "max_search_passes": 1
+            }
+          },
+          "resolution": {
+            "mode": "manual",
+            "pitch_mm": 1
+          },
+          "compute": {
+            "backend": "cpu"
+          },
+          "resolved": {
+            "pitch_mm": 1,
+            "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "orientation_catalog_version": 1,
+            "backend": "cpu",
+            "thread_count": 1
+          }
+        },
+        "pitch_levels_mm": [
+          1
+        ],
+        "seed": "0",
+        "work_counts": {
+          "candidate_evaluations": 0,
+          "search_passes": 0
+        },
+        "run_segments": [
+          {
+            "segment_id": "segment-0",
+            "parent_solution_revision": null,
+            "seed": "0",
+            "backend": "cpu",
+            "elapsed_seconds": 0,
+            "work_counts": {
+              "candidate_evaluations": 0,
+              "search_passes": 0
+            },
+            "search_state_reset": false,
+            "rng": {
+              "algorithm": "synthetic",
+              "state": "initial"
+            },
+            "resolved_settings": {
+              "settings_version": 1,
+              "object_asset": {
+                "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "container": {
+                "kind": "box",
+                "dimensions_mm": [
+                  10,
+                  10,
+                  10
+                ]
+              },
+              "clearance_mm": {
+                "pair": 0,
+                "wall": 0
+              },
+              "orientation": {
+                "mode": "fixed",
+                "quaternion_xyzw": [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "search": {
+                "preset": "synthetic-v1",
+                "seed": "0",
+                "deterministic": true,
+                "work_budget": {
+                  "max_candidate_evaluations": 1,
+                  "max_search_passes": 1
+                }
+              },
+              "resolution": {
+                "mode": "manual",
+                "pitch_mm": 1
+              },
+              "compute": {
+                "backend": "cpu"
+              },
+              "resolved": {
+                "pitch_mm": 1,
+                "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "orientation_catalog_version": 1,
+                "backend": "cpu",
+                "thread_count": 1
+              }
+            }
+          }
+        ],
+        "backend_transitions": [],
+        "elapsed_seconds": 0
+      },
+      "count": 1,
+      "placements": [
+        {
+          "copy_id": "copy-1",
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "quaternion_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "local_to_world": [
+            [
+              1,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              1
+            ]
+          ]
+        }
+      ],
+      "validation": {
+        "status": "valid",
+        "tolerance_mm": 0,
+        "authoritative_geometry_sha256": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        "validator_version": "synthetic",
+        "kernel_version": "synthetic",
+        "checks": {
+          "pair": "valid",
+          "containment": "valid",
+          "clearance": "valid"
+        }
+      },
+      "metrics": {
+        "solid_volume_mm3": 1,
+        "container_volume_mm3": 1000,
+        "utilization": 0.001,
+        "time_to_best_seconds": 0,
+        "peak_host_bytes": 0,
+        "peak_device_bytes": 0,
+        "termination_reason": "budget_exhausted"
+      },
+      "artifacts": [
+        {
+          "kind": "assembled_stl",
+          "path": "artifacts/",
+          "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        }
+      ]
+    },
+    "schema_valid": true,
+    "semantic_valid": false
+  },
+  {
+    "name": "requested-missing-settings-version",
+    "kind": "settings",
+    "value": {
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "clearance_mm": {
+        "pair": 0,
+        "wall": 0
+      },
+      "orientation": {
+        "mode": "fixed",
+        "quaternion_xyzw": [
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "search": {
+        "preset": "synthetic-v1",
+        "seed": "0",
+        "deterministic": true,
+        "work_budget": {
+          "max_candidate_evaluations": 1,
+          "max_search_passes": 1
+        }
+      },
+      "resolution": {
+        "mode": "manual",
+        "pitch_mm": 1
+      },
+      "compute": {
+        "backend": "cpu"
+      },
+      "object_asset_id": "asset-0123456789abcdef0123456789abcdef-1"
+    },
+    "schema_valid": false,
+    "semantic_valid": false
+  },
+  {
+    "name": "requested-unknown-field",
+    "kind": "settings",
+    "value": {
+      "settings_version": 1,
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "clearance_mm": {
+        "pair": 0,
+        "wall": 0
+      },
+      "orientation": {
+        "mode": "fixed",
+        "quaternion_xyzw": [
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "search": {
+        "preset": "synthetic-v1",
+        "seed": "0",
+        "deterministic": true,
+        "work_budget": {
+          "max_candidate_evaluations": 1,
+          "max_search_passes": 1
+        }
+      },
+      "resolution": {
+        "mode": "manual",
+        "pitch_mm": 1
+      },
+      "compute": {
+        "backend": "cpu"
+      },
+      "object_asset_id": "asset-0123456789abcdef0123456789abcdef-1",
+      "extra_field": true
+    },
+    "schema_valid": false,
+    "semantic_valid": false
+  },
+  {
+    "name": "accepted-asset-missing-solid",
+    "kind": "assets",
+    "value": {
+      "schema_version": 1,
+      "role": "object",
+      "state": "accepted",
+      "source": {
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "path": "assets/object.stl",
+        "units": "mm",
+        "unit_scale_mm": 1
+      },
+      "frame": {
+        "source_bounds": {
+          "min": [
+            0,
+            0,
+            0
+          ],
+          "max": [
+            1,
+            1,
+            1
+          ]
+        },
+        "source_to_local": [
+          [
+            1,
+            0,
+            0,
+            -0.5
+          ],
+          [
+            0,
+            1,
+            0,
+            -0.5
+          ],
+          [
+            0,
+            0,
+            1,
+            -0.5
+          ],
+          [
+            0,
+            0,
+            0,
+            1
+          ]
+        ]
+      },
+      "dimensions_mm": [
+        1,
+        1,
+        1
+      ],
+      "diagnostics": {
+        "status": "valid",
+        "messages": []
+      },
+      "repair_record": null
+    },
+    "schema_valid": false,
+    "semantic_valid": false
+  },
+  {
+    "name": "result-negative-count",
+    "kind": "results",
+    "value": {
+      "schema_version": 1,
+      "label": "best_found",
+      "job_id": "job-one-copy",
+      "solution_revision": 1,
+      "created_at": "2026-09-10T00:00:00Z",
+      "engine": {
+        "version": "synthetic-fixture",
+        "commit": "0000000"
+      },
+      "assets": {
+        "object": {
+          "schema_version": 1,
+          "role": "object",
+          "state": "accepted",
+          "source": {
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "path": "assets/object.stl",
+            "units": "mm",
+            "unit_scale_mm": 1
+          },
+          "frame": {
+            "source_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                1,
+                1,
+                1
+              ]
+            },
+            "source_to_local": [
+              [
+                1,
+                0,
+                0,
+                -0.5
+              ],
+              [
+                0,
+                1,
+                0,
+                -0.5
+              ],
+              [
+                0,
+                0,
+                1,
+                -0.5
+              ],
+              [
+                0,
+                0,
+                0,
+                1
+              ]
+            ]
+          },
+          "dimensions_mm": [
+            1,
+            1,
+            1
+          ],
+          "diagnostics": {
+            "status": "valid",
+            "messages": []
+          },
+          "accepted_solid": {
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "path": "assets/object.ply",
+            "format": "binary_little_endian_ply_f64_u32",
+            "vertex_count": 8,
+            "triangle_count": 12
+          },
+          "repair_record": null
+        }
+      },
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "constraints": {
+        "clearance_mm": {
+          "pair": 0,
+          "wall": 0
+        },
+        "orientation": {
+          "mode": "fixed",
+          "quaternion_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "search": {
+        "resolved_settings": {
+          "settings_version": 1,
+          "object_asset": {
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "container": {
+            "kind": "box",
+            "dimensions_mm": [
+              10,
+              10,
+              10
+            ]
+          },
+          "clearance_mm": {
+            "pair": 0,
+            "wall": 0
+          },
+          "orientation": {
+            "mode": "fixed",
+            "quaternion_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ]
+          },
+          "search": {
+            "preset": "synthetic-v1",
+            "seed": "0",
+            "deterministic": true,
+            "work_budget": {
+              "max_candidate_evaluations": 1,
+              "max_search_passes": 1
+            }
+          },
+          "resolution": {
+            "mode": "manual",
+            "pitch_mm": 1
+          },
+          "compute": {
+            "backend": "cpu"
+          },
+          "resolved": {
+            "pitch_mm": 1,
+            "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "orientation_catalog_version": 1,
+            "backend": "cpu",
+            "thread_count": 1
+          }
+        },
+        "pitch_levels_mm": [
+          1
+        ],
+        "seed": "0",
+        "work_counts": {
+          "candidate_evaluations": 0,
+          "search_passes": 0
+        },
+        "run_segments": [
+          {
+            "segment_id": "segment-0",
+            "parent_solution_revision": null,
+            "seed": "0",
+            "backend": "cpu",
+            "elapsed_seconds": 0,
+            "work_counts": {
+              "candidate_evaluations": 0,
+              "search_passes": 0
+            },
+            "search_state_reset": false,
+            "rng": {
+              "algorithm": "synthetic",
+              "state": "initial"
+            },
+            "resolved_settings": {
+              "settings_version": 1,
+              "object_asset": {
+                "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "container": {
+                "kind": "box",
+                "dimensions_mm": [
+                  10,
+                  10,
+                  10
+                ]
+              },
+              "clearance_mm": {
+                "pair": 0,
+                "wall": 0
+              },
+              "orientation": {
+                "mode": "fixed",
+                "quaternion_xyzw": [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "search": {
+                "preset": "synthetic-v1",
+                "seed": "0",
+                "deterministic": true,
+                "work_budget": {
+                  "max_candidate_evaluations": 1,
+                  "max_search_passes": 1
+                }
+              },
+              "resolution": {
+                "mode": "manual",
+                "pitch_mm": 1
+              },
+              "compute": {
+                "backend": "cpu"
+              },
+              "resolved": {
+                "pitch_mm": 1,
+                "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "orientation_catalog_version": 1,
+                "backend": "cpu",
+                "thread_count": 1
+              }
+            }
+          }
+        ],
+        "backend_transitions": [],
+        "elapsed_seconds": 0
+      },
+      "count": -1,
+      "placements": [
+        {
+          "copy_id": "copy-1",
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "quaternion_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "local_to_world": [
+            [
+              1,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              1
+            ]
+          ]
+        }
+      ],
+      "validation": {
+        "status": "valid",
+        "tolerance_mm": 0,
+        "authoritative_geometry_sha256": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        "validator_version": "synthetic",
+        "kernel_version": "synthetic",
+        "checks": {
+          "pair": "valid",
+          "containment": "valid",
+          "clearance": "valid"
+        }
+      },
+      "metrics": {
+        "solid_volume_mm3": 1,
+        "container_volume_mm3": 1000,
+        "utilization": 0.001,
+        "time_to_best_seconds": 0,
+        "peak_host_bytes": 0,
+        "peak_device_bytes": 0,
+        "termination_reason": "budget_exhausted"
+      }
+    },
+    "schema_valid": false,
+    "semantic_valid": false
+  },
+  {
+    "name": "result-quaternion-wrong-length",
+    "kind": "results",
+    "value": {
+      "schema_version": 1,
+      "label": "best_found",
+      "job_id": "job-one-copy",
+      "solution_revision": 1,
+      "created_at": "2026-09-10T00:00:00Z",
+      "engine": {
+        "version": "synthetic-fixture",
+        "commit": "0000000"
+      },
+      "assets": {
+        "object": {
+          "schema_version": 1,
+          "role": "object",
+          "state": "accepted",
+          "source": {
+            "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "path": "assets/object.stl",
+            "units": "mm",
+            "unit_scale_mm": 1
+          },
+          "frame": {
+            "source_bounds": {
+              "min": [
+                0,
+                0,
+                0
+              ],
+              "max": [
+                1,
+                1,
+                1
+              ]
+            },
+            "source_to_local": [
+              [
+                1,
+                0,
+                0,
+                -0.5
+              ],
+              [
+                0,
+                1,
+                0,
+                -0.5
+              ],
+              [
+                0,
+                0,
+                1,
+                -0.5
+              ],
+              [
+                0,
+                0,
+                0,
+                1
+              ]
+            ]
+          },
+          "dimensions_mm": [
+            1,
+            1,
+            1
+          ],
+          "diagnostics": {
+            "status": "valid",
+            "messages": []
+          },
+          "accepted_solid": {
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "path": "assets/object.ply",
+            "format": "binary_little_endian_ply_f64_u32",
+            "vertex_count": 8,
+            "triangle_count": 12
+          },
+          "repair_record": null
+        }
+      },
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "constraints": {
+        "clearance_mm": {
+          "pair": 0,
+          "wall": 0
+        },
+        "orientation": {
+          "mode": "fixed",
+          "quaternion_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
+        "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      },
+      "search": {
+        "resolved_settings": {
+          "settings_version": 1,
+          "object_asset": {
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "container": {
+            "kind": "box",
+            "dimensions_mm": [
+              10,
+              10,
+              10
+            ]
+          },
+          "clearance_mm": {
+            "pair": 0,
+            "wall": 0
+          },
+          "orientation": {
+            "mode": "fixed",
+            "quaternion_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ]
+          },
+          "search": {
+            "preset": "synthetic-v1",
+            "seed": "0",
+            "deterministic": true,
+            "work_budget": {
+              "max_candidate_evaluations": 1,
+              "max_search_passes": 1
+            }
+          },
+          "resolution": {
+            "mode": "manual",
+            "pitch_mm": 1
+          },
+          "compute": {
+            "backend": "cpu"
+          },
+          "resolved": {
+            "pitch_mm": 1,
+            "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "orientation_catalog_version": 1,
+            "backend": "cpu",
+            "thread_count": 1
+          }
+        },
+        "pitch_levels_mm": [
+          1
+        ],
+        "seed": "0",
+        "work_counts": {
+          "candidate_evaluations": 0,
+          "search_passes": 0
+        },
+        "run_segments": [
+          {
+            "segment_id": "segment-0",
+            "parent_solution_revision": null,
+            "seed": "0",
+            "backend": "cpu",
+            "elapsed_seconds": 0,
+            "work_counts": {
+              "candidate_evaluations": 0,
+              "search_passes": 0
+            },
+            "search_state_reset": false,
+            "rng": {
+              "algorithm": "synthetic",
+              "state": "initial"
+            },
+            "resolved_settings": {
+              "settings_version": 1,
+              "object_asset": {
+                "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+              },
+              "container": {
+                "kind": "box",
+                "dimensions_mm": [
+                  10,
+                  10,
+                  10
+                ]
+              },
+              "clearance_mm": {
+                "pair": 0,
+                "wall": 0
+              },
+              "orientation": {
+                "mode": "fixed",
+                "quaternion_xyzw": [
+                  0,
+                  0,
+                  0,
+                  1
+                ]
+              },
+              "search": {
+                "preset": "synthetic-v1",
+                "seed": "0",
+                "deterministic": true,
+                "work_budget": {
+                  "max_candidate_evaluations": 1,
+                  "max_search_passes": 1
+                }
+              },
+              "resolution": {
+                "mode": "manual",
+                "pitch_mm": 1
+              },
+              "compute": {
+                "backend": "cpu"
+              },
+              "resolved": {
+                "pitch_mm": 1,
+                "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "orientation_catalog_version": 1,
+                "backend": "cpu",
+                "thread_count": 1
+              }
+            }
+          }
+        ],
+        "backend_transitions": [],
+        "elapsed_seconds": 0
+      },
+      "count": 1,
+      "placements": [
+        {
+          "copy_id": "copy-1",
+          "translation_mm": [
+            0,
+            0,
+            0
+          ],
+          "quaternion_xyzw": [
+            0,
+            0,
+            1
+          ],
+          "local_to_world": [
+            [
+              1,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              1
+            ]
+          ]
+        }
+      ],
+      "validation": {
+        "status": "valid",
+        "tolerance_mm": 0,
+        "authoritative_geometry_sha256": [
+          "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ],
+        "validator_version": "synthetic",
+        "kernel_version": "synthetic",
+        "checks": {
+          "pair": "valid",
+          "containment": "valid",
+          "clearance": "valid"
+        }
+      },
+      "metrics": {
+        "solid_volume_mm3": 1,
+        "container_volume_mm3": 1000,
+        "utilization": 0.001,
+        "time_to_best_seconds": 0,
+        "peak_host_bytes": 0,
+        "peak_device_bytes": 0,
+        "termination_reason": "budget_exhausted"
+      }
+    },
+    "schema_valid": false,
+    "semantic_valid": false
+  },
+  {
+    "name": "protocol-request-unknown-field",
+    "kind": "protocol",
+    "value": {
+      "protocol_version": 1,
+      "request_id": "req-1",
+      "method": "pack",
+      "params": {},
+      "extra_field": true
+    },
+    "schema_valid": false,
+    "semantic_valid": false
+  },
+  {
+    "name": "benchmark-completed-missing-result",
+    "kind": "benchmark-summary",
+    "value": {
+      "schema_version": 1,
+      "suite_id": "synthetic",
+      "created_at": "2026-09-10T00:00:00Z",
+      "engine": {
+        "version": "synthetic-fixture",
+        "commit": "0000000"
+      },
+      "host": {
+        "cpu": "synthetic",
+        "gpu": null,
+        "driver": null,
+        "os_build": "synthetic",
+        "thread_count": 1
+      },
+      "dependency_revisions": {
+        "spectrapack": "synthetic"
+      },
+      "configuration": {
+        "method": "aabb",
+        "settings": {
+          "settings_version": 1,
+          "object_asset": {
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "container": {
+            "kind": "box",
+            "dimensions_mm": [
+              10,
+              10,
+              10
+            ]
+          },
+          "clearance_mm": {
+            "pair": 0,
+            "wall": 0
+          },
+          "orientation": {
+            "mode": "fixed",
+            "quaternion_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ]
+          },
+          "search": {
+            "preset": "synthetic-v1",
+            "seed": "0",
+            "deterministic": true,
+            "work_budget": {
+              "max_candidate_evaluations": 1,
+              "max_search_passes": 1
+            }
+          },
+          "resolution": {
+            "mode": "manual",
+            "pitch_mm": 1
+          },
+          "compute": {
+            "backend": "cpu"
+          },
+          "resolved": {
+            "pitch_mm": 1,
+            "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "orientation_catalog_version": 1,
+            "backend": "cpu",
+            "thread_count": 1
+          }
+        },
+        "cache_state": "cold"
+      },
+      "runs": [
+        {
+          "seed": "0",
+          "status": "completed",
+          "settings": {
+            "settings_version": 1,
+            "object_asset": {
+              "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "container": {
+              "kind": "box",
+              "dimensions_mm": [
+                10,
+                10,
+                10
+              ]
+            },
+            "clearance_mm": {
+              "pair": 0,
+              "wall": 0
+            },
+            "orientation": {
+              "mode": "fixed",
+              "quaternion_xyzw": [
+                0,
+                0,
+                0,
+                1
+              ]
+            },
+            "search": {
+              "preset": "synthetic-v1",
+              "seed": "0",
+              "deterministic": true,
+              "work_budget": {
+                "max_candidate_evaluations": 1,
+                "max_search_passes": 1
+              }
+            },
+            "resolution": {
+              "mode": "manual",
+              "pitch_mm": 1
+            },
+            "compute": {
+              "backend": "cpu"
+            },
+            "resolved": {
+              "pitch_mm": 1,
+              "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "orientation_catalog_version": 1,
+              "backend": "cpu",
+              "thread_count": 1
+            }
+          },
+          "count": 0,
+          "validation_failures": 0,
+          "timings": {
+            "preprocessing_seconds": 0,
+            "search_seconds": 0,
+            "validation_seconds": 0,
+            "export_seconds": 0,
+            "cold_end_to_end_seconds": 0
+          },
+          "peak_host_bytes": 0,
+          "peak_device_bytes": 0,
+          "improvements": [],
+          "backend_transitions": []
+        }
+      ],
+      "summary": {
+        "successful_runs": 1,
+        "failed_runs": 0,
+        "best_count": 0,
+        "median_count": 0,
+        "worst_count": 0
+      }
+    },
+    "schema_valid": false,
+    "semantic_valid": false
+  },
+  {
+    "name": "benchmark-failed-missing-error",
+    "kind": "benchmark-summary",
+    "value": {
+      "schema_version": 1,
+      "suite_id": "synthetic",
+      "created_at": "2026-09-10T00:00:00Z",
+      "engine": {
+        "version": "synthetic-fixture",
+        "commit": "0000000"
+      },
+      "host": {
+        "cpu": "synthetic",
+        "gpu": null,
+        "driver": null,
+        "os_build": "synthetic",
+        "thread_count": 1
+      },
+      "dependency_revisions": {
+        "spectrapack": "synthetic"
+      },
+      "configuration": {
+        "method": "aabb",
+        "settings": {
+          "settings_version": 1,
+          "object_asset": {
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "container": {
+            "kind": "box",
+            "dimensions_mm": [
+              10,
+              10,
+              10
+            ]
+          },
+          "clearance_mm": {
+            "pair": 0,
+            "wall": 0
+          },
+          "orientation": {
+            "mode": "fixed",
+            "quaternion_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ]
+          },
+          "search": {
+            "preset": "synthetic-v1",
+            "seed": "0",
+            "deterministic": true,
+            "work_budget": {
+              "max_candidate_evaluations": 1,
+              "max_search_passes": 1
+            }
+          },
+          "resolution": {
+            "mode": "manual",
+            "pitch_mm": 1
+          },
+          "compute": {
+            "backend": "cpu"
+          },
+          "resolved": {
+            "pitch_mm": 1,
+            "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "orientation_catalog_version": 1,
+            "backend": "cpu",
+            "thread_count": 1
+          }
+        },
+        "cache_state": "cold"
+      },
+      "runs": [
+        {
+          "seed": "1",
+          "status": "failed",
+          "settings": null,
+          "count": null,
+          "result": null,
+          "validation_failures": 0,
+          "timings": {
+            "preprocessing_seconds": 0,
+            "search_seconds": 0,
+            "validation_seconds": 0,
+            "export_seconds": 0,
+            "cold_end_to_end_seconds": 0
+          },
+          "peak_host_bytes": 0,
+          "peak_device_bytes": 0,
+          "improvements": [],
+          "backend_transitions": []
+        }
+      ],
+      "summary": {
+        "successful_runs": 0,
+        "failed_runs": 1,
+        "best_count": null,
+        "median_count": null,
+        "worst_count": null
+      }
+    },
+    "schema_valid": false,
+    "semantic_valid": false
+  },
+  {
+    "name": "requested-unsafe-work-counter",
+    "kind": "settings",
+    "value": {
+      "settings_version": 1,
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "clearance_mm": {
+        "pair": 0,
+        "wall": 0
+      },
+      "orientation": {
+        "mode": "fixed",
+        "quaternion_xyzw": [
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "search": {
+        "preset": "synthetic-v1",
+        "seed": "0",
+        "deterministic": true,
+        "work_budget": {
+          "max_candidate_evaluations": 9007199254740992,
+          "max_search_passes": 1
+        }
+      },
+      "resolution": {
+        "mode": "manual",
+        "pitch_mm": 1
+      },
+      "compute": {
+        "backend": "cpu"
+      },
+      "object_asset_id": "asset-0123456789abcdef0123456789abcdef-1"
+    },
+    "schema_valid": false,
+    "semantic_valid": false
+  },
+  {
+    "name": "resolved-thread-count-unsafe",
+    "kind": "settings",
+    "value": {
+      "settings_version": 1,
+      "object_asset": {
+        "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "container": {
+        "kind": "box",
+        "dimensions_mm": [
+          10,
+          10,
+          10
+        ]
+      },
+      "clearance_mm": {
+        "pair": 0,
+        "wall": 0
+      },
+      "orientation": {
+        "mode": "fixed",
+        "quaternion_xyzw": [
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      "search": {
+        "preset": "synthetic-v1",
+        "seed": "0",
+        "deterministic": true,
+        "work_budget": {
+          "max_candidate_evaluations": 1,
+          "max_search_passes": 1
+        }
+      },
+      "resolution": {
+        "mode": "manual",
+        "pitch_mm": 1
+      },
+      "compute": {
+        "backend": "cpu"
+      },
+      "resolved": {
+        "pitch_mm": 1,
+        "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "orientation_catalog_version": 1,
+        "backend": "cpu",
+        "thread_count": 9007199254740992
+      }
+    },
+    "schema_valid": false,
+    "semantic_valid": false
+  }
+]

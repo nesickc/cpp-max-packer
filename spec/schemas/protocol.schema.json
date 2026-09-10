@@ -1,0 +1,139 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spectrapack.invalid/schemas/v1/protocol.schema.json",
+  "definitions": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "not": {
+        "pattern": "\\x00"
+      }
+    },
+    "request": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "request_id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "method": {
+          "$ref": "#/definitions/id"
+        },
+        "params": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "success": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "request_id",
+        "ok",
+        "result"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "request_id": {
+          "$ref": "#/definitions/id"
+        },
+        "ok": {
+          "const": true
+        },
+        "result": {}
+      },
+      "additionalProperties": false
+    },
+    "failure": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "request_id",
+        "ok",
+        "error"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "request_id": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/id"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ok": {
+          "const": false
+        },
+        "error": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/error"
+        }
+      },
+      "additionalProperties": false
+    },
+    "event": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "job_id",
+        "sequence",
+        "type",
+        "payload"
+      ],
+      "properties": {
+        "protocol_version": {
+          "const": 1
+        },
+        "job_id": {
+          "$ref": "#/definitions/id"
+        },
+        "sequence": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/counter"
+        },
+        "type": {
+          "enum": [
+            "task_progress",
+            "job_state",
+            "best_solution",
+            "backend_changed",
+            "warning",
+            "error",
+            "job_finished"
+          ]
+        },
+        "payload": {}
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/definitions/request"
+    },
+    {
+      "$ref": "#/definitions/success"
+    },
+    {
+      "$ref": "#/definitions/failure"
+    },
+    {
+      "$ref": "#/definitions/event"
+    }
+  ]
+}

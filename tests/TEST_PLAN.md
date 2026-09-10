@@ -5,7 +5,7 @@ The product acceptance cases below are **planned**, not passing tests. Executabl
 ## Test-first work order
 
 0. QA-01: native/Python test runners, small analytic fixture builders, an independent direct integer correlation oracle, and bounded reference timing reports. Merged through PR #1; see [project status](../doc/PROJECT_STATUS.md).
-1. M0: [T-001](../doc/T-001.md) pins the CPU build and checks actual dependency calls, toolchain/source drift, static runtime flags and staged DLL dependencies. T-002 adds schema examples and CLI/stdio envelopes, error codes and request identity after T-001 merges. Settle the contracts before backend/frontend implementation diverges.
+1. M0: merged [T-001](../doc/T-001.md) pins the CPU build and checks actual dependency calls, toolchain/source drift, static runtime flags and staged DLL dependencies. [T-002](../doc/T-002.md) adds schema examples and CLI/stdio envelopes, error codes and request identity. Settle the contracts before backend/frontend implementation diverges.
 2. M1: STL content detection, units/source frames, diagnostics/accepted repairs, independent solid overlap/containment/clearance, and display isolation. Start with analytic small solids; then run every applicable `rc/` asset through the same public boundary.
 3. M2: physical AABB baseline, conservative fields, direct integer correlation oracle, CPU FFT, and validated result/export round trips.
 4. M3–M6: lifecycle and UI, count/orientation search, actual Radeon compute/failure recovery, and installer/release evidence.
@@ -13,6 +13,15 @@ The product acceptance cases below are **planned**, not passing tests. Executabl
 For each slice, name its requirement and AT case, add a failing observable test, record the intended failure, implement, and record the passing command. Refactor only while preserving those gates. Use fixed work and seeds for deterministic regressions. Do not create an all-green collection of skipped acceptance placeholders.
 
 ## Practical cases and independent checks
+
+T-002's bounded contract coverage is separate from full AT-13/AT-14. Its checks
+cover native/Ajv agreement for structural fixtures, semantic mutations and source
+frame/pose goldens, generated TypeScript freshness and negative compile fixtures,
+immutable asset registry handles, malformed/oversized/truncated NDJSON, replay and
+conflicting request IDs, cache exhaustion, unknown/unsupported methods, and real
+CLI/pipe behavior. Fixed-work validation/dispatch timings are informational; there
+is no solver or stop-latency performance claim. Job lifecycle, physical validation
+and moved-project/export round trips remain required by the full gates below.
 
 | Gate | Concrete fixture/action and observable result | Tier / first milestone |
 | --- | --- | --- |

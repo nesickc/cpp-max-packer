@@ -1,0 +1,443 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spectrapack.invalid/schemas/v1/settings.schema.json",
+  "definitions": {
+    "q": {
+      "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/quaternion"
+    },
+    "box": {
+      "type": "object",
+      "required": [
+        "kind",
+        "dimensions_mm"
+      ],
+      "properties": {
+        "kind": {
+          "const": "box"
+        },
+        "dimensions_mm": {
+          "type": "array",
+          "items": {
+            "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/positive"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        }
+      },
+      "additionalProperties": false
+    },
+    "stl_id": {
+      "type": "object",
+      "required": [
+        "kind",
+        "asset_id"
+      ],
+      "properties": {
+        "kind": {
+          "const": "stl_volume"
+        },
+        "asset_id": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/runtime_id"
+        }
+      },
+      "additionalProperties": false
+    },
+    "stl_ref": {
+      "type": "object",
+      "required": [
+        "kind",
+        "asset"
+      ],
+      "properties": {
+        "kind": {
+          "const": "stl_volume"
+        },
+        "asset": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/content_ref"
+        }
+      },
+      "additionalProperties": false
+    },
+    "or_requested": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "mode"
+          ],
+          "properties": {
+            "mode": {
+              "const": "fixed"
+            },
+            "quaternion_xyzw": {
+              "$ref": "#/definitions/q"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "mode"
+          ],
+          "properties": {
+            "mode": {
+              "enum": [
+                "upright",
+                "cube"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "mode",
+            "catalog_size"
+          ],
+          "properties": {
+            "mode": {
+              "const": "free"
+            },
+            "catalog_size": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "mode",
+            "quaternions_xyzw"
+          ],
+          "properties": {
+            "mode": {
+              "const": "custom"
+            },
+            "quaternions_xyzw": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/definitions/q"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "or_resolved": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "mode",
+            "quaternion_xyzw"
+          ],
+          "properties": {
+            "mode": {
+              "const": "fixed"
+            },
+            "quaternion_xyzw": {
+              "$ref": "#/definitions/q"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "mode"
+          ],
+          "properties": {
+            "mode": {
+              "enum": [
+                "upright",
+                "cube"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "mode",
+            "catalog_size"
+          ],
+          "properties": {
+            "mode": {
+              "const": "free"
+            },
+            "catalog_size": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "mode",
+            "quaternions_xyzw"
+          ],
+          "properties": {
+            "mode": {
+              "const": "custom"
+            },
+            "quaternions_xyzw": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/definitions/q"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "search": {
+      "type": "object",
+      "required": [
+        "preset",
+        "seed",
+        "deterministic"
+      ],
+      "properties": {
+        "preset": {
+          "type": "string",
+          "minLength": 1
+        },
+        "seed": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"
+        },
+        "deterministic": {
+          "type": "boolean"
+        },
+        "budget_seconds": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/positive"
+        },
+        "work_budget": {
+          "type": "object",
+          "required": [
+            "max_candidate_evaluations",
+            "max_search_passes"
+          ],
+          "properties": {
+            "max_candidate_evaluations": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "max_search_passes": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "resolution": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "mode",
+            "longest_object_axis_cells"
+          ],
+          "properties": {
+            "mode": {
+              "const": "auto"
+            },
+            "longest_object_axis_cells": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "mode",
+            "pitch_mm"
+          ],
+          "properties": {
+            "mode": {
+              "const": "manual"
+            },
+            "pitch_mm": {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/positive"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "compute": {
+      "type": "object",
+      "required": [
+        "backend"
+      ],
+      "properties": {
+        "backend": {
+          "enum": [
+            "auto",
+            "cpu",
+            "vulkan"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "requested": {
+      "type": "object",
+      "required": [
+        "settings_version",
+        "object_asset_id",
+        "container",
+        "clearance_mm",
+        "orientation",
+        "search",
+        "resolution",
+        "compute"
+      ],
+      "properties": {
+        "settings_version": {
+          "const": 1
+        },
+        "object_asset_id": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/runtime_id"
+        },
+        "container": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/box"
+            },
+            {
+              "$ref": "#/definitions/stl_id"
+            }
+          ]
+        },
+        "clearance_mm": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/clearance"
+        },
+        "orientation": {
+          "$ref": "#/definitions/or_requested"
+        },
+        "search": {
+          "$ref": "#/definitions/search"
+        },
+        "resolution": {
+          "$ref": "#/definitions/resolution"
+        },
+        "compute": {
+          "$ref": "#/definitions/compute"
+        }
+      },
+      "additionalProperties": false
+    },
+    "resolved": {
+      "type": "object",
+      "required": [
+        "settings_version",
+        "object_asset",
+        "container",
+        "clearance_mm",
+        "orientation",
+        "search",
+        "resolution",
+        "compute",
+        "resolved"
+      ],
+      "properties": {
+        "settings_version": {
+          "const": 1
+        },
+        "object_asset": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/content_ref"
+        },
+        "container": {
+          "oneOf": [
+            {
+              "$ref": "#/definitions/box"
+            },
+            {
+              "$ref": "#/definitions/stl_ref"
+            }
+          ]
+        },
+        "clearance_mm": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/clearance"
+        },
+        "orientation": {
+          "$ref": "#/definitions/or_resolved"
+        },
+        "search": {
+          "$ref": "#/definitions/search"
+        },
+        "resolution": {
+          "$ref": "#/definitions/resolution"
+        },
+        "compute": {
+          "$ref": "#/definitions/compute"
+        },
+        "resolved": {
+          "type": "object",
+          "required": [
+            "pitch_mm",
+            "orientation_catalog_sha256",
+            "orientation_catalog_version",
+            "backend",
+            "thread_count"
+          ],
+          "properties": {
+            "pitch_mm": {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/positive"
+            },
+            "orientation_catalog_sha256": {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/sha256"
+            },
+            "orientation_catalog_version": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "backend": {
+              "enum": [
+                "cpu",
+                "vulkan"
+              ]
+            },
+            "thread_count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/definitions/requested"
+    },
+    {
+      "$ref": "#/definitions/resolved"
+    }
+  ]
+}

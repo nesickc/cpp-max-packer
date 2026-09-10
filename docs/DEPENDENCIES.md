@@ -9,6 +9,7 @@ The Windows CPU build uses the locked `x64-windows-static` graph in [dependencie
 | meshoptimizer | 0.25 | `zeux/meshoptimizer` `v0.25` | MIT | mesh processing |
 | pocketfft | 2023-09-25 | `mreineck/pocketfft` `9efd4da52cf8d28d14531d14e43ad9d913807546` | BSD-3-Clause | CPU FFT |
 | nlohmann-json | 3.12.0#1 | `nlohmann/json` `v3.12.0` | MIT | JSON contracts |
+| json-schema-validator | 2.3.0#2 | `pboettch/json-schema-validator` `2.3.0` | MIT | compiled Draft-07 validation |
 | clipper2 | 1.5.4 | `AngusJohnson/Clipper2` `Clipper2_1.5.4` | BSL-1.0 | Manifold dependency |
 | tbb | 2022.2.0 | `oneapi-src/oneTBB` `v2022.2.0` | Apache-2.0 | Manifold dependency |
 | ccd | 2.1#4 | `danfis/libccd` `v2.1` | BSD-3-Clause | FCL dependency |
@@ -16,4 +17,14 @@ The Windows CPU build uses the locked `x64-windows-static` graph in [dependencie
 | octomap | 1.10.0 | `OctoMap/octomap` `v1.10.0` | BSD-3-Clause | FCL dependency |
 | catch2 | 3.11.0 | `catchorg/Catch2` `v3.11.0` | BSL-1.0 | test framework |
 
-The staged diagnostic preserves original upstream notices at `<install-prefix>/share/licenses/<port>/copyright`; they are the license record. FCL's port manifest has no SPDX license field, but its installed notice contains the upstream BSD license. The 11 target library notices above are separate from the host-only build utilities `vcpkg-cmake` (2025-08-07) and `vcpkg-cmake-config` (2024-05-23), which do not ship as runtime libraries.
+The staged package preserves original upstream notices at `<install-prefix>/share/licenses/<port>/copyright`; they are the license record. FCL's port manifest has no SPDX license field, but its installed notice contains the upstream BSD license. The 12 target library notices above are separate from the host-only build utilities `vcpkg-cmake` (2025-08-07) and `vcpkg-cmake-config` (2024-05-23), which do not ship as runtime libraries.
+
+The validator's pinned Windows installation patch is preserved byte-for-byte in
+[third_party/vcpkg](../third_party/vcpkg/README.md). `Prepare-VcpkgAssets.ps1`
+verifies its SHA-512 before seeding `VCPKG_DOWNLOADS` or the vcpkg downloads folder;
+vcpkg then performs its normal locked checksum validation.
+
+Development-only Node tools are pinned by `package.json` and `pnpm-lock.yaml`:
+Ajv 8.20.0 (MIT), ajv-formats 3.0.1 (MIT), json-schema-to-typescript 16.0.0 (MIT),
+and TypeScript 5.9.3 (Apache-2.0), using pnpm 11.19.0. They generate/check contracts
+and are not part of the native runtime package.

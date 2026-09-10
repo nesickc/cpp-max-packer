@@ -35,3 +35,5 @@ install(TARGETS spectrapack_cpu_dependency_smoke
   COMPONENT cpu-diagnostics)
 
 catch_discover_tests(spectrapack_cpu_dependency_smoke)
+
+add_subdirectory(protocol)

@@ -34,7 +34,13 @@ save/export(immutable_result, accepted_assets, destination) -> ArtifactReport
 
 ## Contracts, validity and state
 
-`spec/schemas/` will be the single source for versioned wire/persistence shapes and generated TypeScript types. C++ CLI and service use one decoder and semantic-validation path. `pack_geometry` supplies the canonical physical transform implementation and golden vectors shared with viewer/export tests: millimeters, right-handed Z-up, active normalized XYZW quaternion plus translation; matrices are derived and checked. Preserve source mappings; never scale to fit (`GEO-02`, `DATA-01`, `DATA-03`).
+[ADR 0004](../spec/decisions/0004-versioned-contracts.md) freezes the initial
+schema/stdio implementation. `pack_io` consumes embedded Draft-07 schemas and
+checks serialization semantics without geometry dependencies. `pack_service`
+owns framing, dispatch and replay; `spectrapack-engine` is its CLI adapter.
+Contract-valid metadata does not establish accepted physical geometry.
+
+`spec/schemas/` is the single source for versioned wire/persistence shapes and generated TypeScript types. C++ CLI and service use one decoder and semantic-validation path. The planned `pack_geometry` module will supply the canonical physical transform implementation and golden vectors shared with viewer/export tests: millimeters, right-handed Z-up, active normalized XYZW quaternion plus translation; matrices are derived and checked. Preserve source mappings; never scale to fit (`GEO-02`, `DATA-01`, `DATA-03`).
 
 Validation returns `valid`, `invalid` or `indeterminate`, with copy IDs and diagnostics. Only `valid` can enter incumbent publication. Validate accepted solids, including enclosure/coincidence, STL-volume difference and separate pair/wall distances; tolerance never reduces clearance. Restore/final/export validation bypasses search certificates. Re-read quantized STL coordinates; retain valid JSON/project if STL export fails (`GEO-05`, `GEO-06`).
 

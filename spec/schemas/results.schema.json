@@ -1,0 +1,505 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spectrapack.invalid/schemas/v1/results.schema.json",
+  "definitions": {
+    "c": {
+      "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/counter"
+    },
+    "q": {
+      "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/quaternion"
+    },
+    "m": {
+      "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/matrix4"
+    },
+    "hash": {
+      "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/sha256"
+    },
+    "work": {
+      "type": "object",
+      "required": [
+        "candidate_evaluations",
+        "search_passes"
+      ],
+      "properties": {
+        "candidate_evaluations": {
+          "$ref": "#/definitions/c"
+        },
+        "search_passes": {
+          "$ref": "#/definitions/c"
+        }
+      },
+      "additionalProperties": false
+    },
+    "segment": {
+      "type": "object",
+      "required": [
+        "segment_id",
+        "parent_solution_revision",
+        "seed",
+        "backend",
+        "elapsed_seconds",
+        "work_counts",
+        "search_state_reset",
+        "rng",
+        "resolved_settings"
+      ],
+      "properties": {
+        "segment_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "parent_solution_revision": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/definitions/c"
+            }
+          ]
+        },
+        "seed": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"
+        },
+        "backend": {
+          "enum": [
+            "cpu",
+            "vulkan"
+          ]
+        },
+        "elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "work_counts": {
+          "$ref": "#/definitions/work"
+        },
+        "search_state_reset": {
+          "type": "boolean"
+        },
+        "rng": {
+          "type": "object",
+          "required": [
+            "algorithm",
+            "state"
+          ],
+          "properties": {
+            "algorithm": {
+              "type": "string",
+              "minLength": 1
+            },
+            "state": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "resolved_settings": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/settings.schema.json#/definitions/resolved"
+        }
+      },
+      "additionalProperties": false
+    },
+    "placement": {
+      "type": "object",
+      "required": [
+        "copy_id",
+        "translation_mm",
+        "quaternion_xyzw",
+        "local_to_world"
+      ],
+      "properties": {
+        "copy_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "translation_mm": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/vec3"
+        },
+        "quaternion_xyzw": {
+          "$ref": "#/definitions/q"
+        },
+        "local_to_world": {
+          "$ref": "#/definitions/m"
+        }
+      },
+      "additionalProperties": false
+    },
+    "transition": {
+      "type": "object",
+      "required": [
+        "segment_id",
+        "from",
+        "to",
+        "reason",
+        "elapsed_seconds"
+      ],
+      "properties": {
+        "segment_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from": {
+          "enum": [
+            "cpu",
+            "vulkan"
+          ]
+        },
+        "to": {
+          "enum": [
+            "cpu",
+            "vulkan"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "device": {
+          "type": "string"
+        },
+        "driver": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "type": "object",
+  "required": [
+    "schema_version",
+    "label",
+    "job_id",
+    "solution_revision",
+    "created_at",
+    "engine",
+    "assets",
+    "container",
+    "constraints",
+    "search",
+    "count",
+    "placements",
+    "validation",
+    "metrics"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "label": {
+      "const": "best_found"
+    },
+    "job_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "solution_revision": {
+      "$ref": "#/definitions/c"
+    },
+    "created_at": {
+      "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/timestamp"
+    },
+    "engine": {
+      "type": "object",
+      "required": [
+        "version",
+        "commit"
+      ],
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "assets": {
+      "type": "object",
+      "required": [
+        "object"
+      ],
+      "properties": {
+        "object": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/assets.schema.json#/definitions/accepted"
+        },
+        "container": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/assets.schema.json#/definitions/accepted"
+        }
+      },
+      "additionalProperties": false
+    },
+    "container": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "dimensions_mm"
+          ],
+          "properties": {
+            "kind": {
+              "const": "box"
+            },
+            "dimensions_mm": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "minItems": 3,
+              "maxItems": 3
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "asset",
+            "source_to_world",
+            "semantics"
+          ],
+          "properties": {
+            "kind": {
+              "const": "stl_volume"
+            },
+            "asset": {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/content_ref"
+            },
+            "source_to_world": {
+              "$ref": "#/definitions/m"
+            },
+            "semantics": {
+              "const": "interior_volume"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "constraints": {
+      "type": "object",
+      "required": [
+        "clearance_mm",
+        "orientation",
+        "orientation_catalog_sha256"
+      ],
+      "properties": {
+        "clearance_mm": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/clearance"
+        },
+        "orientation": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/settings.schema.json#/definitions/or_resolved"
+        },
+        "orientation_catalog_sha256": {
+          "$ref": "#/definitions/hash"
+        }
+      },
+      "additionalProperties": false
+    },
+    "search": {
+      "type": "object",
+      "required": [
+        "resolved_settings",
+        "pitch_levels_mm",
+        "seed",
+        "work_counts",
+        "run_segments",
+        "backend_transitions",
+        "elapsed_seconds"
+      ],
+      "properties": {
+        "resolved_settings": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/settings.schema.json#/definitions/resolved"
+        },
+        "pitch_levels_mm": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        },
+        "seed": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"
+        },
+        "work_counts": {
+          "$ref": "#/definitions/work"
+        },
+        "run_segments": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/segment"
+          }
+        },
+        "backend_transitions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/transition"
+          }
+        },
+        "elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "count": {
+      "$ref": "#/definitions/c"
+    },
+    "placements": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/placement"
+      }
+    },
+    "validation": {
+      "type": "object",
+      "required": [
+        "status",
+        "tolerance_mm",
+        "authoritative_geometry_sha256",
+        "validator_version",
+        "kernel_version",
+        "checks"
+      ],
+      "properties": {
+        "status": {
+          "const": "valid"
+        },
+        "tolerance_mm": {
+          "type": "number",
+          "minimum": 0
+        },
+        "authoritative_geometry_sha256": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/hash"
+          }
+        },
+        "validator_version": {
+          "type": "string"
+        },
+        "kernel_version": {
+          "type": "string"
+        },
+        "checks": {
+          "type": "object",
+          "required": [
+            "pair",
+            "containment",
+            "clearance"
+          ],
+          "properties": {
+            "pair": {
+              "const": "valid"
+            },
+            "containment": {
+              "const": "valid"
+            },
+            "clearance": {
+              "const": "valid"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "metrics": {
+      "type": "object",
+      "required": [
+        "solid_volume_mm3",
+        "container_volume_mm3",
+        "utilization",
+        "time_to_best_seconds",
+        "peak_host_bytes",
+        "peak_device_bytes",
+        "termination_reason"
+      ],
+      "properties": {
+        "solid_volume_mm3": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0
+        },
+        "container_volume_mm3": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "exclusiveMinimum": 0
+        },
+        "utilization": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 1
+        },
+        "time_to_best_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "peak_host_bytes": {
+          "$ref": "#/definitions/c"
+        },
+        "peak_device_bytes": {
+          "$ref": "#/definitions/c"
+        },
+        "termination_reason": {
+          "enum": [
+            "budget_exhausted",
+            "user_stopped",
+            "search_stalled",
+            "resource_limit",
+            "error"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "kind",
+          "path",
+          "sha256"
+        ],
+        "properties": {
+          "kind": {
+            "enum": [
+              "assembled_stl",
+              "preview_image",
+              "benchmark",
+              "log"
+            ]
+          },
+          "path": {
+            "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/portable_path"
+          },
+          "sha256": {
+            "$ref": "#/definitions/hash"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -8,3 +8,6 @@ __pycache__/
 # Local CMake builds and manifest-installed dependencies.
 /out/
 /vcpkg_installed/
+
+# Development-only schema tooling.
+/node_modules/

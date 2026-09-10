@@ -13,6 +13,8 @@ jobs:
   windows-cpu-tests:
     runs-on: windows-2025-vs2026
     timeout-minutes: 30
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.local/vcpkg-binary-cache
     defaults:
       run:
         shell: pwsh
@@ -21,6 +23,27 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.12'
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24.19.0'
+      - name: Install locked development contract tools
+        run: |
+          New-Item -ItemType Directory -Force .local/ci | Out-Null
+          npm install --prefix .local/package-manager --ignore-scripts --no-package-lock pnpm@11.19.0 *> .local/ci/package-manager.log
+          if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/package-manager.log; exit $LASTEXITCODE }
+          & .local/package-manager/node_modules/.bin/pnpm.cmd install --frozen-lockfile --ignore-scripts *> .local/ci/node-install.log
+          exit $LASTEXITCODE
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .local/vcpkg-binary-cache
+          key: windows-cpu-v1-${{ hashFiles('vcpkg.json', 'cmake/dependencies.lock.json', 'cmake/toolchains.lock.json', 'CMakePresets.json') }}
+          restore-keys: windows-cpu-v1-
+      - name: Schema examples and generated TypeScript contracts
+        run: |
+          & .local/package-manager/node_modules/.bin/pnpm.cmd contracts:check *> .local/ci/contracts.log
+          $contractResult = $LASTEXITCODE
+          Get-Content .local/ci/contracts.log
+          exit $contractResult
       - name: Python fixture, build-guard and performance-harness tests
         run: |
           New-Item -ItemType Directory -Force .local/ci | Out-Null
@@ -30,6 +53,7 @@ jobs:
           exit $testResult
       - name: Prepare pinned vcpkg
         run: |
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
           $baseline = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
           # Versioned ports need historical blobs during dependency resolution.
           # Fetch them here instead of triggering lazy Git fetches inside vcpkg.
@@ -43,7 +67,7 @@ jobs:
         run: |
           foreach ($configuration in @('debug', 'release')) {
             $log = ".local/ci/native-$configuration.log"
-            & ./tools/Invoke-NativeTests.ps1 -Preset "windows-ninja-$configuration" -VcpkgRoot "$PWD/.local/vcpkg" -ToolchainProfile hosted-windows-2025 -PythonPath python -Fresh *> $log
+            & ./tools/Invoke-NativeTests.ps1 -Preset "windows-ninja-$configuration" -VcpkgRoot "$PWD/.local/vcpkg" -ToolchainProfile hosted-windows-2025 -PythonPath python -Fresh 2>&1 | Tee-Object -FilePath $log
             $testResult = $LASTEXITCODE
             Get-Content $log -Tail 45
             if ($testResult -ne 0) { exit $testResult }
@@ -52,6 +76,10 @@ jobs:
           $runtimeReport = Join-Path $PWD '.local/ci/runtime.json'
           cmake --install out/build/windows-ninja-release --prefix $packageRoot --component cpu-diagnostics *> .local/ci/stage.log
           if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/stage.log; exit $LASTEXITCODE }
+          cmake --install out/build/windows-ninja-release --prefix $packageRoot --component engine *>> .local/ci/stage.log
+          if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/stage.log; exit $LASTEXITCODE }
+          python tests/protocol/service_subprocess_test.py (Join-Path $packageRoot 'bin/spectrapack-engine.exe') *> .local/ci/staged-protocol.log
+          if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/staged-protocol.log; exit $LASTEXITCODE }
           $diagnostic = Join-Path $packageRoot 'diagnostics/spectrapack_cpu_dependency_smoke.exe'
           dumpbin /DEPENDENTS $diagnostic *> .local/ci/pe-imports.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -72,6 +100,10 @@ jobs:
       - name: Bounded reference timings
         run: |
           python benchmarks/run_reference.py --executable out/build/windows-ninja-release/bin/spectrapack_reference_benchmark.exe --output .local/ci/reference.json --samples 5 --warmup 1 --timeout-seconds 60
+          exit $LASTEXITCODE
+      - name: Bounded service replay timings
+        run: |
+          python tests/protocol/service_replay_perf.py out/build/windows-ninja-release/bin/spectrapack-engine.exe --samples 5 --requests 1000 > .local/ci/service-replay.json 2> .local/ci/service-replay.log
           exit $LASTEXITCODE
       - name: Retain test and timing evidence
         if: always()
