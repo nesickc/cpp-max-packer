@@ -18,6 +18,12 @@ Drafts may describe invalid or indeterminate geometry. Acceptance requires a
 completed valid topology, intersection and shell-containment analysis. Accepted
 solids expose only immutable owned buffers; callers cannot inject a validity flag
 or mutate an alias. An accepted repair retains the original and candidate drafts.
+A proposal's candidate remains a preview draft: `accept_asset` cannot promote it
+without its repair provenance. `accept_repair` is the explicit promotion boundary
+and retains that proposal, even after callers release their original handles.
+This first API also rejects `propose_weld` on a proposal-derived candidate, so
+chaining previews cannot discard earlier repair provenance. A different tolerance
+may be proposed again from the original inspected draft.
 
 ## Content, frames and exact cleanup
 
@@ -35,6 +41,16 @@ original scaled bounding-box center; containers use its minimum. Axes remain
 unchanged. The original frame remains fixed through cleanup and proposed repairs.
 `dimensions_mm` retains ADR 0004's source-extent meaning; actual cleaned/candidate
 and accepted bounds are reported separately.
+
+Frame arithmetic must check the scaled endpoints and avoid an intermediate
+unscaled-extent overflow when the scaled extent is representable. If conversion
+collapses distinct retained source vertices or a positive-area source face, reject
+the conversion with a precision diagnostic instead of counting it as safe cleanup.
+Exact cleanup must not hide loss introduced by the frame conversion.
+Serialized source-frame matrices have exact structural zeros, an exact affine
+last row, and diagonal entries equal to the declared scale. Valid/accepted assets
+require positive computed and declared extents; an absolute comparison tolerance
+cannot admit a zero scale or a collapsed dimension.
 
 Automatic cleanup merges exactly equal coordinates, normalizes signed zero,
 removes same-winding exact duplicate faces and mathematically zero-area faces,
@@ -55,6 +71,15 @@ Strict shell containment forms an acyclic parent tree; alternating depth represe
 outer material, cavities and nested islands. Disjoint roots remain one rigid asset.
 Only after these checks is meaningful material volume reported.
 
+Reported material volume preserves the exact dyadic determinant sum through the
+final shell-orientation flips. It aggregates all outer, cavity and island faces
+as checked integers, divides the resulting signed six-volume by six exactly, and
+rounds once to nearest binary64 with ties to even. Rounded per-shell magnitudes
+may guide strict-containment parent selection, but they are not subtracted to
+form the reported material volume. The final accumulation spends the same
+predicate-work budget; exhaustion, overflow or nonzero underflow is
+`indeterminate` rather than an approximate volume.
+
 Numerical uncertainty or exhausted geometric work yields `indeterminate`, never
 acceptance. Check states distinguish completed zero findings from checks not run
 or capped; issue examples are bounded independently of finding counts. Kernel
@@ -69,10 +94,64 @@ oracle fixtures exercise determinant signs, including cancellation and extreme
 exponents. Floating filters are permitted only with a documented error bound and
 an exact fallback. This adds no approximate geometry permission or dependency.
 
+Exact topology shortcuts avoid repeated determinants without reducing coverage.
+For two nondegenerate triangles sharing an edge, a nonzero orientation of the
+opposite vertex proves their planes meet only on that edge; coplanar triangles
+still require the full overlap predicate. For a shared vertex, both remaining
+vertices strictly on the same side of the other triangle's plane prove that their
+only possible contact is the shared vertex. A zero sign or opposite signs cannot
+use that shortcut. Known shared coordinates have exact zero side signs; reuse
+computed signs in later predicates. Identical dyadic values may normalize trailing
+significand zeros to reduce arithmetic width. Independent permutation, extreme
+exponent and tiny coplanar-overlap regressions gate these optimizations.
+
+The first floating filter evaluates orient2d/orient3d through outward-rounded
+binary64 intervals. Inputs are exact singleton intervals. Addition/subtraction
+use endpoint bounds; multiplication uses all four endpoint products. Each stored
+binary64 endpoint is widened with `nextafter` toward the relevant infinity.
+Strictly positive/negative enclosures certify only that sign; an enclosure spanning
+zero or any nonfinite intermediate/bound falls back to exact dyadic arithmetic.
+This enclosure proof does not grant a geometric epsilon. A common represented
+coordinate on all points is a separate exact zero-determinant identity, with its
+own bounded comparison charge; a rounded zero is never that proof.
+
+Compile predicate code with strict floating-point semantics, without reassociation
+or contraction. Filtering requires the supported round-to-nearest environment
+and gradual underflow; on the x64 target, enabled MXCSR FTZ/DAZ or an unsupported
+rounding mode disables it. Other unsupported environments use the exact path.
+An attempted orient2d filter charges 32 work units (18 endpoint operations and
+14 outward steps); orient3d charges 110 (64 endpoint operations and 46 outward
+steps). Failed attempts still spend that allowance and exact fallback spends its
+ordinary work from the same remaining budget. These are bounded work units, not
+an elapsed-time estimate.
+
+A private exact-only seam, independent oracle cases, cancellation/extreme inputs,
+floating-mode and combined-budget tests gate the filter. Diagnostic profiling
+records stage costs and filter/fallback counts before practical qualification.
+Physical permissions and serialized frame/mesh meanings are unchanged.
+
 Default resource caps are 256 MiB source bytes, 5,000,000 triangles, 50,000,000
-candidate pairs, 500,000,000 predicate-work units and 64 issue examples. Callers may
+candidate pairs, 1,300,000,000 predicate-work units and 64 issue examples. Callers may
 provide smaller or larger explicit caps within representable allocation bounds.
 These caps limit work; they do not change geometric permissions.
+The predicate budget covers the entire inspection or proposal operation, including
+exact cleanup, weld-distance checks when applicable, and solid analysis. Pass the
+remaining budget between stages and report their combined usage; starting a new
+stage must not reset the allowance. A proposal does not charge again for work
+already completed during the original inspection.
+
+The predicate default is calibrated from completed public CLI inspections of the
+pinned large inputs: 620,516,986 units for `pryanik_1` and 1,009,948,927 for
+`pryanik_2`, including source/local cleanup, intersections, volume and containment.
+A 25% margin over the maximum, rounded upward, gives 1.3 billion. Diagnostic
+stage probes undercounted the public operation's two cleanup stages and are not
+the final sizing evidence. The initial 500-million
+allowance preceded the conservative 32/110-unit filter accounting and did not
+complete these inputs; its failure remains recorded rather than blessed as a
+baseline. The probe's explicit 2-billion ceiling is not the selected default.
+Qualify the public CLI again at the actual default, and retain explicit smaller-cap
+rejection tests. This changes an initial resource default, not geometry permissions
+or serialized formats; no previously delivered T-003 project format is migrated.
 
 ## Welding
 
@@ -80,6 +159,10 @@ Tolerance welding is a separate bounded proposal with a finite positive toleranc
 and a default 10,000,000 candidate-pair cap. Deterministic representative selection
 must keep every changed vertex within the requested displacement; transitive
 chains cannot amplify that bound. The original draft/frame stays unchanged.
+Every tested representative pair counts toward this cap, including pairs rejected
+by a preliminary bounding-box check. A separated mesh must not permit an
+uncounted quadratic scan; cap exhaustion rejects the proposal with a resource
+diagnostic.
 Candidate cleanup and solid analysis run again in full. Before/after meshes,
 actual bounds, counts and maximum displacement remain inspectable. Explicit
 acceptance can promote only a completely valid candidate. No hole filling, shell
@@ -132,6 +215,8 @@ existing path/hash shape. A later invocation with the same input/options and
 accepted report contains the proposal's path/hash in `repair_record` and
 `accepted_by_user: true`; it has no pending `repair_proposal`. Tokens contain no
 timestamp or absolute path, and a changed input or option cannot reuse a token.
+The hashed record's `before_diagnostics` and `after_diagnostics` include explicit
+`status`, `messages` and `import` fields, matching the asset diagnostics shape.
 
 On completed inspection stdout is one compact JSON object with `report_path`,
 `state`, `status` and, when present, `proposal_sha256`. The report is the detailed

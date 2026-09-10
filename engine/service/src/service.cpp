@@ -56,6 +56,7 @@ Json capabilities(const BuildInfo& build) {
                                    {"results", Json::array({1})}, {"protocol", Json::array({1})},
                                    {"benchmark_summary", Json::array({1})}}},
               {"implemented_methods", Json::array({"capabilities.get"})},
+              {"implemented_commands", Json::array({"capabilities", "serve", "inspect"})},
               {"unsupported_methods", Json::array({"asset.import", "asset.accept_repair", "job.preflight", "job.start",
                   "job.stop", "job.continue", "job.status", "project.open", "project.save", "result.validate", "result.export"})},
               {"max_record_bytes", 1048576}, {"max_active_solver_jobs", 1}, {"compute_backends", Json::array()},

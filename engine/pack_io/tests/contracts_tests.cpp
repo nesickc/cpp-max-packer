@@ -508,6 +508,69 @@ TEST_CASE("AT-14 preserves the hand-computed object-centre and container-minimum
 TEST_CASE("AT-14 preserves a selected custom source-unit scale", "[contracts][assets][transforms]") {
   ContractValidator validator;
   CHECK(failure_of(validator.validate(ContractKind::assets, inspected_asset_with_custom_scale())) == nullptr);
+
+  Json wide_source = inspected_asset_with_custom_scale();
+  wide_source["source"]["unit_scale_mm"] = 1e-300;
+  wide_source["frame"]["source_bounds"] = {
+      {"min", Json::array({-1e308, -1e308, -1e308})},
+      {"max", Json::array({1e308, 1e308, 1e308})}};
+  wide_source["dimensions_mm"] = Json::array({2e8, 2e8, 2e8});
+  wide_source["frame"]["source_to_local"] = Json::array({
+      Json::array({1e-300, 0.0, 0.0, 0.0}),
+      Json::array({0.0, 1e-300, 0.0, 0.0}),
+      Json::array({0.0, 0.0, 1e-300, 0.0}),
+      Json::array({0.0, 0.0, 0.0, 1.0})});
+  CHECK(failure_of(validator.validate(ContractKind::assets, wide_source)) == nullptr);
+
+  const auto rejected = [&validator, &wide_source](const auto& mutate) {
+    Json changed = wide_source;
+    mutate(changed);
+    const auto outcome = validator.validate(ContractKind::assets, changed);
+    const auto* failure = failure_of(outcome);
+    REQUIRE(failure != nullptr);
+    CHECK(has_issue(*failure, "SOURCE_FRAME_MISMATCH"));
+  };
+  SECTION("off-diagonal drift remains physical at a tiny scale") {
+    rejected([](Json& asset) { asset["frame"]["source_to_local"][0][1] = 1e-13; });
+  }
+  SECTION("the diagonal exactly matches the declared scale") {
+    rejected([](Json& asset) { asset["frame"]["source_to_local"][0][0] = 0.0; });
+  }
+  SECTION("the homogeneous row is exact") {
+    rejected([](Json& asset) { asset["frame"]["source_to_local"][3][0] = 1e-13; });
+  }
+  SECTION("valid dimensions must stay positive after scaling") {
+    rejected([](Json& asset) {
+      asset["diagnostics"]["status"] = "valid";
+      asset["frame"]["source_bounds"]["max"][0] = -1e308;
+      asset["dimensions_mm"][0] = 0.0;
+    });
+  }
+  SECTION("canonical unit scales are exact") {
+    Json changed = inspected_asset_with_hand_computed_source_frame("object");
+    changed["source"]["unit_scale_mm"] = std::nextafter(25.4, 26.0);
+    changed["frame"]["source_to_local"][0][0] = changed["source"]["unit_scale_mm"];
+    changed["frame"]["source_to_local"][1][1] = changed["source"]["unit_scale_mm"];
+    changed["frame"]["source_to_local"][2][2] = changed["source"]["unit_scale_mm"];
+    const auto outcome = validator.validate(ContractKind::assets, changed);
+    const auto* failure = failure_of(outcome);
+    REQUIRE(failure != nullptr);
+    CHECK(has_issue(*failure, "SOURCE_FRAME_MISMATCH"));
+  }
+}
+
+TEST_CASE("GEO-02 permits flat inspected source bounds but rejects them once valid", "[contracts][assets][transforms]") {
+  ContractValidator validator;
+  Json asset = inspected_asset_with_custom_scale();
+  asset["frame"]["source_bounds"]["max"][2] = 0.0;
+  asset["dimensions_mm"][2] = 0.0;
+  asset["frame"]["source_to_local"][2][3] = 0.0;
+  CHECK(failure_of(validator.validate(ContractKind::assets, asset)) == nullptr);
+  asset["diagnostics"]["status"] = "valid";
+  const auto outcome = validator.validate(ContractKind::assets, asset);
+  const auto* failed = failure_of(outcome);
+  REQUIRE(failed != nullptr);
+  CHECK(has_issue(*failed, "SOURCE_FRAME_MISMATCH"));
 }
 
 TEST_CASE("AT-14 result semantics preserve zero-copy and hand-computed 90-degree placement goldens", "[contracts][results]") {

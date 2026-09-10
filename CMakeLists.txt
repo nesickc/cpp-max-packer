@@ -49,6 +49,7 @@ endif()
 set(SPECTRAPACK_ENGINE_VERSION "${PROJECT_VERSION}")
 
 add_subdirectory(engine/dependencies)
+add_subdirectory(engine/pack_geometry)
 add_subdirectory(engine/pack_io)
 add_subdirectory(engine/service)
 add_subdirectory(engine/cli)

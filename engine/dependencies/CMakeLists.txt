@@ -15,6 +15,11 @@ target_link_libraries(spectrapack_dependency_geometry INTERFACE
   meshoptimizer::meshoptimizer
 )
 
+# Retain FCL's directory-scoped imported targets without adding the diagnostic
+# aggregate's Manifold/meshoptimizer libraries to the import engine.
+add_library(spectrapack_dependency_import_geometry INTERFACE)
+target_link_libraries(spectrapack_dependency_import_geometry INTERFACE fcl)
+
 add_library(spectrapack_dependency_cpu_compute INTERFACE)
 target_include_directories(spectrapack_dependency_cpu_compute INTERFACE
   "${SPECTRAPACK_POCKETFFT_INCLUDE_DIR}"
@@ -63,7 +68,7 @@ install(FILES
 
 # The standalone engine component carries the notices for its actual linked
 # runtime libraries, even when the optional CPU diagnostic is not staged.
-foreach(port IN ITEMS nlohmann-json json-schema-validator)
+foreach(port IN ITEMS nlohmann-json json-schema-validator fcl ccd eigen3 octomap)
   install(FILES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${port}/copyright"
     DESTINATION "share/licenses/${port}" COMPONENT engine)
 endforeach()
