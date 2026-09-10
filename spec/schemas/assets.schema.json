@@ -1,0 +1,284 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spectrapack.invalid/schemas/v1/assets.schema.json",
+  "definitions": {
+    "hash": {
+      "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/sha256"
+    },
+    "path": {
+      "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/portable_path"
+    },
+    "source": {
+      "type": "object",
+      "required": [
+        "sha256",
+        "path",
+        "units",
+        "unit_scale_mm"
+      ],
+      "properties": {
+        "sha256": {
+          "$ref": "#/definitions/hash"
+        },
+        "path": {
+          "$ref": "#/definitions/path"
+        },
+        "units": {
+          "enum": [
+            "mm",
+            "inch",
+            "custom"
+          ]
+        },
+        "unit_scale_mm": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/positive"
+        }
+      },
+      "additionalProperties": false
+    },
+    "frame": {
+      "type": "object",
+      "required": [
+        "source_bounds",
+        "source_to_local"
+      ],
+      "properties": {
+        "source_bounds": {
+          "type": "object",
+          "required": [
+            "min",
+            "max"
+          ],
+          "properties": {
+            "min": {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/vec3"
+            },
+            "max": {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/vec3"
+            }
+          },
+          "additionalProperties": false
+        },
+        "source_to_local": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/matrix4"
+        }
+      },
+      "additionalProperties": false
+    },
+    "diagnostics": {
+      "type": "object",
+      "required": [
+        "status",
+        "messages"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "valid",
+            "invalid",
+            "indeterminate"
+          ]
+        },
+        "messages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "solid": {
+      "type": "object",
+      "required": [
+        "sha256",
+        "path",
+        "format",
+        "vertex_count",
+        "triangle_count"
+      ],
+      "properties": {
+        "sha256": {
+          "$ref": "#/definitions/hash"
+        },
+        "path": {
+          "$ref": "#/definitions/path"
+        },
+        "format": {
+          "const": "binary_little_endian_ply_f64_u32"
+        },
+        "vertex_count": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/counter"
+        },
+        "triangle_count": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/counter"
+        }
+      },
+      "additionalProperties": false
+    },
+    "repair": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "path",
+            "sha256",
+            "accepted_by_user"
+          ],
+          "properties": {
+            "path": {
+              "$ref": "#/definitions/path"
+            },
+            "sha256": {
+              "$ref": "#/definitions/hash"
+            },
+            "accepted_by_user": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "preview": {
+      "type": "object",
+      "required": [
+        "path",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "#/definitions/path"
+        },
+        "sha256": {
+          "$ref": "#/definitions/hash"
+        }
+      },
+      "additionalProperties": false
+    },
+    "base": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "role",
+        "state",
+        "source",
+        "frame",
+        "dimensions_mm",
+        "diagnostics"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "role": {
+          "enum": [
+            "object",
+            "container"
+          ]
+        },
+        "state": {
+          "enum": [
+            "inspected",
+            "accepted"
+          ]
+        },
+        "source": {
+          "$ref": "#/definitions/source"
+        },
+        "frame": {
+          "$ref": "#/definitions/frame"
+        },
+        "dimensions_mm": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/vec3"
+        },
+        "diagnostics": {
+          "$ref": "#/definitions/diagnostics"
+        },
+        "accepted_solid": {
+          "$ref": "#/definitions/solid"
+        },
+        "repair_record": {
+          "$ref": "#/definitions/repair"
+        },
+        "preview": {
+          "$ref": "#/definitions/preview"
+        }
+      },
+      "additionalProperties": false
+    },
+    "inspected": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/base"
+        },
+        {
+          "properties": {
+            "state": {
+              "const": "inspected"
+            }
+          }
+        },
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "accepted_solid"
+                ]
+              },
+              {
+                "required": [
+                  "repair_record"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "accepted": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/base"
+        },
+        {
+          "required": [
+            "accepted_solid",
+            "repair_record"
+          ],
+          "properties": {
+            "state": {
+              "const": "accepted"
+            },
+            "diagnostics": {
+              "allOf": [
+                {
+                  "$ref": "#/definitions/diagnostics"
+                },
+                {
+                  "properties": {
+                    "status": {
+                      "const": "valid"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/definitions/inspected"
+    },
+    {
+      "$ref": "#/definitions/accepted"
+    }
+  ]
+}

@@ -31,6 +31,7 @@ set(SPECTRAPACK_DISTRIBUTION_LICENSE_PORTS
   clipper2
   eigen3
   fcl
+  json-schema-validator
   manifold
   meshoptimizer
   nlohmann-json
@@ -59,3 +60,15 @@ install(FILES
   "${CMAKE_BINARY_DIR}/build-metadata.json"
   DESTINATION "share/spectrapack"
   COMPONENT cpu-diagnostics)
+
+# The standalone engine component carries the notices for its actual linked
+# runtime libraries, even when the optional CPU diagnostic is not staged.
+foreach(port IN ITEMS nlohmann-json json-schema-validator)
+  install(FILES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${port}/copyright"
+    DESTINATION "share/licenses/${port}" COMPONENT engine)
+endforeach()
+install(FILES
+  "${CMAKE_SOURCE_DIR}/cmake/dependencies.lock.json"
+  "${CMAKE_SOURCE_DIR}/cmake/toolchains.lock.json"
+  "${CMAKE_BINARY_DIR}/build-metadata.json"
+  DESTINATION "share/spectrapack" COMPONENT engine)

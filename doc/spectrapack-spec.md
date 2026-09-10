@@ -339,6 +339,8 @@ Use UTF-8 newline-delimited JSON over the sidecar's stdin/stdout. stdout contain
 
 Required methods: `capabilities.get`, `asset.import`, `asset.accept_repair`, `job.preflight`, `job.start`, `job.stop`, `job.continue`, `job.status`, `project.open`, `project.save`, `result.validate`, and `result.export`. Long operations acknowledge a task/job ID promptly and subsequently emit events. Only one solver job runs per engine process in v1. Duplicate request IDs must not start duplicate jobs.
 
+Version-1 schema, framing, replay, null-ID transport errors, asset-handle grammar and compatibility rules are fixed in [ADR 0004](../spec/decisions/0004-versioned-contracts.md). A record limit counts bytes before LF, including an optional CR. Malformed complete records are recoverable; oversized records and nonempty EOF fragments close with exit 2. Requests with trusted envelopes retain correlation IDs; errors before a trustworthy envelope exists use `request_id: null`. The bounded per-session replay cache never evicts IDs; exhaustion closes with a nonrecoverable resource error. Unimplemented required methods return `METHOD_UNSUPPORTED` and must not fabricate successful work. The authoritative schemas and generated types implement these initial contracts; contract consistency cannot establish physical validity.
+
 An asset import task completes with its asset ID, source/accepted hashes, frame and dimension metadata, diagnostic report, and a scoped shared preview-mesh reference. The shell grants access only to user-selected/project-owned files and launches the fixed bundled sidecar; protocol arguments are data, never shell command fragments.
 
 Illustrative request after a successful object import; the asset ID is supplied by the running engine. This example is pretty-printed for reading; each wire record occupies one line:
@@ -350,7 +352,7 @@ Illustrative request after a successful object import; the asset ID is supplied 
   "method": "job.start",
   "params": {
     "settings_version": 1,
-    "object_asset_id": "object-1",
+    "object_asset_id": "asset-0123456789abcdef0123456789abcdef-1",
     "container": {
       "kind": "box",
       "dimensions_mm": [165.0, 165.0, 320.0]
@@ -369,7 +371,7 @@ Illustrative request after a successful object import; the asset ID is supplied 
 }
 ```
 
-An STL container substitutes `{"kind":"stl_volume","asset_id":"container-1"}`. Imports carry independent units, which resolve before job creation. Seeds are decimal uint64 strings to avoid JavaScript integer precision loss.
+An STL container substitutes `{"kind":"stl_volume","asset_id":"asset-0123456789abcdef0123456789abcdef-2"}`. These illustrative handles must be replaced by IDs from the running process. Imports carry independent units, which resolve before job creation. Seeds are decimal uint64 strings to avoid JavaScript integer precision loss.
 
 Event types include `task_progress`, `job_state`, `best_solution`, `backend_changed`, `warning`, `error`, and `job_finished`. A `best_solution` event identifies an immutable revision and result file; it does not send an unvalidated mutable buffer. The frontend ignores stale events by job ID and revision. The shell reads records asynchronously and prevents progress output from blocking the solver.
 

@@ -1,0 +1,2 @@
+# Preserve the checksum-pinned upstream patch, including its context whitespace.
+third_party/vcpkg/0034c113477f83c28d4380de1ee189c25b1168e6.patch -text -whitespace

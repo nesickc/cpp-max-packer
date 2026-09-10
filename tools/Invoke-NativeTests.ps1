@@ -8,7 +8,7 @@ param(
     [string]$CtestPath = 'ctest',
     [string]$PythonPath = 'python',
     [string]$ToolchainLock = (Join-Path $PSScriptRoot '..\cmake\toolchains.lock.json'),
-    [ValidateSet('local-windows-2026', 'hosted-windows-2025')]
+    [ValidateSet('local-windows-2026', 'hosted-windows-2025', 'hosted-windows-2025-20260907')]
     [string]$ToolchainProfile,
     [switch]$Fresh
 )
@@ -73,6 +73,8 @@ foreach ($pair in $importedEnvironment.GetEnumerator()) {
     }
 }
 $env:VCPKG_ROOT = $VcpkgRoot
+& (Join-Path $PSScriptRoot 'Prepare-VcpkgAssets.ps1') -VcpkgRoot $VcpkgRoot
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $metadataPath = Join-Path (Join-Path $PSScriptRoot '..\out\build') "$Preset\build-metadata.json"
 $metadataDirectory = Split-Path -Parent $metadataPath
 New-Item -ItemType Directory -Force -Path $metadataDirectory | Out-Null
@@ -88,9 +90,9 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $PythonPath (Join-Path $PSScriptRoot 'Inspect-CpuBuild.py') check-vcpkg-tool --lock (Join-Path $PSScriptRoot '..\cmake\dependencies.lock.json') --actual $metadataPath
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if ($Fresh) {
-    & $CmakePath --fresh --preset $Preset
+    & $CmakePath --fresh --preset $Preset "-DPython3_EXECUTABLE=$((Get-Command $PythonPath).Source)"
 } else {
-    & $CmakePath --preset $Preset
+    & $CmakePath --preset $Preset "-DPython3_EXECUTABLE=$((Get-Command $PythonPath).Source)"
 }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $PythonPath (Join-Path $PSScriptRoot 'Inspect-CpuBuild.py') check-crt --build-type $(if ($Preset -eq 'windows-ninja-debug') { 'Debug' } else { 'Release' }) --cache (Join-Path $metadataDirectory 'CMakeCache.txt') --compile-commands (Join-Path $metadataDirectory 'compile_commands.json')
@@ -110,5 +112,5 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $CmakePath --build --preset $Preset
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-& $CtestPath --preset $Preset
+& $CtestPath --preset $Preset --timeout 30
 exit $LASTEXITCODE

@@ -1,0 +1,14 @@
+add_library(pack_service STATIC src/service.cpp)
+target_include_directories(pack_service PUBLIC include ../core/include)
+target_link_libraries(pack_service PUBLIC pack_io)
+target_compile_features(pack_service PUBLIC cxx_std_20)
+
+add_executable(spectrapack_service_tests tests/service_tests.cpp)
+target_link_libraries(spectrapack_service_tests PRIVATE pack_service Catch2::Catch2WithMain)
+
+include(Catch)
+catch_discover_tests(spectrapack_service_tests)
+
+add_executable(spectrapack_service_allocation_failure_tests tests/allocation_failure_tests.cpp)
+target_link_libraries(spectrapack_service_allocation_failure_tests PRIVATE pack_service Catch2::Catch2WithMain)
+catch_discover_tests(spectrapack_service_allocation_failure_tests)

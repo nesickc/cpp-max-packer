@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.25)
 
-project(SpectraPack LANGUAGES CXX)
+project(SpectraPack VERSION 0.0.0 LANGUAGES CXX)
 
 include(CTest)
 
@@ -27,7 +27,30 @@ if(SPECTRAPACK_ENABLE_VULKAN)
 endif()
 
 find_package(Catch2 3.11.0 CONFIG REQUIRED)
+find_package(nlohmann_json_schema_validator 2.3.0 CONFIG REQUIRED)
+find_package(Python3 3.12 COMPONENTS Interpreter REQUIRED)
+
+execute_process(COMMAND git rev-parse HEAD WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+  OUTPUT_VARIABLE SPECTRAPACK_ENGINE_COMMIT OUTPUT_STRIP_TRAILING_WHITESPACE
+  RESULT_VARIABLE SPECTRAPACK_GIT_RESULT ERROR_QUIET)
+if(NOT SPECTRAPACK_GIT_RESULT EQUAL 0)
+  set(SPECTRAPACK_ENGINE_COMMIT "unavailable")
+else()
+  execute_process(COMMAND git status --porcelain --untracked-files=normal
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE SPECTRAPACK_GIT_CHANGES OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE SPECTRAPACK_GIT_STATUS_RESULT ERROR_QUIET)
+  if(NOT SPECTRAPACK_GIT_STATUS_RESULT EQUAL 0)
+    set(SPECTRAPACK_ENGINE_COMMIT "unavailable")
+  elseif(NOT SPECTRAPACK_GIT_CHANGES STREQUAL "")
+    string(APPEND SPECTRAPACK_ENGINE_COMMIT "-dirty")
+  endif()
+endif()
+set(SPECTRAPACK_ENGINE_VERSION "${PROJECT_VERSION}")
 
 add_subdirectory(engine/dependencies)
+add_subdirectory(engine/pack_io)
+add_subdirectory(engine/service)
+add_subdirectory(engine/cli)
 add_subdirectory(tests)
 add_subdirectory(benchmarks)

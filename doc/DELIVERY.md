@@ -7,8 +7,8 @@ The spec's `T-001`–`T-008` are initial implementation tasks; `AT-01`–`AT-17`
 | Task | Branch | Prerequisite / boundary |
 | --- | --- | --- |
 | QA-01 test foundation | `feature/QA-01-test-foundation` | Merged through PR #1 at `067f1e52`; native tests, analytic/reference helpers, bounded performance reporting |
-| [T-001 CPU build and dependency lock](T-001.md) | `feature/AT-01-windows-cpu-build` | Implemented from merged QA-01; local/hosted checks pass, awaiting user review and merge |
-| T-002 schemas and service envelopes | `feature/AT-13-protocol-contracts` | T-001 merged; versioned schemas, common decoding, asset IDs, CLI/service handshake |
+| [T-001 CPU build and dependency lock](T-001.md) | `feature/AT-01-windows-cpu-build` | Merged through PR #2 at `2568c38`; local/hosted checks pass |
+| [T-002 schemas and service envelopes](T-002.md) | `feature/AT-13-protocol-contracts` | Implemented, locally verified and Astra-reviewed from merged T-001; awaiting user review/merge; hosted evidence in feature CI |
 | T-003 STL/units/diagnostics | `feature/AT-03-stl-import` | Build/contracts merged; test-first authoritative import pipeline |
 | T-004 independent solid validator | `feature/AT-06-solid-validator` | Import merged; adversarial overlap, containment, cavity and clearance gates |
 | T-005 LOD and conservative fields | `feature/AT-05-geometry-representations` | Relevant import/validator contracts merged; representation isolation |

@@ -1,0 +1,50 @@
+From 0034c113477f83c28d4380de1ee189c25b1168e6 Mon Sep 17 00:00:00 2001
+From: bvstrien <149567363+bvstrien@users.noreply.github.com>
+Date: Wed, 31 Jan 2024 11:54:34 +0100
+Subject: [PATCH] Fix cmake install target on windows (#315)
+
+* Fix cmake install target on windows
+
+Install the dll to the bin directory, instead of a non-existent CMAKE_INSTALL_RUNTIMEDIR.
+
+* Combine install targets
+
+The only difference was the `RUNTIME DESTINATION` for windows. Since
+that is set to the default path, they can use the same definition.
+---
+ src/CMakeLists.txt | 24 +++++++-----------------
+ 1 file changed, 7 insertions(+), 17 deletions(-)
+
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index f895d66..7848554 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -54,21 +54,11 @@ target_link_libraries(nlohmann_json_schema_validator PUBLIC
+ 
+ if (JSON_VALIDATOR_INSTALL)
+     # Normal installation target to system. When using scikit-build check python subdirectory
+-    if (WIN32)
+-        # TODO: Probably wrong, please fix
+-        install(TARGETS nlohmann_json_schema_validator
+-                EXPORT nlohmann_json_schema_validatorTargets
+-                LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT nlohmann_json_schema_validator_Runtime
+-                NAMELINK_COMPONENT nlohmann_json_schema_validator_Development
+-                ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT nlohmann_json_schema_validator_Development
+-                PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nlohmann COMPONENT nlohmann_json_schema_validator_Development
+-                RUNTIME DESTINATION ${CMAKE_INSTALL_RUNTIMEDIR} COMPONENT nlohmann_json_schema_validator_Runtime)
+-    else ()
+-        install(TARGETS nlohmann_json_schema_validator
+-                EXPORT nlohmann_json_schema_validatorTargets
+-                LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT nlohmann_json_schema_validator_Runtime
+-                NAMELINK_COMPONENT nlohmann_json_schema_validator_Development
+-                ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT nlohmann_json_schema_validator_Development
+-                PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nlohmann COMPONENT nlohmann_json_schema_validator_Development)
+-    endif ()
++    install(TARGETS nlohmann_json_schema_validator
++            EXPORT nlohmann_json_schema_validatorTargets
++            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT nlohmann_json_schema_validator_Runtime
++            NAMELINK_COMPONENT nlohmann_json_schema_validator_Development
++            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT nlohmann_json_schema_validator_Development
++            PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/nlohmann COMPONENT nlohmann_json_schema_validator_Development
++            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT nlohmann_json_schema_validator_Runtime)
+ endif ()
