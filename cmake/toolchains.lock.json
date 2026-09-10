@@ -14,7 +14,23 @@
       "msvc_runtime": "static"
     },
     "hosted-windows-2025": {
+      "source": "windows-2025-vs2026 20260824.214.3 runner image; measured again in T-002 run 34509492355",
+      "runner_image": "win25-vs2026",
+      "runner_image_version": "20260824.214.3",
+      "architecture": "x64",
+      "vs_version": "18.9.12112.369",
+      "toolset": "14.51.36231",
+      "compiler": "19.51.36256.0",
+      "windows_sdk": "10.0.26100.0",
+      "cmake": "4.4.2",
+      "ninja": "1.13.2",
+      "triplet": "x64-windows-static",
+      "msvc_runtime": "static"
+    },
+    "hosted-windows-2025-20260907": {
       "source": "windows-2025-vs2026 20260907.229.1 runner image readme; qualification tracked in doc/T-002.md",
+      "runner_image": "win25-vs2026",
+      "runner_image_version": "20260907.229.1",
       "architecture": "x64",
       "vs_version": "18.9.12120.119",
       "toolset": "14.51.36231",

@@ -76,9 +76,14 @@ jobs:
           [pscustomobject]@{image=$env:ImageOS;image_version=$env:ImageVersion;visual_studio=$vs;msvc_toolsets=$msvc;windows_sdk_include=$sdk;cmake=$cmake;ninja=$ninja} | ConvertTo-Json -Depth 8 | Set-Content .local/ci/hosted-tools.json
       - name: Build and run native Debug and Release tests
         run: |
+          $profiles = (Get-Content cmake/toolchains.lock.json -Raw | ConvertFrom-Json).profiles.PSObject.Properties
+          if ([string]::IsNullOrWhiteSpace($env:ImageOS) -or [string]::IsNullOrWhiteSpace($env:ImageVersion)) { throw 'Hosted image identity is missing' }
+          $matchedProfiles = @($profiles | Where-Object { $_.Value.runner_image -eq $env:ImageOS -and $_.Value.runner_image_version -eq $env:ImageVersion })
+          if ($matchedProfiles.Count -ne 1) { throw "No unique locked profile for hosted image $env:ImageOS $env:ImageVersion" }
+          $hostedProfile = $matchedProfiles[0].Name
           foreach ($configuration in @('debug', 'release')) {
             $log = ".local/ci/native-$configuration.log"
-            & ./tools/Invoke-NativeTests.ps1 -Preset "windows-ninja-$configuration" -VcpkgRoot "$PWD/.local/vcpkg" -ToolchainProfile hosted-windows-2025 -PythonPath python -Fresh 2>&1 | Tee-Object -FilePath $log
+            & ./tools/Invoke-NativeTests.ps1 -Preset "windows-ninja-$configuration" -VcpkgRoot "$PWD/.local/vcpkg" -ToolchainProfile $hostedProfile -PythonPath python -Fresh 2>&1 | Tee-Object -FilePath $log
             $testResult = $LASTEXITCODE
             Get-Content $log -Tail 45
             if ($testResult -ne 0) { exit $testResult }

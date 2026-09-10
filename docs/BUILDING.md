@@ -11,6 +11,11 @@ Use a vcpkg checkout at the manifest's `builtin-baseline`, with its matching boo
 
 [toolchains.lock.json](../cmake/toolchains.lock.json) defines exact local and hosted profiles. Install the specified Visual Studio, MSVC toolset, Windows SDK, CMake and Ninja versions. The runner rejects drift; a new environment requires a reviewed profile update backed by measured versions and passing checks. Python 3.12 or later runs the standard-library tooling. The hosted profile is tied to the recorded Windows VS 2026 image; a runner image update can require deliberate requalification.
 
+During hosted image rollouts, CI selects a unique locked profile using `ImageOS`
+and `ImageVersion`. Both observed images have separate exact entries; unknown
+images are rejected. Retained tool inventories and the selected build metadata
+identify which profile a successful run actually qualifies.
+
 ## Build and test
 
 From the repository root in PowerShell:
