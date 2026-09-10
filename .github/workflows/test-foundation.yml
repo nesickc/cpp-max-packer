@@ -94,7 +94,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/stage.log; exit $LASTEXITCODE }
           cmake --install out/build/windows-ninja-release --prefix $packageRoot --component engine *>> .local/ci/stage.log
           if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/stage.log; exit $LASTEXITCODE }
-          $runtimePython = (Get-Command python -CommandType Application).Source
+          $runtimePython = (python -c "import sys; print(sys.executable)").Trim()
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $runtimePython -PathType Leaf)) { throw 'Could not resolve the active Python executable' }
           $engine = Join-Path $packageRoot 'bin/spectrapack-engine.exe'
           $serviceTest = Join-Path $PWD 'tests/protocol/service_subprocess_test.py'
           $importTest = Join-Path $PWD 'tests/protocol/import_subprocess_test.py'
