@@ -43,7 +43,7 @@ with tempfile.TemporaryDirectory() as outside_checkout:
         if process.stderr is not None:
             process.stderr.close()
 
-for command in ("inspect", "pack", "validate", "benchmark"):
+for command in ("pack", "validate", "benchmark"):
     unsupported = subprocess.run([engine, command], capture_output=True, text=True, timeout=5)
     assert unsupported.returncode == 3
     assert len(unsupported.stdout.splitlines()) == 1

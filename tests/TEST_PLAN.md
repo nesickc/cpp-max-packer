@@ -1,6 +1,10 @@
 # Spec-linked test plan
 
-The product acceptance cases below are **planned**, not passing tests. Executable foundation checks are listed in [README.md](README.md); they do not establish engine correctness. Read the canonical [spec §10](../doc/spectrapack-spec.md#10-acceptance-tests) for the full gates.
+The rows below describe full product acceptance gates; implemented slices and
+remaining qualification are tracked in the linked tickets and
+[project status](../doc/PROJECT_STATUS.md). Executable foundation checks are listed
+in [README.md](README.md); they do not establish engine correctness. Read the
+canonical [spec §10](../doc/spectrapack-spec.md#10-acceptance-tests) for the full gates.
 
 ## Test-first work order
 
@@ -13,6 +17,14 @@ The product acceptance cases below are **planned**, not passing tests. Executabl
 For each slice, name its requirement and AT case, add a failing observable test, record the intended failure, implement, and record the passing command. Refactor only while preserving those gates. Use fixed work and seeds for deterministic regressions. Do not create an all-green collection of skipped acceptance placeholders.
 
 ## Practical cases and independent checks
+
+[T-003](../doc/T-003.md) adds native STL/frame/solid/repair cases, source-preserving
+CLI publication tests, and bounded inspection of all ten supplied meshes. Analytic
+tests include independent exact-predicate oracles, exhaustive small AABB pair
+counts, nested cavities, and actual seam repair. Practical expectations must be
+reviewed before qualification; an indeterminate result cannot become a passing
+fixture merely because its source is watertight. Placement/job/export obligations
+remain separate from this import slice.
 
 T-002's bounded contract coverage is separate from full AT-13/AT-14. Its checks
 cover native/Ajv agreement for structural fixtures, semantic mutations and source

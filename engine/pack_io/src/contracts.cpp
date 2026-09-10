@@ -225,25 +225,37 @@ bool source_frame_valid(const Json& asset) {
   const auto& maximum = bounds.at("max");
   const double scale = source.at("unit_scale_mm").get<double>();
   const auto& units = source.at("units");
-  if ((units == "inch" && !approximately_equal(scale, 25.4)) ||
-      (units == "mm" && !approximately_equal(scale, 1.0))) return false;
+  if ((units == "inch" && scale != 25.4) ||
+      (units == "mm" && scale != 1.0)) return false;
   const auto& dimensions = asset.at("dimensions_mm");
   const auto& matrix = asset.at("frame").at("source_to_local");
   for (std::size_t axis = 0; axis != 3; ++axis) {
     const double low = minimum.at(axis).get<double>();
     const double high = maximum.at(axis).get<double>();
-    if (!(high > low) || !approximately_equal(dimensions.at(axis).get<double>(), scale * (high - low))) return false;
-    const double origin = asset.at("role") == "object" ? scale * (low + high) / 2.0 : scale * low;
+    const bool needs_positive_extent = asset.at("diagnostics").at("status") == "valid" || asset.at("state") == "accepted";
+    const double scaled_low = scale * low;
+    const double scaled_high = scale * high;
+    const double expected_dimension = scaled_high - scaled_low;
+    const double origin = asset.at("role") == "object"
+        ? scaled_low / 2.0 + scaled_high / 2.0
+        : scaled_low;
+    if ((needs_positive_extent && !(high > low)) || high < low ||
+        !std::isfinite(scaled_low) || !std::isfinite(scaled_high) ||
+        !std::isfinite(expected_dimension) || !std::isfinite(origin) ||
+        (needs_positive_extent && (!(expected_dimension > 0.0) ||
+                                   !(dimensions.at(axis).get<double>() > 0.0))) ||
+        !translation_equal(dimensions.at(axis).get<double>(), expected_dimension)) return false;
     for (std::size_t column = 0; column != 4; ++column) {
       const double expected = column == axis ? scale : (column == 3 ? -origin : 0.0);
       const double actual = matrix.at(axis).at(column).get<double>();
-      if (column == 3 ? !translation_equal(actual, expected) : !approximately_equal(actual, expected)) return false;
+      if (column == 3 ? !translation_equal(actual, expected) :
+          (column == axis ? actual != expected : actual != 0.0)) return false;
     }
   }
-  return approximately_equal(matrix.at(3).at(0).get<double>(), 0.0) &&
-      approximately_equal(matrix.at(3).at(1).get<double>(), 0.0) &&
-      approximately_equal(matrix.at(3).at(2).get<double>(), 0.0) &&
-      approximately_equal(matrix.at(3).at(3).get<double>(), 1.0);
+  return matrix.at(3).at(0).get<double>() == 0.0 &&
+      matrix.at(3).at(1).get<double>() == 0.0 &&
+      matrix.at(3).at(2).get<double>() == 0.0 &&
+      matrix.at(3).at(3).get<double>() == 1.0;
 }
 
 bool utc_calendar_valid(std::string_view value) {

@@ -591,6 +591,88 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
     "path": {
       "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/portable_path"
     },
+    "counter": { "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/counter" },
+    "check_state": { "enum": ["not_run", "complete", "indeterminate"] },
+    "bounds": {
+      "type": "object", "required": ["min", "max"],
+      "properties": {
+        "min": { "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/vec3" },
+        "max": { "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/vec3" }
+      }, "additionalProperties": false
+    },
+    "cleanup": {
+      "type": "object",
+      "required": ["exact_vertices_merged", "duplicate_faces_removed", "zero_area_faces_removed", "faces_reoriented"],
+      "properties": {
+        "exact_vertices_merged": { "$ref": "#/definitions/counter" },
+        "duplicate_faces_removed": { "$ref": "#/definitions/counter" },
+        "zero_area_faces_removed": { "$ref": "#/definitions/counter" },
+        "faces_reoriented": { "$ref": "#/definitions/counter" }
+      }, "additionalProperties": false
+    },
+    "shell": {
+      "type": "object", "required": ["id", "triangle_count", "input_orientation", "final_orientation"],
+      "properties": {
+        "id": { "$ref": "#/definitions/counter" },
+        "parent_id": { "anyOf": [{ "$ref": "#/definitions/counter" }, { "type": "null" }] },
+        "depth": { "anyOf": [{ "$ref": "#/definitions/counter" }, { "type": "null" }] },
+        "triangle_count": { "$ref": "#/definitions/counter" },
+        "input_orientation": { "enum": ["unresolved", "outward", "inward"] },
+        "final_orientation": { "enum": ["unresolved", "outward", "inward"] }
+      }, "additionalProperties": false
+    },
+    "import_issue": {
+      "type": "object", "required": ["reason", "message"],
+      "properties": {
+        "reason": { "type": "string", "minLength": 1 },
+        "message": { "type": "string", "minLength": 1 },
+        "face_id": { "$ref": "#/definitions/counter" },
+        "other_face_id": { "$ref": "#/definitions/counter" },
+        "vertex_id": { "$ref": "#/definitions/counter" }
+      }, "additionalProperties": false
+    },
+    "import_diagnostics": {
+      "type": "object",
+      "required": ["encoding", "source_byte_size", "source_triangle_count", "vertex_count", "triangle_count", "component_count", "boundary_edges", "nonmanifold_edges", "nonmanifold_vertices", "zero_area_faces", "duplicate_faces", "self_intersection_pairs", "cleanup", "topology_check", "intersection_check", "containment_check", "candidate_pair_tests", "predicate_work", "issues_truncated", "shells", "issues"],
+      "properties": {
+        "encoding": { "enum": ["ascii", "binary"] },
+        "source_byte_size": { "$ref": "#/definitions/counter" },
+        "source_triangle_count": { "$ref": "#/definitions/counter" },
+        "vertex_count": { "$ref": "#/definitions/counter" },
+        "triangle_count": { "$ref": "#/definitions/counter" },
+        "component_count": { "$ref": "#/definitions/counter" },
+        "boundary_edges": { "$ref": "#/definitions/counter" },
+        "nonmanifold_edges": { "$ref": "#/definitions/counter" },
+        "nonmanifold_vertices": { "$ref": "#/definitions/counter" },
+        "zero_area_faces": { "$ref": "#/definitions/counter" },
+        "duplicate_faces": { "$ref": "#/definitions/counter" },
+        "self_intersection_pairs": { "$ref": "#/definitions/counter" },
+        "cleanup": { "$ref": "#/definitions/cleanup" },
+        "topology_check": { "$ref": "#/definitions/check_state" },
+        "intersection_check": { "$ref": "#/definitions/check_state" },
+        "containment_check": { "$ref": "#/definitions/check_state" },
+        "mesh_bounds_mm": { "$ref": "#/definitions/bounds" },
+        "volume_mm3": { "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/positive" },
+        "candidate_pair_tests": { "$ref": "#/definitions/counter" },
+        "predicate_work": { "$ref": "#/definitions/counter" },
+        "issues_truncated": { "type": "boolean" },
+        "shells": { "type": "array", "items": { "$ref": "#/definitions/shell" } },
+        "issues": { "type": "array", "items": { "$ref": "#/definitions/import_issue" } }
+      }, "additionalProperties": false
+    },
+    "repair_proposal": {
+      "type": "object",
+      "required": ["sha256", "path", "before", "after", "tolerance_mm", "max_displacement_mm", "candidate_status"],
+      "properties": {
+        "sha256": { "$ref": "#/definitions/hash" },
+        "path": { "$ref": "#/definitions/path" },
+        "before": { "$ref": "#/definitions/preview" },
+        "after": { "$ref": "#/definitions/preview" },
+        "tolerance_mm": { "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/positive" },
+        "max_displacement_mm": { "type": "number", "minimum": 0 },
+        "candidate_status": { "enum": ["valid", "invalid", "indeterminate"] }
+      }, "additionalProperties": false
+    },
     "source": {
       "type": "object",
       "required": [
@@ -615,7 +697,8 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         },
         "unit_scale_mm": {
           "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/positive"
-        }
+        },
+        "byte_size": { "$ref": "#/definitions/counter" }
       },
       "additionalProperties": false
     },
@@ -667,7 +750,8 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
           "items": {
             "type": "string"
           }
-        }
+        },
+        "import": { "$ref": "#/definitions/import_diagnostics" }
       },
       "additionalProperties": false
     },
@@ -789,7 +873,8 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         },
         "preview": {
           "$ref": "#/definitions/preview"
-        }
+        },
+        "repair_proposal": { "$ref": "#/definitions/repair_proposal" }
       },
       "additionalProperties": false
     },
@@ -825,6 +910,7 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
     },
     "accepted": {
       "allOf": [
+        { "not": { "required": ["repair_proposal"] } },
         {
           "$ref": "#/definitions/base"
         },

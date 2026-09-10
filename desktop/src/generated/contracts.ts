@@ -235,6 +235,7 @@ export type Inspected = Base & {
 };
 export type Hash = string;
 export type Path = string;
+export type Counter = number;
 /**
  * @minItems 3
  * @maxItems 3
@@ -250,6 +251,7 @@ export type Matrix4 = [
   [number, number, number, number],
   [number, number, number, number]
 ];
+export type CheckState = "not_run" | "complete" | "indeterminate";
 export type Repair = null | {
   path: Path;
   sha256: Hash;
@@ -275,12 +277,14 @@ export interface Base {
   accepted_solid?: Solid;
   repair_record?: Repair;
   preview?: Preview;
+  repair_proposal?: RepairProposal;
 }
 export interface Source {
   sha256: Hash;
   path: Path;
   units: "mm" | "inch" | "custom";
   unit_scale_mm: number;
+  byte_size?: Counter;
 }
 export interface Frame {
   source_bounds: {
@@ -292,17 +296,77 @@ export interface Frame {
 export interface Diagnostics {
   status: "valid" | "invalid" | "indeterminate";
   messages: string[];
+  import?: ImportDiagnostics;
+}
+export interface ImportDiagnostics {
+  encoding: "ascii" | "binary";
+  source_byte_size: Counter;
+  source_triangle_count: Counter;
+  vertex_count: Counter;
+  triangle_count: Counter;
+  component_count: Counter;
+  boundary_edges: Counter;
+  nonmanifold_edges: Counter;
+  nonmanifold_vertices: Counter;
+  zero_area_faces: Counter;
+  duplicate_faces: Counter;
+  self_intersection_pairs: Counter;
+  cleanup: Cleanup;
+  topology_check: CheckState;
+  intersection_check: CheckState;
+  containment_check: CheckState;
+  mesh_bounds_mm?: Bounds;
+  volume_mm3?: number;
+  candidate_pair_tests: Counter;
+  predicate_work: Counter;
+  issues_truncated: boolean;
+  shells: Shell[];
+  issues: ImportIssue[];
+}
+export interface Cleanup {
+  exact_vertices_merged: Counter;
+  duplicate_faces_removed: Counter;
+  zero_area_faces_removed: Counter;
+  faces_reoriented: Counter;
+}
+export interface Bounds {
+  min: Vec3;
+  max: Vec3;
+}
+export interface Shell {
+  id: Counter;
+  parent_id?: Counter | null;
+  depth?: Counter | null;
+  triangle_count: Counter;
+  input_orientation: "unresolved" | "outward" | "inward";
+  final_orientation: "unresolved" | "outward" | "inward";
+}
+export interface ImportIssue {
+  reason: string;
+  message: string;
+  face_id?: Counter;
+  other_face_id?: Counter;
+  vertex_id?: Counter;
 }
 export interface Solid {
   sha256: Hash;
   path: Path;
   format: "binary_little_endian_ply_f64_u32";
-  vertex_count: number;
-  triangle_count: number;
+  vertex_count: Counter;
+  triangle_count: Counter;
 }
 export interface Preview {
   path: Path;
   sha256: Hash;
+}
+export interface RepairProposal {
+  sha256: Hash;
+  path: Path;
+  before: Preview;
+  after: Preview;
+  tolerance_mm: number;
+  max_displacement_mm: number;
+  candidate_status: "valid" | "invalid" | "indeterminate";
 }
 
 }
@@ -470,12 +534,14 @@ export interface Base {
     accepted_by_user: true;
   };
   preview?: Preview;
+  repair_proposal?: RepairProposal;
 }
 export interface Source {
   sha256: Hash;
   path: string;
   units: "mm" | "inch" | "custom";
   unit_scale_mm: number;
+  byte_size?: C;
 }
 export interface Frame {
   source_bounds: {
@@ -487,6 +553,57 @@ export interface Frame {
 export interface Diagnostics {
   status: "valid" | "invalid" | "indeterminate";
   messages: string[];
+  import?: ImportDiagnostics;
+}
+export interface ImportDiagnostics {
+  encoding: "ascii" | "binary";
+  source_byte_size: C;
+  source_triangle_count: C;
+  vertex_count: C;
+  triangle_count: C;
+  component_count: C;
+  boundary_edges: C;
+  nonmanifold_edges: C;
+  nonmanifold_vertices: C;
+  zero_area_faces: C;
+  duplicate_faces: C;
+  self_intersection_pairs: C;
+  cleanup: Cleanup;
+  topology_check: "not_run" | "complete" | "indeterminate";
+  intersection_check: "not_run" | "complete" | "indeterminate";
+  containment_check: "not_run" | "complete" | "indeterminate";
+  mesh_bounds_mm?: Bounds;
+  volume_mm3?: number;
+  candidate_pair_tests: C;
+  predicate_work: C;
+  issues_truncated: boolean;
+  shells: Shell[];
+  issues: ImportIssue[];
+}
+export interface Cleanup {
+  exact_vertices_merged: C;
+  duplicate_faces_removed: C;
+  zero_area_faces_removed: C;
+  faces_reoriented: C;
+}
+export interface Bounds {
+  min: Vec3;
+  max: Vec3;
+}
+export interface Shell {
+  id: C;
+  parent_id?: C | null;
+  depth?: C | null;
+  triangle_count: C;
+  input_orientation: "unresolved" | "outward" | "inward";
+  final_orientation: "unresolved" | "outward" | "inward";
+}
+export interface ImportIssue {
+  reason: string;
+  message: string;
+  face_id?: C;
+  other_face_id?: C;
+  vertex_id?: C;
 }
 export interface Solid {
   sha256: Hash;
@@ -498,6 +615,15 @@ export interface Solid {
 export interface Preview {
   path: string;
   sha256: Hash;
+}
+export interface RepairProposal {
+  sha256: Hash;
+  path: string;
+  before: Preview;
+  after: Preview;
+  tolerance_mm: number;
+  max_displacement_mm: number;
+  candidate_status: "valid" | "invalid" | "indeterminate";
 }
 export interface ContentRef {
   source_sha256: Hash;

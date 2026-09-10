@@ -94,8 +94,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/stage.log; exit $LASTEXITCODE }
           cmake --install out/build/windows-ninja-release --prefix $packageRoot --component engine *>> .local/ci/stage.log
           if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/stage.log; exit $LASTEXITCODE }
-          python tests/protocol/service_subprocess_test.py (Join-Path $packageRoot 'bin/spectrapack-engine.exe') *> .local/ci/staged-protocol.log
-          if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/staged-protocol.log; exit $LASTEXITCODE }
+          $runtimePython = (python -c "import sys; print(sys.executable)").Trim()
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $runtimePython -PathType Leaf)) { throw 'Could not resolve the active Python executable' }
+          $engine = Join-Path $packageRoot 'bin/spectrapack-engine.exe'
+          $serviceTest = Join-Path $PWD 'tests/protocol/service_subprocess_test.py'
+          $importTest = Join-Path $PWD 'tests/protocol/import_subprocess_test.py'
+          $serviceLog = Join-Path $PWD '.local/ci/staged-protocol.log'
+          $importLog = Join-Path $PWD '.local/ci/staged-import.log'
           $diagnostic = Join-Path $packageRoot 'diagnostics/spectrapack_cpu_dependency_smoke.exe'
           dumpbin /DEPENDENTS $diagnostic *> .local/ci/pe-imports.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -107,6 +112,11 @@ jobs:
             try {
               & $diagnostic --runtime-report $runtimeReport *> $diagnosticLog
               $diagnosticResult = $LASTEXITCODE
+              if ($diagnosticResult -ne 0) { exit $diagnosticResult }
+              & $runtimePython $serviceTest $engine *> $serviceLog
+              if ($LASTEXITCODE -ne 0) { Get-Content $serviceLog; exit $LASTEXITCODE }
+              & $runtimePython $importTest $engine *> $importLog
+              if ($LASTEXITCODE -ne 0) { Get-Content $importLog; exit $LASTEXITCODE }
             } finally { Pop-Location }
           } finally { $env:PATH = $savedPath }
           Get-Content $diagnosticLog
@@ -121,6 +131,10 @@ jobs:
         run: |
           python tests/protocol/service_replay_perf.py out/build/windows-ninja-release/bin/spectrapack-engine.exe --samples 5 --requests 1000 > .local/ci/service-replay.json 2> .local/ci/service-replay.log
           exit $LASTEXITCODE
+      - name: Bounded STL import qualification and timings
+        run: |
+          python benchmarks/run_import.py --executable out/build/windows-ninja-release/bin/spectrapack-engine.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --output .local/ci/import.json --samples 3 --warmup 1 --timeout-seconds 120 --overall-timeout-seconds 600 *> .local/ci/import.log
+          exit $LASTEXITCODE
       - name: Retain test and timing evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -129,6 +143,7 @@ jobs:
           path: |
             .local/ci/*.log
             .local/ci/*.json
+            .local/ci/import.json.artifacts-*/**
             ${{ runner.temp }}/spectrapack-cpu-package/
             out/build/windows-ninja-*/build-metadata.json
             out/build/windows-ninja-*/installed-dependencies.json

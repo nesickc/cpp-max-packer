@@ -2,8 +2,10 @@
 
 [T-001](../doc/T-001.md) supplies the C++20 reference tests and CPU dependency diagnostic.
 [T-002](../doc/T-002.md) adds versioned contracts and the capability CLI/stdio service.
-Production geometry adapters, packing and the desktop application follow in later
-tasks. See [ADR 0004](../spec/decisions/0004-versioned-contracts.md) for this boundary.
+[T-003](../doc/T-003.md) adds STL inspection and immutable accepted geometry;
+packing and the desktop application follow in later tasks. See
+[ADR 0005](../spec/decisions/0005-stl-import-and-acceptance.md) for the import boundary
+and the ticket for its current qualification status.
 
 ## Locked prerequisites
 
@@ -41,6 +43,11 @@ diff, and rebuild native tests. Native tests exercise the same checked-in schema
 
 Native checks exercise exact analytic geometry through Manifold and FCL, meshoptimizer triangle preservation, a non-power-of-two pocketfft transform and explicit inverse normalization, and typed JSON round trips. Foundation cases retain analytic fixtures and direct integer correlation. These are library characterization checks, not completed product acceptance cases.
 
+T-003 adds native parser, frame, exact-predicate, shell-analysis and repair tests,
+plus process tests of source-preserving inspection and repair acceptance. FCL
+supplies the import broadphase; exact predicates check candidate pairs. Manifold's
+construction status alone does not authorize an imported solid.
+
 ## Stage and inspect the diagnostic
 
 After the Release wrapper succeeds:
@@ -65,17 +72,37 @@ python tools/Inspect-CpuBuild.py audit-runtime --package-root $packageRoot --run
 
 The [Windows workflow](../.github/workflows/test-foundation.yml) performs those steps and uploads the package, licenses and evidence. This staged check does not establish clean Windows 10/11 installation or the full AT-01 import/solve/export workflow.
 
-Stage the capability-only engine with its runtime-library notices separately:
+Stage the engine with its runtime-library notices separately:
 
 ```powershell
 cmake --install out/build/windows-ninja-release --prefix $packageRoot --component engine
 & "$packageRoot/bin/spectrapack-engine.exe" capabilities --json
 python tests/protocol/service_subprocess_test.py "$packageRoot/bin/spectrapack-engine.exe"
+python tests/protocol/import_subprocess_test.py "$packageRoot/bin/spectrapack-engine.exe"
 ```
 
 The process test runs the engine outside the checkout and checks that it responds
 before stdin closes. The executable embeds its contract catalog. There is no
-installer or packing/import implementation in this component yet.
+installer or packing implementation in this component yet. CI also runs the staged
+inspection tests with developer directories removed from `PATH`.
+
+## Inspect an STL
+
+```powershell
+& "$packageRoot/bin/spectrapack-engine.exe" inspect --stl rc/containers/10_kg_np.stl --role container --units mm --report .local/import/container.json
+```
+
+Units are required: `mm`, `inch`, or `custom` with a positive `--scale-mm` value.
+The report records original coordinates, unit/frame mapping, diagnostics and
+content-addressed source/mesh artifacts beside the report. `state: accepted` with
+`diagnostics.status: valid` identifies accepted geometry. Exit zero alone means
+inspection completed and can also accompany invalid geometry or a pending repair.
+
+For a bounded welding proposal, add `--weld-tolerance-mm VALUE`. Inspect the
+before/after diagnostics and previews, then repeat the same options with
+`--accept-repair SHA256`, using the returned proposal token, to accept that exact
+candidate. Only a fully valid candidate can be accepted; the original STL remains
+unchanged. Full CLI/report semantics are in ADR 0005.
 
 ## Bounded performance checks
 
@@ -94,3 +121,16 @@ python tests/protocol/service_replay_perf.py out/build/windows-ninja-release/bin
 One warmup precedes five fixed-work samples. The watchdog rejects a stalled run;
 times are informational and include process/transport overhead. This does not
 measure solver performance or qualify stop latency.
+
+T-003 adds inspection of all ten pinned STLs and three Release samples of the
+largest source after one warmup:
+
+```powershell
+python benchmarks/run_import.py --executable out/build/windows-ninja-release/bin/spectrapack-engine.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --output .local/import-release.json --samples 3 --warmup 1 --timeout-seconds 120 --overall-timeout-seconds 600
+```
+
+Qualification requires the reviewed fixture expectations and determinate outcomes.
+The runner independently checks source/frame/mesh artifacts and container volumes,
+retains per-process diagnostics and reports informational median/p95 inspection
+times. `--discover` retains unqualified observations for review and cannot approve
+its own baseline. See T-003 for outstanding gates.
