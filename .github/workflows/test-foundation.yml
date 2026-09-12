@@ -12,7 +12,9 @@ permissions:
 jobs:
   windows-cpu-tests:
     runs-on: windows-2025-vs2026
-    timeout-minutes: 30
+    # Preserve the existing build/regression allowance plus the bounded
+    # twenty-minute representation qualifier.
+    timeout-minutes: 50
     env:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.local/vcpkg-binary-cache
     defaults:
@@ -139,6 +141,14 @@ jobs:
         run: |
           python benchmarks/run_validation.py --executable out/build/windows-ninja-release/bin/spectrapack_validation_benchmark.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --output .local/ci/validation.json --samples 3 --warmup 1 --timeout-seconds 300 --overall-timeout-seconds 600 *> .local/ci/validation.log
           exit $LASTEXITCODE
+      - name: Generate million-triangle representation fixture
+        run: |
+          python benchmarks/subdivided_cube.py --output .local/ci/cube_subdivided_n300.stl --subdivisions 300 *> .local/ci/representation-fixture.log
+          exit $LASTEXITCODE
+      - name: Bounded geometry representation qualification and timings
+        run: |
+          python benchmarks/run_representation.py --executable out/build/windows-ninja-release/bin/spectrapack_representation_benchmark.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --large-fixture .local/ci/cube_subdivided_n300.stl --output .local/ci/representation.json --samples 3 --warmup 1 --timeout-seconds 900 --overall-timeout-seconds 1200 *> .local/ci/representation.log
+          exit $LASTEXITCODE
       - name: Retain test and timing evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -149,6 +159,7 @@ jobs:
             .local/ci/*.json
             .local/ci/import.json.artifacts-*/**
             .local/ci/validation.json.artifacts-*/**
+            .local/ci/representation.json.artifacts-*/**
             ${{ runner.temp }}/spectrapack-cpu-package/
             out/build/windows-ninja-*/build-metadata.json
             out/build/windows-ninja-*/installed-dependencies.json

@@ -20,6 +20,10 @@ target_link_libraries(spectrapack_dependency_geometry INTERFACE
 add_library(spectrapack_dependency_import_geometry INTERFACE)
 target_link_libraries(spectrapack_dependency_import_geometry INTERFACE fcl)
 
+add_library(spectrapack_dependency_display_geometry INTERFACE)
+target_link_libraries(spectrapack_dependency_display_geometry INTERFACE
+  meshoptimizer::meshoptimizer)
+
 add_library(spectrapack_dependency_cpu_compute INTERFACE)
 target_include_directories(spectrapack_dependency_cpu_compute INTERFACE
   "${SPECTRAPACK_POCKETFFT_INCLUDE_DIR}"
@@ -68,7 +72,7 @@ install(FILES
 
 # The standalone engine component carries the notices for its actual linked
 # runtime libraries, even when the optional CPU diagnostic is not staged.
-foreach(port IN ITEMS nlohmann-json json-schema-validator fcl ccd eigen3 octomap)
+foreach(port IN ITEMS nlohmann-json json-schema-validator fcl ccd eigen3 octomap meshoptimizer)
   install(FILES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${port}/copyright"
     DESTINATION "share/licenses/${port}" COMPONENT engine)
 endforeach()

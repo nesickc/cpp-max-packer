@@ -83,6 +83,11 @@ Compute the outside halo before cropping to the requested window, so window
 edges do not become invented walls. Analytic boxes may use direct whole-cell
 inward-plane certificates. Unknown cells remain blocked.
 
+Keep certified interior, certified exterior, boundary and uncertain component
+states distinct until producing the final binary field. In particular, an
+uncertain occupied object cell is not a certificate of permitted container
+material when constructing the complementary blocker mask.
+
 ## Display approximation and admission
 
 Use pinned meshoptimizer 0.25 privately, with normal `meshopt_simplify` and
@@ -106,6 +111,15 @@ temporarily swap process-global allocators around concurrent calls. A bounded
 input-triangle gate covers the non-cancellable simplification operation; it does
 not establish product stop latency.
 
+The allocator throws `std::bad_alloc` on exhausted scratch admission, matching
+meshoptimizer's throwing C++ allocation contract. The adapter catches it with
+its allocation ledger active, verifies released scratch, and restores the TLS
+binding/mutex on a normal exit. MSVC compiles this adapter with `/EHsc-` so it
+does not assume the C-linkage simplifier is nonthrowing; that assumption otherwise
+removed required Release cleanup in the reproduced failure. See
+[Microsoft's exception-model documentation](https://learn.microsoft.com/en-us/cpp/build/reference/eh-exception-handling-model).
+Both Debug and Release must pass allocation-failure and clean-retry tests.
+
 All factories preflight checked geometry/grid sizes and their real concurrent
 buffers, including resident accepted/prepared inputs and explicit caller reserve.
 Fields account for halos, masks, flood queues/labels, outputs, stencil storage,
@@ -115,6 +129,14 @@ tracked working storage, 16,777,216 cells, 1.3 billion kernel work units,
 record explicit bounded overrides. Tracked storage is distinct from process RSS.
 The exact allocation helper is internal to the buffer owner; an unchecked
 caller-provided estimate never bypasses a factory's admission checks.
+
+`AcceptedSolid::resident_buffer_bytes()` supplies a checked optional byte count
+from the owning import storage. Include actual mesh/report buffer capacities
+and any distinct original retained by an accepted repair, counting shared
+storage once. Overflow produces no byte count and representation admission
+fails. This is buffer accounting; allocator/control-block overhead and process
+RSS are separate. LOD and field factories consume the same accessor rather
+than treating public mesh span lengths as resident capacities.
 
 Global work/memory exhaustion returns an operational failure with no completed
 field. Geometric uncertainty is counted and conservatively blocked. Full

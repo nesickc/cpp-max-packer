@@ -1,6 +1,7 @@
 #include "validation_kernel.hpp"
 
 #include "exact_predicates.hpp"
+#include "field_kernel.hpp"
 
 #include <algorithm>
 #include <array>
@@ -972,6 +973,176 @@ Decision point_in_material(Vec3 point,const PlacedSolid& target,Budget& budget) 
   return Decision::indeterminate;
 }
 
+using IntervalVec3 = std::array<Interval,3>;
+
+IntervalVec3 interval_subtract(const IntervalVec3& first,
+                               const IntervalVec3& second) noexcept {
+  return {subtract_interval(first[0],second[0]),
+          subtract_interval(first[1],second[1]),
+          subtract_interval(first[2],second[2])};
+}
+
+IntervalVec3 interval_cross(const IntervalVec3& first,
+                            const IntervalVec3& second) noexcept {
+  return {
+      subtract_interval(multiply_interval(first[1],second[2]),
+                        multiply_interval(first[2],second[1])),
+      subtract_interval(multiply_interval(first[2],second[0]),
+                        multiply_interval(first[0],second[2])),
+      subtract_interval(multiply_interval(first[0],second[1]),
+                        multiply_interval(first[1],second[0]))};
+}
+
+Interval interval_dot(const IntervalVec3& first,
+                      const IntervalVec3& second) noexcept {
+  Interval result=point_interval(0.0);
+  for (int axis=0;axis!=3;++axis)
+    result=add_interval(result,multiply_interval(first[axis],second[axis]));
+  return result;
+}
+
+bool projection_separates(const std::array<IntervalVec3,3>& triangle,
+                          const IntervalVec3& box,
+                          const IntervalVec3& axis) noexcept {
+  Interval triangle_projection=interval_dot(triangle[0],axis);
+  for (int vertex=1;vertex!=3;++vertex) {
+    const auto projection=interval_dot(triangle[vertex],axis);
+    if (!projection.valid) return false;
+    triangle_projection.low=std::min(triangle_projection.low,projection.low);
+    triangle_projection.high=std::max(triangle_projection.high,projection.high);
+  }
+  const auto box_projection=interval_dot(box,axis);
+  return triangle_projection.valid && box_projection.valid &&
+      (triangle_projection.high < box_projection.low ||
+       box_projection.high < triangle_projection.low);
+}
+
+bool triangle_box_disjoint(const std::array<IntervalVec3,3>& triangle,
+                           const IntervalVec3& box) noexcept {
+  for (int axis=0;axis!=3;++axis) {
+    double triangle_low=triangle[0][axis].low;
+    double triangle_high=triangle[0][axis].high;
+    for (int vertex=1;vertex!=3;++vertex) {
+      triangle_low=std::min(triangle_low,triangle[vertex][axis].low);
+      triangle_high=std::max(triangle_high,triangle[vertex][axis].high);
+    }
+    if (triangle_high < box[axis].low || box[axis].high < triangle_low) return true;
+  }
+
+  const auto first=interval_subtract(triangle[1],triangle[0]);
+  const auto second=interval_subtract(triangle[2],triangle[0]);
+  if (projection_separates(triangle,box,interval_cross(first,second))) return true;
+  const std::array<IntervalVec3,3> box_axes{{
+      {point_interval(1),point_interval(0),point_interval(0)},
+      {point_interval(0),point_interval(1),point_interval(0)},
+      {point_interval(0),point_interval(0),point_interval(1)}}};
+  const std::array<IntervalVec3,3> edges{{
+      first,second,interval_subtract(triangle[2],triangle[1])}};
+  for (const auto& edge:edges)
+    for (const auto& axis:box_axes)
+      if (projection_separates(triangle,box,interval_cross(edge,axis))) return true;
+  return false;
+}
+
+std::optional<IntervalVec3> grid_cell_interval(const GridWindow& window,
+                                               CellIndex index) noexcept {
+  constexpr std::int64_t kLargestExactInteger=std::int64_t{1} << 53;
+  IntervalVec3 result;
+  for (int axis=0;axis!=3;++axis) {
+    if (index[axis] < -kLargestExactInteger || index[axis] >= kLargestExactInteger)
+      return std::nullopt;
+    const auto low=add_interval(
+        point_interval(window.lattice.origin_mm[axis]),
+        multiply_interval(point_interval(window.lattice.pitch_mm),
+                          point_interval(static_cast<double>(index[axis]))));
+    const auto high=add_interval(
+        point_interval(window.lattice.origin_mm[axis]),
+        multiply_interval(point_interval(window.lattice.pitch_mm),
+                          point_interval(static_cast<double>(index[axis]+1))));
+    if (!low.valid || !high.valid) return std::nullopt;
+    result[axis]={std::min(low.low,high.low),std::max(low.high,high.high),true};
+  }
+  return result;
+}
+
+ExactOrder compare_grid_expression(double origin,double pitch,std::int64_t index,
+                                   std::span<const Term> terms,
+                                   Budget& budget) noexcept {
+  ScratchCharge scratch(budget,kExactScratchBytes);
+  if (!scratch.held()) return ExactOrder::indeterminate;
+  const double represented_index=static_cast<double>(index);
+  const auto pitch_value=decompose(pitch);
+  const auto index_value=decompose(represented_index);
+  const auto origin_value=decompose(origin);
+  if (!pitch_value.finite || !index_value.finite || !origin_value.finite)
+    return ExactOrder::indeterminate;
+
+  int exponent=std::numeric_limits<int>::max();
+  if (origin_value.sign!=0) exponent=origin_value.exponent;
+  if (index_value.sign!=0)
+    exponent=std::min(exponent,pitch_value.exponent+index_value.exponent);
+  for (const auto term:terms) {
+    const auto value=decompose(term.value);
+    if (!value.finite) return ExactOrder::indeterminate;
+    if (value.sign!=0) exponent=std::min(exponent,value.exponent);
+  }
+  if (exponent==std::numeric_limits<int>::max()) exponent=-1074;
+
+  ExactContext context{budget};
+  Big result=scaled(origin,exponent,context);
+  if (index_value.sign!=0) {
+    // The two scaled operands multiply to an integer measured in 2^exponent,
+    // so this retains the exact dyadic pitch*index product without binary64
+    // cancellation or a long-double assumption.
+    auto pitch_integer=scaled(
+        pitch,exponent-index_value.exponent,context);
+    auto index_integer=scaled(represented_index,index_value.exponent,context);
+    result=add(result,multiply(pitch_integer,index_integer,context),context);
+  }
+  for (const auto term:terms) {
+    auto value=scaled(term.value,exponent,context);
+    if (term.sign<0) value=negate(std::move(value));
+    result=add(result,value,context);
+  }
+  return sign_order(result);
+}
+
+Decision local_point_in_material(Vec3 point,const PreparedSolid& target,
+                                 Budget& budget) {
+  const auto mesh=target.asset->mesh();
+  const auto bounds=target.asset->bounds_mm();
+  const double span=std::max({bounds.max[0]-bounds.min[0],
+                              bounds.max[1]-bounds.min[1],
+                              bounds.max[2]-bounds.min[2],1.0});
+  constexpr std::array<std::array<double,2>,12> slopes{{
+      {{0.137,0.271}},{{0.223,0.419}},{{0.347,0.163}},{{0.431,0.593}},
+      {{0.557,0.317}},{{0.619,0.733}},{{0.709,0.467}},{{0.823,0.197}},
+      {{0.911,0.541}},{{0.293,0.887}},{{0.487,0.773}},{{0.677,0.929}}}};
+  for (const auto slope:slopes) {
+    const Vec3 endpoint{{std::max(point[0],bounds.max[0])+2*span+1,
+                         point[1]+slope[0]*span,point[2]+slope[1]*span}};
+    std::uint64_t crossings{};
+    bool retry=false;
+    exact::WorkBudget exact_budget{
+        std::min<std::uint64_t>(100'000'000,budget.work_remaining())};
+    for (const auto& face:mesh.triangles) {
+      const std::array<Vec3,3> triangle{{mesh.vertices[face[0]],
+                                         mesh.vertices[face[1]],
+                                         mesh.vertices[face[2]]}};
+      const auto relation=exact::segment_triangle_crossing(
+          point,endpoint,triangle,exact_budget);
+      if (relation==exact::SegmentTriangleCrossing::crossing) ++crossings;
+      else if (relation!=exact::SegmentTriangleCrossing::none) {
+        retry=true;
+        break;
+      }
+    }
+    if (!budget.consume_work(exact_budget.used())) return Decision::indeterminate;
+    if (!retry) return crossings%2==0 ? Decision::no : Decision::yes;
+  }
+  return Decision::indeterminate;
+}
+
 using ExactVec3 = std::array<Big,3>;
 using ExactInputPoint = std::array<AxisCoordinate,3>;
 
@@ -1254,6 +1425,229 @@ Threshold conservative_surface_gap(const PlacedSolid& first,const PlacedSolid& s
 }
 
 }  // namespace
+
+std::optional<KernelFailure> rasterize_boundary(
+    const PlacedSolid& solid,const GridWindow& window,
+    std::span<std::uint8_t> boundary,Budget& budget,
+    std::uint64_t& cell_visits,std::uint64_t max_cell_visits) {
+  std::uint64_t cell_count=1;
+  for (const auto extent:window.shape) {
+    if (extent==0 || cell_count>std::numeric_limits<std::uint64_t>::max()/extent)
+      return KernelFailure{"FIELD_INDEX_OVERFLOW","rasterize-boundary"};
+    cell_count*=extent;
+  }
+  if (boundary.size()!=cell_count)
+    return KernelFailure{"FIELD_BUFFER_SIZE","rasterize-boundary"};
+
+  std::array<std::int64_t,3> window_last{};
+  for (int axis=0;axis!=3;++axis) {
+    const auto extent=static_cast<std::int64_t>(window.shape[axis]-1);
+    if (window.first[axis]>std::numeric_limits<std::int64_t>::max()-extent)
+      return KernelFailure{"FIELD_INDEX_OVERFLOW","rasterize-boundary"};
+    window_last[axis]=window.first[axis]+extent;
+  }
+  const auto mesh=solid.prepared->asset->mesh();
+  for (const auto& face:mesh.triangles) {
+    if (!budget.consume_work(32))
+      return KernelFailure{"FIELD_KERNEL_WORK_LIMIT","rasterize-boundary"};
+    std::array<IntervalVec3,3> triangle{{solid.vertex_intervals[face[0]],
+                                        solid.vertex_intervals[face[1]],
+                                        solid.vertex_intervals[face[2]]}};
+    CellIndex first{},last{};
+    bool outside=false;
+    for (int axis=0;axis!=3;++axis) {
+      double low=triangle[0][axis].low,high=triangle[0][axis].high;
+      for (int vertex=1;vertex!=3;++vertex) {
+        low=std::min(low,triangle[vertex][axis].low);
+        high=std::max(high,triangle[vertex][axis].high);
+      }
+      const long double lo=(static_cast<long double>(low)-window.lattice.origin_mm[axis])/
+                           window.lattice.pitch_mm;
+      const long double hi=(static_cast<long double>(high)-window.lattice.origin_mm[axis])/
+                           window.lattice.pitch_mm;
+      if (!std::isfinite(lo)||!std::isfinite(hi) ||
+          lo<=static_cast<long double>(std::numeric_limits<std::int64_t>::min()+1) ||
+          hi>=static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
+        return KernelFailure{"FIELD_INDEX_OVERFLOW","rasterize-boundary"};
+      // Include the cell below a lower grid plane because geometric queries use
+      // closed cells and exact surface contact may occupy both neighbours.
+      first[axis]=static_cast<std::int64_t>(std::floor(lo))-1;
+      last[axis]=static_cast<std::int64_t>(std::floor(hi))+1;
+      if (last[axis]<window.first[axis] || first[axis]>window_last[axis]) outside=true;
+      first[axis]=std::max(first[axis],window.first[axis]);
+      last[axis]=std::min(last[axis],window_last[axis]);
+    }
+    if (outside) continue;
+    for (std::int64_t z=first[2];z<=last[2];++z)
+      for (std::int64_t y=first[1];y<=last[1];++y)
+        for (std::int64_t x=first[0];x<=last[0];++x) {
+          if (cell_visits==max_cell_visits)
+            return KernelFailure{"FIELD_CELL_VISIT_LIMIT","rasterize-boundary"};
+          ++cell_visits;
+          if (!budget.consume_work(180))
+            return KernelFailure{"FIELD_KERNEL_WORK_LIMIT","rasterize-boundary"};
+          const CellIndex index{x,y,z};
+          const auto cell=grid_cell_interval(window,index);
+          if (!cell)
+            return KernelFailure{"FIELD_INDEX_OVERFLOW","rasterize-boundary"};
+          if (!triangle_box_disjoint(triangle,*cell)) {
+            const auto lx=static_cast<std::uint64_t>(x-window.first[0]);
+            const auto ly=static_cast<std::uint64_t>(y-window.first[1]);
+            const auto lz=static_cast<std::uint64_t>(z-window.first[2]);
+            const auto flat=lx+window.shape[0]*(ly+std::uint64_t{window.shape[1]}*lz);
+            boundary[static_cast<std::size_t>(flat)]=2;
+          }
+        }
+  }
+  return std::nullopt;
+}
+
+Decision classify_material_witness(const PlacedSolid& solid,
+                                   Bounds world_interval,Budget& budget) {
+  if (!supported_floating_environment() || !solid.conservative.finite)
+    return Decision::indeterminate;
+  for (int axis=0;axis!=3;++axis)
+    if (!std::isfinite(world_interval.min[axis]) ||
+        !std::isfinite(world_interval.max[axis]) ||
+        world_interval.min[axis]>world_interval.max[axis] ||
+        !std::isfinite(solid.conservative.bounds_mm.min[axis]) ||
+        !std::isfinite(solid.conservative.bounds_mm.max[axis]) ||
+        solid.conservative.bounds_mm.min[axis]>
+            solid.conservative.bounds_mm.max[axis])
+      return Decision::indeterminate;
+  if (!budget.consume_work(64)) return Decision::indeterminate;
+
+  // Both boxes are outward enclosures. Strict separation therefore proves the
+  // entire closed witness cell is outside the solid without a mesh-size parity
+  // scan. Equality still falls through because closed contact is not free.
+  for (int axis=0;axis!=3;++axis)
+    if (world_interval.max[axis]<solid.conservative.bounds_mm.min[axis] ||
+        world_interval.min[axis]>solid.conservative.bounds_mm.max[axis])
+      return Decision::no;
+
+  if (solid.represented_world_exact) {
+    Vec3 represented{};
+    for (int axis=0;axis!=3;++axis)
+      represented[axis]=std::midpoint(world_interval.min[axis],world_interval.max[axis]);
+    return point_in_material(represented,solid,budget);
+  }
+
+  std::array<Interval,3> shifted;
+  for (int axis=0;axis!=3;++axis)
+    shifted[axis]=subtract_interval(
+        {world_interval.min[axis],world_interval.max[axis],true},
+        point_interval(solid.translation[axis]));
+  const auto rotation=rotation_intervals(solid.quaternion);
+  IntervalVec3 local;
+  for (int local_axis=0;local_axis!=3;++local_axis) {
+    local[local_axis]=point_interval(0.0);
+    for (int world_axis=0;world_axis!=3;++world_axis)
+      local[local_axis]=add_interval(
+          local[local_axis],multiply_interval(
+              rotation[world_axis][local_axis],shifted[world_axis]));
+    if (!local[local_axis].valid) return Decision::indeterminate;
+  }
+
+  const auto mesh=solid.prepared->asset->mesh();
+  for (const auto& face:mesh.triangles) {
+    if (!budget.consume_work(180)) return Decision::indeterminate;
+    const std::array<IntervalVec3,3> triangle{{
+        {point_interval(mesh.vertices[face[0]][0]),point_interval(mesh.vertices[face[0]][1]),point_interval(mesh.vertices[face[0]][2])},
+        {point_interval(mesh.vertices[face[1]][0]),point_interval(mesh.vertices[face[1]][1]),point_interval(mesh.vertices[face[1]][2])},
+        {point_interval(mesh.vertices[face[2]][0]),point_interval(mesh.vertices[face[2]][1]),point_interval(mesh.vertices[face[2]][2])}}};
+    if (!triangle_box_disjoint(triangle,local)) return Decision::indeterminate;
+  }
+  Vec3 witness{};
+  for (int axis=0;axis!=3;++axis) {
+    witness[axis]=std::midpoint(local[axis].low,local[axis].high);
+    if (!std::isfinite(witness[axis])) return Decision::indeterminate;
+  }
+  return local_point_in_material(witness,*solid.prepared,budget);
+}
+
+bool field_floating_environment_supported() noexcept {
+  return supported_floating_environment();
+}
+
+std::optional<Bounds> outward_grid_cell(const GridWindow& window,
+                                        CellIndex index) noexcept {
+  if (!supported_floating_environment()) return std::nullopt;
+  const auto interval=grid_cell_interval(window,index);
+  if (!interval) return std::nullopt;
+  Bounds result{};
+  for (int axis=0;axis!=3;++axis) {
+    result.min[axis]=(*interval)[axis].low;
+    result.max[axis]=(*interval)[axis].high;
+  }
+  return result;
+}
+
+Decision classify_analytic_box_cell(const GridWindow& window,CellIndex index,
+                                    BoxDimensions box,double clearance,
+                                    Budget& budget) {
+  if (!supported_floating_environment() || !budget.consume_work(18))
+    return Decision::indeterminate;
+  const auto cell=grid_cell_interval(window,index);
+  if (!cell) return Decision::indeterminate;
+  const double dimensions[3]={box.width_mm,box.depth_mm,box.height_mm};
+  for (int axis=0;axis!=3;++axis) {
+    const auto& coordinate=(*cell)[axis];
+    if (coordinate.low<clearance) {
+      if (coordinate.high<clearance) return Decision::no;
+      const std::array<Term,1> lower_terms{{{clearance,-1}}};
+      const auto lower=compare_grid_expression(
+          window.lattice.origin_mm[axis],window.lattice.pitch_mm,index[axis],
+          lower_terms,budget);
+      if (lower==ExactOrder::less) return Decision::no;
+      if (lower==ExactOrder::indeterminate) return Decision::indeterminate;
+    }
+
+    const auto permitted=subtract_interval(
+        point_interval(dimensions[axis]),point_interval(clearance));
+    if (permitted.valid && coordinate.high<=permitted.low) continue;
+    if (permitted.valid && coordinate.low>permitted.high) return Decision::no;
+    const std::array<Term,2> upper_terms{{
+        {dimensions[axis],-1},{clearance,1}}};
+    const auto upper=compare_grid_expression(
+        window.lattice.origin_mm[axis],window.lattice.pitch_mm,index[axis]+1,
+        upper_terms,budget);
+    if (upper==ExactOrder::greater) return Decision::no;
+    if (upper==ExactOrder::indeterminate) return Decision::indeterminate;
+  }
+  return Decision::yes;
+}
+
+Decision euclidean_offset_reaches(CellIndex delta,double pitch,double clearance,
+                                  Budget& budget) {
+  if (!(pitch>0.0) || !std::isfinite(pitch) || clearance<0.0 ||
+      !std::isfinite(clearance) || !budget.consume_work(24))
+    return Decision::indeterminate;
+  std::uint64_t squared_sum{};
+  for (const auto value:delta) {
+    if (value==std::numeric_limits<std::int64_t>::min()) return Decision::indeterminate;
+    const std::uint64_t magnitude=static_cast<std::uint64_t>(value<0?-value:value);
+    const std::uint64_t gap=magnitude>1?magnitude-1:0;
+    if (gap!=0 && gap>std::numeric_limits<std::uint64_t>::max()/gap)
+      return Decision::indeterminate;
+    const auto square=gap*gap;
+    if (square>std::numeric_limits<std::uint64_t>::max()-squared_sum)
+      return Decision::indeterminate;
+    squared_sum+=square;
+  }
+  // Converting a larger integer sum to binary64 can round upward, which would
+  // invalidate its use as a lower bound.  Uncertainty must include the cell.
+  if (squared_sum>(std::uint64_t{1}<<53)) return Decision::indeterminate;
+  const double pitch_squared_low=std::nextafter(
+      pitch*pitch,-std::numeric_limits<double>::infinity());
+  const double distance_squared_low=std::nextafter(
+      pitch_squared_low*static_cast<double>(squared_sum),
+      -std::numeric_limits<double>::infinity());
+  const double clearance_squared_high=std::nextafter(
+      clearance*clearance,std::numeric_limits<double>::infinity());
+  if (!std::isfinite(distance_squared_low) ||
+      !std::isfinite(clearance_squared_high)) return Decision::indeterminate;
+  return distance_squared_low>clearance_squared_high ? Decision::no : Decision::yes;
+}
 
 PairResult classify_pair(const PlacedSolid& first,const PlacedSolid& second,
                          double clearance,Budget& budget) {
