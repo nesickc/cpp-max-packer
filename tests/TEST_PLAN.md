@@ -57,6 +57,12 @@ and moved-project/export round trips remain required by the full gates below.
 
 ## User-provided assets
 
+[T-004](../doc/T-004.md) adds native overlap, containment and clearance tests;
+its [bounded validation matrix](../benchmarks/VALIDATION_PLAN.md) fixes known
+valid and invalid poses for all 18 accepted item/container combinations and a
+64-copy analytic workload. This qualifies supplied poses independently of search;
+maximum-count and export acceptance remain separate gates.
+
 `rc/` contains six container STLs and four item STLs. Their coordinates are millimeters and their intended container semantics are usable interior volumes, confirmed by the user. [rc-manifest.json](fixtures/rc-manifest.json) pins the actual files and inspection evidence. It does not mark authoritative-solid validation as passed.
 
 - Unit tests use small analytic/generated geometry for exact contact, overlap, transforms, padding, and known counts. Heavy user assets belong in tagged integration/regression tests; do not reread all meshes on every tiny unit check.

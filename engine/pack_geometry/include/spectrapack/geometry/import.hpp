@@ -111,6 +111,10 @@ template<class T> using ImportOutcome = std::variant<std::shared_ptr<const T>, I
 
 class AssetDraft {
  public:
+  AssetDraft(const AssetDraft&) = delete;
+  AssetDraft& operator=(const AssetDraft&) = delete;
+  AssetDraft(AssetDraft&&) = delete;
+  AssetDraft& operator=(AssetDraft&&) = delete;
   [[nodiscard]] MeshView mesh() const noexcept;
   [[nodiscard]] const Frame& frame() const noexcept;
   [[nodiscard]] AssetRole role() const noexcept;
@@ -125,6 +129,10 @@ class AssetDraft {
 };
 class RepairProposal {
  public:
+  RepairProposal(const RepairProposal&) = delete;
+  RepairProposal& operator=(const RepairProposal&) = delete;
+  RepairProposal(RepairProposal&&) = delete;
+  RepairProposal& operator=(RepairProposal&&) = delete;
   [[nodiscard]] std::shared_ptr<const AssetDraft> original() const noexcept;
   [[nodiscard]] std::shared_ptr<const AssetDraft> candidate() const noexcept;
   [[nodiscard]] double tolerance_mm() const noexcept;
@@ -137,6 +145,10 @@ class RepairProposal {
 };
 class AcceptedSolid {
  public:
+  AcceptedSolid(const AcceptedSolid&) = delete;
+  AcceptedSolid& operator=(const AcceptedSolid&) = delete;
+  AcceptedSolid(AcceptedSolid&&) = delete;
+  AcceptedSolid& operator=(AcceptedSolid&&) = delete;
   [[nodiscard]] MeshView mesh() const noexcept;
   [[nodiscard]] const Frame& frame() const noexcept;
   [[nodiscard]] AssetRole role() const noexcept;

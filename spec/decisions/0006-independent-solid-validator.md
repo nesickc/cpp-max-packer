@@ -36,6 +36,17 @@ snapshot. Invalid and indeterminate candidates produce no validated handle.
 Future incumbent/export code must consume that handle. T-004 does not implement
 solver lifecycle or a serialized-result validation command.
 
+Opaque assets, drafts, repair proposals, contexts, candidates and validated
+solutions are shared through handles, with value copy/move operations disabled.
+Otherwise a caller could copy one into a mutable object, retain it through a
+const shared pointer, and later replace or move out its storage. Private fields
+alone would not preserve the identity guarantee. This tightens the T-003 native
+types' implicit value-copy surface; existing repository clients use shared
+handles and need no migration. It does not change serialized contracts.
+Factories also copy caller-owned pose and orientation-catalog values into private
+storage. Merely moving a vector would preserve external references to its elements
+and allow those references to mutate a supposedly immutable snapshot.
+
 ## Physical predicates
 
 The classification tolerance remains `max(1e-6, 1e-9 * D)` mm, using the larger
