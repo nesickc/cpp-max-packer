@@ -76,3 +76,21 @@ host and Release build metadata, Git revision and dirty state, timeout parameter
 and hashes for every protected input. It is serialized to an exclusive temporary
 file with non-finite JSON disabled, flushed, deadline-checked, and atomically
 published; an older output remains unchanged on failure.
+
+## Geometry representation qualification
+
+T-005's [fixed plan](REPRESENTATION_PLAN.md) checks native display LOD and
+authoritative object, placed-copy and container fields. Generate the large input
+once in an existing output directory, then run the Release qualifier:
+
+```powershell
+python benchmarks/subdivided_cube.py --output .local/cube_subdivided_n300.stl --subdivisions 300
+python benchmarks/run_representation.py --executable out/build/windows-ninja-release/bin/spectrapack_representation_benchmark.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --large-fixture .local/cube_subdivided_n300.stl --output .local/representation-release.json --samples 3 --warmup 1 --timeout-seconds 900 --overall-timeout-seconds 1200
+```
+
+The generator refuses to overwrite an existing file. Three supplied items run
+with one warmup and three samples each; the 1.08-million-triangle cube is one
+separate observation. Timings distinguish import, simplification, preparation,
+field construction and validation. See [T-005](../doc/T-005.md) for the current
+verification status and limits. These checks do not measure a packing solver,
+FFT throughput or viewport performance.

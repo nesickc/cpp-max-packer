@@ -12,3 +12,15 @@ target_compile_features(spectrapack_validation_benchmark PRIVATE cxx_std_20)
 set_target_properties(spectrapack_validation_benchmark PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+add_executable(spectrapack_representation_benchmark native/representation_benchmark.cpp)
+target_link_libraries(spectrapack_representation_benchmark PRIVATE
+  pack_geometry spectrapack_dependency_json
+)
+target_compile_features(spectrapack_representation_benchmark PRIVATE cxx_std_20)
+if(WIN32)
+  target_link_libraries(spectrapack_representation_benchmark PRIVATE Psapi)
+endif()
+set_target_properties(spectrapack_representation_benchmark PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)

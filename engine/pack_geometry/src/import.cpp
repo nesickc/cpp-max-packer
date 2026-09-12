@@ -356,6 +356,50 @@ Bounds AcceptedSolid::bounds_mm() const noexcept {
   return storage_->accepted->report().mesh_bounds_mm.value_or(Bounds{});
 }
 
+std::optional<std::uint64_t> AcceptedSolid::resident_buffer_bytes() const noexcept {
+  const auto add_capacity=[](std::uint64_t& total,std::size_t count,
+                             std::size_t width) noexcept {
+    if (count!=0 && width>std::numeric_limits<std::uint64_t>::max()/count)
+      return false;
+    const auto bytes=static_cast<std::uint64_t>(count)*width;
+    if (bytes>std::numeric_limits<std::uint64_t>::max()-total) return false;
+    total+=bytes;
+    return true;
+  };
+  const auto add_draft=[&](std::uint64_t& total,
+                           const AssetDraft& draft) noexcept {
+    const auto& owned=*draft.storage_;
+    if (!add_capacity(total,owned.vertices.capacity(),sizeof(Vec3)) ||
+        !add_capacity(total,owned.triangles.capacity(),sizeof(Triangle)) ||
+        !add_capacity(total,owned.report.shells.capacity(),sizeof(ShellRecord)) ||
+        !add_capacity(total,owned.report.issues.capacity(),sizeof(ImportIssue)))
+      return false;
+    for (const auto& issue:owned.report.issues) {
+      const auto add_external_string=[&](const std::string& value) noexcept {
+        const auto data=reinterpret_cast<std::uintptr_t>(value.data());
+        const auto begin=reinterpret_cast<std::uintptr_t>(&value);
+        const auto end=begin+sizeof(value);
+        if (data>=begin && data<end) return true;
+        if (value.capacity()==std::numeric_limits<std::size_t>::max()) return false;
+        return add_capacity(total,value.capacity()+1,sizeof(char));
+      };
+      if (!add_external_string(issue.reason) ||
+          !add_external_string(issue.message)) return false;
+    }
+    return true;
+  };
+
+  if (!storage_ || !storage_->accepted) return std::nullopt;
+  std::uint64_t total{};
+  if (!add_draft(total,*storage_->accepted)) return std::nullopt;
+  if (storage_->repair) {
+    const auto original=storage_->repair->original();
+    if (original && original.get()!=storage_->accepted.get() &&
+        !add_draft(total,*original)) return std::nullopt;
+  }
+  return total;
+}
+
 ImportOutcome<AssetDraft> inspect_stl(
     std::span<const std::byte> bytes, const ImportOptions& options) {
   if (options.role != AssetRole::object && options.role != AssetRole::container) {

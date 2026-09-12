@@ -57,6 +57,15 @@ and moved-project/export round trips remain required by the full gates below.
 
 ## User-provided assets
 
+[T-005](../doc/T-005.md) adds shared display-LOD and conservative-field gates:
+useful approximation with an actual error-limited triangle count; invariant
+accepted geometry, field bytes and physical validation across display settings;
+solid interiors/cavities/thin features; exact grid/trim mapping; separate full
+Euclidean clearance masks; and transactional overlap counts. Its generated
+million-triangle case must pass actual import before positive LOD/field checks.
+Memory/preflight rejection is a separate negative test. Deterministic solver and
+viewer/export clauses remain at their product integration milestones.
+
 [T-004](../doc/T-004.md) adds native overlap, containment and clearance tests;
 its [bounded validation matrix](../benchmarks/VALIDATION_PLAN.md) fixes known
 valid and invalid poses for all 18 accepted item/container combinations and a

@@ -30,6 +30,13 @@ python -m unittest discover -s tests -p 'test_*.py'
 
 The wrapper selects the locked Visual Studio installation and x64 developer environment, checks tools, configures, checks the installed dependency graph and static runtime flags, builds and runs CTest. Pass `-VsWherePath`, `-CmakePath`, `-CtestPath` or `-PythonPath` for non-default executable locations. `-Fresh` discards only that preset's CMake configuration cache. Outputs are in `out/build/<preset>/`; `build-metadata.json` records the measured build environment. Direct CMake commands alone do not run all admission checks.
 
+For a focused module check, retain the lock/profile arguments and add
+`-BuildTarget <cmake-target> -TestRegex <ctest-name-regex>`. The regex matches
+discovered test names, not executable names. A target-only build uses
+`-BuildTarget <cmake-target> -BuildOnly` and does not claim test success. Focused
+targets require either an explicit test selection or build-only mode; selecting
+no tests is an error. Omit these options for the complete build/test gate.
+
 The wrapper verifies and seeds the original locked validator patch before CMake.
 Set `VCPKG_DOWNLOADS` to use a separate writable asset cache. The same Python
 interpreter supplied to the wrapper runs CMake's process-level protocol checks.

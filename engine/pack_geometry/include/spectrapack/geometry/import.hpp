@@ -126,6 +126,7 @@ class AssetDraft {
   friend ImportOutcome<AssetDraft> inspect_stl(std::span<const std::byte>, const ImportOptions&);
   friend ImportOutcome<RepairProposal> propose_weld(std::shared_ptr<const AssetDraft>, const WeldOptions&);
   friend ImportOutcome<AcceptedSolid> accept_asset(std::shared_ptr<const AssetDraft>);
+  friend class AcceptedSolid;
 };
 class RepairProposal {
  public:
@@ -154,6 +155,12 @@ class AcceptedSolid {
   [[nodiscard]] AssetRole role() const noexcept;
   [[nodiscard]] const ImportReport& report() const noexcept;
   [[nodiscard]] Bounds bounds_mm() const noexcept;
+  // Checked owner-known payload capacity retained by this handle: accepted
+  // vertex/triangle arrays, report shell/issue arrays, and external issue-string
+  // buffers. A repaired solid also counts its distinct retained original draft
+  // once. Allocator headers/slack, shared_ptr control blocks, inline scalar
+  // metadata, and process RSS are outside this portable accounting boundary.
+  [[nodiscard]] std::optional<std::uint64_t> resident_buffer_bytes() const noexcept;
  private:
   struct Storage;
   std::shared_ptr<const Storage> storage_;

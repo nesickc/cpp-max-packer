@@ -143,6 +143,10 @@ TEST_CASE("AT-03 imports and accepts an analytic ASCII cube with authoritative o
   source.clear();
   REQUIRE(accepted->mesh().vertices.size() == 8);
   CHECK(accepted->report().validity == geo::Validity::valid);
+  REQUIRE(accepted->resident_buffer_bytes());
+  CHECK(*accepted->resident_buffer_bytes() >=
+        accepted->mesh().vertices.size() * sizeof(geo::Vec3) +
+        accepted->mesh().triangles.size() * sizeof(geo::Triangle));
   const auto bounds = accepted->bounds_mm();
   CHECK(bounds.min == geo::Vec3{-25.4, -25.4, -25.4});
   CHECK(bounds.max == geo::Vec3{25.4, 25.4, 25.4});
@@ -212,6 +216,12 @@ TEST_CASE("AT-04 weld proposal closes a bounded seam without mutating the origin
   const auto accepted = std::get<std::shared_ptr<const geo::AcceptedSolid>>(accepted_result);
   CHECK(accepted->report().validity == geo::Validity::valid);
   CHECK(accepted->mesh().vertices.size() == 8);
+  REQUIRE(accepted->resident_buffer_bytes());
+  CHECK(*accepted->resident_buffer_bytes() >=
+        accepted->mesh().vertices.size() * sizeof(geo::Vec3) +
+        accepted->mesh().triangles.size() * sizeof(geo::Triangle) +
+        original->mesh().vertices.size() * sizeof(geo::Vec3) +
+        original->mesh().triangles.size() * sizeof(geo::Triangle));
 }
 
 TEST_CASE("AT-04 import cleanup and solid analysis share one predicate budget",

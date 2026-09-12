@@ -10,10 +10,16 @@ param(
     [string]$ToolchainLock = (Join-Path $PSScriptRoot '..\cmake\toolchains.lock.json'),
     [ValidateSet('local-windows-2026', 'hosted-windows-2025', 'hosted-windows-2025-20260907')]
     [string]$ToolchainProfile,
+    [string]$BuildTarget,
+    [string]$TestRegex,
+    [switch]$BuildOnly,
     [switch]$Fresh
 )
 
 $ErrorActionPreference = 'Stop'
+if ($BuildTarget -and -not $BuildOnly -and -not $TestRegex) {
+    throw 'A focused BuildTarget requires TestRegex or BuildOnly to avoid running unbuilt test targets.'
+}
 if ([string]::IsNullOrWhiteSpace($VcpkgRoot)) {
     throw 'Set VCPKG_ROOT or pass -VcpkgRoot before configuring.'
 }
@@ -110,7 +116,12 @@ $installedRoot = Join-Path $metadataDirectory 'vcpkg_installed'
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $PythonPath (Join-Path $PSScriptRoot 'Inspect-CpuBuild.py') check-dependencies --lock (Join-Path $PSScriptRoot '..\cmake\dependencies.lock.json') --actual (Join-Path $metadataDirectory 'installed-dependencies.json')
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-& $CmakePath --build --preset $Preset
+$buildArguments = @('--build', '--preset', $Preset)
+if ($BuildTarget) { $buildArguments += @('--target', $BuildTarget) }
+& $CmakePath @buildArguments
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-& $CtestPath --preset $Preset --timeout 30
+if ($BuildOnly) { exit 0 }
+$testArguments = @('--preset', $Preset, '--timeout', '30', '--no-tests=error')
+if ($TestRegex) { $testArguments += @('-R', $TestRegex) }
+& $CtestPath @testArguments
 exit $LASTEXITCODE
