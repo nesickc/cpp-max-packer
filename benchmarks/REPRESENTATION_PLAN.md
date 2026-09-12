@@ -102,6 +102,17 @@ and record all overrides. Track process peak working set separately from the
 representation allocator counters; a declared estimate is not an RSS measurement.
 These are workload watchdogs/admission limits, not latency or regression promises.
 
+The local full matrix qualifies with the default 900/1,200-second limits. Hosted
+[run 34710698429](https://github.com/nesickc/cpp-max-packer/actions/runs/34710698429)
+reached the large case's completed first field set with the expected counts, then
+hit the 900-second process watchdog. Its retained stdout is empty and no qualified
+report was published. The hosted workflow therefore uses explicit
+**1,500-second process / 1,800-second overall** limits within its 50-minute job
+cap. This provides a bounded allowance for the slower hosted execution; mesh,
+pitch, sample counts, field work/memory limits and all correctness oracles remain
+the same. A subsequent completed hosted report is still required. Preserve the
+timeout artifacts as negative evidence, not completed qualification.
+
 The runner must reject incomplete/repeated/wrong workload sets, malformed or
 nonfinite values, boolean numeric values, invalid verdict/snapshot combinations,
 bad bit counts/windows, mismatched parameters, mutated sources/build inputs and

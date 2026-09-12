@@ -12,8 +12,7 @@ permissions:
 jobs:
   windows-cpu-tests:
     runs-on: windows-2025-vs2026
-    # Preserve the existing build/regression allowance plus the bounded
-    # twenty-minute representation qualifier.
+    # Cover build/regression gates and the bounded representation qualifier.
     timeout-minutes: 50
     env:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.local/vcpkg-binary-cache
@@ -147,7 +146,7 @@ jobs:
           exit $LASTEXITCODE
       - name: Bounded geometry representation qualification and timings
         run: |
-          python benchmarks/run_representation.py --executable out/build/windows-ninja-release/bin/spectrapack_representation_benchmark.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --large-fixture .local/ci/cube_subdivided_n300.stl --output .local/ci/representation.json --samples 3 --warmup 1 --timeout-seconds 900 --overall-timeout-seconds 1200 *> .local/ci/representation.log
+          python benchmarks/run_representation.py --executable out/build/windows-ninja-release/bin/spectrapack_representation_benchmark.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --large-fixture .local/ci/cube_subdivided_n300.stl --output .local/ci/representation.json --samples 3 --warmup 1 --timeout-seconds 1500 --overall-timeout-seconds 1800 *> .local/ci/representation.log
           exit $LASTEXITCODE
       - name: Retain test and timing evidence
         if: always()
