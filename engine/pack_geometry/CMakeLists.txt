@@ -1,4 +1,4 @@
-add_library(pack_geometry STATIC src/import.cpp src/solid_analysis.cpp src/exact_predicates.cpp)
+add_library(pack_geometry STATIC src/import.cpp src/solid_analysis.cpp src/exact_predicates.cpp src/validation.cpp src/validation_kernel.cpp)
 target_include_directories(pack_geometry PUBLIC include)
 target_compile_features(pack_geometry PUBLIC cxx_std_20)
 target_compile_options(pack_geometry PRIVATE
@@ -15,3 +15,9 @@ add_executable(spectrapack_solid_analysis_tests
   tests/predicate_tests.cpp)
 target_link_libraries(spectrapack_solid_analysis_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
 catch_discover_tests(spectrapack_solid_analysis_tests)
+
+add_executable(spectrapack_validation_tests
+  tests/validation_tests.cpp
+  tests/validation_kernel_tests.cpp)
+target_link_libraries(spectrapack_validation_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
+catch_discover_tests(spectrapack_validation_tests)

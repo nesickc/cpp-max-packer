@@ -135,6 +135,10 @@ jobs:
         run: |
           python benchmarks/run_import.py --executable out/build/windows-ninja-release/bin/spectrapack-engine.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --output .local/ci/import.json --samples 3 --warmup 1 --timeout-seconds 120 --overall-timeout-seconds 600 *> .local/ci/import.log
           exit $LASTEXITCODE
+      - name: Bounded independent solid validation qualification and timings
+        run: |
+          python benchmarks/run_validation.py --executable out/build/windows-ninja-release/bin/spectrapack_validation_benchmark.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --output .local/ci/validation.json --samples 3 --warmup 1 --timeout-seconds 300 --overall-timeout-seconds 600 *> .local/ci/validation.log
+          exit $LASTEXITCODE
       - name: Retain test and timing evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -144,6 +148,7 @@ jobs:
             .local/ci/*.log
             .local/ci/*.json
             .local/ci/import.json.artifacts-*/**
+            .local/ci/validation.json.artifacts-*/**
             ${{ runner.temp }}/spectrapack-cpu-package/
             out/build/windows-ninja-*/build-metadata.json
             out/build/windows-ninja-*/installed-dependencies.json

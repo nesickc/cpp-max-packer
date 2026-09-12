@@ -9,8 +9,8 @@ The spec's `T-001`–`T-008` are initial implementation tasks; `AT-01`–`AT-17`
 | QA-01 test foundation | `feature/QA-01-test-foundation` | Merged through PR #1 at `067f1e52`; native tests, analytic/reference helpers, bounded performance reporting |
 | [T-001 CPU build and dependency lock](T-001.md) | `feature/AT-01-windows-cpu-build` | Merged through PR #2 at `2568c38`; local/hosted checks pass |
 | [T-002 schemas and service envelopes](T-002.md) | `feature/AT-13-protocol-contracts` | Merged through PR #3 at `6af862e`; local and hosted checks pass |
-| [T-003 STL/units/diagnostics](T-003.md) | `feature/AT-03-stl-import` | Implemented and locally qualified from merged T-002; ready publication requires feature-head CI, user review/merge pending |
-| T-004 independent solid validator | `feature/AT-06-solid-validator` | Import merged; adversarial overlap, containment, cavity and clearance gates |
+| [T-003 STL/units/diagnostics](T-003.md) | `feature/AT-03-stl-import` | Merged through PR #4 at `08d094b`; local and hosted qualification pass |
+| [T-004 independent solid validator](T-004.md) | `feature/AT-06-solid-validator` | Implemented, Astra-reviewed and locally qualified; ready PR requires hosted checks, then user review/merge |
 | T-005 LOD and conservative fields | `feature/AT-05-geometry-representations` | Relevant import/validator contracts merged; representation isolation |
 | T-006 physical AABB baseline | `feature/AT-10-aabb-baseline` | Validator merged; exact physical fixtures and retained incumbent; reuse independent correlation test oracle |
 | T-007 CPU spectral placement | `feature/AT-12-cpu-spectral-placement` | Geometry fields/baseline merged; compare production FFT against independent reference |

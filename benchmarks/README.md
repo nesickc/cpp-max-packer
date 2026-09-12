@@ -41,3 +41,38 @@ and content-addressed artifacts. Output paths may not alias the executable, buil
 metadata, manifest, expectations, or any source, including by hardlink. An
 indeterminate or resource-capped result cannot qualify; a reviewed invalid result
 may qualify only when it has a completed decisive diagnostic path.
+
+## Native validation qualification
+
+Run the fixed 91-workload matrix with the Release benchmark and retain raw native
+streams:
+
+```text
+python benchmarks/run_validation.py --executable out/build/windows-ninja-release/bin/spectrapack_validation_benchmark.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --output .local/t004/validation.json
+```
+
+Qualification requires three to twenty retained samples and one to ten warmups;
+defaults are three and one. The per-process watchdog defaults to 300 seconds and
+the overall deadline to 600 seconds. The overall deadline covers source checks,
+native execution, independent payload validation, provenance collection,
+serialization, and publication.
+
+The runner derives all 91 workload identities, poses, verdicts, affected copy IDs,
+check states, and expected AABB pair counts from the reviewed import bounds and the
+fixed analytic construction. It accepts only the complete native report shape with
+finite non-boolean numbers, exact enum values, deterministic work counts, complete
+valid snapshots, and no snapshot for invalid results. It computes each workload's
+median and nearest-rank p95 from retained sample times; native cached statistics are
+not accepted as input.
+
+All ten manifest sources are checked against their pinned byte sizes and SHA-256
+values before execution, including the rejected simplified Pryanik. The import
+expectations must bind the manifest hash. The executable, build metadata, manifest,
+expectations, and sources retain their filesystem identities, sizes, and hashes
+through publication. Output aliases, including hardlinks, are rejected. Raw stdout
+and stderr remain in a unique artifact directory even when the child times out.
+The qualified report records the complete native payload, per-workload statistics,
+host and Release build metadata, Git revision and dirty state, timeout parameters,
+and hashes for every protected input. It is serialized to an exclusive temporary
+file with non-finite JSON disabled, flushed, deadline-checked, and atomically
+published; an older output remains unchanged on failure.
