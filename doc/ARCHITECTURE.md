@@ -49,6 +49,15 @@ snapshots, lossless meshes and reports. The standalone `inspect` command does no
 implement asynchronous service imports. Implementation evidence is tracked in
 [T-003](T-003.md).
 
+[ADR 0006](../spec/decisions/0006-independent-solid-validator.md) defines T-004's
+independent native validator: immutable asset/constraint contexts, rigid candidate
+poses and an opaque validated snapshot minted only after a complete valid pass.
+Conservative separation, exact threshold predicates and material classification
+establish physical permission; unresolved contact or exhausted work is rejected.
+The numerical adapter retains local geometry and exact pose expressions rather
+than authorizing rounded world meshes. [T-004](T-004.md) tracks implementation
+and qualification; protocol persistence and solver integration remain separate.
+
 `spec/schemas/` is the single source for versioned wire/persistence shapes and generated TypeScript types. C++ CLI and service use one decoder and semantic-validation path. `pack_geometry` supplies source-to-local import frames in millimeters with unchanged right-handed Z-up axes. Placement transforms and shared viewer/export goldens remain to be implemented: active normalized XYZW quaternion plus translation, with matrices derived and checked. Preserve source mappings; never scale to fit (`GEO-02`, `DATA-01`, `DATA-03`).
 
 Validation returns `valid`, `invalid` or `indeterminate`, with copy IDs and diagnostics. Only `valid` can enter incumbent publication. Validate accepted solids, including enclosure/coincidence, STL-volume difference and separate pair/wall distances; tolerance never reduces clearance. Restore/final/export validation bypasses search certificates. Re-read quantized STL coordinates; retain valid JSON/project if STL export fails (`GEO-05`, `GEO-06`).
