@@ -11,7 +11,7 @@ The spec's `T-001`–`T-008` are initial implementation tasks; `AT-01`–`AT-17`
 | [T-002 schemas and service envelopes](T-002.md) | `feature/AT-13-protocol-contracts` | Merged through PR #3 at `6af862e`; local and hosted checks pass |
 | [T-003 STL/units/diagnostics](T-003.md) | `feature/AT-03-stl-import` | Merged through PR #4 at `08d094b`; local and hosted qualification pass |
 | [T-004 independent solid validator](T-004.md) | `feature/AT-06-solid-validator` | Merged through PR #5 at `407be83`; local and hosted qualification pass |
-| [T-005 LOD and conservative fields](T-005.md) | `feature/AT-05-geometry-representations` | In progress from merged T-004; shared display geometry, conservative fields and representation isolation |
+| [T-005 LOD and conservative fields](T-005.md) | `feature/AT-05-geometry-representations` | Implemented and locally qualified from merged T-004; user review/merge pending, hosted status accompanies the feature branch |
 | T-006 physical AABB baseline | `feature/AT-10-aabb-baseline` | Validator merged; exact physical fixtures and retained incumbent; reuse independent correlation test oracle |
 | T-007 CPU spectral placement | `feature/AT-12-cpu-spectral-placement` | Geometry fields/baseline merged; compare production FFT against independent reference |
 | T-008 desktop workflow | `feature/AT-15-desktop-workflow` | Required engine/protocol/result contracts merged; first desktop vertical slice |

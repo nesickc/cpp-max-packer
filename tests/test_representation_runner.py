@@ -163,7 +163,7 @@ class RunnerTests(unittest.TestCase):
 
         self.assertEqual(result, 0)
         native.assert_called_once()
-        verify.assert_called_once_with(self.payload, self.expectations, 3, 1)
+        verify.assert_called_once_with(self.payload, self.expectations.resolve(), 3, 1)
         self.assertGreaterEqual(binding_guard.call_count, 2)
         self.assertEqual(self.command[-6:], [
             "--large-fixture", str(self.large.resolve()),
