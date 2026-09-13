@@ -1,8 +1,9 @@
 # T-006 bounded physical baseline qualification
 
-Status: implemented registered plan awaiting clean Release qualification. Pilot
-timings and packing results remain unqualified observations; no performance claim
-is made by this file. Requirements: SOL-01, SOL-02, QA-01;
+Status: clean local Release qualification passed at implementation revision
+`1d1c034d3e5b6b3f630ddb041e14e46be7009dd9`; see [evidence](../doc/T-006.md).
+Pilot timings remain unqualified observations; measured timings are informational.
+Requirements: SOL-01, SOL-02, QA-01;
 native AT-10 scope. See [ADR 0008](../spec/decisions/0008-physical-baseline.md).
 
 ## Workloads and independent expectations
