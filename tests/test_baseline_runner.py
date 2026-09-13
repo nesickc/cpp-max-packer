@@ -1,4 +1,6 @@
+import contextlib
 import importlib.util
+import io
 import json
 import subprocess
 import sys
@@ -75,7 +77,7 @@ class BaselineRunnerTests(unittest.TestCase):
         self.payload_path.write_text(
             json.dumps(self.payload, separators=(",", ":")), encoding="utf-8")
 
-    def argv(self, output=None, timeout="1", overall="3", pilot=False):
+    def argv(self, output=None, timeout="10", overall="60", pilot=False):
         result = [
             "--executable", str(self.executable),
             "--build-metadata", str(self.metadata),
@@ -104,8 +106,8 @@ class BaselineRunnerTests(unittest.TestCase):
             f"print(Path({str(self.payload_path)!r}).read_text(encoding='utf-8'))")
         return self.child("\n".join(lines) + "\n")
 
-    def run_main(self, child, *, output=None, timeout="1", overall="3",
-                 pilot=False, repository=None):
+    def run_main(self, child, *, output=None, timeout="10", overall="60",
+                 pilot=False, repository=None, allow_deadline_error=False):
         command = [sys.executable, str(child)]
         with (
             mock.patch.object(runner, "ROOT", self.root),
@@ -116,7 +118,15 @@ class BaselineRunnerTests(unittest.TestCase):
             mock.patch.object(runner, "build_native_command",
                               return_value=command) as builder,
         ):
-            result = runner.main(self.argv(output, timeout, overall, pilot))
+            diagnostics = io.StringIO()
+            with contextlib.redirect_stderr(diagnostics):
+                result = runner.main(self.argv(output, timeout, overall, pilot))
+        self.last_stderr = diagnostics.getvalue()
+        if not allow_deadline_error:
+            self.assertNotIn("validation benchmark watchdog expired",
+                             self.last_stderr)
+            self.assertNotIn("overall validation qualification deadline expired",
+                             self.last_stderr)
         return result, builder
 
     def test_complete_child_runs_real_checker_and_publishes_bound_report(self):
@@ -127,7 +137,7 @@ class BaselineRunnerTests(unittest.TestCase):
             run["fresh_revalidation_ms"] = fresh
         self.write_payload()
         result, builder = self.run_main(self.payload_child())
-        self.assertEqual(result, 0)
+        self.assertEqual(result, 0, self.last_stderr)
         builder.assert_called_once()
         report = json.loads(self.output.read_text(encoding="utf-8"))
         self.assertTrue(report["qualified"])
@@ -187,6 +197,7 @@ class BaselineRunnerTests(unittest.TestCase):
                 result, _ = self.run_main(self.payload_child(mutate=target),
                                           output=output)
                 self.assertEqual(result, 2)
+                self.assertTrue(self.last_stderr.strip())
                 self.assertEqual(output.read_bytes(), b"prior report")
                 target.write_bytes(original)
 
@@ -197,8 +208,13 @@ class BaselineRunnerTests(unittest.TestCase):
                 output.write_bytes(b"prior report")
                 started = time.monotonic()
                 result, _ = self.run_main(self.payload_child(delay=5), output=output,
-                                          timeout=timeout, overall=overall)
+                                          timeout=timeout, overall=overall,
+                                          allow_deadline_error=True)
                 self.assertEqual(result, 2)
+                expected = ("validation benchmark watchdog expired"
+                            if timeout == "0.02" else
+                            "overall validation qualification deadline expired")
+                self.assertIn(expected, self.last_stderr)
                 self.assertLess(time.monotonic() - started, 2.0)
                 self.assertEqual(output.read_bytes(), b"prior report")
 
