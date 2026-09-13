@@ -607,15 +607,24 @@ TEST_CASE("T006 baseline rejects the AABB cell in an excluded STL cavity",
                                 {0.25, 0.25, 0.25}),
       container, constraints);
   solver::BaselineLimits limits;
-  limits.max_candidate_evaluations = 27;
-  limits.max_copies = 27;
+  // Fifteen proposals reach the excluded center cell and observe the next
+  // valid cell; full grid traversal is covered by analytic cases.
+  limits.max_candidate_evaluations = 15;
+  limits.max_copies = 15;
 
   const auto result = solver::run_aabb_baseline(context, limits, {});
 
   REQUIRE(result.best);
-  CHECK(result.stats.candidate_evaluations == 27);
+  REQUIRE(result.best->solution);
+  const auto& copies = result.best->solution->copies();
+  REQUIRE(copies.size() == 14);
+  CHECK(copies.back().translation_mm == geo::Vec3{2.5, 1.5, 1.5});
+  for (const auto& copy : copies) {
+    CHECK(copy.translation_mm != geo::Vec3{1.5, 1.5, 1.5});
+  }
+  CHECK(result.stats.candidate_evaluations == 15);
   CHECK(result.stats.invalid_candidates == 1);
-  CHECK(result.best->score.count == 26);
+  CHECK(result.best->score.count == 14);
 }
 
 TEST_CASE("T006 final safe boundaries distinguish deadline and explicit stop",

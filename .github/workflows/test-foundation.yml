@@ -13,7 +13,7 @@ jobs:
   windows-cpu-tests:
     runs-on: windows-2025-vs2026
     # Cover build/regression gates and both bounded geometry/packing qualifiers.
-    timeout-minutes: 50
+    timeout-minutes: 70
     env:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.local/vcpkg-binary-cache
     defaults:
@@ -146,7 +146,7 @@ jobs:
           exit $LASTEXITCODE
       - name: Bounded physical baseline qualification and timings
         run: |
-          python benchmarks/run_baseline.py --executable out/build/windows-ninja-release/bin/spectrapack_baseline_benchmark.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --output .local/ci/baseline.json --samples 3 --warmup 1 --timeout-seconds 600 --overall-timeout-seconds 900 *> .local/ci/baseline.log
+          python benchmarks/run_baseline.py --executable out/build/windows-ninja-release/bin/spectrapack_baseline_benchmark.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --output .local/ci/baseline.json --samples 3 --warmup 1 --timeout-seconds 1500 --overall-timeout-seconds 1800 *> .local/ci/baseline.log
           exit $LASTEXITCODE
       - name: Bounded geometry representation qualification and timings
         run: |

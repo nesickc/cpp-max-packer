@@ -243,3 +243,24 @@ plus the analytic64/64/empty workloads. Keep all source identities, exact poses,
 fresh-context revalidation, limits/counters, termination and raw timing samples.
 No irregular baseline count is an optimum. Watchdog failure is incomplete
 evidence; retain it rather than calling it a deterministic completed run.
+
+### Hosted qualification watchdog (2026-09-13)
+
+The clean local full baseline takes 427.569 s under the default 600 s native /
+900 s harness watchdogs. Hosted run `34766827635` passes 209 Debug tests but
+times out the original 27-proposal cavity regression at 30.01 s; the same test
+takes 12.68 s locally. This establishes material host variability for that test,
+without establishing a Release benchmark speed ratio. The cavity unit regression
+is reduced to the prefix that crosses the forbidden cell and then accepts the
+next valid cell, retaining its geometry and rejection assertion.
+
+Register an explicit hosted baseline allowance of 1,500 s native / 1,800 s harness,
+matching the existing hosted representation allowance. The workflow has a bounded
+70-minute envelope for both qualifiers and the preceding build/test gates. Default
+local watchdogs stay 600/900 s. Every host still runs all 21 baseline cases with
+one warmup and three samples, identical proposal/geometry/validation/storage limits,
+and unchanged physical oracles. Reports retain actual timing parameters. A timeout
+remains incomplete qualification; no speed or regression threshold is inferred
+from this planning allowance. There has been no hosted baseline timeout at the
+default allowance; this adjustment precedes that run and is based on the observed
+native regression timing difference.

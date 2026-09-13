@@ -40,6 +40,11 @@ requires an explicit recorded decision; retained failures are not erased.
   limit, caller reserve, seed/score-order version and thread configuration.
 - Start with a 600-second whole-native-process watchdog and 900-second entire
   Python-harness deadline. A watchdog abort is incomplete qualification.
+- Hosted CI explicitly uses 1,500/1,800 seconds for the same complete workload,
+  with a 70-minute job envelope shared with the representation qualifier and
+  build/test gates. [ADR 0008](../spec/decisions/0008-physical-baseline.md) records
+  the observed hosted native-test slowdown and the prospective planning allowance.
+  All solver work/storage budgets, repeat counts and physical oracles stay fixed.
 - Record import/preparation, baseline search and fresh-context revalidation
   separately where observable, plus process duration. Retain raw timing samples
   and derive informational median/p95. No throughput/regression threshold is
