@@ -406,7 +406,7 @@ def _verify_report(value, name, validity):
     _need(isinstance(report.get("code"), str) and report["code"], f"{name}.code missing")
     _need(isinstance(report.get("message"), str), f"{name}.message missing")
     _number(report.get("epsilon_mm"), f"{name}.epsilon_mm", 0.0)
-    _same(report.get("kernel_revision"), "homogeneous-rational-interval-v1",
+    _same(report.get("kernel_revision"), "homogeneous-rational-interval-v2",
           f"{name}.kernel_revision")
     for key in ("aabb_pair_tests", "kernel_work", "working_bytes_peak"):
         _integer(report.get(key), f"{name}.{key}")

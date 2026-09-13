@@ -1,7 +1,7 @@
 add_library(pack_geometry STATIC
   src/import.cpp src/solid_analysis.cpp src/exact_predicates.cpp
   src/validation.cpp src/validation_kernel.cpp
-  src/display_lod.cpp src/conservative_fields.cpp)
+  src/display_lod.cpp src/conservative_fields.cpp src/physical_bounds.cpp)
 target_include_directories(pack_geometry PUBLIC include)
 target_compile_features(pack_geometry PUBLIC cxx_std_20)
 target_compile_options(pack_geometry PRIVATE
@@ -27,7 +27,9 @@ catch_discover_tests(spectrapack_solid_analysis_tests)
 
 add_executable(spectrapack_validation_tests
   tests/validation_tests.cpp
-  tests/validation_kernel_tests.cpp)
+  tests/validation_kernel_tests.cpp
+  tests/axis_container_tests.cpp
+  tests/axis_pair_tests.cpp)
 target_link_libraries(spectrapack_validation_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
 catch_discover_tests(spectrapack_validation_tests)
 
@@ -38,3 +40,13 @@ catch_discover_tests(spectrapack_display_lod_tests)
 add_executable(spectrapack_conservative_fields_tests tests/conservative_fields_tests.cpp)
 target_link_libraries(spectrapack_conservative_fields_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
 catch_discover_tests(spectrapack_conservative_fields_tests)
+
+add_executable(spectrapack_physical_bounds_tests tests/physical_bounds_tests.cpp)
+target_link_libraries(spectrapack_physical_bounds_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
+catch_discover_tests(spectrapack_physical_bounds_tests)
+
+add_executable(spectrapack_physical_bounds_allocation_tests
+  tests/physical_bounds_allocation_tests.cpp)
+target_link_libraries(spectrapack_physical_bounds_allocation_tests PRIVATE
+  pack_geometry Catch2::Catch2WithMain)
+catch_discover_tests(spectrapack_physical_bounds_allocation_tests)
