@@ -276,9 +276,14 @@ using AssetLoadOutcome =
     std::variant<std::shared_ptr<const VerifiedAsset>, Error>;
 AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path);
 
+struct ResultCatalog {
+  std::uint64_t version{1};
+  std::vector<geometry::Quaternion> quaternions;
+};
 struct ResultRequest {
   std::shared_ptr<const geometry::ValidatedSolution> solution;
   std::shared_ptr<const VerifiedAsset> object_asset, container_asset;
+  ResultCatalog catalog;
   Json metadata;
   geometry::ValidationLimits validation_limits{};
 };
@@ -288,6 +293,7 @@ ResultOutcome build_result(const ResultRequest&);
 struct ExportRequest {
   std::shared_ptr<const geometry::ValidatedSolution> solution;
   std::shared_ptr<const VerifiedAsset> object_asset, container_asset;
+  ResultCatalog catalog;
   ValidatedDocument result;
   std::filesystem::path result_path;
   std::optional<std::filesystem::path> stl_path;
@@ -314,6 +320,15 @@ not an independently caller-asserted `{solid,hash}` pair. Its accepted handle
 must be pointer-identical to the solution context's corresponding asset.
 Container handle is absent for analytic boxes. Charge provenance residency
 through the solver's caller reserve and export's total live-memory allowance.
+
+The integration layer copies the actual ordered solver catalog into the value-only
+`ResultCatalog`; I/O never depends on solver headers. I/O verifies version,
+canonical signs/positive zero, uniqueness, policy completeness and placement
+membership before recomputing its canonical hash. Fixed has exactly the selected
+orientation; custom retains the complete canonical policy order; cube has all
+24 proper symmetries in the versioned matrix order. Export repeats this binding
+against the supplied result and verified handles: a `ValidatedDocument` created
+by the general schema validator is not proof that `build_result` produced it.
 
 `metadata` contains exactly identity (`schema_version`, `job_id`,
 `solution_revision`, `created_at`, `engine`), `search`, and `metrics`.
