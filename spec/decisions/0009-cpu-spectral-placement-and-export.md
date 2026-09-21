@@ -158,6 +158,10 @@ CatalogOutcome make_orientation_catalog(
 Version 1 retains fixed identity/specified quaternion, 24 lexicographically
 sorted proper cube matrices, and canonical custom input order with exact
 duplicate removal only. The context remains the authority for permissions.
+The orientation admission limit bounds the raw policy size before output
+allocation: one for fixed, 24 for cube, and the supplied count for custom, even
+when custom entries later deduplicate. This matches the existing baseline's
+resource limit and does not change orientation permissions.
 For wire catalog identity, hash UTF-8 compact JSON
 `{"version":1,"quaternions_xyzw":[...]}` with keys in that displayed order,
 round-trip double values and positive zero. No geometry hash is invented.
@@ -321,6 +325,10 @@ not an independently caller-asserted `{solid,hash}` pair. Its accepted handle
 must be pointer-identical to the solution context's corresponding asset.
 Container handle is absent for analytic boxes. Charge provenance residency
 through the solver's caller reserve and export's total live-memory allowance.
+Retain original resolved report/artifact locations or equivalent file identities
+privately as well, to prevent output or staging aliases from overwriting an
+input. Publication uses the verified byte snapshots even if original files later
+change; location metadata is for protection, not a new source of content.
 `VerifiedAsset::resident_buffer_bytes()` counts its retained provenance buffers
 and record payload; it excludes the accepted solid's separately reported
 `AcceptedSolid::resident_buffer_bytes()` so the integration layer counts that
@@ -369,6 +377,10 @@ Check `N*T <= UINT32_MAX` and `84+50*N*T` with checked arithmetic and the output
 limit before writing. Attribute words are zero; normals are derived from written
 coordinates. Zero copies produce a legal zero-triangle STL and empty ranges.
 Source STL bytes, accepted PLY and input reports must never be overwritten.
+Output names must be distinct from one another and from those inputs, including
+hardlink aliases. The optional STL and companion must be representable by
+contained portable paths below the result directory; reject incompatible paths
+before publication rather than emitting traversal references.
 
 Publish the verified source/PLY/repair artifacts first, then primary JSON, then
 optional STL and companion to unique adjacent
@@ -451,6 +463,11 @@ spectrapack-engine solve --settings FILE --object-report FILE
   [--container-report FILE] --result FILE [--stl FILE]
 ```
 
+This is an additive diagnostic command for the T-007 native slice. The required
+`pack --job --output` interface and asynchronous service jobs remain later
+integration gates. Add `solve` to `implemented_commands` only when its end-to-end
+path passes; keep unimplemented methods and their service feature flags explicit.
+
 Settings use the existing resolved shape. Accepted reports come from existing
 `inspect`. I/O verifies the report schema, source SHA-256 and canonical accepted
 PLY bytes/hash before use. Reconstruct acceptance from the preserved source and
@@ -485,3 +502,20 @@ page rejection/cursor progress, export read/write failures and quantization.
 No mocked validator may establish packing/export acceptance. Tests can invoke
 the page-selection helper directly for deterministic rejection scheduling, with
 separate end-to-end tests requiring the real geometry validator.
+
+## Representation accounting decision
+
+The [representation accounting contract](../../doc/T-007-representation-accounting.md)
+is part of this decision. Conservative representations expose fixed-size,
+deduplicable current ownership blocks and call-specific attempt statistics.
+Shared accepted/prepared payload is charged once; caller reservation and temporary
+workspace are not retained storage. Spectral clamps every factory and blocked-field
+mutation to current remaining work and live-byte allowance, including work consumed
+by failed attempts. Mutation uses the current call's reservation and preserves
+logical occupancy on failure. Owner identities are in-process accounting tokens
+with retained-owner lifetimes, never asset identities or persisted values.
+
+The additions preserve existing source calls and wire/physical semantics. Corrected
+charging can refuse tight budgets that previously omitted work or used stale
+reservations. Existing broad-budget representation outcomes must remain unchanged.
+Implementation and runtime qualification of these additions are still pending.
