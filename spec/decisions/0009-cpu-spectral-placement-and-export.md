@@ -60,7 +60,8 @@ struct NumericReport {
   double max_integer_residual{}, mass_residual{}, max_probe_error{};
 };
 struct CorrelationFailure {
-  std::string_view code, message;
+  std::string_view code;
+  std::string message;
   CorrelationStats stats;
 };
 struct CorrelationResult {
@@ -148,7 +149,7 @@ struct OrientationCatalog {
   std::uint64_t version{1};
   std::vector<geometry::Quaternion> quaternions;
 };
-struct CatalogFailure { std::string_view code, message; };
+struct CatalogFailure { std::string_view code; std::string message; };
 using CatalogOutcome = std::variant<OrientationCatalog, CatalogFailure>;
 CatalogOutcome make_orientation_catalog(
     const geometry::OrientationPolicy&, std::uint64_t max_orientations);
@@ -320,6 +321,17 @@ not an independently caller-asserted `{solid,hash}` pair. Its accepted handle
 must be pointer-identical to the solution context's corresponding asset.
 Container handle is absent for analytic boxes. Charge provenance residency
 through the solver's caller reserve and export's total live-memory allowance.
+`VerifiedAsset::resident_buffer_bytes()` counts its retained provenance buffers
+and record payload; it excludes the accepted solid's separately reported
+`AcceptedSolid::resident_buffer_bytes()` so the integration layer counts that
+shared solid once. Neither measure claims allocator overhead or process RSS.
+Count retained JSON container and string payload, rather than using serialized
+JSON length as a proxy. The loader caps a report at 16 MiB and each source/PLY
+file at 256 MiB, also checking native allocation and stream-size ranges before
+reading. These are operational admission limits, not changes to source geometry;
+oversize, allocation and I/O failures return `Error`. Resolve artifact containment
+across Windows reparse points, including junctions. Replay binding compares exact
+source bounds and recorded source byte size as well as frames, hashes and counts.
 
 The integration layer copies the actual ordered solver catalog into the value-only
 `ResultCatalog`; I/O never depends on solver headers. I/O verifies version,
