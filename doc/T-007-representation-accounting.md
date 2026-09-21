@@ -1,7 +1,8 @@
 # T-007 representation accounting contract
 
-2026-09-21. Status: **accepted design under ADR 0009**, pending implementation; not an
-implemented API. Scope: conservative fields and their solver integration only.
+2026-09-21. Status: **accepted design under ADR 0009**; the geometry implementation
+is under configured review and qualification. Solver integration remains pending.
+Scope: conservative fields and their solver integration only.
 No geometry, occupancy, clearance or acceptance semantics change.
 
 ## Finding and decision
@@ -139,7 +140,7 @@ owned block can change after a mutation attempt.
 | Accepted draft payload | Refactor the existing `resident_buffer_bytes()` draft helper: actual vertex/triangle/report vector capacities and external issue-string capacity. One token is the private `AssetDraft::Storage` address. A repaired solid exposes accepted and distinct original draft blocks separately. Do not use the outer `AcceptedSolid*`: separate accepted handles can share the same draft. |
 | Voxel geometry owned | `sizeof(VoxelGeometry::Storage)` plus the private prepared kernel's own `sizeof(PreparedSolid)` and actual shell-witness capacity. Excludes accepted draft payload, which is listed separately. Identity is the voxel storage address. Prepared kernel ownership is bundled here because it is private and shared through this `VoxelGeometry`. |
 | Cell field owned | `sizeof(CellField::Storage)`, actual cells capacity, retained external pose-ID capacity, placed kernel's own `sizeof(PlacedSolid)` and actual vertex/interval/exact-coordinate capacities. For STL-container fields also include their privately owned prepared kernel payload. Excludes the separately listed source and shared voxel geometry. Identity is field storage address. |
-| Blocked field owned | `sizeof(BlockedField::Storage)` plus **owned PMR outstanding bytes** for counts, map buckets/nodes, keys and footprints. Excludes mask dependency, caller reserve and temporary blocker graph. Identity is blocked storage address. The counts vector's actual allocation appears through PMR, not again via a capacity formula. |
+| Blocked field owned | `sizeof(BlockedField::Storage)` plus **owned PMR outstanding bytes** for counts, identifier records, keys and footprints. Excludes mask dependency, caller reserve and temporary blocker graph. Identity is blocked storage address. The counts vector's actual allocation appears through PMR, not again via a capacity formula. |
 
 The graph returned by a handle includes these dependency blocks as applicable:
 
@@ -250,9 +251,9 @@ Separate PMR **owned current bytes** from all external charges. Give its countin
 resource a scoped allocation ceiling and per-operation peak capture. Calculate
 that ceiling from current call reservation and the deduplicated input graph;
 do not keep caller reserve inside `base_bytes` or PMR ownership. The public graph
-getter must use actual PMR outstanding allocations, including bucket capacity
-that survives a removal or failed insertion. No allocations occur outside the
-creation/mutation scopes.
+getter must use actual PMR outstanding allocations, including any container
+capacity that survives a removal or failed insertion. No allocations occur
+outside the creation/mutation scopes.
 
 Charge and bound duplicate-ID lookup/comparison, both blocker scans, footprint
 construction and count updates; remove charges lookup, invariant scan and count
@@ -262,13 +263,23 @@ ID processing under a documented deterministic work-unit policy. Reuse existing
 kernel counters for geometric preparation/rasterization. This policy measures
 charged algorithmic work, not CPU instructions or elapsed time.
 
+The repaired implementation uses PMR list records for copy identifiers, removing
+hidden hash-table comparison/rehash costs. Identifier work charges one unit per
+record touched, linked or unlinked and one per byte compared or copied. Budget
+admission is separate from consumption: refusal never spends the unused portion
+of an admitted or requested bound. This internal representation change preserves
+the public API and occupancy semantics; actual PMR allocation still determines
+resident bytes. Review-requested regressions cover long-ID admission, common-
+prefix keys that collided under the former hash table, and tight removal limits.
+
 Preflight the final nonthrowing count-update phase's remaining work before
 changing any count, then record its units as it executes. Allocate ID/footprint/
-map storage before committing counts. Work exhaustion, duplicate/missing ID,
+record storage before committing counts. Work exhaustion, duplicate/missing ID,
 overflow/underflow or memory failure preserves counts and the set of copy IDs.
-Map rehash capacity may remain after a failed insertion; that is not a placement
-mutation, but it **must** appear in the fresh residency snapshot. Do not claim
-byte-for-byte storage rollback or omit surviving buckets from the next reserve.
+Internal container capacity may remain after a failed insertion; that is not a
+placement mutation, but it **must** appear in the fresh residency snapshot. Do not
+claim byte-for-byte storage rollback or omit surviving allocations from the next
+reserve.
 An over-limit remove may fail unchanged; releasing/destroying the whole trial
 remains allocation-free cleanup outside placement search.
 
@@ -339,9 +350,10 @@ field tests; do not use missing declarations as behavioral red evidence.
 6. **No blocker retention / PMR truth:** after successful add, releasing the
    supplied blocker and its private dependencies releases their graph ownership;
    the blocked graph contains only mask dependencies plus PMR-owned storage.
-   Removal reports remaining bucket capacity honestly. A private allocator fault
-   after rehash but before insertion preserves semantic state and exposes any
-   surviving allocated bucket capacity in the public snapshot.
+   Removal reports remaining container allocations honestly. A private allocator
+   fault during insertion preserves semantic state and exposes any surviving
+   owned allocation in the public snapshot. With list records there is no rehash
+   or bucket capacity to retain; do not fabricate that former implementation detail.
 7. **Pre-entry clone / allocation failure:** use the explicit borrowed-pose and
    string-view overloads with a large ID and tiny cap. A scoped private allocation
    observer verifies no large ID copy precedes admission. Inject metadata/PMR
@@ -369,11 +381,11 @@ platform-specific PMR bucket size or invented memory coefficient is a test oracl
 > logical occupancy on failure. Owner identities are in-process accounting tokens
 > with retained-owner lifetimes, never asset identities or persisted values.
 
-The primary accepted these additive declarations on 2026-09-21. Implement the
-import/kernel/field edits after the active export repair. No unresolved algorithm
-or dependency choice is required to implement this contract.
+The primary accepted these additive declarations on 2026-09-21. The import,
+kernel and field additions now exist; configured review and final integration
+acceptance remain in progress. No unresolved dependency choice is required.
 
-Design evidence: inspected the named review/handoff, current public
+Original design evidence: inspected the named review/handoff, current public
 headers, field ownership/mutation implementations, private kernel owners and
 existing accepted capacity calculation. Documentation whitespace/fence checks
 only; no code edits, builds, native tests or claimed runtime results.

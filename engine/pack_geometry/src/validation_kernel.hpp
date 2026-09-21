@@ -2,6 +2,7 @@
 
 #include "spectrapack/geometry/validation.hpp"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -66,10 +67,14 @@ class Budget {
 class PreparedSolid;
 class PlacedSolid;
 
+[[nodiscard]] std::optional<std::uint64_t> prepared_owned_bytes(const PreparedSolid&) noexcept;
+[[nodiscard]] std::optional<std::uint64_t> placed_owned_bytes(const PlacedSolid&) noexcept;
+[[nodiscard]] std::optional<std::uint64_t> placed_prepared_owned_bytes(const PlacedSolid&) noexcept;
+
 struct PrepareResult {
-  std::shared_ptr<const PreparedSolid> solid;
-  KernelFailure failure;
-  [[nodiscard]] explicit operator bool() const noexcept { return static_cast<bool>(solid); }
+    std::shared_ptr<const PreparedSolid> solid;
+    KernelFailure failure;
+    [[nodiscard]] explicit operator bool() const noexcept { return static_cast<bool>(solid); }
 };
 
 struct PlaceResult {
@@ -97,6 +102,18 @@ struct ConservativeBounds {
   Bounds bounds_mm{};
   bool finite{};
 };
+
+struct RotationTransform {
+  std::array<std::array<double, 3>, 3> matrix{};
+  std::array<int, 3> source_axis{};
+  std::array<int, 3> sign{};
+  bool exact_cardinal{};
+};
+
+// Uses exact signed-permutation recognition for cardinal quaternions and the
+// homogeneous quaternion matrix for every other finite, nonzero quaternion.
+[[nodiscard]] std::optional<RotationTransform> rotation_transform(
+    Quaternion rotation_xyzw) noexcept;
 
 // Bounds calculated by the same homogeneous quaternion interval path used by
 // validation. Cardinal extrema retain the signed-permutation values instead of

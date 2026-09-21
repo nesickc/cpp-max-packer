@@ -10,7 +10,14 @@
 #include <variant>
 #include <vector>
 
+#include "spectrapack/geometry/representation_types.hpp"
+
 namespace spectrapack::geometry {
+
+class AssetDraft;
+namespace detail {
+class ImportAccess;
+}
 
 using Vec3 = std::array<double, 3>;
 using Triangle = std::array<std::uint32_t, 3>;
@@ -124,6 +131,7 @@ class AssetDraft {
   std::shared_ptr<const Storage> storage_;
   explicit AssetDraft(std::shared_ptr<const Storage> storage) noexcept;
   friend ImportOutcome<AssetDraft> inspect_stl(std::span<const std::byte>, const ImportOptions&);
+  friend class detail::ImportAccess;
   friend ImportOutcome<RepairProposal> propose_weld(std::shared_ptr<const AssetDraft>, const WeldOptions&);
   friend ImportOutcome<AcceptedSolid> accept_asset(std::shared_ptr<const AssetDraft>);
   friend class AcceptedSolid;
@@ -161,6 +169,7 @@ class AcceptedSolid {
   // once. Allocator headers/slack, shared_ptr control blocks, inline scalar
   // metadata, and process RSS are outside this portable accounting boundary.
   [[nodiscard]] std::optional<std::uint64_t> resident_buffer_bytes() const noexcept;
+  [[nodiscard]] std::optional<RepresentationResidency> representation_residency() const noexcept;
  private:
   struct Storage;
   std::shared_ptr<const Storage> storage_;

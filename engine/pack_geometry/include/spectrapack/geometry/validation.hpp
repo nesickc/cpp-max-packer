@@ -137,6 +137,8 @@ class ValidatedSolution {
                     ValidationReport) noexcept;
   friend ValidationOutcome validate(std::shared_ptr<const ValidationContext>,
                                     std::shared_ptr<const Candidate>, const ValidationLimits&);
+  friend ValidationOutcome revalidate(std::shared_ptr<const ValidatedSolution>,
+                                      const ValidationLimits&);
 };
 struct ValidationOutcome {
   ValidationReport report;
@@ -153,5 +155,8 @@ struct ValidationOutcome {
 [[nodiscard]] ValidationOutcome validate(
     std::shared_ptr<const ValidationContext> expected_context,
     std::shared_ptr<const Candidate> candidate, const ValidationLimits& limits = {});
+[[nodiscard]] ValidationOutcome revalidate(
+    std::shared_ptr<const ValidatedSolution> solution,
+    const ValidationLimits& limits = {});
 
 }  // namespace spectrapack::geometry

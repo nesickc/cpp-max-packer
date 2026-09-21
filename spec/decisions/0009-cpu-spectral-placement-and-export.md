@@ -158,6 +158,11 @@ CatalogOutcome make_orientation_catalog(
 Version 1 retains fixed identity/specified quaternion, 24 lexicographically
 sorted proper cube matrices, and canonical custom input order with exact
 duplicate removal only. The context remains the authority for permissions.
+For fixed/custom representatives, version 1 computes the double norm as
+`hypot(hypot(x,y),hypot(z,w))`, divides each component by that norm, selects the
+canonical sign and replaces signed zeros with positive zero. I/O repeats this
+specified construction independently. Cube representatives use the exact
+versioned constants and sign/zero handling, without another normalization.
 The orientation admission limit bounds the raw policy size before output
 allocation: one for fixed, 24 for cube, and the supplied count for custom, even
 when custom entries later deduplicate. This matches the existing baseline's
@@ -341,6 +346,17 @@ oversize, allocation and I/O failures return `Error`. Resolve artifact containme
 across Windows reparse points, including junctions. Replay binding compares exact
 source bounds and recorded source byte size as well as frames, hashes and counts.
 
+Geometry provides the additive public entry point
+`ValidationOutcome revalidate(shared_ptr<const ValidatedSolution>, const ValidationLimits& = {})`.
+It invokes the existing independent validator on the solution's immutable
+candidate and context, with unchanged validation-limit semantics, avoiding a
+second owning copy of every pose and ID. A null solution follows the existing
+invalid-input path. The caller continues to account for retained solution/input
+storage separately from validator workspace. Result construction and checked
+export use this path for fresh validation; a prior valid result never bypasses
+the new validation attempt. This is source-additive and changes no wire contract
+or physical acceptance rule.
+
 The integration layer copies the actual ordered solver catalog into the value-only
 `ResultCatalog`; I/O never depends on solver headers. I/O verifies version,
 canonical signs/positive zero, uniqueness, policy completeness and placement
@@ -349,6 +365,63 @@ orientation; custom retains the complete canonical policy order; cube has all
 24 proper symmetries in the versioned matrix order. Export repeats this binding
 against the supplied result and verified handles: a `ValidatedDocument` created
 by the general schema validator is not proof that `build_result` produced it.
+To repeat the binding, extract the same identity keys, `search`, and the four
+measured metric keys below from the supplied document, then call `build_result`
+with the supplied native handles/catalog/limits. Require the complete rebuilt
+JSON to equal the supplied JSON before publication. This is semantic rebinding,
+not an issuance-token requirement: byte-identical content with the same freshly
+validated native binding is acceptable. The initial document has the builder's
+shape, without pre-existing output-artifact claims; the writer adds the checked
+STL reference later. No change to general `ValidatedDocument` is needed.
+
+Result constraints use the canonical fixed/custom policy derived above; custom
+entries are deduplicated in stable order. Repeated entries in a native context
+do not add permissions. Supplied resolved settings must already contain the same
+canonical policy. Existing wire validation continues to reject duplicate custom
+settings; the builder never copies native duplicates into the persisted policy
+or silently rewrites caller-provided search metadata. This removes no physical
+permission and changes no schema or semantic-validator rule.
+
+### Already resolved catalog input
+
+Version-1 construction normalizes raw fixed/custom policy once. That operation
+is not bit-idempotent: under the pinned compiler, four components equal to
+`0.5*(1+5e-13)` become `0.5000000000000001`, and normalizing that result again
+produces `0.5`. Already resolved settings therefore need an explicit consumption
+path, preserving their exact representatives and identity. Do not change the
+existing construction algorithm or silently rewrite resolved metadata.
+
+Add a source-compatible solver overload with a `const OrientationCatalog&`
+between the lattice and limits parameters. Before search it verifies version 1,
+canonical unit values, positive zero, uniqueness, orientation admission limits,
+and exact context binding: the selected fixed representative (identity for an
+empty native fixed policy), complete custom order, or all 24 versioned cube
+constants. It threads that supplied catalog through the spectral pipeline
+without normalization. Existing overloads and raw-policy catalog construction
+retain their current semantics. The context still controls physical permission.
+
+I/O adds `ResultCatalogBinding { normalized_policy, resolved_policy }`, with a
+trailing defaulted `binding{normalized_policy}` member in `ResultCatalog`.
+The default retains independent normalization/completeness checks. Explicit
+`resolved_policy` checks exact context values/order and does not normalize them;
+both modes retain canonical/version/uniqueness/completeness checks. Reject
+unknown binding values. Export forwards the binding during semantic rebuilding.
+Expose `std::variant<std::string, Error> result_catalog_sha256(const ResultCatalog&,
+const geometry::OrientationPolicy&)` using these independent I/O checks and the
+existing ordered-JSON digest. The CLI chooses resolved binding, validates the
+settings and catalog hash before search, then passes unchanged representatives
+and metadata to the solver and builder. I/O gains no solver dependency.
+
+This is an additive native interface correction. Existing aggregate initializers,
+raw-policy callers, wire schemas and geometry permission tolerances are unchanged;
+native consumers rebuild together. Resolved validation certifies the supplied
+representation, not its unavailable normalization history. Regression evidence
+must cover fixed and custom near-unit values above, exact retained bits/order/hash
+through solver and builder, stale identities and malformed catalogs, and later
+the CLI/export round trip. The numeric probe alone is characterization, not
+integration acceptance.
+
+### Result metadata
 
 `metadata` contains exactly identity (`schema_version`, `job_id`,
 `solution_revision`, `created_at`, `engine`), `search`, and `metrics`.
@@ -381,6 +454,18 @@ Output names must be distinct from one another and from those inputs, including
 hardlink aliases. The optional STL and companion must be representable by
 contained portable paths below the result directory; reject incompatible paths
 before publication rather than emitting traversal references.
+Here output names mean the primary JSON, optional STL, companion and every
+temporary staging file. A pre-existing content-addressed asset may be reused
+without opening it for writing when its complete bytes match the retained
+snapshot and it satisfies destination containment. This allows inspection and
+results in the same directory. An input alias with conflicting/missing bytes
+must be refused, never replaced or recreated through artifact publication.
+Primary result JSON may atomically replace a previous non-input result at the
+requested path. Pre-existing STL and companion destinations follow artifact
+conflict rules: reuse them read-only only when their complete bytes equal the
+new checked stages; conflicting bytes refuse optional publication and preserve
+the newly validated primary JSON. This first-slice policy adds no overwrite flag
+and changes no existing inspection-command behavior.
 
 Publish the verified source/PLY/repair artifacts first, then primary JSON, then
 optional STL and companion to unique adjacent
@@ -394,9 +479,10 @@ and reports its retained path in `Error.details`; do not claim full success.
 No multi-file atomicity claim: interrupted optional publication can leave an
 unreferenced artifact, never JSON referencing an unvalidated STL.
 
-Companion content: `schema_version:1`, `units:"mm"`, source and accepted-solid
-SHA-256, assembly SHA-256, total triangle count, and ordered
-`{copy_id, first_triangle, triangle_count}` ranges. Ranges are zero-based,
+Companion keys are exactly `schema_version:1`, `units:"mm"`, `source_sha256`,
+`accepted_solid_sha256`, `assembly_sha256`, `total_triangle_count`, and `copies`.
+`copies` is the ordered array of `{copy_id, first_triangle, triangle_count}`
+ranges. The three hash values are lowercase SHA-256 hex strings. Ranges are zero-based,
 contiguous, non-overlapping and exhaust the file. The result stores its normal
 `assembled_stl` artifact; companion naming is `<stl filename>.json`.
 
@@ -518,4 +604,5 @@ with retained-owner lifetimes, never asset identities or persisted values.
 The additions preserve existing source calls and wire/physical semantics. Corrected
 charging can refuse tight budgets that previously omitted work or used stale
 reservations. Existing broad-budget representation outcomes must remain unchanged.
-Implementation and runtime qualification of these additions are still pending.
+The geometry additions are implemented and under configured review; final
+qualification and their use by the spectral search remain in progress.

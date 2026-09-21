@@ -31,5 +31,10 @@ namespace detail::validation_kernel {
 // Publication boundary for internal material/boundary/uncertain raster tags.
 void normalize_public_object_cells(std::span<std::uint8_t>) noexcept;
 
+// Source-local test seam for forcing allocation failure while publishing a
+// field-kernel diagnostic. Production leaves the hook null.
+using FieldFailureAllocationHook = void (*)() noexcept;
+void set_field_failure_allocation_hook(FieldFailureAllocationHook) noexcept;
+
 }  // namespace detail::validation_kernel
 }  // namespace spectrapack::geometry

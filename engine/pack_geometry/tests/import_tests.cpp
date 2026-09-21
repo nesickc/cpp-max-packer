@@ -93,6 +93,13 @@ TEST_CASE("AT-03 keeps container minimum source frame and rejects malformed or n
   auto bad=geo::inspect_stl(ascii("solid x\nfacet normal 0 0 0\nouter loop\nvertex nan 0 0\n"), {geo::AssetRole::object,geo::Units::mm}); REQUIRE(std::holds_alternative<geo::ImportFailure>(bad)); CHECK(std::get<geo::ImportFailure>(bad).reason=="NONFINITE_COORDINATE");
   auto scale=geo::inspect_stl(triangle_ascii(), {geo::AssetRole::object,geo::Units::custom,0}); REQUIRE(std::holds_alternative<geo::ImportFailure>(scale)); CHECK(std::get<geo::ImportFailure>(scale).reason=="INVALID_SCALE");
 }
+TEST_CASE("AT-03 public import preserves the container source anchor", "[import][AT-03]") {
+  const auto bytes = cube_ascii(false, false, {10, 10, 10}, {12, 12, 12});
+  const auto outcome = geo::inspect_stl(bytes, {geo::AssetRole::container, geo::Units::mm});
+  REQUIRE(std::holds_alternative<std::shared_ptr<const geo::AssetDraft>>(outcome));
+  const auto imported = std::get<std::shared_ptr<const geo::AssetDraft>>(outcome);
+  CHECK(imported->frame().anchor_mm == geo::Vec3{10, 10, 10});
+}
 TEST_CASE("AT-04 exact cleanup keeps positive-area faces while removing exact duplicates and zero area", "[import][AT-04]") {
   auto bytes=ascii("solid x\nfacet normal 0 0 -1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 1 0\nendloop\nendfacet\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 2 0 0\nendloop\nendfacet\nendsolid x\n");
   auto outcome=geo::inspect_stl(bytes,{geo::AssetRole::object,geo::Units::mm}); const auto& d=draft(outcome); CHECK(d.mesh().triangles.size()==1); CHECK(d.report().cleanup.exact_vertices_merged==5); CHECK(d.report().duplicate_faces==1); CHECK(d.report().zero_area_faces==1); CHECK(d.report().validity==geo::Validity::invalid);

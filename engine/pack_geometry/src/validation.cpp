@@ -352,6 +352,12 @@ const std::shared_ptr<const ValidationContext>& ValidatedSolution::context() con
 const std::vector<CopyPose>& ValidatedSolution::copies() const noexcept { return candidate_->copies(); }
 const ValidationReport& ValidatedSolution::report() const noexcept { return report_; }
 
+ValidationOutcome revalidate(std::shared_ptr<const ValidatedSolution> solution,
+                             const ValidationLimits& limits) {
+  if (!solution) return validate({}, {}, limits);
+  return validate(solution->context_, solution->candidate_, limits);
+}
+
 ValidationContext::ValidationContext(std::shared_ptr<const Storage> storage) noexcept
     : storage_(std::move(storage)) {}
 const std::shared_ptr<const AcceptedSolid>& ValidationContext::object() const noexcept { return storage_->object_; }

@@ -23,6 +23,8 @@
 namespace spectrapack::geometry::detail::validation_kernel {
 namespace {
 
+thread_local FieldFailureAllocationHook field_failure_allocation_hook{};
+
 constexpr std::size_t kExactLimbs = 1024;  // 32,768 checked bits.
 constexpr std::uint64_t kExactScratchBytes =
     128ULL * sizeof(std::array<std::uint32_t, kExactLimbs>);
@@ -452,17 +454,6 @@ std::array<std::array<Interval, 3>, 3> rotation_intervals(const Quaternion& q) n
   return h;
 }
 
-double direct_coordinate(const Vec3& point, const Vec3& translation,
-                         const Quaternion& q, int row) noexcept {
-  const double x=q[0],y=q[1],z=q[2],w=q[3];
-  const double d=x*x+y*y+z*z+w*w;
-  const double h[3][3] = {
-      {w*w+x*x-y*y-z*z,2*(x*y-z*w),2*(x*z+y*w)},
-      {2*(x*y+z*w),w*w-x*x+y*y-z*z,2*(y*z-x*w)},
-      {2*(x*z-y*w),2*(y*z+x*w),w*w-x*x-y*y+z*z}};
-  return translation[row] + (h[row][0]*point[0]+h[row][1]*point[1]+h[row][2]*point[2])/d;
-}
-
 Interval transformed_interval(const Vec3& point, const Vec3& translation,
                               const std::array<std::array<Interval,3>,3>& rotation,
                               int row) noexcept {
@@ -525,6 +516,50 @@ std::vector<std::uint32_t> shell_witnesses(MeshView mesh, Budget& budget) {
 
 }  // namespace
 
+std::optional<RotationTransform> rotation_transform(Quaternion quaternion) noexcept {
+  double scale{};
+  for (const double component : quaternion) {
+    if (!std::isfinite(component)) return std::nullopt;
+    scale = std::max(scale, std::abs(component));
+  }
+  if (!(scale > 0.0)) return std::nullopt;
+
+  RotationTransform result;
+  CardinalRotation cardinal;
+  if (cardinal_rotation(quaternion, cardinal)) {
+    result.exact_cardinal = true;
+    result.source_axis = cardinal.source_axis;
+    result.sign = cardinal.sign;
+    for (int row = 0; row != 3; ++row)
+      result.matrix[row][result.source_axis[row]] = result.sign[row];
+    return result;
+  }
+
+  for (double& component : quaternion) component /= scale;
+  const double x = quaternion[0], y = quaternion[1], z = quaternion[2], w = quaternion[3];
+  const double denominator = x * x + y * y + z * z + w * w;
+  if (!(denominator > 0.0) || !std::isfinite(denominator)) return std::nullopt;
+  result.matrix = {{
+      {{(w * w + x * x - y * y - z * z) / denominator,
+        2.0 * (x * y - z * w) / denominator,
+        2.0 * (x * z + y * w) / denominator}},
+      {{2.0 * (x * y + z * w) / denominator,
+        (w * w - x * x + y * y - z * z) / denominator,
+        2.0 * (y * z - x * w) / denominator}},
+      {{2.0 * (x * z - y * w) / denominator,
+        2.0 * (y * z + x * w) / denominator,
+        (w * w - x * x - y * y + z * z) / denominator}},
+  }};
+  for (const auto& row : result.matrix)
+    for (const double coefficient : row)
+      if (!std::isfinite(coefficient)) return std::nullopt;
+  return result;
+}
+
+void set_field_failure_allocation_hook(FieldFailureAllocationHook hook) noexcept {
+  field_failure_allocation_hook = hook;
+}
+
 class PreparedSolid {
  public:
   std::shared_ptr<const AcceptedSolid> asset;
@@ -544,20 +579,63 @@ class PlacedSolid {
   std::array<AxisCoordinate,3> cuboid_max{};
   ConservativeBounds conservative;
   std::vector<Vec3> world_vertices;
-  std::vector<std::array<Interval,3>> vertex_intervals;
-  std::vector<std::array<AxisCoordinate,3>> exact_vertices;
-  bool represented_world_exact{};
+  std::vector<std::array<Interval, 3>> vertex_intervals;
+  std::vector<std::array<AxisCoordinate, 3>> exact_vertices;
+  bool represented_world_exact {};
 };
 
-Budget::Budget(std::uint64_t max_work, std::uint64_t max_working_bytes) noexcept
-    : max_work_(max_work), max_working_bytes_(max_working_bytes) {}
+std::optional<std::uint64_t> prepared_owned_bytes(const PreparedSolid& solid) noexcept
+{
+    constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
+    if (solid.shell_witnesses.capacity() > maximum / sizeof(std::uint32_t)) {
+        return std::nullopt;
+    }
+    return sizeof(PreparedSolid) + static_cast<std::uint64_t>(solid.shell_witnesses.capacity()) * sizeof(std::uint32_t);
+}
 
-bool Budget::consume_work(std::uint64_t units) noexcept {
-  if (work_used_ > max_work_ || units > max_work_ - work_used_) {
-    exhausted_=true; work_exhausted_=true; return false;
-  }
-  work_used_ += units;
-  return true;
+std::optional<std::uint64_t> placed_owned_bytes(const PlacedSolid& solid) noexcept
+{
+    constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
+    std::uint64_t total = sizeof(PlacedSolid);
+    const auto add = [&](std::size_t count, std::size_t width) {
+        if (count != 0 && width > maximum / count) {
+            return false;
+        }
+        const auto bytes = static_cast<std::uint64_t>(count) * width;
+        if (bytes > maximum - total) {
+            return false;
+        }
+        total += bytes;
+        return true;
+    };
+    if (!add(solid.world_vertices.capacity(), sizeof(Vec3)) ||
+        !add(solid.vertex_intervals.capacity(), sizeof(std::array<Interval, 3>)) ||
+        !add(solid.exact_vertices.capacity(), sizeof(std::array<AxisCoordinate, 3>))) {
+        return std::nullopt;
+    }
+    return total;
+}
+
+std::optional<std::uint64_t> placed_prepared_owned_bytes(const PlacedSolid& solid) noexcept
+{
+    return solid.prepared ? prepared_owned_bytes(*solid.prepared) : std::nullopt;
+}
+
+Budget::Budget(std::uint64_t max_work, std::uint64_t max_working_bytes) noexcept :
+    max_work_(max_work),
+    max_working_bytes_(max_working_bytes)
+{
+}
+
+bool Budget::consume_work(std::uint64_t units) noexcept
+{
+    if (work_used_ > max_work_ || units > max_work_ - work_used_) {
+        exhausted_ = true;
+        work_exhausted_ = true;
+        return false;
+    }
+    work_used_ += units;
+    return true;
 }
 
 bool Budget::reserve_bytes(std::uint64_t bytes) noexcept {
@@ -615,6 +693,8 @@ PlaceResult place(std::shared_ptr<const PreparedSolid> solid, Vec3 translation,
     return {{},{"KERNEL_FLOATING_ENVIRONMENT","place"}};
   if (!solid || !finite_pose(translation,quaternion))
     return {{},{"KERNEL_POSE_INVALID","place"}};
+  const auto transform = rotation_transform(quaternion);
+  if (!transform) return {{},{"KERNEL_POSE_INVALID","place"}};
   if (!budget.consume_work(32)) return {{},{"KERNEL_WORK_LIMIT","place"}};
   if (!budget.reserve_bytes(sizeof(PlacedSolid))) return {{},{"KERNEL_MEMORY_LIMIT","place"}};
   try {
@@ -622,7 +702,9 @@ PlaceResult place(std::shared_ptr<const PreparedSolid> solid, Vec3 translation,
     result->prepared=std::move(solid);
     result->translation=translation;
     result->quaternion=quaternion;
-    result->is_cardinal=cardinal_rotation(quaternion,result->cardinal);
+    result->is_cardinal=transform->exact_cardinal;
+    result->cardinal.source_axis=transform->source_axis;
+    result->cardinal.sign=transform->sign;
     if (result->prepared->is_cuboid && result->is_cardinal) {
       for (int world=0;world!=3;++world) {
         const int local=result->cardinal.source_axis[world];
@@ -682,7 +764,9 @@ PlaceResult place(std::shared_ptr<const PreparedSolid> solid, Vec3 translation,
     for (std::size_t i=0;i<mesh.vertices.size();++i) {
       if (!budget.consume_work(90)) return {{},{"KERNEL_WORK_LIMIT","place-vertices"}};
       for (int axis=0;axis!=3;++axis) {
-        result->world_vertices[i][axis]=direct_coordinate(mesh.vertices[i],translation,quaternion,axis);
+        result->world_vertices[i][axis] = translation[axis];
+        for (int source = 0; source != 3; ++source)
+          result->world_vertices[i][axis] += transform->matrix[axis][source] * mesh.vertices[i][source];
         result->vertex_intervals[i][axis]=transformed_interval(mesh.vertices[i],translation,rotation,axis);
         const auto interval=result->vertex_intervals[i][axis];
         if (!interval.valid) return {{},{"KERNEL_INTERVAL_OVERFLOW","place-vertices"}};
@@ -738,7 +822,7 @@ PhysicalBounds physical_bounds(std::shared_ptr<const AcceptedSolid> solid,
   // workspace so max_working_bytes remains a real cap rather than silently
   // excluding the rotation intervals and extrema accumulators.
   constexpr std::uint64_t kStackWorkingBytes =
-      sizeof(PhysicalBounds) + sizeof(CardinalRotation) +
+      sizeof(PhysicalBounds) + sizeof(RotationTransform) +
       sizeof(std::array<std::array<Interval, 3>, 3>) +
       4 * sizeof(Interval) + 2 * sizeof(Vec3);
   ScratchCharge scratch{budget, kStackWorkingBytes};
@@ -748,8 +832,14 @@ PhysicalBounds physical_bounds(std::shared_ptr<const AcceptedSolid> solid,
     return result;
   }
 
-  CardinalRotation cardinal{};
-  const bool is_cardinal = cardinal_rotation(quaternion, cardinal);
+  const auto transform = rotation_transform(quaternion);
+  if (!transform) {
+    result.failure_code = "KERNEL_POSE_INVALID";
+    result.failure_method = "physical-bounds";
+    return result;
+  }
+  CardinalRotation cardinal { transform->source_axis, transform->sign };
+  const bool is_cardinal = transform->exact_cardinal;
   const std::uint64_t setup_work = is_cardinal ? 8 : 48;
   if (!budget.consume_work(setup_work)) {
     result.failure_code = "KERNEL_WORK_LIMIT";
@@ -1826,8 +1916,10 @@ std::optional<KernelFailure> rasterize_boundary(
     for (std::int64_t z=first[2];z<=last[2];++z)
       for (std::int64_t y=first[1];y<=last[1];++y)
         for (std::int64_t x=first[0];x<=last[0];++x) {
-          if (cell_visits==max_cell_visits)
+          if (cell_visits==max_cell_visits) {
+            if (field_failure_allocation_hook) field_failure_allocation_hook();
             return KernelFailure{"FIELD_CELL_VISIT_LIMIT","rasterize-boundary"};
+          }
           ++cell_visits;
           if (!budget.consume_work(180))
             return KernelFailure{"FIELD_KERNEL_WORK_LIMIT","rasterize-boundary"};
@@ -2071,17 +2163,20 @@ ContainmentResult classify_stl(const PlacedSolid& object,const PlacedSolid& cont
   if (boundary.relation==BoundaryRelation::indeterminate)
     return {Decision::indeterminate,Threshold::indeterminate,"boundary-shell","KERNEL_BOUNDARY_UNRESOLVED"};
   for (const auto witness:object.prepared->shell_witnesses) {
-    const Vec3 point=object.prepared->is_cuboid && object.is_cardinal
-        ? object.translation : object.world_vertices[witness];
+    const Vec3 point=object.world_vertices[witness];
     const auto inside=point_in_material(point,container,budget);
-    if (inside!=Decision::yes)
-      return {inside==Decision::no?Decision::no:Decision::indeterminate,Threshold::indeterminate,
-              "boundary-disjoint-shell-witnesses",inside==Decision::no?"OUTSIDE_CONTAINER":"KERNEL_OBJECT_WITNESS_UNRESOLVED"};
+    if (inside==Decision::no)
+      return {Decision::no,exact_surface_gap(object,container,clearance,budget),
+              "boundary-disjoint-shell-witnesses","OUTSIDE_CONTAINER"};
+    if (inside==Decision::indeterminate)
+      return {Decision::indeterminate,Threshold::indeterminate,
+              "boundary-disjoint-shell-witnesses","KERNEL_OBJECT_WITNESS_UNRESOLVED"};
   }
   for (const auto witness:container.prepared->shell_witnesses) {
     const auto inside=point_in_material(container.world_vertices[witness],object,budget);
     if (inside==Decision::yes)
-      return {Decision::no,Threshold::indeterminate,"boundary-disjoint-shell-witnesses","EXCLUDED_CAVITY_ENCLOSED"};
+      return {Decision::no,exact_surface_gap(object,container,clearance,budget),
+              "boundary-disjoint-shell-witnesses","EXCLUDED_CAVITY_ENCLOSED"};
     if (inside==Decision::indeterminate)
       return {Decision::indeterminate,Threshold::indeterminate,"boundary-disjoint-shell-witnesses","KERNEL_CONTAINER_WITNESS_UNRESOLVED"};
   }
