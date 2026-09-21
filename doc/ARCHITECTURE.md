@@ -70,6 +70,12 @@ bounds/grid queries in geometry. It preserves exact cardinal tiling and sends
 every insertion through authoritative full-prefix validation. Implementation and
 qualification are tracked in [T-006](T-006.md).
 
+[ADR 0009](../spec/decisions/0009-cpu-spectral-placement-and-export.md) defines
+T-007's CPU correlation, native spectral solver and synchronous solve/export
+boundaries. Compute proposes fields; geometry remains authoritative. A separate
+geometry report validates distinct quantized STL copies without replacing the
+accepted search solution. [T-007](T-007.md) tracks implementation and evidence.
+
 `spec/schemas/` is the single source for versioned wire/persistence shapes and generated TypeScript types. C++ CLI and service use one decoder and semantic-validation path. `pack_geometry` supplies source-to-local import frames in millimeters with unchanged right-handed Z-up axes and native rigid placement validation using active XYZW quaternions plus translation. Viewer/export integration and its shared transform goldens remain pending. Preserve source mappings; never scale to fit (`GEO-02`, `DATA-01`, `DATA-03`).
 
 Validation returns `valid`, `invalid` or `indeterminate`, with copy IDs and diagnostics. Only `valid` can enter incumbent publication. Validate accepted solids, including enclosure/coincidence, STL-volume difference and separate pair/wall distances; tolerance never reduces clearance. Restore/final/export validation bypasses search certificates. Re-read quantized STL coordinates; retain valid JSON/project if STL export fails (`GEO-05`, `GEO-06`).
