@@ -809,7 +809,9 @@ BaselineOutcome run_aabb_baseline(
       if (skip_orientation) continue;
 
       bool interrupted = false;
-      for (std::uint64_t z = 0; z != grid[2].count && !interrupted; ++z) {
+      const bool has_cells =
+          grid[0].count != 0 && grid[1].count != 0 && grid[2].count != 0;
+      for (std::uint64_t z = 0; z != grid[2].count && !interrupted && has_cells; ++z) {
         for (std::uint64_t y = 0; y != grid[1].count && !interrupted; ++y) {
           for (std::uint64_t x = 0; x != grid[0].count; ++x) {
             const auto current_boundary = boundary(control);

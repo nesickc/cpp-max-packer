@@ -131,6 +131,24 @@ TEST_CASE("T006 baseline reports an oversized solid as an authoritative valid em
   CHECK(result.best->volumes->utilization == 0.0);
 }
 
+TEST_CASE("T006 baseline completes a zero-X grid without enumerating the other axes",
+          "[solver][T006][SOL-01][AT-10]") {
+  // X cannot fit, while Y and Z each admit the default one-million cells.
+  // The guard must happen after all axis plans, before the Z/Y/X loops.
+  const auto context = baseline_context(1, {0.5, 1'000'000, 1'000'000});
+
+  const auto result = solver::run_aabb_baseline(context, {}, {});
+
+  REQUIRE(result.best);
+  REQUIRE(result.best->solution);
+  CHECK(result.best->label == "best_found");
+  CHECK(result.best->solution->copies().empty());
+  CHECK(result.best->score.count == 0);
+  CHECK(result.stats.candidate_evaluations == 0);
+  CHECK(result.stats.search_passes == 1);
+  CHECK(result.termination_reason == solver::TerminationReason::search_stalled);
+}
+
 TEST_CASE("T006 baseline searches exact canonical cube and upright cardinal seeds",
           "[solver][T006][AT-08]") {
   auto object = geo::test_support::accepted(

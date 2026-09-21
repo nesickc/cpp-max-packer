@@ -40,9 +40,20 @@ Architect session: `01a0822e-b3c1-7163-95ee-d16b3752d301`; reviewer: `01a08234-a
 
 ## Dispatch and evidence limits
 
-This task exposes explicit model/effort overrides and no named-role selector or close-worker control. Tasks used fresh context, exact model/effort, and scoped role instructions. Reuse completed workers for related follow-ups and close them where supported. At most two workers ran simultaneously; the configured cap is confirmed without a stress test. Leaf-only behavior is policy, not a verified permission boundary.
+The original setup task exposed explicit model/effort overrides and no named-role selector or close-worker control. Tasks used fresh context, exact model/effort, and scoped role instructions. Reuse completed workers for related follow-ups and close them where supported. At most two workers ran simultaneously; the configured cap is confirmed without a stress test. Leaf-only behavior is policy, not a verified permission boundary.
 
 When a future surface supports native named-role dispatch, select the role and inspect metadata on first use. Otherwise use the tested explicit-override fallback. A role name in a prompt alone does not select a model. Native role-file and unqualified-worker dispatch are not claimed runtime-verified. No restart is needed merely to repeat probes; confirm a fresh project task retains Astra Ultra.
+
+On 2026-09-21, the T-006 task exposes native named-role dispatch. Local session
+`turn_context` records confirm primary `gpt-6-astra` / `ultra`, named `architect`
+and `code_reviewer` `gpt-6-astra` / `xhigh`, `implementation_worker`
+`gpt-5.6-terra` / `medium`, and `light_worker` / `log_reviewer`
+`gpt-5.6-luna` / `low`. All seven repository TOML files parse successfully;
+metadata evidence is retained in `.local/t006/agent-runtime-check.json`.
+The task uses fresh worker context and keeps at most two workers active; no
+close-worker control is exposed. Historical account paths above are not current
+machine prerequisites. Sign-in, billing, speed and global permissions remain
+unchanged.
 
 ## Test-first operation
 
