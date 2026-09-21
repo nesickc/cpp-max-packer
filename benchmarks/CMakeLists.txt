@@ -24,3 +24,27 @@ endif()
 set_target_properties(spectrapack_representation_benchmark PROPERTIES
   RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+add_executable(spectrapack_baseline_benchmark native/baseline_benchmark.cpp)
+target_link_libraries(spectrapack_baseline_benchmark PRIVATE
+  pack_solver spectrapack_dependency_json spectrapack_test_support
+)
+target_compile_features(spectrapack_baseline_benchmark PRIVATE cxx_std_20)
+target_compile_options(spectrapack_baseline_benchmark PRIVATE
+  $<$<CXX_COMPILER_ID:MSVC>:/fp:strict>
+)
+if(WIN32)
+  target_link_libraries(spectrapack_baseline_benchmark PRIVATE Psapi)
+endif()
+set_target_properties(spectrapack_baseline_benchmark PROPERTIES
+  RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+)
+
+add_executable(spectrapack_baseline_support_tests native/baseline_support_tests.cpp)
+target_link_libraries(spectrapack_baseline_support_tests PRIVATE
+  pack_solver spectrapack_dependency_json spectrapack_test_support
+  Catch2::Catch2WithMain
+)
+target_compile_features(spectrapack_baseline_support_tests PRIVATE cxx_std_20)
+include(Catch)
+catch_discover_tests(spectrapack_baseline_support_tests)

@@ -64,6 +64,12 @@ from accepted solids through boundary rasterization and material classification;
 full Euclidean clearance masks and transactional reference counts support later
 search. Display settings never enter authoritative field or validation inputs.
 
+[ADR 0008](../spec/decisions/0008-physical-baseline.md) specifies T-006's native
+`pack_solver` baseline and immutable incumbent, with public bounded physical
+bounds/grid queries in geometry. It preserves exact cardinal tiling and sends
+every insertion through authoritative full-prefix validation. Implementation and
+qualification are tracked in [T-006](T-006.md).
+
 `spec/schemas/` is the single source for versioned wire/persistence shapes and generated TypeScript types. C++ CLI and service use one decoder and semantic-validation path. `pack_geometry` supplies source-to-local import frames in millimeters with unchanged right-handed Z-up axes and native rigid placement validation using active XYZW quaternions plus translation. Viewer/export integration and its shared transform goldens remain pending. Preserve source mappings; never scale to fit (`GEO-02`, `DATA-01`, `DATA-03`).
 
 Validation returns `valid`, `invalid` or `indeterminate`, with copy IDs and diagnostics. Only `valid` can enter incumbent publication. Validate accepted solids, including enclosure/coincidence, STL-volume difference and separate pair/wall distances; tolerance never reduces clearance. Restore/final/export validation bypasses search certificates. Re-read quantized STL coordinates; retain valid JSON/project if STL export fails (`GEO-05`, `GEO-06`).

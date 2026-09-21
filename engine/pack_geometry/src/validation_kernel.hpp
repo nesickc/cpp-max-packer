@@ -4,15 +4,24 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 
 namespace spectrapack::geometry::detail::validation_kernel {
 
-inline constexpr std::string_view kRevision = "homogeneous-rational-interval-v1";
+inline constexpr std::string_view kRevision = "homogeneous-rational-interval-v2";
 
 enum class Decision : std::uint8_t { no, yes, indeterminate };
-enum class Threshold : std::uint8_t { below, equal, above, indeterminate };
+// `at_least` certifies that a lower bound meets the requested threshold. It
+// deliberately does not distinguish exact equality from a larger actual gap.
+enum class Threshold : std::uint8_t {
+  below,
+  equal,
+  above,
+  at_least,
+  indeterminate
+};
 enum class BoundaryRelation : std::uint8_t {
   disjoint,
   contact,
@@ -89,6 +98,18 @@ struct ConservativeBounds {
   bool finite{};
 };
 
+// Bounds calculated by the same homogeneous quaternion interval path used by
+// validation. Cardinal extrema retain the signed-permutation values instead of
+// inheriting a conservative expansion intended for broad-phase rejection.
+struct PhysicalBounds {
+  Bounds bounds_mm{};
+  bool exact_cardinal_extrema{};
+  bool finite{};
+  std::uint64_t vertex_visits{};
+  std::string_view failure_code;
+  std::string_view failure_method;
+};
+
 [[nodiscard]] PrepareResult prepare(
     std::shared_ptr<const AcceptedSolid> solid, Budget& budget);
 [[nodiscard]] PlaceResult place(
@@ -96,9 +117,19 @@ struct ConservativeBounds {
     Quaternion rotation_xyzw, Budget& budget);
 [[nodiscard]] ConservativeBounds conservative_bounds(
     const PlacedSolid& solid) noexcept;
+[[nodiscard]] PhysicalBounds physical_bounds(
+    std::shared_ptr<const AcceptedSolid> solid, Quaternion rotation_xyzw,
+    std::uint64_t max_vertex_visits, Budget& budget) noexcept;
 [[nodiscard]] bool separated_by_bounds(
     const PlacedSolid& first, const PlacedSolid& second,
     double clearance_mm, Budget& budget) noexcept;
+// Present only when exact cardinal extrema either certify a sufficient
+// positive-clearance lower bound or fail to complete that proof. Absence means
+// the full pair classifier remains authoritative.
+[[nodiscard]] std::optional<PairResult>
+cardinal_bounds_clearance_certificate(
+    const PlacedSolid& first, const PlacedSolid& second,
+    double clearance_mm, Budget& budget);
 [[nodiscard]] PairResult classify_pair(
     const PlacedSolid& first, const PlacedSolid& second,
     double clearance_mm, Budget& budget);

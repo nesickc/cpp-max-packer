@@ -8,7 +8,7 @@ param(
     [string]$CtestPath = 'ctest',
     [string]$PythonPath = 'python',
     [string]$ToolchainLock = (Join-Path $PSScriptRoot '..\cmake\toolchains.lock.json'),
-    [ValidateSet('local-windows-2026', 'hosted-windows-2025', 'hosted-windows-2025-20260907')]
+    [ValidateSet('local-windows-2026', 'local-windows-2026-20260921', 'hosted-windows-2025', 'hosted-windows-2025-20260907')]
     [string]$ToolchainProfile,
     [string]$BuildTarget,
     [string]$TestRegex,

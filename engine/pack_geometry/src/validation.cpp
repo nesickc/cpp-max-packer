@@ -290,6 +290,22 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
     if (kernel::separated_by_bounds(*placed[first], *placed[second], expected_context->constraints().pair_clearance_mm, budget)) {
       continue;
     }
+    const auto certificate = kernel::cardinal_bounds_clearance_certificate(
+        *placed[first], *placed[second],
+        expected_context->constraints().pair_clearance_mm, budget);
+    if (certificate) {
+      outcome.report.checks[3].method = certificate->method;
+      if (certificate->material_overlap == kernel::Decision::indeterminate ||
+          certificate->surface_gap == kernel::Threshold::indeterminate)
+        return reject(Validity::indeterminate,
+                      certificate->code.empty() ? "VALIDATION_PAIR_UNRESOLVED"
+                                                : certificate->code,
+                      "Pair clearance bound was unresolved.",
+                      ValidationCheck::pair_solids,
+                      {candidate->copies()[first].copy_id,
+                       candidate->copies()[second].copy_id});
+      continue;
+    }
     const auto pair = kernel::classify_pair(*placed[first], *placed[second], expected_context->constraints().pair_clearance_mm, budget);
     outcome.report.checks[3].method = pair.method;
     if (pair.material_overlap == kernel::Decision::yes || pair.surface_gap == kernel::Threshold::below)

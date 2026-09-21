@@ -57,6 +57,14 @@ and moved-project/export round trips remain required by the full gates below.
 
 ## User-provided assets
 
+[T-006](../doc/T-006.md) plans physical AABB candidate and retained-incumbent
+gates: exact 64-copy tiling independent of pitch, separate pair/wall clearances,
+validated empty results, true STL containment, deterministic work and monotone
+immutable snapshots. Independent analytic coordinates and distances complement
+fresh-context validation of retained poses. Runtime red/green and bounded
+practical qualification evidence are required before claiming this native slice;
+product export/event round trips remain later integration gates.
+
 [T-005](../doc/T-005.md) adds shared display-LOD and conservative-field gates:
 useful approximation with an actual error-limited triangle count; invariant
 accepted geometry, field bytes and physical validation across display settings;

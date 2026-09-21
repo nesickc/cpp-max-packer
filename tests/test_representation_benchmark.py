@@ -93,7 +93,7 @@ def _cube_cells(low, high):
 def _validation(translation):
     report = {
         "validity": 0, "code": "VALID", "message": "complete",
-        "epsilon_mm": 1e-6, "kernel_revision": "homogeneous-rational-interval-v1",
+        "epsilon_mm": 1e-6, "kernel_revision": "homogeneous-rational-interval-v2",
         "aabb_pair_tests": 0, "kernel_work": 100, "working_bytes_peak": 1000,
         "affected_ids_truncated": False, "affected_copy_ids": [],
         "checks": [{"check": index, "state": 1, "method": "checked"}

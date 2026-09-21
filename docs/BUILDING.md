@@ -25,6 +25,8 @@ From the repository root in PowerShell:
 ```powershell
 .\tools\Invoke-NativeTests.ps1 -Preset windows-ninja-debug -ToolchainProfile local-windows-2026 -VcpkgRoot D:\path\to\vcpkg -PythonPath python -Fresh
 .\tools\Invoke-NativeTests.ps1 -Preset windows-ninja-release -ToolchainProfile local-windows-2026 -VcpkgRoot D:\path\to\vcpkg -PythonPath python -Fresh
+# For the separately measured 2026-09-21 local profile:
+.\tools\Invoke-NativeTests.ps1 -Preset windows-ninja-debug -ToolchainProfile local-windows-2026-20260921 -VcpkgRoot D:\path\to\vcpkg -PythonPath python -Fresh
 python -m unittest discover -s tests -p 'test_*.py'
 ```
 
