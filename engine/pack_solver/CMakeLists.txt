@@ -1,6 +1,7 @@
 add_library(pack_solver STATIC
   src/incumbent.cpp
   src/baseline.cpp
+  src/orientations.cpp
 )
 target_include_directories(pack_solver PUBLIC include)
 target_link_libraries(pack_solver PUBLIC pack_geometry)
@@ -11,6 +12,7 @@ target_compile_options(pack_solver PRIVATE
 add_executable(spectrapack_solver_tests
   tests/incumbent_tests.cpp
   tests/baseline_tests.cpp
+  tests/orientations_tests.cpp
 )
 target_link_libraries(spectrapack_solver_tests PRIVATE
   pack_solver spectrapack_test_support Catch2::Catch2WithMain)

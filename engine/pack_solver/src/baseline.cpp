@@ -1,6 +1,7 @@
 #include "spectrapack/solver/baseline.hpp"
 
 #include "allocation_fault.hpp"
+#include "orientation_cube.hpp"
 #include "storage_accounting.hpp"
 
 #include <algorithm>
@@ -272,12 +273,6 @@ std::optional<geometry::Bounds> container_bounds(
   return {};
 }
 
-int determinant(const Matrix& matrix) noexcept {
-  return matrix[0] * (matrix[4] * matrix[8] - matrix[5] * matrix[7]) -
-         matrix[1] * (matrix[3] * matrix[8] - matrix[5] * matrix[6]) +
-         matrix[2] * (matrix[3] * matrix[7] - matrix[4] * matrix[6]);
-}
-
 geometry::Quaternion canonicalized(geometry::Quaternion value) noexcept {
   const double norm = std::hypot(std::hypot(value[0], value[1]),
                                  std::hypot(value[2], value[3]));
@@ -297,77 +292,6 @@ geometry::Quaternion canonicalized(geometry::Quaternion value) noexcept {
   for (auto& component : value)
     if (component == 0) component = 0;
   return value;
-}
-
-geometry::Quaternion cardinal_quaternion(const Matrix& matrix) noexcept {
-  std::array<int, 4> numerators{};
-  const int trace = matrix[0] + matrix[4] + matrix[8];
-  if (trace > 0) {
-    numerators = {matrix[7] - matrix[5], matrix[2] - matrix[6],
-                  matrix[3] - matrix[1], trace + 1};
-  } else if (matrix[0] > matrix[4] && matrix[0] > matrix[8]) {
-    numerators = {1 + matrix[0] - matrix[4] - matrix[8],
-                  matrix[1] + matrix[3], matrix[2] + matrix[6],
-                  matrix[7] - matrix[5]};
-  } else if (matrix[4] > matrix[8]) {
-    numerators = {matrix[1] + matrix[3],
-                  1 + matrix[4] - matrix[0] - matrix[8],
-                  matrix[5] + matrix[7], matrix[2] - matrix[6]};
-  } else {
-    numerators = {matrix[2] + matrix[6], matrix[5] + matrix[7],
-                  1 + matrix[8] - matrix[0] - matrix[4],
-                  matrix[3] - matrix[1]};
-  }
-
-  const auto nonzero = static_cast<std::size_t>(std::count_if(
-      numerators.begin(), numerators.end(), [](int value) { return value != 0; }));
-  constexpr double half_sqrt = 0.7071067811865475244;
-  const double magnitude = nonzero == 1 ? 1.0 : (nonzero == 2 ? half_sqrt : 0.5);
-  geometry::Quaternion result{};
-  for (std::size_t index = 0; index != result.size(); ++index) {
-    result[index] = numerators[index] < 0
-                        ? -magnitude
-                        : (numerators[index] > 0 ? magnitude : 0.0);
-  }
-  bool negate = result[3] < 0;
-  if (result[3] == 0) {
-    const auto first_nonzero = std::find_if(
-        result.begin(), result.begin() + 3,
-        [](double value) { return value != 0; });
-    negate = first_nonzero != result.begin() + 3 && *first_nonzero < 0;
-  }
-  if (negate) {
-    for (auto& component : result) component = -component;
-  }
-  return result;
-}
-
-geometry::Quaternion matrix_quaternion(const Matrix& matrix) noexcept {
-  return cardinal_quaternion(matrix);
-}
-
-std::vector<geometry::Quaternion> cube_seeds(std::size_t reserved = 24) {
-  std::array<Matrix, 24> matrices{};
-  std::size_t count = 0;
-  std::array<int, 3> permutation{0, 1, 2};
-  do {
-    for (const int sx : {-1, 1}) {
-      for (const int sy : {-1, 1}) {
-        for (const int sz : {-1, 1}) {
-          Matrix matrix{};
-          matrix[permutation[0]] = sx;
-          matrix[3 + permutation[1]] = sy;
-          matrix[6 + permutation[2]] = sz;
-          if (determinant(matrix) == 1) matrices[count++] = matrix;
-        }
-      }
-    }
-  } while (std::next_permutation(permutation.begin(), permutation.end()));
-  std::sort(matrices.begin(), matrices.end());
-  std::vector<geometry::Quaternion> result;
-  result.reserve(reserved);
-  for (const auto& matrix : matrices) result.push_back(matrix_quaternion(matrix));
-  return result;
 }
 
 geometry::Quaternion multiply(const geometry::Quaternion& first,
@@ -406,7 +330,7 @@ std::vector<geometry::Quaternion> orientation_seeds(
     deduplicate_exact(result);
     return result;
   }
-  if (policy.mode == geometry::OrientationMode::cube) return cube_seeds();
+  if (policy.mode == geometry::OrientationMode::cube) return detail::cube_seed_quaternions();
   if (policy.mode == geometry::OrientationMode::upright) {
     constexpr double half_sqrt = 0.7071067811865475244;
     std::vector<geometry::Quaternion> result;
@@ -424,7 +348,7 @@ std::vector<geometry::Quaternion> orientation_seeds(
     return result;
   }
 
-  auto result = cube_seeds(48);
+  auto result = detail::cube_seed_quaternions(48);
   const geometry::Quaternion z45{
       0, 0, std::sin(std::numbers::pi / 8.0),
       std::cos(std::numbers::pi / 8.0)};
