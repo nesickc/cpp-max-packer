@@ -213,10 +213,35 @@ provides attribution. Work slices are additional bounded search effort, not
 claims that the complete baseline found every grid placement. `run_cpu_spectral`
 explicitly rejects upright/free before search; the existing baseline is unchanged.
 
+Resolve or verify one catalog before either phase. Within this new spectral
+wrapper, a private baseline helper uses those exact ordered representatives for
+new candidates, still validating against the original context. Preserve raw
+orientation-count admission before deduplication and all phase limits. The
+existing public `run_aabb_baseline` keeps its original representative behavior.
+This prevents raw near-unit baseline poses and normalized spectral poses from
+being mixed under an incompatible exact catalog identity.
+
+Retain a same-context initial valid handle before any allocation. The new spectral
+API additionally requires its initial poses to be exact canonical catalog members,
+including positive zero; angular equivalence alone is insufficient. For a
+nonmember representative, return `SPECTRAL_INITIAL_CATALOG_MISMATCH` before search
+or sink publication, with the unchanged handle in `retained_solution`, empty
+`best`, and zero search counters. This is an unsupported initial representation,
+not a claim of geometric invalidity. Never silently rewrite a validated pose.
+
 First try extending the baseline best; then permit one empty initial spectral
 trial for mixed-orientation greedy placement. There is no count controller,
 random restart, removal/reinsertion, local rotation or multilevel pitch search.
 All trials feed the same incumbent. No trial can reduce its published count.
+
+A spectral search pass is one greedy trial: first the retained-layout extension,
+then, if a second pass is admitted, the empty trial. All orientations, insertion
+rebuilds and candidate pages within that trial share its work slice. Increment
+`search_passes` only when the trial completes; an interrupted or candidate-budget
+exhausted partial trial does not fabricate a completed pass. At most these two
+trials run even when the configured pass ceiling is higher. This defines the
+new solver's counter attribution without changing the baseline's counters or
+the persisted work-count schema.
 
 Use T-005 fields on one lattice `(g,h)`. Kernel first `a` is never recentered:
 integer shift `t` means physical anchor `g+h*t`, and kernel cell `j` occupies
@@ -242,12 +267,26 @@ divide by occupied kernel cell count. This is a ranking heuristic only.
 
 Normalize candidate top height as
 `(translation_z + oriented_bounds.max_z - container.min_z)/container.height`.
+As required by spec §6.3, ordinary pages shortlist collision-free FFT proposals:
+use the verified binary residual envelope to identify near-zero (rounded-zero)
+overlap, then still perform the exact integer recheck before native validation.
+Nonzero-overlap shifts remain eligible for the separate low-overlap refinement
+pool. Every examined legal translation is charged even when this filter rejects it.
 Rank ascending `0.65*normalized_top_height - 0.35*mean_proximity`; ties use
 orientation index, then physical Z/Y/X without epsilon comparators. Return
 32 candidates per orientation and merge page heads by this ordering. When a
 page is rejected, advance its deterministic cursor and fetch the next page while
 budget remains. A bounded top-32 scan/recomputation is acceptable; charge rescans.
 Do not truncate a field permanently to its first 32 candidates.
+
+For the new solver's cumulative `direct_terms`, charge the binary correlation's
+direct probe terms, one unit for each legal translation examined by a ranking
+scan, and one unit for each kernel cell examined by an ordinary candidate's
+integer occupancy recheck (including examined zero cells). Repeated scans charge
+their actual repeated work. Charge completed examinations, including failed
+attempts; a preflight estimate or reserved allowance is not consumed work.
+This defines the native search counter and its existing `max_direct_terms` cap;
+it changes neither the compute API's counters nor the persisted wire schema.
 
 For ordinary insertion, recompute exact integer occupancy at each shortlisted
 translation; only zero-overlap proposals reach full-prefix `validate`. FFT zero
@@ -258,6 +297,18 @@ then the ranking key; generate physical combinations lazily in stable Z/Y/X
 order. These proposals bypass voxel veto but still require authoritative full
 validation. Refinement never changes orientation outside the catalog. Count all
 submitted proposals, rejected and indeterminate included, against work slices.
+
+The initial deterministic refinement schedule tries physical face alignments
+after ordinary pages stall, then at most one low-overlap page per orientation
+for that unchanged layout. Merge low-overlap heads by overlap before the normal
+ranking key. Filter face coordinates to the oriented-AABB containment interval
+before enumerating their Cartesian product; this is only a proposal filter.
+Every accepted insertion restarts ordinary search with rebuilt blockers and
+fresh refinement state. Refinement allowances are ceilings, not reservations
+that suppress ordinary search. There is no additional per-trial candidate quota:
+the empty trial starts only after the retained trial completes with budget left.
+Candidate, copy-count or enabled-refinement ceilings interrupt a partial trial
+with `budget_exhausted`; they do not increment the completed-pass counter.
 
 All allocation/work/index failures are operational outcomes. Unreliable
 correlation terminates with `error` plus a specific diagnostic, retaining best;
@@ -286,10 +337,14 @@ using AssetLoadOutcome =
     std::variant<std::shared_ptr<const VerifiedAsset>, Error>;
 AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path);
 
+enum class ResultCatalogBinding { normalized_policy, resolved_policy };
 struct ResultCatalog {
   std::uint64_t version{1};
   std::vector<geometry::Quaternion> quaternions;
+  ResultCatalogBinding binding{ResultCatalogBinding::normalized_policy};
 };
+std::variant<std::string, Error> result_catalog_sha256(
+    const ResultCatalog&, const geometry::OrientationPolicy&);
 struct ResultRequest {
   std::shared_ptr<const geometry::ValidatedSolution> solution;
   std::shared_ptr<const VerifiedAsset> object_asset, container_asset;
@@ -397,8 +452,9 @@ canonical unit values, positive zero, uniqueness, orientation admission limits,
 and exact context binding: the selected fixed representative (identity for an
 empty native fixed policy), complete custom order, or all 24 versioned cube
 constants. It threads that supplied catalog through the spectral pipeline
-without normalization. Existing overloads and raw-policy catalog construction
-retain their current semantics. The context still controls physical permission.
+without normalization. Raw-policy catalog construction retains its version-1
+arithmetic; both new spectral overloads use the baseline and initial-membership
+rules above. The context still controls physical permission.
 
 I/O adds `ResultCatalogBinding { normalized_policy, resolved_policy }`, with a
 trailing defaulted `binding{normalized_policy}` member in `ResultCatalog`.
@@ -413,13 +469,17 @@ settings and catalog hash before search, then passes unchanged representatives
 and metadata to the solver and builder. I/O gains no solver dependency.
 
 This is an additive native interface correction. Existing aggregate initializers,
-raw-policy callers, wire schemas and geometry permission tolerances are unchanged;
-native consumers rebuild together. Resolved validation certifies the supplied
+the public baseline API, raw catalog construction, wire schemas and geometry
+permission tolerances are unchanged. The new spectral API explicitly restricts
+initial representatives as described above; native consumers rebuild together.
+Resolved validation certifies the supplied
 representation, not its unavailable normalization history. Regression evidence
 must cover fixed and custom near-unit values above, exact retained bits/order/hash
 through solver and builder, stale identities and malformed catalogs, and later
 the CLI/export round trip. The numeric probe alone is characterization, not
-integration acceptance.
+integration acceptance. Runtime tests also compare unchanged public-baseline raw
+representatives with the spectral wrapper's exact catalog representatives, and
+verify initial-mismatch retention with no sink call or consumed search work.
 
 ### Result metadata
 
@@ -449,6 +509,13 @@ accepted face order, writing finite IEEE float32 little-endian STL coordinates.
 Check `N*T <= UINT32_MAX` and `84+50*N*T` with checked arithmetic and the output
 limit before writing. Attribute words are zero; normals are derived from written
 coordinates. Zero copies produce a legal zero-triangle STL and empty ranges.
+`ExportRequest::max_output_bytes` bounds that optional binary STL stream,
+including its 84-byte header. It is not a combined disk quota for the primary
+JSON and retained provenance assets. JSON-only publication performs no STL size
+admission. An optional STL size/count refusal occurs after valid primary JSON
+publication and returns its retained path, before creating an STL stage. This
+clarifies the new native request's limit and JSON-first failure behavior; it
+changes no wire schema, existing import limit or previously released interface.
 Source STL bytes, accepted PLY and input reports must never be overwritten.
 Output names must be distinct from one another and from those inputs, including
 hardlink aliases. The optional STL and companion must be representable by
@@ -582,6 +649,36 @@ and `rng.algorithm:"none"`, `state:"unused"`; do not fabricate random draws.
 JSON work counts report actual sums. Wall-clock budgets remain optional and
 do not establish fixed-work reproducibility or service stop latency.
 
+The CLI records time-to-best at its first observation of the final retained
+solution through the central snapshot sink. If an operational failure preserves
+a valid handle before a central snapshot can be delivered, record the elapsed
+time when the solver returns that handle and identify the measurement basis as
+`retained_return` in command diagnostics. This is an observed upper bound on
+native admission time, not a fabricated zero or a serialization timestamp.
+Normal sink observations use the diagnostic basis `snapshot`.
+
+This initial command accepts fixed/cube/custom orientations, manual pitch,
+resolved CPU execution and one thread. An `auto` request already resolved to
+CPU is accepted; an explicit unavailable backend is not silently changed.
+Use grid origin `(0,0,0)` in the existing container-local millimeter frame.
+These restrictions add no settings fields and do not implement a settings
+resolver, automatic pitch selection or GPU initialization.
+
+Deterministic settings use their explicit work budgets and no deadline, as the
+existing semantic validator requires. Time-budget settings use the native
+phase work ceilings plus a checked steady-clock deadline from `budget_seconds`;
+reject an unrepresentable deadline before search. Record actual work and the
+phase ceilings in command diagnostics without adding settings fields. These
+runs are not fixed-work reproducibility evidence.
+
+If search ends with an operational error or resource refusal but retains a valid
+solution, attempt normal checked result publication and return a nonzero
+machine-readable error with the retained result path. A valid partial result is
+still useful; its termination reason and failure diagnostic must remain visible.
+Normal budget exhaustion, proposal exhaustion and user stop may return success
+after checked publication. Protect the input settings file from primary-result
+aliasing as well as the asset/report inputs protected by the writer.
+
 Use public APIs for oracle, deterministic solver and headless artifact tests.
 Private seams cover corruption at the real numeric checker, allocation failure,
 page rejection/cursor progress, export read/write failures and quantization.
@@ -604,5 +701,6 @@ with retained-owner lifetimes, never asset identities or persisted values.
 The additions preserve existing source calls and wire/physical semantics. Corrected
 charging can refuse tight budgets that previously omitted work or used stale
 reservations. Existing broad-budget representation outcomes must remain unchanged.
-The geometry additions are implemented and under configured review; final
-qualification and their use by the spectral search remain in progress.
+The geometry additions passed configured review and their focused qualification
+at `2940de6`. Final integrated qualification of their use by spectral search and
+checked export remains in progress.

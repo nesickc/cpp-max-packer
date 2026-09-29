@@ -13,12 +13,16 @@ param(
     [string]$BuildTarget,
     [string]$TestRegex,
     [switch]$BuildOnly,
+    [switch]$WithoutTests,
     [switch]$Fresh
 )
 
 $ErrorActionPreference = 'Stop'
 if ($BuildTarget -and -not $BuildOnly -and -not $TestRegex) {
     throw 'A focused BuildTarget requires TestRegex or BuildOnly to avoid running unbuilt test targets.'
+}
+if ($WithoutTests -and (-not $BuildOnly -or [string]::IsNullOrWhiteSpace($BuildTarget))) {
+    throw '-WithoutTests requires -BuildOnly and an explicit production -BuildTarget.'
 }
 if ([string]::IsNullOrWhiteSpace($VcpkgRoot)) {
     throw 'Set VCPKG_ROOT or pass -VcpkgRoot before configuring.'
@@ -95,12 +99,18 @@ $vcpkgSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $vcpkgExecutable).Ha
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & $PythonPath (Join-Path $PSScriptRoot 'Inspect-CpuBuild.py') check-vcpkg-tool --lock (Join-Path $PSScriptRoot '..\cmake\dependencies.lock.json') --actual $metadataPath
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-if ($Fresh) {
-    & $CmakePath --fresh --preset $Preset "-DPython3_EXECUTABLE=$((Get-Command $PythonPath).Source)"
-} else {
-    & $CmakePath --preset $Preset "-DPython3_EXECUTABLE=$((Get-Command $PythonPath).Source)"
-}
+$configureArguments = @('--preset', $Preset,
+    "-DPython3_EXECUTABLE=$((Get-Command $PythonPath).Source)",
+    "-DBUILD_TESTING=$(if ($WithoutTests) { 'OFF' } else { 'ON' })")
+if ($Fresh) { $configureArguments += '--fresh' }
+& $CmakePath @configureArguments
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+$expectedTesting = if ($WithoutTests) { 'OFF' } else { 'ON' }
+$testingCache = @(Select-String -LiteralPath (Join-Path $metadataDirectory 'CMakeCache.txt') -Pattern '^BUILD_TESTING:BOOL=(ON|OFF)$')
+if ($testingCache.Count -ne 1 -or $testingCache[0].Matches[0].Groups[1].Value -ne $expectedTesting) {
+    throw "Configured BUILD_TESTING does not match requested mode $expectedTesting."
+}
+Write-Output "Verified BUILD_TESTING=$expectedTesting"
 & $PythonPath (Join-Path $PSScriptRoot 'Inspect-CpuBuild.py') check-crt --build-type $(if ($Preset -eq 'windows-ninja-debug') { 'Debug' } else { 'Release' }) --cache (Join-Path $metadataDirectory 'CMakeCache.txt') --compile-commands (Join-Path $metadataDirectory 'compile_commands.json')
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $compilerRecords = @(Get-ChildItem -LiteralPath (Join-Path $metadataDirectory 'CMakeFiles') -Filter 'CMakeCXXCompiler.cmake' -File -Recurse)

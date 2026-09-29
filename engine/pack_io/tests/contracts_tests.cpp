@@ -1,14 +1,420 @@
-#include <spectrapack/io/contracts.hpp>
-
+#include <array>
 #include <catch2/catch_test_macros.hpp>
-
-#include <fstream>
+#include <chrono>
 #include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <spectrapack/io/contracts.hpp>
+#include <spectrapack/io/inspection.hpp>
+#include <spectrapack/io/result_export.hpp>
 #include <stdexcept>
 #include <string>
 #include <variant>
+#include <vector>
+
+#include "result_export_test_seam.hpp"
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 namespace {
+
+std::vector<std::byte> binary_cube_stl()
+{
+    constexpr std::array<std::array<float, 3>, 8> vertices {
+        { { { 0, 0, 0 } },
+         { { 1, 0, 0 } },
+         { { 1, 1, 0 } },
+         { { 0, 1, 0 } },
+         { { 0, 0, 1 } },
+         { { 1, 0, 1 } },
+         { { 1, 1, 1 } },
+         { { 0, 1, 1 } } }
+    };
+    constexpr std::array<std::array<std::uint32_t, 3>, 12> faces {
+        { { { 0, 2, 1 } },
+         { { 0, 3, 2 } },
+         { { 4, 5, 6 } },
+         { { 4, 6, 7 } },
+         { { 0, 1, 5 } },
+         { { 0, 5, 4 } },
+         { { 1, 2, 6 } },
+         { { 1, 6, 5 } },
+         { { 2, 3, 7 } },
+         { { 2, 7, 6 } },
+         { { 3, 0, 4 } },
+         { { 3, 4, 7 } } }
+    };
+    std::vector<std::byte> bytes(84 + faces.size() * 50);
+    const auto append = [&bytes](std::size_t& offset, const auto& value) {
+        std::memcpy(bytes.data() + offset, &value, sizeof(value));
+        offset += sizeof(value);
+    };
+    std::size_t offset = 80;
+    const auto count = static_cast<std::uint32_t>(faces.size());
+    append(offset, count);
+    for (const auto& face : faces) {
+        const std::array<float, 3> normal {};
+        for (float value : normal) {
+            append(offset, value);
+        }
+        for (auto index : face) {
+            for (float value : vertices[index]) {
+                append(offset, value);
+            }
+        }
+        const std::uint16_t attribute {};
+        append(offset, attribute);
+    }
+    return bytes;
+}
+
+struct LoaderFixture {
+    std::filesystem::path root;
+    std::filesystem::path report;
+};
+
+LoaderFixture make_loader_fixture(std::string_view units = "mm")
+{
+    const auto root =
+        std::filesystem::temp_directory_path() /
+        ("spectrapack-loader-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    if (!std::filesystem::create_directory(root)) {
+        throw std::runtime_error("Cannot create loader fixture directory.");
+    }
+    const auto source = root / "cube.stl";
+    {
+        std::ofstream output(source, std::ios::binary);
+        const auto bytes = binary_cube_stl();
+        output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
+    const auto report = root / "report.json";
+    if (!std::holds_alternative<spectrapack::io::InspectSuccess>(
+            spectrapack::io::inspect_stl_file({ source, report, std::string(units) }))) {
+        std::filesystem::remove_all(root);
+        throw std::runtime_error("Loader fixture inspection failed.");
+    }
+    return { root, report };
+}
+
+void write_json(const std::filesystem::path& path, const spectrapack::io::Json& value)
+{
+    std::ofstream output(path);
+    output << value.dump();
+}
+
+void remove_fixture(const LoaderFixture& fixture) { REQUIRE(std::filesystem::remove_all(fixture.root) > 0); }
+
+TEST_CASE("AT-14 reconstructs retained accepted assets from bound provenance", "[result_export][AT-14]")
+{
+    const auto root =
+        std::filesystem::temp_directory_path() /
+        ("spectrapack-result-export-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    REQUIRE(std::filesystem::create_directory(root));
+    const auto source = root / "cube.stl";
+    {
+        std::ofstream output(source, std::ios::binary);
+        const auto bytes = binary_cube_stl();
+        output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+    }
+    const auto report = root / "report.json";
+    const auto inspected = spectrapack::io::inspect_stl_file({ source, report, "mm" });
+    REQUIRE(std::holds_alternative<spectrapack::io::InspectSuccess>(inspected));
+    const auto loaded = spectrapack::io::load_accepted_asset(report);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const spectrapack::io::VerifiedAsset>>(loaded));
+    const auto& asset = *std::get<std::shared_ptr<const spectrapack::io::VerifiedAsset>>(loaded);
+    CHECK(asset.solid()->mesh().triangles.size() == 12);
+    CHECK(asset.resident_buffer_bytes().has_value());
+    CHECK(*asset.resident_buffer_bytes() > asset.solid()->resident_buffer_bytes().value_or(0));
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE("AT-14 rejects retained accepted-asset provenance tampering", "[result_export][AT-14]")
+{
+    const auto make_fixture = [] {
+        const auto root = std::filesystem::temp_directory_path() /
+                          ("spectrapack-result-export-" +
+                           std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+        if (!std::filesystem::create_directory(root)) {
+            throw std::runtime_error("Cannot create owned test directory.");
+        }
+        const auto source = root / "cube.stl";
+        {
+            std::ofstream output(source, std::ios::binary);
+            const auto bytes = binary_cube_stl();
+            output.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+        }
+        const auto report = root / "report.json";
+        if (!std::holds_alternative<spectrapack::io::InspectSuccess>(
+                spectrapack::io::inspect_stl_file({ source, report, "mm" }))) {
+            throw std::runtime_error("Fixture inspection failed.");
+        }
+        return std::pair { root, report };
+    };
+    const auto expect_rejected = [](const auto& outcome) {
+        REQUIRE(std::holds_alternative<spectrapack::io::Error>(outcome));
+    };
+    SECTION("source bytes")
+    {
+        const auto [root, report] = make_fixture();
+        {
+            std::fstream stream(
+                root / "assets" /
+                    std::filesystem::path(
+                        spectrapack::io::Json::parse(std::ifstream(report)).at("source").at("path").get<std::string>())
+                        .filename(),
+                std::ios::in | std::ios::out | std::ios::binary);
+            stream.seekp(80);
+            stream.put('\x01');
+        }
+        expect_rejected(spectrapack::io::load_accepted_asset(report));
+        std::filesystem::remove_all(root);
+    }
+    SECTION("accepted PLY bytes")
+    {
+        const auto [root, report] = make_fixture();
+        spectrapack::io::Json value = spectrapack::io::Json::parse(std::ifstream(report));
+        {
+            std::fstream stream(root / value.at("accepted_solid").at("path").get<std::string>(),
+                                std::ios::in | std::ios::out | std::ios::binary);
+            stream.seekp(0);
+            stream.put('X');
+        }
+        expect_rejected(spectrapack::io::load_accepted_asset(report));
+        std::filesystem::remove_all(root);
+    }
+    SECTION("frame and count")
+    {
+        const auto [root, report] = make_fixture();
+        spectrapack::io::Json value = spectrapack::io::Json::parse(std::ifstream(report));
+        value["frame"]["source_to_local"][0][3] = 7.0;
+        value["accepted_solid"]["triangle_count"] = 99;
+        {
+            std::ofstream output(report);
+            output << value.dump();
+        }
+        expect_rejected(spectrapack::io::load_accepted_asset(report));
+        std::filesystem::remove_all(root);
+    }
+    SECTION("portable traversal and malformed report")
+    {
+        const auto [root, report] = make_fixture();
+        spectrapack::io::Json value = spectrapack::io::Json::parse(std::ifstream(report));
+        value["source"]["path"] = "../cube.stl";
+        {
+            std::ofstream output(report);
+            output << value.dump();
+        }
+        expect_rejected(spectrapack::io::load_accepted_asset(report));
+        {
+            std::ofstream output(report);
+            output << "{";
+        }
+        expect_rejected(spectrapack::io::load_accepted_asset(report));
+        std::filesystem::remove_all(root);
+    }
+    SECTION("recorded repair requires supported replay")
+    {
+        const auto [root, report] = make_fixture();
+        spectrapack::io::Json value = spectrapack::io::Json::parse(std::ifstream(report));
+        value["repair_record"] = {
+            { "path", "assets/repair.json" },
+            { "sha256", std::string(64, 'a') },
+            { "accepted_by_user", true }
+        };
+        {
+            std::ofstream output(report);
+            output << value.dump();
+        }
+        const auto outcome = spectrapack::io::load_accepted_asset(report);
+        REQUIRE(std::holds_alternative<spectrapack::io::Error>(outcome));
+        CHECK(std::get<spectrapack::io::Error>(outcome).code == "REPAIR_RECONSTRUCTION_UNSUPPORTED");
+        std::filesystem::remove_all(root);
+    }
+}
+
+TEST_CASE("T007 loader accepts optional source byte size omission", "[loader][T-007]")
+{
+    const auto fixture = make_loader_fixture();
+    auto report = spectrapack::io::Json::parse(std::ifstream(fixture.report));
+    report["source"].erase("byte_size");
+    write_json(fixture.report, report);
+    const auto loaded = spectrapack::io::load_accepted_asset(fixture.report);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const spectrapack::io::VerifiedAsset>>(loaded));
+    remove_fixture(fixture);
+}
+
+TEST_CASE("T007 loader rejects schema-valid source replay changes", "[loader][T-007]")
+{
+    SECTION("source bounds")
+    {
+        const auto fixture = make_loader_fixture();
+        auto report = spectrapack::io::Json::parse(std::ifstream(fixture.report));
+        report["frame"]["source_bounds"]["max"].at(0) =
+            report["frame"]["source_bounds"]["max"].at(0).get<double>() + 5e-10;
+        write_json(fixture.report, report);
+        CHECK(std::holds_alternative<spectrapack::io::Error>(spectrapack::io::load_accepted_asset(fixture.report)));
+        remove_fixture(fixture);
+    }
+    SECTION("triangle count")
+    {
+        const auto fixture = make_loader_fixture();
+        auto report = spectrapack::io::Json::parse(std::ifstream(fixture.report));
+        report["accepted_solid"]["triangle_count"] = 11;
+        write_json(fixture.report, report);
+        CHECK(std::holds_alternative<spectrapack::io::Error>(spectrapack::io::load_accepted_asset(fixture.report)));
+        remove_fixture(fixture);
+    }
+}
+
+TEST_CASE("T007 loader preserves positive inch dimensions and immutable retained assets", "[loader][T-007]")
+{
+    const auto fixture = make_loader_fixture("inch");
+    const auto retained_report = spectrapack::io::Json::parse(std::ifstream(fixture.report));
+    const auto loaded = spectrapack::io::load_accepted_asset(fixture.report);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const spectrapack::io::VerifiedAsset>>(loaded));
+    const auto asset = std::get<std::shared_ptr<const spectrapack::io::VerifiedAsset>>(loaded);
+    CHECK(asset->solid()->frame().dimensions_mm[0] == 25.4);
+    const auto before = asset->resident_buffer_bytes();
+    const auto report_bytes = asset->record().dump();
+    const auto source_path = fixture.root / retained_report.at("source").at("path").get<std::string>();
+    const auto ply_path = fixture.root / retained_report.at("accepted_solid").at("path").get<std::string>();
+    {
+        std::fstream source(source_path, std::ios::in | std::ios::out | std::ios::binary);
+        REQUIRE(source);
+        source.seekp(0);
+        source.put('X');
+        REQUIRE(source);
+    }
+    {
+        std::fstream ply(ply_path, std::ios::in | std::ios::out | std::ios::binary);
+        REQUIRE(ply);
+        ply.seekp(0);
+        ply.put('X');
+        REQUIRE(ply);
+    }
+    REQUIRE(std::filesystem::remove(source_path));
+    REQUIRE(std::filesystem::remove(ply_path));
+    CHECK(asset->record().dump() == report_bytes);
+    CHECK(asset->solid()->mesh().triangles.size() == 12);
+    CHECK(asset->resident_buffer_bytes() == before);
+    remove_fixture(fixture);
+}
+
+TEST_CASE("T007 loader counts retained object nodes and empty diagnostics", "[loader][T-007]")
+{
+    const auto fixture = make_loader_fixture();
+    auto report = spectrapack::io::Json::parse(std::ifstream(fixture.report));
+    constexpr std::uint64_t message_count = 2000;
+    for (std::uint64_t index = 0; index != message_count; ++index) {
+        report["diagnostics"]["messages"].push_back("");
+    }
+    write_json(fixture.report, report);
+    const auto loaded = spectrapack::io::load_accepted_asset(fixture.report);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const spectrapack::io::VerifiedAsset>>(loaded));
+    const auto asset = std::get<std::shared_ptr<const spectrapack::io::VerifiedAsset>>(loaded);
+    REQUIRE(asset->resident_buffer_bytes().has_value());
+    std::error_code error;
+    const auto report_size = std::filesystem::file_size(fixture.report, error);
+    REQUIRE_FALSE(error);
+    const auto source_size =
+        std::filesystem::file_size(fixture.root / report.at("source").at("path").get<std::string>(), error);
+    REQUIRE_FALSE(error);
+    const auto ply_size =
+        std::filesystem::file_size(fixture.root / report.at("accepted_solid").at("path").get<std::string>(), error);
+    REQUIRE_FALSE(error);
+    const auto lower_bound =
+        report_size + source_size + ply_size + message_count * (sizeof(spectrapack::io::Json) + sizeof(std::string));
+    CHECK(*asset->resident_buffer_bytes() >= lower_bound);
+    remove_fixture(fixture);
+}
+
+TEST_CASE("T007 loader closes the Windows SHA-256 provider after post-open allocation failure", "[loader][T-007]")
+{
+#ifdef _WIN32
+    const auto fixture = make_loader_fixture();
+    spectrapack::io::test::fail_sha256_post_open_allocation_for_test(true);
+    const auto outcome = spectrapack::io::load_accepted_asset(fixture.report);
+    spectrapack::io::test::fail_sha256_post_open_allocation_for_test(false);
+    REQUIRE(std::holds_alternative<spectrapack::io::Error>(outcome));
+    CHECK(std::get<spectrapack::io::Error>(outcome).code == "MEMORY_LIMIT");
+    const auto counts = spectrapack::io::test::sha256_provider_counts_for_test();
+    CHECK(counts.opened == counts.closed);
+    remove_fixture(fixture);
+#else
+    SUCCEED("Windows BCrypt coverage is only applicable on Windows.");
+#endif
+}
+
+TEST_CASE("T007 loader refuses oversized sparse report and source artifacts", "[loader][T-007]")
+{
+    SECTION("report")
+    {
+        const auto fixture = make_loader_fixture();
+        std::error_code error;
+        std::filesystem::resize_file(fixture.report, (16ULL << 20) + 1, error);
+        REQUIRE_FALSE(error);
+        const auto outcome = spectrapack::io::load_accepted_asset(fixture.report);
+        REQUIRE(std::holds_alternative<spectrapack::io::Error>(outcome));
+        CHECK(std::get<spectrapack::io::Error>(outcome).code == "ASSET_MISMATCH");
+        remove_fixture(fixture);
+    }
+    SECTION("source")
+    {
+        const auto fixture = make_loader_fixture();
+        const auto report = spectrapack::io::Json::parse(std::ifstream(fixture.report));
+        std::error_code error;
+        const auto path = fixture.root / report.at("source").at("path").get<std::string>();
+        std::filesystem::resize_file(path, (256ULL << 20) + 1, error);
+        REQUIRE_FALSE(error);
+        const auto outcome = spectrapack::io::load_accepted_asset(fixture.report);
+        REQUIRE(std::holds_alternative<spectrapack::io::Error>(outcome));
+        CHECK(std::get<spectrapack::io::Error>(outcome).code == "ASSET_MISMATCH");
+        remove_fixture(fixture);
+    }
+    SECTION("accepted PLY")
+    {
+        const auto fixture = make_loader_fixture();
+        const auto report = spectrapack::io::Json::parse(std::ifstream(fixture.report));
+        std::error_code error;
+        const auto path = fixture.root / report.at("accepted_solid").at("path").get<std::string>();
+        std::filesystem::resize_file(path, (256ULL << 20) + 1, error);
+        REQUIRE_FALSE(error);
+        const auto outcome = spectrapack::io::load_accepted_asset(fixture.report);
+        REQUIRE(std::holds_alternative<spectrapack::io::Error>(outcome));
+        CHECK(std::get<spectrapack::io::Error>(outcome).code == "ASSET_MISMATCH");
+        CHECK(std::get<spectrapack::io::Error>(outcome).message ==
+              "A retained provenance artifact has an unsupported size.");
+        remove_fixture(fixture);
+    }
+}
+
+TEST_CASE("T007 loader refuses report assets reached through a Windows junction", "[loader][T-007]")
+{
+#ifdef _WIN32
+    const auto fixture = make_loader_fixture();
+    const auto external = fixture.root.parent_path() / (fixture.root.filename().string() + "-external");
+    std::error_code move_error;
+    std::filesystem::rename(fixture.root / "assets", external, move_error);
+    REQUIRE_FALSE(move_error);
+    const auto command = "New-Item -ItemType Junction -Path '" + (fixture.root / "assets").string() + "' -Target '" +
+                         external.string() + "' | Out-Null";
+    REQUIRE(std::system(("powershell.exe -NoProfile -NonInteractive -Command \"" + command + "\"").c_str()) == 0);
+    REQUIRE(std::filesystem::is_directory(fixture.root / "assets"));
+    const auto outcome = spectrapack::io::load_accepted_asset(fixture.report);
+    REQUIRE(std::holds_alternative<spectrapack::io::Error>(outcome));
+    CHECK(std::get<spectrapack::io::Error>(outcome).code == "ASSET_MISMATCH");
+    std::filesystem::remove(fixture.root / "assets");
+    REQUIRE(std::filesystem::remove_all(external) > 0);
+    remove_fixture(fixture);
+#else
+    SUCCEED("Windows junction coverage is only applicable on Windows.");
+#endif
+}
 
 using spectrapack::io::ContractFailure;
 using spectrapack::io::ContractKind;
