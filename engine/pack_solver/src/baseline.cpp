@@ -1,6 +1,7 @@
 #include "spectrapack/solver/baseline.hpp"
 
 #include "allocation_fault.hpp"
+#include "baseline_internal.hpp"
 #include "orientation_cube.hpp"
 #include "storage_accounting.hpp"
 
@@ -453,10 +454,11 @@ std::optional<std::uint64_t> proposed_pose_bytes(
 
 }  // namespace
 
-BaselineOutcome run_aabb_baseline(
+BaselineOutcome run_aabb_baseline_impl(
     std::shared_ptr<const geometry::ValidationContext> context,
     const BaselineLimits& limits, const RunControl& control, SnapshotSink sink,
-    std::shared_ptr<const geometry::ValidatedSolution> initial) {
+    std::shared_ptr<const geometry::ValidatedSolution> initial,
+    const std::vector<geometry::Quaternion>* exact_seeds) {
   BaselineOutcome out;
   if (!context) {
     out.diagnostic_code = "PHYSICAL_NULL_CONTEXT";
@@ -465,7 +467,11 @@ BaselineOutcome run_aabb_baseline(
   if (initial && initial->context() == context) out.retained_solution = initial;
   initial.reset();
 
-  const auto base = resident_bytes(*context, limits);
+  auto base = resident_bytes(*context, limits);
+  if (base && exact_seeds &&
+      !add_optional(*base, checked_product(exact_seeds->capacity(), sizeof(geometry::Quaternion)))) {
+    base.reset();
+  }
   if (!base || !update_peak(out.stats, *base, limits)) {
     out.termination_reason = TerminationReason::resource_limit;
     out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
@@ -639,8 +645,8 @@ BaselineOutcome run_aabb_baseline(
       out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
       return out;
     }
-    detail::allocation_point();
-    auto seeds = orientation_seeds(policy);
+    if (!exact_seeds) detail::allocation_point();
+    auto seeds = exact_seeds ? *exact_seeds : orientation_seeds(policy);
     if (seeds.size() > limits.max_orientations) {
       retain_best();
       out.termination_reason = TerminationReason::budget_exhausted;
@@ -917,5 +923,24 @@ BaselineOutcome run_aabb_baseline(
     return out;
   }
 }
+
+BaselineOutcome run_aabb_baseline(
+    std::shared_ptr<const geometry::ValidationContext> context,
+    const BaselineLimits& limits, const RunControl& control, SnapshotSink sink,
+    std::shared_ptr<const geometry::ValidatedSolution> initial) {
+  return run_aabb_baseline_impl(std::move(context), limits, control, std::move(sink),
+                                std::move(initial), nullptr);
+}
+
+namespace detail {
+BaselineOutcome run_aabb_baseline_with_seeds(
+    std::shared_ptr<const geometry::ValidationContext> context,
+    const BaselineLimits& limits, const RunControl& control,
+    const std::vector<geometry::Quaternion>& seeds, SnapshotSink sink,
+    std::shared_ptr<const geometry::ValidatedSolution> initial) {
+  return run_aabb_baseline_impl(std::move(context), limits, control, std::move(sink),
+                                std::move(initial), &seeds);
+}
+}  // namespace detail
 
 }  // namespace spectrapack::solver
