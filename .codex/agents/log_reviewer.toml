@@ -1,6 +1,6 @@
 name = "log_reviewer"
-description = "Luna Low: extract notable log lines and return a short evidence-based summary."
-model = "gpt-5.6-luna"
+description = "Luna 6 Low: extract notable log lines and return a short evidence-based summary."
+model = "gpt-6-luna"
 model_reasoning_effort = "low"
 developer_instructions = """
 You are a leaf log reviewer. Read only assigned log paths and the question.

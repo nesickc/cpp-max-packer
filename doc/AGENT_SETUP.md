@@ -1,34 +1,43 @@
 # Agent setup and verification
 
-Updated 2026-09-21 with native named-role runtime verification. This is the current policy; the [original setup template](codex-local-agent-setup-guide.md) is historical where it conflicts.
+Updated 2026-09-30 with the user-approved model allocation. This is the current policy; the [original setup template](codex-local-agent-setup-guide.md) and runtime records below describe earlier configurations where they conflict.
 
 ## Allocation
 
 | Role | Configured model / effort | Use |
 | --- | --- | --- |
 | Primary | `gpt-6-astra` / `ultra` | Coordination, final decisions, integration acceptance |
-| `architect` | `gpt-6-astra` / `xhigh` | Initial architecture and shared testable contracts |
-| `code_reviewer` | `gpt-6-astra` / `xhigh` | Focused code/test and contract review |
-| `implementation_worker` | `gpt-5.6-terra` / `medium` | Bounded product implementation and substantive fixes |
-| `light_worker` | `gpt-5.6-luna` / `low` | Low-risk edits, fixture metadata, focused tests, documentation |
-| `log_reviewer` | `gpt-5.6-luna` / `low` | Notable log lines, locations, counts, and a short summary |
-| `expert_worker` | `gpt-5.6-sol` / `high` | Reproduced difficult numerical/C++/Vulkan uncertainty |
+| `implementation_worker` | `gpt-6.1-sol` / `high` | Default product implementation and substantive fixes |
+| `expert_worker` | `gpt-6.1-sol` / `xhigh` | Known difficult features or bounded numerical/C++/Vulkan diagnosis |
+| `code_reviewer` | `gpt-6.1-sol` / `xhigh` | Routine independent code/test and contract review |
+| `architect` | `gpt-6-astra` / `xhigh` | Selective architecture, shared contracts, and critical validity decisions |
+| `critical_reviewer` | `gpt-6-astra` / `xhigh` | Selective high-risk review or uncertainty unresolved by Sol |
+| `light_worker` | `gpt-6-luna` / `low` | Low-risk edits, fixture metadata, focused tests, documentation |
+| `log_reviewer` | `gpt-6-luna` / `low` | Notable log lines, locations, counts, and a short summary |
 
-Extra High is **`xhigh`**, not Ultra. The user authorized these two Astra worker roles. Ordinary implementation stays on lower tiers; the unqualified default remains Terra Medium. The cap remains two workers excluding the primary, so roles are queued. Workers are leaves by policy. No measured usage saving is claimed.
+The unqualified worker default is **6.1 Sol High**. Route known difficult features directly to `expert_worker`; no failed High attempts are required. Routine review starts on Sol Extra High as a trial. Use Astra `critical_reviewer` for authoritative validity, clearance semantics, numerical uncertainty, difficult concurrency, or consequential unresolved concerns. Choose one appropriate reviewer; do not append an automatic Astra pass. Use `architect` when shared boundaries or critical decisions need design. After two failed repairs, obtain bounded expert diagnosis; if Sol Extra High has already failed, use selective Astra diagnosis and reassess.
+
+Extra High is **`xhigh`**, not Ultra. Astra workers are limited to `architect` and `critical_reviewer`. The cap remains two workers excluding the primary, so roles are queued. Workers are leaves by policy. Test-first and acceptance requirements are unchanged. No measured project quality, latency, or usage improvement is claimed.
 
 ## Files and scope
 
 - [AGENTS.md](../AGENTS.md): routing, allocation, TDD, and shared invariants.
-- [.codex/config.toml](../.codex/config.toml) and [.codex/agents/](../.codex/agents/): primary/default settings and six roles, each with model **and** effort.
+- [.codex/config.toml](../.codex/config.toml) and [.codex/agents/](../.codex/agents/): primary/default settings and seven roles, each with model **and** effort.
 - [.agents/skills/](../.agents/skills/): four focused project skills; acceptance now includes test-first work and `rc/` policy.
 - [ARCHITECTURE.md](ARCHITECTURE.md), [ADR 0001](../spec/decisions/0001-initial-architecture.md): boundaries and baseline decisions from the Astra architect.
 - [TEST_PLAN.md](../tests/TEST_PLAN.md), [fixture checks](../tests/README.md), and [manifest](../tests/fixtures/rc-manifest.json): AT-01–AT-17 coverage plan and executable fixture-tool groundwork.
 
 All changes are repository-local. Spec §11.3 now records TDD and confirmed fixture conventions. Source STL bytes are retained. No global configuration, sign-in, permissions, provider, speed, or billing settings were changed.
 
-The first-tranche creation manifest is `.local/agent-setup/install-20260908-194541.json`. This addition backs up changed existing role/skill files under `.local/agent-additions/backups/20260908-211000/`; existence flags and hashes are in `.local/agent-additions/install.json`. The previous setup report is `.local/agent-additions/AGENT_SETUP.previous.md`. New roles have no earlier version. Preserve subsequent edits when undoing individual settings; do not reset the repository.
+The first-tranche creation manifest is `.local/agent-setup/install-20260908-194541.json`. The original additions backed up changed existing role/skill files under `.local/agent-additions/backups/20260908-211000/`; existence flags and hashes are in `.local/agent-additions/install.json`. The previous setup report is `.local/agent-additions/AGENT_SETUP.previous.md`. These are historical backups, not snapshots of this allocation change. Preserve subsequent edits when undoing individual settings; do not reset the repository.
 
-## Observed evidence
+## Current verification and dispatch
+
+On 2026-09-30, Python `tomllib` parsed all eight project TOML files. Assertions verified all seven role names/model/effort pairs, matching allocation tables in `AGENTS.md` and this document, leaf instructions, the Astra Ultra primary, Sol High default, and worker cap of two. `git diff --check` passed. This was configuration/documentation validation; no product tests or new model benchmark runs were needed.
+
+Prior runtime evidence below does not verify the new allocation. On first use in a fresh project chat, inspect the exposed role settings and session metadata. Existing chats may retain earlier role definitions; when a named role is absent or stale, use a fresh/limited-context worker with the exact model, effort, and role-file instructions. A role name in a prompt alone does not select a model. Report unavailable settings rather than silently substituting.
+
+## Historical observed evidence (before this allocation)
 
 - Installed desktop package `OpenAI.Codex 26.901.6511.0`; CLI and independently observed desktop engine `0.153.4` (first-tranche inspection).
 - Desktop configuration home is `C:\Users\Nes\.codex`; the project was already trusted. A fresh read-only `app-server --strict-config` check under that account still reports Astra Ultra, Terra Medium defaults, and cap `2`. All seven project TOML files parse; all six role model/effort pairs match the allocation.
@@ -38,11 +47,11 @@ The first-tranche creation manifest is `.local/agent-setup/install-20260908-1945
 
 Architect session: `01a0822e-b3c1-7163-95ee-d16b3752d301`; reviewer: `01a08234-a4d4-74a3-9e3a-e44790762187`; Luna worker: `01a0822f-0b98-7b61-9e3b-308f389a4cfb`; Terra repair: `01a0823a-5579-73f0-8820-609f80c72a53`. Sol runtime remains unprobed. Spark is optional and disabled.
 
-## Dispatch and evidence limits
+## Historical dispatch and evidence limits
 
 The original setup task exposed explicit model/effort overrides and no named-role selector or close-worker control. Tasks used fresh context, exact model/effort, and scoped role instructions. Reuse completed workers for related follow-ups and close them where supported. At most two workers ran simultaneously; the configured cap is confirmed without a stress test. Leaf-only behavior is policy, not a verified permission boundary.
 
-When a future surface supports native named-role dispatch, select the role and inspect metadata on first use. Otherwise use the tested explicit-override fallback. A role name in a prompt alone does not select a model. Native role-file and unqualified-worker dispatch are not claimed runtime-verified. No restart is needed merely to repeat probes; confirm a fresh project task retains Astra Ultra.
+At initial setup, native role-file and unqualified-worker dispatch had not been runtime-verified. Subsequent named-role checks below verified the earlier allocation; they do not establish runtime use of the 2026-09-30 settings.
 
 On 2026-09-21, the T-006 task exposes native named-role dispatch. Local session
 `turn_context` records confirm primary `gpt-6-astra` / `ultra`, named `architect`
@@ -55,11 +64,11 @@ close-worker control is exposed. Historical account paths above are not current
 machine prerequisites. Sign-in, billing, speed and global permissions remain
 unchanged.
 
-T-007 repeated the metadata check in a fresh primary task and verified all six
+Before the 2026-09-30 allocation change, T-007 repeated the metadata check in a fresh primary task and verified all six
 named roles, including `expert_worker` on `gpt-5.6-sol` / `high` for a reproduced
-CPU correlation issue. Primary remains Astra Ultra; architecture/review use
-Astra Extra High, implementation uses Terra Medium, and focused tests/log triage
-use Luna Low. Evidence: `.local/t007/current-agent-metadata.json`. Workers remain
+CPU correlation issue. At that time primary used Astra Ultra; architecture/review used
+Astra Extra High, implementation used Terra Medium, and focused tests/log triage
+used Luna Low. Evidence: `.local/t007/current-agent-metadata.json`. Workers remained
 leaves and at most two run concurrently; this does not assert an enforced
 permission boundary. No model, billing, sign-in or global permission setting was
 changed by the check.

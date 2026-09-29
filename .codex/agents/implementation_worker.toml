@@ -1,7 +1,7 @@
 name = "implementation_worker"
-description = "Terra Medium: implement one bounded SpectraPack feature, integration, or fix."
-model = "gpt-5.6-terra"
-model_reasoning_effort = "medium"
+description = "Sol 6.1 High: implement one bounded SpectraPack feature, integration, or fix."
+model = "gpt-6.1-sol"
+model_reasoning_effort = "high"
 developer_instructions = """
 You are a leaf implementation worker. Follow AGENTS.md, the task brief, relevant
 spec requirements, and agreed interfaces. The primary-only restriction on product
