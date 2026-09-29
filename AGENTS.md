@@ -19,23 +19,26 @@ Skills live in `.agents/skills/<name>/SKILL.md`; open only the applicable skill.
 
 ## Model allocation and delegation
 
-Primary: **Astra Ultra** handles coordination, final interface decisions, integration acceptance, and user communication. Delegate initial architecture to `architect`, code review to `code_reviewer`, and implementation/integration edits to workers. The primary may maintain specifications/configuration/status and run targeted checks.
+Primary: **Astra Ultra** handles coordination, final interface decisions, integration acceptance, and user communication. Delegate implementation/integration edits to workers; route architecture and review by the risk rules below. The primary may maintain specifications/configuration/status and run targeted checks.
 
 | Role | Model / effort | Assignment |
 | --- | --- | --- |
-| `implementation_worker` | `gpt-5.6-terra` / `medium` | Bounded feature, module, integration, or repair |
-| `light_worker` | `gpt-5.6-luna` / `low` | Low-risk/difficulty edits, fixtures, focused tests, inspection, documentation |
-| `log_reviewer` | `gpt-5.6-luna` / `low` | Notable log lines with a short evidence-based summary |
-| `architect` | `gpt-6-astra` / `xhigh` | Initial architecture, module contracts, test seams |
-| `code_reviewer` | `gpt-6-astra` / `xhigh` | Focused review of code, tests, and contract consistency |
-| `expert_worker` | `gpt-5.6-sol` / `high` | A reproduced hard issue or focused expert review |
+| `implementation_worker` | `gpt-6.1-sol` / `high` | Default bounded feature, module, integration, or repair |
+| `expert_worker` | `gpt-6.1-sol` / `xhigh` | Known difficult features, bounded numerical/C++/Vulkan diagnosis, or focused expert review |
+| `code_reviewer` | `gpt-6.1-sol` / `xhigh` | Routine independent review of code, tests, and contracts |
+| `architect` | `gpt-6-astra` / `xhigh` | Selective architecture, shared contracts, and critical validity decisions |
+| `critical_reviewer` | `gpt-6-astra` / `xhigh` | Selective high-risk review or consequential uncertainty unresolved by Sol |
+| `light_worker` | `gpt-6-luna` / `low` | Low-risk/difficulty edits, fixtures, focused tests, inspection, documentation |
+| `log_reviewer` | `gpt-6-luna` / `low` | Notable log lines with a short evidence-based summary |
 
-- Keep at most **two open workers**, excluding the primary; queue additional roles. Astra workers are authorized only as `architect` and `code_reviewer` at **Extra High (`xhigh`)**, never Ultra. Workers are leaves: no delegation, nested Codex, or external model sessions.
+- The unqualified worker default is **6.1 Sol High**. Assign known difficult features directly to `expert_worker`; do not require failed High attempts first. Extra High is selective, not an automatic quality guarantee.
+- Use `architect` when shared boundaries, contracts, or critical validity decisions need design. Select `critical_reviewer` for changes to authoritative validity, clearance semantics, numerical uncertainty, difficult concurrency, or consequential concerns unresolved by Sol. Choose the appropriate reviewer for the scope; do not automatically run both Sol and Astra reviews. Use fresh review context with requirements, diff, and evidence.
+- Keep at most **two open workers**, excluding the primary; queue additional roles. Astra workers are authorized only as `architect` and `critical_reviewer` at **Extra High (`xhigh`)**, never Ultra. Workers are leaves: no delegation, nested Codex, or external model sessions.
 - Settle shared interfaces before parallel edits. Give each worker: deliverable, relevant requirement IDs, exact inputs, exclusive write scope, dependencies, acceptance checks, and stop condition. Use fresh/limited context when sufficient.
 - Do useful independent work while a worker runs; do not duplicate its implementation. Review the diff and evidence. Reuse workers for related corrections, close completed workers where supported, and avoid repeated status polling.
-- After two failed repair attempts, obtain one bounded expert diagnosis and reassess. Do not grow an escalating agent tree.
+- After two failed repair attempts, obtain one bounded `expert_worker` diagnosis and reassess. If Sol Extra High has already failed to resolve the issue, use one focused `critical_reviewer` diagnosis and reassess rather than repeating the same escalation. Do not grow an escalating agent tree.
 - Offload low-risk work to Luna. Send raw logs to `log_reviewer` with paths and a question; return a few notable lines with file/line references, failure counts, and a short summary. The primary/reviewer reads deeper only for an unresolved issue. A truncated or filtered log cannot establish success.
-- Where named roles are unavailable, explicitly pass the role's exact model **and** effort with fresh/limited context, and include its role-file instructions. See [setup status](doc/AGENT_SETUP.md) for verified capabilities. Report unavailable settings; never silently promote or substitute models.
+- Where named roles are unavailable or their exposed settings are stale, explicitly pass the role's exact model **and** effort with fresh/limited context, and include its role-file instructions. See [setup status](doc/AGENT_SETUP.md) for verified capabilities. Report unavailable settings; never silently promote or substitute models.
 - Preserve existing ChatGPT sign-in and permissions. No API billing or Fast-speed changes. Leaf behavior is policy, not a claimed permission boundary.
 
 ## Shared product rules
