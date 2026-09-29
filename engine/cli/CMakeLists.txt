@@ -1,7 +1,23 @@
-add_executable(spectrapack-engine src/main.cpp)
-target_link_libraries(spectrapack-engine PRIVATE pack_service)
+add_executable(spectrapack-engine src/main.cpp src/solve.cpp)
+target_link_libraries(spectrapack-engine PRIVATE pack_service pack_solver)
+if(WIN32)
+  target_link_libraries(spectrapack-engine PRIVATE Psapi)
+endif()
 target_compile_features(spectrapack-engine PRIVATE cxx_std_20)
 target_compile_definitions(spectrapack-engine PRIVATE
   SPECTRAPACK_ENGINE_VERSION="${SPECTRAPACK_ENGINE_VERSION}"
   SPECTRAPACK_ENGINE_COMMIT="${SPECTRAPACK_ENGINE_COMMIT}")
 install(TARGETS spectrapack-engine RUNTIME DESTINATION bin COMPONENT engine)
+
+if(BUILD_TESTING)
+  add_executable(spectrapack_cli_memory_check
+    tests/solve_memory_test_main.cpp
+    src/solve.cpp)
+  target_include_directories(spectrapack_cli_memory_check PRIVATE src)
+  target_link_libraries(spectrapack_cli_memory_check PRIVATE pack_service pack_solver)
+  if(WIN32)
+    target_link_libraries(spectrapack_cli_memory_check PRIVATE Psapi)
+  endif()
+  target_compile_features(spectrapack_cli_memory_check PRIVATE cxx_std_20)
+  target_compile_definitions(spectrapack_cli_memory_check PRIVATE SPECTRAPACK_CLI_TESTING)
+endif()

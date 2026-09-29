@@ -72,7 +72,7 @@ install(FILES
 
 # The standalone engine component carries the notices for its actual linked
 # runtime libraries, even when the optional CPU diagnostic is not staged.
-foreach(port IN ITEMS nlohmann-json json-schema-validator fcl ccd eigen3 octomap meshoptimizer)
+foreach(port IN ITEMS nlohmann-json json-schema-validator fcl ccd eigen3 octomap meshoptimizer pocketfft)
   install(FILES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${port}/copyright"
     DESTINATION "share/licenses/${port}" COMPONENT engine)
 endforeach()

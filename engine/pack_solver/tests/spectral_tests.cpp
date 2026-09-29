@@ -19,6 +19,7 @@
 #include "../../pack_compute/src/correlation_test_hook.hpp"
 #include "../../pack_geometry/src/field_kernel.hpp"
 #include "../../pack_geometry/tests/validation_fixtures.hpp"
+#include "../src/allocation_fault.hpp"
 #include "../src/baseline_internal.hpp"
 #include "../src/spectral_pipeline.hpp"
 #include "spectrapack/geometry/validation.hpp"
@@ -52,13 +53,13 @@ namespace {
 
 void enable_persistent_allocation_failure() noexcept { fail_test_allocations.store(true, std::memory_order_relaxed); }
 
-class PersistentAllocationFailure final {
+class SolverAllocationFailure final {
 public:
-    PersistentAllocationFailure() noexcept { fail_test_allocations.store(true, std::memory_order_relaxed); }
-    ~PersistentAllocationFailure() { fail_test_allocations.store(false, std::memory_order_relaxed); }
+    SolverAllocationFailure() noexcept { solver::detail::fail_allocation_after_for_test(0); }
+    ~SolverAllocationFailure() { solver::detail::clear_allocation_failure_for_test(); }
 
-    PersistentAllocationFailure(const PersistentAllocationFailure&) = delete;
-    PersistentAllocationFailure& operator=(const PersistentAllocationFailure&) = delete;
+    SolverAllocationFailure(const SolverAllocationFailure&) = delete;
+    SolverAllocationFailure& operator=(const SolverAllocationFailure&) = delete;
 };
 
 class AllocationFailureReset final {
@@ -1400,18 +1401,19 @@ TEST_CASE("AT-16 spectral wrapper retains a validated initial when central alloc
     const auto initial = native_solution(context, {
                                                       { "initial", { 1, 1, 1 }, { 0, 0, 0, 1 } }
     });
+    const solver::OrientationCatalog catalog { 1, { { 0, 0, 0, 1 } } };
     solver::SpectralLimits limits;
     solver::SpectralOutcome outcome;
     bool escaped {};
     {
-        const PersistentAllocationFailure failure;
+        const SolverAllocationFailure failure;
         try {
             outcome = solver::run_cpu_spectral(context,
                                                {
                                                    { 0, 0, 0 },
                                                    .5
             },
-                                               limits, {}, {}, initial);
+                                               catalog, limits, {}, {}, initial);
         }
         catch (...) {
             escaped = true;
@@ -1925,7 +1927,7 @@ TEST_CASE("AT-12 resolved default fixed identity catalog is accepted", "[solver]
     CHECK(outcome.run.diagnostic_code != "SPECTRAL_CATALOG_INVALID");
 }
 
-TEST_CASE("AT-16 spectral retains its same-context initial on persistent catalog allocation failure",
+TEST_CASE("AT-16 spectral retains its same-context initial on a catalog allocation failure",
           "[solver][T007][AT-16][catalog]")
 {
     const auto context = default_fixed_context();
@@ -1940,7 +1942,7 @@ TEST_CASE("AT-16 spectral retains its same-context initial on persistent catalog
     limits.spectral.max_orientations = 1;
     solver::SpectralOutcome outcome;
     {
-        const PersistentAllocationFailure failure;
+        const SolverAllocationFailure failure;
         outcome = solver::run_cpu_spectral(context,
                                            {
                                                { 0, 0, 0 },
@@ -1955,7 +1957,7 @@ TEST_CASE("AT-16 spectral retains its same-context initial on persistent catalog
     CHECK(outcome.run.stats.candidate_evaluations == 0);
 }
 
-TEST_CASE("AT-16 resolved cube retains its same-context initial on persistent catalog verification failure",
+TEST_CASE("AT-16 resolved cube retains its same-context initial on catalog verification allocation failure",
           "[solver][T007][AT-16][catalog]")
 {
     const auto context = cube_context();
@@ -1973,7 +1975,7 @@ TEST_CASE("AT-16 resolved cube retains its same-context initial on persistent ca
     limits.spectral.max_orientations = 24;
     solver::SpectralOutcome outcome;
     {
-        const PersistentAllocationFailure failure;
+        const SolverAllocationFailure failure;
         outcome = solver::run_cpu_spectral(context,
                                            {
                                                { 0, 0, 0 },
@@ -2191,7 +2193,7 @@ TEST_CASE("AT-12 pipeline returns a bounded stable ordinary candidate page", "[s
     auto made = geo::make_validation_context(
         geo::test_support::accepted(geo::test_support::cuboid({ 1.25, -.25, .1 }, { 1.75, .25, .6 }),
                                     geo::AssetRole::object),
-        geo::BoxDimensions { 8, 8, 2 }, constraints);
+        geo::BoxDimensions { 4, 4, 1.25 }, constraints);
     REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
     const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(std::move(made));
     solver::SpectralLimits limits;
@@ -2203,7 +2205,7 @@ TEST_CASE("AT-12 pipeline returns a bounded stable ordinary candidate page", "[s
     PageOracleCapture oracle {
         {},
         { { -.125, .25, -.2 }, .375 },
-        { { 0, 0, 0 }, { 8, 8, 2 } },
+        { { 0, 0, 0 }, { 4, 4, 1.25 } },
         std::get<geo::OrientedBounds>(physical).bounds_mm,
         0,
         false,

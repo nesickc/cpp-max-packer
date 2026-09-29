@@ -11,6 +11,9 @@
 #include <string_view>
 #include <type_traits>
 #include <variant>
+#include <vector>
+
+#include "solve.hpp"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -37,7 +40,9 @@ void usage(std::ostream& stream) {
   stream << "Usage: spectrapack-engine capabilities --json\n"
             "       spectrapack-engine inspect --stl <path> --units mm|inch|custom "
             "--report <path> [options]\n"
-            "       spectrapack-engine serve --stdio\n";
+            "       spectrapack-engine serve --stdio\n"
+            "       spectrapack-engine solve --settings <path> --object-report <path> --result <path> "
+            "[--container-report <path>] [--stl <path>]\n";
 }
 
 int machine_error(std::string_view code, std::string_view message, int exit_code) {
@@ -224,6 +229,19 @@ int run_engine(int argc, Character** argv) {
       if (result.proposal_sha256) response["proposal_sha256"] = *result.proposal_sha256;
       std::cout << response.dump() << '\n' << std::flush;
       return std::cout ? 0 : 4;
+    }
+
+    if (argc >= 2 && equals_ascii(View(argv[1]), "solve")) {
+      std::vector<std::string> arguments;
+      arguments.reserve(static_cast<std::size_t>(argc - 2));
+      for (int index = 2; index < argc; ++index) {
+        const auto converted = utf8(View(argv[index]));
+        if (!converted) {
+          return machine_error("INVALID_REQUEST", "A solve option is not valid Unicode.", 2);
+        }
+        arguments.push_back(*converted);
+      }
+      return run_solve_command(arguments, kBuild.engine_version, kBuild.engine_commit);
     }
 
     if (argc >= 2 &&

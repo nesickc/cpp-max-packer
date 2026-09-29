@@ -57,14 +57,16 @@ and moved-project/export round trips remain required by the full gates below.
 
 ## User-provided assets
 
-[T-007](../doc/T-007.md) specifies the next CPU correlation, placement and export
-gates. Production FFT must match the independent integer oracle at every small
-linear translation and reject injected numerical faults. Spectral trials must
-retain the physical baseline and authorize proposals through the solid validator.
-Export tests must reread actual float32 coordinates for distinct copies, preserve
-source frames, reject quantization failures and retain valid primary JSON. The
-ticket records the ordered acceptance plan; these are pending product gates,
-not evidence that the new solver or writer already passes.
+[T-007](../doc/T-007.md) implements the bounded CPU correlation, placement and
+export slice. Production FFT is checked against the independent integer oracle
+at every small linear translation and rejects injected numerical faults.
+Spectral trials retain the physical baseline and authorize proposals through the
+solid validator. Actual float32 STL coordinates, source frames, quantization
+failures, retained primary JSON and CLI stop/resource boundaries are covered.
+The final local suite passes 412/412 in both Debug and Release, followed by
+production staging and a deterministic supplied-asset repeat. The ticket records
+red/green evidence and limitations: pinned official Benchy, full M2/AT-12,
+Vulkan and service-job responsiveness remain separate acceptance gates.
 
 [T-006](../doc/T-006.md) plans physical AABB candidate and retained-incumbent
 gates: exact 64-copy tiling independent of pitch, separate pair/wall clearances,

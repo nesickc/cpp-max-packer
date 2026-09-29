@@ -23,6 +23,17 @@ enum class ClosedStageMutation : std::uint8_t {
     translate_x
 };
 
+#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+struct ExportResidencyObservation {
+    std::uint64_t builder_base_before_native_inputs {};
+    std::uint64_t post_hash_base_before_reuse_comparison {};
+    std::uint64_t companion_write_base_before_final_documents {};
+};
+
+void reset_export_residency_observation_for_test() noexcept;
+[[nodiscard]] ExportResidencyObservation export_residency_observation_for_test() noexcept;
+#endif
+
 void fail_sha256_post_open_allocation_for_test(bool enabled) noexcept;
 void fail_result_build_post_validation_allocation_for_test(bool enabled) noexcept;
 [[nodiscard]] Sha256ProviderCounts sha256_provider_counts_for_test() noexcept;

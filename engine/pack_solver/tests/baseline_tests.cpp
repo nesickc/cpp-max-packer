@@ -611,62 +611,82 @@ TEST_CASE("T006 baseline filters enclosing-box cells through concave STL contain
   CHECK(result.best->score.count == 7);
 }
 
-TEST_CASE("T006 baseline rejects the AABB cell in an excluded STL cavity",
-          "[solver][T006][AT-10]") {
-  const auto container = geo::test_support::accepted(
-      geo::test_support::hollow_cuboid({0, 0, 0}, {3, 3, 3},
-                                       {1, 1, 1}, {2, 2, 2}),
-      geo::AssetRole::container);
-  geo::Constraints constraints;
-  constraints.pair_clearance_mm = 0.5;
-  constraints.wall_clearance_mm = 0.25;
-  const auto context = mesh_context(
-      geo::test_support::cuboid({-0.25, -0.25, -0.25},
-                                {0.25, 0.25, 0.25}),
-      container, constraints);
-  solver::BaselineLimits limits;
-  // Fifteen proposals reach the excluded center cell and observe the next
-  // valid cell; full grid traversal is covered by analytic cases.
-  limits.max_candidate_evaluations = 15;
-  limits.max_copies = 15;
+TEST_CASE("T006 baseline rejects an AABB cell enclosing an excluded STL cavity", "[solver][T006][AT-10]")
+{
+    const auto container = geo::test_support::accepted(
+        geo::test_support::hollow_cuboid({ 0, 0, 0 }, { 3, 3, 3 }, { .25, .25, .25 }, { .5, .5, .5 }),
+        geo::AssetRole::container);
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = 0.5;
+    constraints.wall_clearance_mm = .125;
+    const auto context =
+        mesh_context(geo::test_support::cuboid({ -0.25, -0.25, -0.25 }, { 0.25, 0.25, 0.25 }), container, constraints);
+    const auto physical = geo::oriented_bounds(context->object(), { 0, 0, 0, 1 }, {});
+    REQUIRE(std::holds_alternative<geo::OrientedBounds>(physical));
+    const auto& bounds = std::get<geo::OrientedBounds>(physical).bounds_mm;
+    geo::Vec3 first {};
+    geo::Vec3 second {};
+    for (std::size_t axis {}; axis != 3; ++axis) {
+        const auto plan = geo::plan_regular_axis(bounds.min[axis], bounds.max[axis], 0, 3,
+                                                 constraints.pair_clearance_mm, constraints.wall_clearance_mm, 3, {});
+        REQUIRE(std::holds_alternative<geo::RegularAxisGrid>(plan));
+        const auto initial = geo::axis_translation(std::get<geo::RegularAxisGrid>(plan), 0, {});
+        REQUIRE(std::holds_alternative<geo::AxisTranslation>(initial));
+        first[axis] = std::get<geo::AxisTranslation>(initial).translation_mm;
+        second[axis] = first[axis];
+        if (axis == 0) {
+            const auto next = geo::axis_translation(std::get<geo::RegularAxisGrid>(plan), 1, {});
+            REQUIRE(std::holds_alternative<geo::AxisTranslation>(next));
+            second[axis] = std::get<geo::AxisTranslation>(next).translation_mm;
+        }
+    }
+    REQUIRE(first == geo::Vec3 { .375, .375, .375 });
+    REQUIRE(second == geo::Vec3 { 1.375, .375, .375 });
+    const auto excluded_surface_gap_mm = std::min(.25 - (bounds.min[0] + first[0]), bounds.max[0] + first[0] - .5);
+    REQUIRE(excluded_surface_gap_mm >= constraints.wall_clearance_mm);
+    solver::BaselineLimits limits;
+    // The first proposal encloses the excluded cavity despite satisfying every
+    // analytic surface-gap check; the next proposal is valid.
+    // Full grid traversal is covered by analytic cases.
+    limits.max_candidate_evaluations = 2;
+    limits.max_copies = 2;
 
-  const auto result = solver::run_aabb_baseline(context, limits, {});
+    const auto result = solver::run_aabb_baseline(context, limits, {});
 
-  REQUIRE(result.best);
-  REQUIRE(result.best->solution);
-  const auto& copies = result.best->solution->copies();
-  REQUIRE(copies.size() == 14);
-  CHECK(copies.back().translation_mm == geo::Vec3{2.5, 1.5, 1.5});
-  for (const auto& copy : copies) {
-    CHECK(copy.translation_mm != geo::Vec3{1.5, 1.5, 1.5});
-  }
-  CHECK(result.stats.candidate_evaluations == 15);
-  CHECK(result.stats.invalid_candidates == 1);
-  CHECK(result.best->score.count == 14);
+    REQUIRE(result.best);
+    REQUIRE(result.best->solution);
+    const auto& copies = result.best->solution->copies();
+    REQUIRE(copies.size() == 1);
+    CHECK(copies.front().translation_mm == second);
+    for (const auto& copy : copies) {
+        CHECK(copy.translation_mm != first);
+    }
+    CHECK(result.stats.candidate_evaluations == 2);
+    CHECK(result.stats.invalid_candidates == 1);
+    CHECK(result.best->score.count == 1);
 }
 
-TEST_CASE("T006 final safe boundaries distinguish deadline and explicit stop",
-          "[solver][T006][AT-16]") {
-  const auto context = baseline_context(10, {10, 10, 10});
-  solver::BaselineLimits limits;
-  limits.max_candidate_evaluations = 1;
-  limits.max_search_passes = 1;
+TEST_CASE("T006 final safe boundaries distinguish deadline and explicit stop", "[solver][T006][AT-16]")
+{
+    const auto context = baseline_context(10, { 10, 10, 10 });
+    solver::BaselineLimits limits;
+    limits.max_candidate_evaluations = 1;
+    limits.max_search_passes = 1;
 
-  const auto completed = solver::run_aabb_baseline(context, limits, {});
-  REQUIRE(completed.best);
-  CHECK(completed.best->score.count == 1);
-  CHECK(completed.stats.search_passes == 1);
-  CHECK(completed.termination_reason == solver::TerminationReason::budget_exhausted);
+    const auto completed = solver::run_aabb_baseline(context, limits, {});
+    REQUIRE(completed.best);
+    CHECK(completed.best->score.count == 1);
+    CHECK(completed.stats.search_passes == 1);
+    CHECK(completed.termination_reason == solver::TerminationReason::budget_exhausted);
 
-  const auto deadline = solver::run_aabb_baseline(
-      context, {}, {{}, std::chrono::steady_clock::now()});
-  REQUIRE(deadline.best);
-  CHECK(deadline.termination_reason == solver::TerminationReason::budget_exhausted);
+    const auto deadline = solver::run_aabb_baseline(context, {}, { {}, std::chrono::steady_clock::now() });
+    REQUIRE(deadline.best);
+    CHECK(deadline.termination_reason == solver::TerminationReason::budget_exhausted);
 
-  std::stop_source source;
-  source.request_stop();
-  const auto stopped = solver::run_aabb_baseline(
-      context, {}, {source.get_token(), std::chrono::steady_clock::now()});
-  REQUIRE(stopped.best);
-  CHECK(stopped.termination_reason == solver::TerminationReason::user_stopped);
+    std::stop_source source;
+    source.request_stop();
+    const auto stopped =
+        solver::run_aabb_baseline(context, {}, { source.get_token(), std::chrono::steady_clock::now() });
+    REQUIRE(stopped.best);
+    CHECK(stopped.termination_reason == solver::TerminationReason::user_stopped);
 }

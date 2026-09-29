@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <catch2/catch_test_macros.hpp>
@@ -9,6 +10,7 @@
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <spectrapack/geometry/validation.hpp>
 #include <spectrapack/io/inspection.hpp>
 #include <spectrapack/io/result_export.hpp>
@@ -23,6 +25,97 @@
 #include "result_export_test_seam.hpp"
 
 namespace {
+
+namespace geo = spectrapack::geometry;
+namespace io = spectrapack::io;
+
+bool checked_add(std::uint64_t& total, std::uint64_t bytes)
+{
+    if (bytes > (std::numeric_limits<std::uint64_t>::max)() - total) {
+        return false;
+    }
+    total += bytes;
+    return true;
+}
+
+bool checked_add_product(std::uint64_t& total, std::uint64_t count, std::size_t element_size)
+{
+    if (element_size != 0 && count > (std::numeric_limits<std::uint64_t>::max)() / element_size) {
+        return false;
+    }
+    return checked_add(total, count * static_cast<std::uint64_t>(element_size));
+}
+
+std::optional<std::uint64_t> json_owner_bytes(const io::Json& value)
+{
+    std::uint64_t total {};
+    const auto visit = [&](const auto& self, const io::Json& item) -> bool {
+        if (item.is_string()) {
+            const auto& text = item.get_ref<const std::string&>();
+            return checked_add(total, sizeof(std::string)) && checked_add(total, text.capacity());
+        }
+        if (item.is_array()) {
+            const auto& array = item.get_ref<const io::Json::array_t&>();
+            if (!checked_add(total, sizeof(io::Json::array_t)) ||
+                !checked_add_product(total, array.capacity(), sizeof(io::Json))) {
+                return false;
+            }
+            return std::all_of(array.begin(), array.end(), [&](const auto& child) {
+                return self(self, child);
+            });
+        }
+        if (item.is_object()) {
+            const auto& object = item.get_ref<const io::Json::object_t&>();
+            if (!checked_add(total, sizeof(io::Json::object_t)) ||
+                !checked_add_product(total, object.size(), sizeof(io::Json::object_t::value_type))) {
+                return false;
+            }
+            for (const auto& child : item.items()) {
+                if (!checked_add(total, child.key().capacity()) || !self(self, child.value())) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+    return visit(visit, value) ? std::optional<std::uint64_t> { total } : std::nullopt;
+}
+
+std::optional<std::uint64_t> native_solution_owner_bytes(const geo::ValidatedSolution& solution)
+{
+    std::uint64_t total {};
+    std::array<const geo::AcceptedSolid*, 2> charged_solids {};
+    std::size_t charged_count {};
+    const auto charge_solid = [&](const std::shared_ptr<const geo::AcceptedSolid>& solid) {
+        if (!solid || std::find(charged_solids.begin(), charged_solids.begin() + charged_count, solid.get()) !=
+                          charged_solids.begin() + charged_count) {
+            return true;
+        }
+        const auto bytes = solid->resident_buffer_bytes();
+        if (!bytes || !checked_add(total, *bytes)) {
+            return false;
+        }
+        charged_solids[charged_count++] = solid.get();
+        return true;
+    };
+    const auto& context = solution.context();
+    if (!context || !charge_solid(context->object())) {
+        return std::nullopt;
+    }
+    if (const auto* container = std::get_if<std::shared_ptr<const geo::AcceptedSolid>>(&context->container());
+        container && !charge_solid(*container)) {
+        return std::nullopt;
+    }
+    if (!checked_add_product(total, solution.copies().capacity(), sizeof(geo::CopyPose))) {
+        return std::nullopt;
+    }
+    for (const auto& copy : solution.copies()) {
+        if (!checked_add(total, copy.copy_id.capacity() + 1)) {
+            return std::nullopt;
+        }
+    }
+    return total;
+}
 
 std::vector<std::byte> binary_cube_stl()
 {
@@ -153,9 +246,6 @@ spectrapack::io::ResultCatalog cube_result_catalog()
     }
     return catalog;
 }
-
-namespace geo = spectrapack::geometry;
-namespace io = spectrapack::io;
 
 struct ResultBuilderFixture {
     std::filesystem::path root;
@@ -497,6 +587,46 @@ TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 writer funds caller native residen
     REQUIRE(std::holds_alternative<io::ValidatedDocument>(document));
     const auto output = root / "builder-native-residency";
     REQUIRE(std::filesystem::create_directory(output));
+    const auto make_export = [&](std::uint64_t cap) {
+        return io::export_result({
+            solution,
+            asset,
+            {},
+            { 1, { { 0, 0, 0, 1 } } },
+            std::get<io::ValidatedDocument>(document),
+            output / "result.json",
+            {},
+            {},
+            {},
+            cap
+        });
+    };
+    io::test::reset_export_residency_observation_for_test();
+    REQUIRE(std::holds_alternative<io::ExportSuccess>(make_export(512ULL << 20)));
+    const auto observed = io::test::export_residency_observation_for_test();
+    REQUIRE(observed.builder_base_before_native_inputs > 0);
+    REQUIRE(std::filesystem::remove(output / "result.json"));
+    const auto native_bytes = native_solution_owner_bytes(*solution);
+    REQUIRE(native_bytes);
+    REQUIRE(*native_bytes > 0);
+
+    const auto measured = geo::revalidate(solution, request.validation_limits);
+    REQUIRE(measured.validated_solution);
+    const auto workspace = measured.report.working_bytes_peak;
+    REQUIRE(workspace > 0);
+    auto exact_limits = request.validation_limits;
+    exact_limits.max_working_bytes = workspace;
+    REQUIRE(geo::revalidate(solution, exact_limits).validated_solution);
+    exact_limits.max_working_bytes = workspace - 1;
+    const auto below_workspace = geo::revalidate(solution, exact_limits);
+    REQUIRE_FALSE(below_workspace.validated_solution);
+    REQUIRE(below_workspace.report.code == "KERNEL_MEMORY_LIMIT");
+
+    auto cap = observed.builder_base_before_native_inputs;
+    REQUIRE(checked_add(cap, *native_bytes));
+    REQUIRE(checked_add(cap, workspace));
+    REQUIRE(cap > 0);
+    --cap;
     const auto exported = io::export_result({
         solution,
         asset,
@@ -507,7 +637,7 @@ TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 writer funds caller native residen
         {},
         {},
         {},
-        600000
+        cap
     });
     REQUIRE(std::holds_alternative<io::Error>(exported));
     const auto& error = std::get<io::Error>(exported);
@@ -644,8 +774,15 @@ TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 repeated zero-copy export accounts
             cap
         });
     };
+    io::test::reset_export_residency_observation_for_test();
     REQUIRE(std::holds_alternative<io::ExportSuccess>(make_export(512ULL << 20)));
-    const auto repeated = make_export(192ULL << 10);
+    const auto observed = io::test::export_residency_observation_for_test();
+    REQUIRE(observed.post_hash_base_before_reuse_comparison > 0);
+    auto comparison_cap = observed.post_hash_base_before_reuse_comparison;
+    REQUIRE(checked_add(comparison_cap, 2ULL * 64 * 1024));
+    REQUIRE(comparison_cap > 0);
+    --comparison_cap;
+    const auto repeated = make_export(comparison_cap);
     REQUIRE(std::holds_alternative<io::Error>(repeated));
     const auto& error = std::get<io::Error>(repeated);
     REQUIRE(error.code == "MEMORY_LIMIT");
@@ -669,18 +806,35 @@ TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 final result validation counts bot
     REQUIRE(std::holds_alternative<io::ValidatedDocument>(document));
     const auto output = root / "final-copy-cap";
     REQUIRE(std::filesystem::create_directory(output));
-    const auto exported = io::export_result({
-        empty_checked.validated_solution,
-        asset,
-        {},
-        { 1, { { 0, 0, 0, 1 } } },
-        std::get<io::ValidatedDocument>(document),
-        output / "result.json",
-        output / "packed.stl",
-        {},
-        {},
-        264ULL << 10
-    });
+    const auto make_export = [&](std::uint64_t cap) {
+        return io::export_result({
+            empty_checked.validated_solution,
+            asset,
+            {},
+            { 1, { { 0, 0, 0, 1 } } },
+            std::get<io::ValidatedDocument>(document),
+            output / "result.json",
+            output / "packed.stl",
+            {},
+            {},
+            cap
+        });
+    };
+    io::test::reset_export_residency_observation_for_test();
+    REQUIRE(std::holds_alternative<io::ExportSuccess>(make_export(512ULL << 20)));
+    const auto observed = io::test::export_residency_observation_for_test();
+    REQUIRE(observed.companion_write_base_before_final_documents > 0);
+    const auto supplied_payload = json_owner_bytes(std::get<io::ValidatedDocument>(document).value());
+    REQUIRE(supplied_payload);
+    REQUIRE(*supplied_payload > 0);
+    auto final_copy_cap = observed.companion_write_base_before_final_documents;
+    REQUIRE(checked_add(final_copy_cap, *supplied_payload));
+    REQUIRE(checked_add(final_copy_cap, *supplied_payload));
+    REQUIRE(final_copy_cap > 0);
+    --final_copy_cap;
+    REQUIRE(std::filesystem::remove_all(output) > 0);
+    REQUIRE(std::filesystem::create_directory(output));
+    const auto exported = make_export(final_copy_cap);
     REQUIRE(std::holds_alternative<io::Error>(exported));
     const auto& error = std::get<io::Error>(exported);
     REQUIRE(error.code == "MEMORY_LIMIT");

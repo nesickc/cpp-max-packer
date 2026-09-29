@@ -78,6 +78,9 @@ std::atomic_uint64_t export_stage_write_count {};
 std::atomic_uint64_t export_stage_write_exception_number {};
 std::atomic<test::ClosedStageMutation> export_closed_stage_mutation { test::ClosedStageMutation::none };
 std::atomic_bool export_closed_stage_reader_failure {};
+std::atomic_uint64_t export_builder_base_before_native_inputs {};
+std::atomic_uint64_t export_post_hash_base_before_reuse_comparison {};
+std::atomic_uint64_t export_companion_write_base_before_final_documents {};
 std::string export_stage_token;
 std::vector<std::string> export_stage_tokens;
 #endif
@@ -986,6 +989,21 @@ std::optional<std::string> portable_relative_path(const std::filesystem::path& r
 }  // namespace
 
 namespace test {
+#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+void reset_export_residency_observation_for_test() noexcept
+{
+    export_builder_base_before_native_inputs.store(0, std::memory_order_relaxed);
+    export_post_hash_base_before_reuse_comparison.store(0, std::memory_order_relaxed);
+    export_companion_write_base_before_final_documents.store(0, std::memory_order_relaxed);
+}
+ExportResidencyObservation export_residency_observation_for_test() noexcept
+{
+    return { export_builder_base_before_native_inputs.load(std::memory_order_relaxed),
+             export_post_hash_base_before_reuse_comparison.load(std::memory_order_relaxed),
+             export_companion_write_base_before_final_documents.load(std::memory_order_relaxed) };
+}
+#endif
+
 void fail_sha256_post_open_allocation_for_test(bool enabled) noexcept
 {
 #ifdef SPECTRAPACK_ASSET_LOADER_TESTING
@@ -1303,6 +1321,9 @@ ExportOutcome export_result(const ExportRequest& request)
             !supplied.contains("count") || !supplied.contains("placements") || !supplied.contains("validation")) {
             return failure("EXPORT_RESULT_MISMATCH", "Result has unsupported pre-publication fields.");
         }
+#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+        export_builder_base_before_native_inputs.store(builder_live_bytes, std::memory_order_relaxed);
+#endif
         const auto native_resident_bytes = solution_resident_bytes(*request.solution);
         std::uint64_t builder_validation_live_bytes = builder_live_bytes;
         if (!native_resident_bytes || !add_bytes(builder_validation_live_bytes, *native_resident_bytes) ||
@@ -1666,6 +1687,9 @@ ExportOutcome export_result(const ExportRequest& request)
             return post_primary_error(
                 failure("MEMORY_LIMIT", "STL hash residency exceeds the configured working-memory limit."));
         }
+#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+        export_post_hash_base_before_reuse_comparison.store(post_hash_live_bytes, std::memory_order_relaxed);
+#endif
         if (auto problem =
                 stl_stage.publish(*request.stl_path, false, request.max_working_bytes - post_hash_live_bytes)) {
             return post_primary_error(*problem);
@@ -1704,6 +1728,9 @@ ExportOutcome export_result(const ExportRequest& request)
             return post_primary_error(
                 failure("MEMORY_LIMIT", "STL companion text exceeds the configured working-memory limit."));
         }
+#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+        export_companion_write_base_before_final_documents.store(companion_write_live_bytes, std::memory_order_relaxed);
+#endif
         if (auto problem = companion_stage.write(std::as_bytes(std::span(companion_text)))) {
             return post_primary_error(*problem);
         }
