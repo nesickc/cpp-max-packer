@@ -1,6 +1,6 @@
 # Agent setup and verification
 
-Updated 2026-09-08 for the user's architecture, review, log-triage, and TDD additions. This is the current policy; the [original setup template](codex-local-agent-setup-guide.md) is historical where it conflicts.
+Updated 2026-09-21 with native named-role runtime verification. This is the current policy; the [original setup template](codex-local-agent-setup-guide.md) is historical where it conflicts.
 
 ## Allocation
 
@@ -54,6 +54,15 @@ The task uses fresh worker context and keeps at most two workers active; no
 close-worker control is exposed. Historical account paths above are not current
 machine prerequisites. Sign-in, billing, speed and global permissions remain
 unchanged.
+
+T-007 repeated the metadata check in a fresh primary task and verified all six
+named roles, including `expert_worker` on `gpt-5.6-sol` / `high` for a reproduced
+CPU correlation issue. Primary remains Astra Ultra; architecture/review use
+Astra Extra High, implementation uses Terra Medium, and focused tests/log triage
+use Luna Low. Evidence: `.local/t007/current-agent-metadata.json`. Workers remain
+leaves and at most two run concurrently; this does not assert an enforced
+permission boundary. No model, billing, sign-in or global permission setting was
+changed by the check.
 
 ## Test-first operation
 

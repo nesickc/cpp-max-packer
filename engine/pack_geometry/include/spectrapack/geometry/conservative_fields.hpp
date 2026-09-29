@@ -29,91 +29,107 @@ struct GridWindow {
   CellIndex first{};
   CellShape shape{};
 };
-enum class FieldPurpose {
-  object_kernel,
-  placed_pair_blocker,
-  container_blocker
-};
+enum class FieldPurpose { object_kernel, placed_pair_blocker, container_blocker };
 
 class VoxelGeometry {
- public:
-  VoxelGeometry(const VoxelGeometry&) = delete;
-  VoxelGeometry& operator=(const VoxelGeometry&) = delete;
-  VoxelGeometry(VoxelGeometry&&) = delete;
-  VoxelGeometry& operator=(VoxelGeometry&&) = delete;
-  [[nodiscard]] const std::shared_ptr<const AcceptedSolid>& source()
-      const noexcept;
+public:
+    VoxelGeometry(const VoxelGeometry&) = delete;
+    VoxelGeometry& operator=(const VoxelGeometry&) = delete;
+    VoxelGeometry(VoxelGeometry&&) = delete;
+    VoxelGeometry& operator=(VoxelGeometry&&) = delete;
+    [[nodiscard]] const std::shared_ptr<const AcceptedSolid>& source() const noexcept;
+    [[nodiscard]] const RepresentationStats& stats() const noexcept;
+    [[nodiscard]] std::optional<RepresentationResidency> representation_residency() const noexcept;
 
- private:
-  struct Storage;
-  std::shared_ptr<const Storage> storage_;
-  explicit VoxelGeometry(std::shared_ptr<const Storage>) noexcept;
-  friend struct detail::FieldBuilder;
-  friend RepresentationOutcome<VoxelGeometry> prepare_voxel_geometry(
-      std::shared_ptr<const AcceptedSolid>, const RepresentationLimits&);
+private:
+    struct Storage;
+    std::shared_ptr<const Storage> storage_;
+    explicit VoxelGeometry(std::shared_ptr<const Storage>) noexcept;
+    friend struct detail::FieldBuilder;
+    friend RepresentationOutcome<VoxelGeometry> prepare_voxel_geometry(std::shared_ptr<const AcceptedSolid>,
+                                                                       const RepresentationLimits&);
+    friend RepresentationOutcome<VoxelGeometry> prepare_voxel_geometry(std::shared_ptr<const AcceptedSolid>,
+                                                                       const RepresentationLimits&,
+                                                                       RepresentationAttemptStats&);
 };
 
 class CellField {
- public:
-  CellField(const CellField&) = delete;
-  CellField& operator=(const CellField&) = delete;
-  CellField(CellField&&) = delete;
-  CellField& operator=(CellField&&) = delete;
-  [[nodiscard]] const GridWindow& window() const noexcept;
-  [[nodiscard]] FieldPurpose purpose() const noexcept;
-  [[nodiscard]] const RepresentationStats& stats() const noexcept;
-  [[nodiscard]] std::span<const std::uint8_t> cells() const noexcept;
+public:
+    CellField(const CellField&) = delete;
+    CellField& operator=(const CellField&) = delete;
+    CellField(CellField&&) = delete;
+    CellField& operator=(CellField&&) = delete;
+    [[nodiscard]] const GridWindow& window() const noexcept;
+    [[nodiscard]] FieldPurpose purpose() const noexcept;
+    [[nodiscard]] const RepresentationStats& stats() const noexcept;
+    [[nodiscard]] std::span<const std::uint8_t> cells() const noexcept;
+    [[nodiscard]] std::optional<RepresentationResidency> representation_residency() const noexcept;
 
- private:
-  struct Storage;
-  std::shared_ptr<const Storage> storage_;
-  explicit CellField(std::shared_ptr<const Storage>) noexcept;
-  friend struct detail::FieldBuilder;
-  friend RepresentationOutcome<CellField> detail_make_solid_field(
-      std::shared_ptr<const VoxelGeometry>, GridWindow, Vec3, Quaternion,
-      FieldPurpose, const RepresentationLimits&);
-  friend RepresentationOutcome<CellField> voxelize_object(
-      std::shared_ptr<const VoxelGeometry>, GridLattice, Quaternion,
-      const RepresentationLimits&);
-  friend RepresentationOutcome<CellField> voxelize_placed(
-      std::shared_ptr<const VoxelGeometry>, GridWindow, CopyPose, double,
-      const RepresentationLimits&);
-  friend RepresentationOutcome<CellField> voxelize_container(
-      Container, GridWindow, double, const RepresentationLimits&);
+private:
+    struct Storage;
+    std::shared_ptr<const Storage> storage_;
+    explicit CellField(std::shared_ptr<const Storage>) noexcept;
+    friend struct detail::FieldBuilder;
+    friend RepresentationOutcome<CellField> detail_make_solid_field(std::shared_ptr<const VoxelGeometry>, GridWindow,
+                                                                    Vec3, Quaternion, FieldPurpose,
+                                                                    const RepresentationLimits&);
+    friend RepresentationOutcome<CellField> voxelize_object(std::shared_ptr<const VoxelGeometry>, GridLattice,
+                                                            Quaternion, const RepresentationLimits&);
+    friend RepresentationOutcome<CellField> voxelize_placed(std::shared_ptr<const VoxelGeometry>, GridWindow, CopyPose,
+                                                            double, const RepresentationLimits&);
+    friend RepresentationOutcome<CellField> voxelize_container(Container, GridWindow, double,
+                                                               const RepresentationLimits&);
 };
 
-[[nodiscard]] RepresentationOutcome<VoxelGeometry> prepare_voxel_geometry(
-    std::shared_ptr<const AcceptedSolid>, const RepresentationLimits& = {});
-[[nodiscard]] RepresentationOutcome<CellField> voxelize_object(
-    std::shared_ptr<const VoxelGeometry>, GridLattice, Quaternion,
-    const RepresentationLimits& = {});
-[[nodiscard]] RepresentationOutcome<CellField> voxelize_placed(
-    std::shared_ptr<const VoxelGeometry>, GridWindow, CopyPose, double,
-    const RepresentationLimits& = {});
-[[nodiscard]] RepresentationOutcome<CellField> voxelize_container(
-    Container, GridWindow, double, const RepresentationLimits& = {});
+[[nodiscard]] RepresentationOutcome<VoxelGeometry> prepare_voxel_geometry(std::shared_ptr<const AcceptedSolid>,
+                                                                          const RepresentationLimits& = {});
+[[nodiscard]] RepresentationOutcome<VoxelGeometry> prepare_voxel_geometry(std::shared_ptr<const AcceptedSolid>,
+                                                                          const RepresentationLimits&,
+                                                                          RepresentationAttemptStats&);
+[[nodiscard]] RepresentationOutcome<CellField> voxelize_object(std::shared_ptr<const VoxelGeometry>, GridLattice,
+                                                               Quaternion, const RepresentationLimits& = {});
+[[nodiscard]] RepresentationOutcome<CellField> voxelize_object(std::shared_ptr<const VoxelGeometry>, GridLattice,
+                                                               Quaternion, const RepresentationLimits&,
+                                                               RepresentationAttemptStats&);
+[[nodiscard]] RepresentationOutcome<CellField> voxelize_placed(std::shared_ptr<const VoxelGeometry>, GridWindow,
+                                                               CopyPose, double, const RepresentationLimits& = {});
+[[nodiscard]] RepresentationOutcome<CellField> voxelize_placed(std::shared_ptr<const VoxelGeometry>, GridWindow,
+                                                               const CopyPose&, double, const RepresentationLimits&,
+                                                               RepresentationAttemptStats&);
+[[nodiscard]] RepresentationOutcome<CellField> voxelize_container(Container, GridWindow, double,
+                                                                  const RepresentationLimits& = {});
+[[nodiscard]] RepresentationOutcome<CellField> voxelize_container(Container, GridWindow, double,
+                                                                  const RepresentationLimits&,
+                                                                  RepresentationAttemptStats&);
 
 class BlockedField {
- public:
-  ~BlockedField();
-  [[nodiscard]] std::optional<RepresentationFailure> add(
-      std::string copy_id, std::shared_ptr<const CellField> placed_blocker);
-  [[nodiscard]] std::optional<RepresentationFailure> remove(
-      std::string_view copy_id);
-  [[nodiscard]] bool blocked(CellIndex global_index) const;
-  [[nodiscard]] std::uint32_t placed_count(CellIndex global_index) const;
-  [[nodiscard]] const GridWindow& window() const noexcept;
+public:
+    ~BlockedField();
+    [[nodiscard]] std::optional<RepresentationFailure> add(std::string copy_id,
+                                                           std::shared_ptr<const CellField> placed_blocker);
+    [[nodiscard]] std::optional<RepresentationFailure> add(std::string_view copy_id,
+                                                           std::shared_ptr<const CellField> placed_blocker,
+                                                           const RepresentationLimits&, RepresentationAttemptStats&);
+    [[nodiscard]] std::optional<RepresentationFailure> remove(std::string_view copy_id);
+    [[nodiscard]] std::optional<RepresentationFailure> remove(std::string_view copy_id, const RepresentationLimits&,
+                                                              RepresentationAttemptStats&);
+    [[nodiscard]] bool blocked(CellIndex global_index) const;
+    [[nodiscard]] std::uint32_t placed_count(CellIndex global_index) const;
+    [[nodiscard]] const GridWindow& window() const noexcept;
+    [[nodiscard]] std::optional<RepresentationResidency> representation_residency() const noexcept;
 
- private:
-  struct Storage;
-  std::unique_ptr<Storage> storage_;
-  explicit BlockedField(std::unique_ptr<Storage>) noexcept;
-  friend std::variant<std::unique_ptr<BlockedField>, RepresentationFailure>
-  make_blocked_field(std::shared_ptr<const CellField>,
-                     const RepresentationLimits&);
+private:
+    struct Storage;
+    std::unique_ptr<Storage> storage_;
+    explicit BlockedField(std::unique_ptr<Storage>) noexcept;
+    friend std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_field(
+        std::shared_ptr<const CellField>, const RepresentationLimits&);
+    friend std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_field(
+        std::shared_ptr<const CellField>, const RepresentationLimits&, RepresentationAttemptStats&);
 };
-[[nodiscard]] std::variant<std::unique_ptr<BlockedField>, RepresentationFailure>
-make_blocked_field(std::shared_ptr<const CellField>,
-                   const RepresentationLimits& = {});
+[[nodiscard]] std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_field(
+    std::shared_ptr<const CellField>, const RepresentationLimits& = {});
+[[nodiscard]] std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_field(
+    std::shared_ptr<const CellField>, const RepresentationLimits&, RepresentationAttemptStats&);
 
 }  // namespace spectrapack::geometry

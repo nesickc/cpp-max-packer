@@ -333,6 +333,14 @@ spectrapack-engine benchmark --suite <suite.json> --output <directory>
 spectrapack-engine serve --stdio
 ```
 
+The T-007 CPU implementation slice also provides a synchronous diagnostic entry
+point, `spectrapack-engine solve --settings FILE --object-report FILE
+[--container-report FILE] --result FILE [--stl FILE]`, specified in
+[ADR 0009](../spec/decisions/0009-cpu-spectral-placement-and-export.md). It consumes
+resolved settings and existing accepted inspection reports. The required `pack`
+job-file interface and asynchronous job methods remain their own integration
+gates. Capabilities distinguish implemented commands from implemented methods.
+
 Headless `pack` and UI `job.start` use the same settings schema, solver, and output contract. CLI Ctrl+C maps to stop-and-keep. Exit codes: `0` for a valid terminal result, including zero copies, budget exhaustion, or a requested stop; `2` for bad input/settings; `3` for unsupported capabilities/resource preflight; `4` for internal failure; `5` for failed or indeterminate validation in the standalone validator. A fatal error may also preserve a prior valid incumbent; the nonzero exit and error record remain.
 
 Use UTF-8 newline-delimited JSON over the sidecar's stdin/stdout. stdout contains protocol records only; human-readable logs use stderr. Each record includes `protocol_version: 1`. Requests have a unique string `request_id`, a `method`, and `params`. Responses carry the request ID, `ok`, and either `result` or a structured `error`. Events carry `job_id`, a monotonically increasing `sequence`, `type`, and `payload`. Use a maximum record size of 1 MiB; transfer geometry through scoped local asset files, not JSON arrays of millions of vertices.

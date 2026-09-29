@@ -62,6 +62,29 @@ TEST_CASE("AT-06 accepts a single authoritative cube inside a box") {
   CHECK(trusted->copies().front().copy_id == "copy-1");
 }
 
+TEST_CASE("AT-06 public revalidation forwards the original immutable candidate") {
+  const auto original = validate_one(context(), {5, 5, 5});
+  REQUIRE(original.validated_solution);
+
+  const auto forwarded = geo::revalidate(original.validated_solution);
+  REQUIRE(forwarded.report.validity == geo::Validity::valid);
+  REQUIRE(forwarded.validated_solution);
+  CHECK(forwarded.validated_solution->context() == original.validated_solution->context());
+  CHECK(&forwarded.validated_solution->copies() == &original.validated_solution->copies());
+
+  const auto missing = geo::revalidate({});
+  CHECK(missing.report.validity == geo::Validity::indeterminate);
+  CHECK(missing.report.code == "VALIDATION_CONTEXT_MISMATCH");
+  CHECK_FALSE(missing.validated_solution);
+
+  geo::ValidationLimits limited;
+  limited.max_copy_count = 0;
+  const auto capped = geo::revalidate(original.validated_solution, limited);
+  CHECK(capped.report.validity == geo::Validity::indeterminate);
+  CHECK(capped.report.code == "VALIDATION_COPY_LIMIT");
+  CHECK_FALSE(capped.validated_solution);
+}
+
 TEST_CASE("AT-07 rejects an authoritative cube through a box wall") {
   CHECK(validate_one(context(), {0.5, 5, 5}).report.validity == geo::Validity::invalid);
 }

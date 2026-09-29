@@ -1,7 +1,8 @@
 add_library(pack_geometry STATIC
   src/import.cpp src/solid_analysis.cpp src/exact_predicates.cpp
   src/validation.cpp src/validation_kernel.cpp
-  src/display_lod.cpp src/conservative_fields.cpp src/physical_bounds.cpp)
+  src/display_lod.cpp src/conservative_fields.cpp src/physical_bounds.cpp
+  src/rigid_transform.cpp src/export_validation.cpp)
 target_include_directories(pack_geometry PUBLIC include)
 target_compile_features(pack_geometry PUBLIC cxx_std_20)
 target_compile_options(pack_geometry PRIVATE
@@ -50,3 +51,17 @@ add_executable(spectrapack_physical_bounds_allocation_tests
 target_link_libraries(spectrapack_physical_bounds_allocation_tests PRIVATE
   pack_geometry Catch2::Catch2WithMain)
 catch_discover_tests(spectrapack_physical_bounds_allocation_tests)
+
+add_executable(spectrapack_rigid_transform_tests tests/rigid_transform_tests.cpp)
+target_link_libraries(spectrapack_rigid_transform_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
+catch_discover_tests(spectrapack_rigid_transform_tests)
+
+add_executable(spectrapack_export_validation_tests tests/export_validation_tests.cpp)
+target_link_libraries(spectrapack_export_validation_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
+catch_discover_tests(spectrapack_export_validation_tests)
+
+add_executable(spectrapack_representation_accounting_tests
+  tests/representation_accounting_tests.cpp)
+target_link_libraries(spectrapack_representation_accounting_tests PRIVATE
+  pack_geometry Catch2::Catch2WithMain)
+catch_discover_tests(spectrapack_representation_accounting_tests)

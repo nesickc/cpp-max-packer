@@ -89,6 +89,8 @@ jobs:
             Get-Content $log -Tail 45
             if ($testResult -ne 0) { exit $testResult }
           }
+          & ./tools/Invoke-NativeTests.ps1 -Preset windows-ninja-release -VcpkgRoot "$PWD/.local/vcpkg" -ToolchainProfile $hostedProfile -PythonPath python -BuildTarget spectrapack-engine -BuildOnly -WithoutTests *> .local/ci/native-production.log
+          if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/native-production.log; exit $LASTEXITCODE }
           $packageRoot = Join-Path $env:RUNNER_TEMP 'spectrapack-cpu-package'
           $runtimeReport = Join-Path $PWD '.local/ci/runtime.json'
           cmake --install out/build/windows-ninja-release --prefix $packageRoot --component cpu-diagnostics *> .local/ci/stage.log
@@ -100,8 +102,14 @@ jobs:
           $engine = Join-Path $packageRoot 'bin/spectrapack-engine.exe'
           $serviceTest = Join-Path $PWD 'tests/protocol/service_subprocess_test.py'
           $importTest = Join-Path $PWD 'tests/protocol/import_subprocess_test.py'
+          $solveTest = Join-Path $PWD 'tests/protocol/solve_subprocess_test.py'
+          $resultContractValidator = Join-Path $PWD 'out/build/windows-ninja-release/bin/spectrapack_result_contract_check.exe'
+          $solveControlsTest = Join-Path $PWD 'tests/protocol/solve_controls_subprocess_test.py'
+          $cliMemoryHelper = Join-Path $PWD 'out/build/windows-ninja-release/bin/spectrapack_cli_memory_check.exe'
           $serviceLog = Join-Path $PWD '.local/ci/staged-protocol.log'
           $importLog = Join-Path $PWD '.local/ci/staged-import.log'
+          $solveLog = Join-Path $PWD '.local/ci/staged-solve.log'
+          $solveControlsLog = Join-Path $PWD '.local/ci/staged-solve-controls.log'
           $diagnostic = Join-Path $packageRoot 'diagnostics/spectrapack_cpu_dependency_smoke.exe'
           dumpbin /DEPENDENTS $diagnostic *> .local/ci/pe-imports.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -118,6 +126,10 @@ jobs:
               if ($LASTEXITCODE -ne 0) { Get-Content $serviceLog; exit $LASTEXITCODE }
               & $runtimePython $importTest $engine *> $importLog
               if ($LASTEXITCODE -ne 0) { Get-Content $importLog; exit $LASTEXITCODE }
+              & $runtimePython $solveTest $engine --contract-validator $resultContractValidator *> $solveLog
+              if ($LASTEXITCODE -ne 0) { Get-Content $solveLog; exit $LASTEXITCODE }
+              & $runtimePython $solveControlsTest $engine --memory-helper $cliMemoryHelper *> $solveControlsLog
+              if ($LASTEXITCODE -ne 0) { Get-Content $solveControlsLog; exit $LASTEXITCODE }
             } finally { Pop-Location }
           } finally { $env:PATH = $savedPath }
           Get-Content $diagnosticLog

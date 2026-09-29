@@ -82,9 +82,16 @@ TEST_CASE("stdio service replays a request without redispatching", "[DATA-01][pr
   const int code = spectrapack::service::run_stdio(input, output, diagnostics, {"test", "commit"});
   REQUIRE(code == 0);
   const std::string expected =
-      R"({"ok":true,"protocol_version":1,"request_id":"cap-1","result":{"compute_backends":[],"engine":{"commit":"commit","version":"test"},"features":{"asset_import":false,"packing":false,"project_io":false,"result_export":false,"result_validation":false},"implemented_commands":["capabilities","serve","inspect"],"implemented_methods":["capabilities.get"],"max_active_solver_jobs":1,"max_record_bytes":1048576,"protocol_versions":[1],"schema_versions":{"assets":[1],"benchmark_summary":[1],"protocol":[1],"results":[1],"settings":[1]},"unsupported_methods":["asset.import","asset.accept_repair","job.preflight","job.start","job.stop","job.continue","job.status","project.open","project.save","result.validate","result.export"]}})" "\n";
+      R"({"ok":true,"protocol_version":1,"request_id":"cap-1","result":{"compute_backends":[],"engine":{"commit":"commit","version":"test"},"features":{"asset_import":false,"packing":false,"project_io":false,"result_export":false,"result_validation":false},"implemented_commands":["capabilities","serve","inspect","solve"],"implemented_methods":["capabilities.get"],"max_active_solver_jobs":1,"max_record_bytes":1048576,"protocol_versions":[1],"schema_versions":{"assets":[1],"benchmark_summary":[1],"protocol":[1],"results":[1],"settings":[1]},"unsupported_methods":["asset.import","asset.accept_repair","job.preflight","job.start","job.stop","job.continue","job.status","project.open","project.save","result.validate","result.export"]}})" "\n";
   REQUIRE(output.str() == expected + expected);
   REQUIRE(diagnostics.str().empty());
+}
+
+TEST_CASE("capabilities advertise the reachable solve command", "[DATA-01][protocol]") {
+  const auto value = spectrapack::service::capabilities({"test", "commit"});
+  REQUIRE(value.at("implemented_commands") ==
+          spectrapack::io::Json::array({"capabilities", "serve", "inspect", "solve"}));
+  REQUIRE_FALSE(value.at("features").at("packing").get<bool>());
 }
 
 TEST_CASE("invalid params and changed duplicate requests are structured errors", "[DATA-01][protocol]") {

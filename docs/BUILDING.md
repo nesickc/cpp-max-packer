@@ -32,6 +32,12 @@ python -m unittest discover -s tests -p 'test_*.py'
 
 The wrapper selects the locked Visual Studio installation and x64 developer environment, checks tools, configures, checks the installed dependency graph and static runtime flags, builds and runs CTest. Pass `-VsWherePath`, `-CmakePath`, `-CtestPath` or `-PythonPath` for non-default executable locations. `-Fresh` discards only that preset's CMake configuration cache. Outputs are in `out/build/<preset>/`; `build-metadata.json` records the measured build environment. Direct CMake commands alone do not run all admission checks.
 
+To check a production target with test hooks disabled, add
+`-BuildTarget pack_io -BuildOnly -WithoutTests` to the same measured-profile
+command. This configures `BUILD_TESTING=OFF` while retaining every toolchain and
+dependency check. `-WithoutTests` requires an explicit target and `-BuildOnly`;
+ordinary wrapper calls explicitly restore `BUILD_TESTING=ON` before running tests.
+
 For a focused module check, retain the lock/profile arguments and add
 `-BuildTarget <cmake-target> -TestRegex <ctest-name-regex>`. The regex matches
 discovered test names, not executable names. A target-only build uses
@@ -91,9 +97,10 @@ python tests/protocol/import_subprocess_test.py "$packageRoot/bin/spectrapack-en
 ```
 
 The process test runs the engine outside the checkout and checks that it responds
-before stdin closes. The executable embeds its contract catalog. There is no
-installer or packing implementation in this component yet. CI also runs the staged
-inspection tests with developer directories removed from `PATH`.
+before stdin closes. The executable embeds its contract catalog. The auxiliary
+`solve` command exposes the T-007 CPU packing slice; service jobs and an installer
+remain later integration work. CI also runs the staged inspection and solve tests
+with developer directories removed from `PATH`.
 
 ## Inspect an STL
 
@@ -112,6 +119,46 @@ before/after diagnostics and previews, then repeat the same options with
 `--accept-repair SHA256`, using the returned proposal token, to accept that exact
 candidate. Only a fully valid candidate can be accepted; the original STL remains
 unchanged. Full CLI/report semantics are in ADR 0005.
+
+## Run the bounded CPU solver
+
+The synchronous T-007 command consumes an accepted object inspection report and
+a resolved [settings document](../spec/schemas/settings.schema.json):
+
+```powershell
+& "$packageRoot/bin/spectrapack-engine.exe" solve --settings settings.json --object-report object.json --result output/result.json --stl output/assembly.stl
+```
+
+For an STL interior-volume container, also pass `--container-report container.json`.
+A box container uses the dimensions in settings. Asset hashes must match the
+reports. Settings must already resolve manual pitch, a version-1 fixed/cube/custom
+orientation catalog and CPU execution with one thread; this command does not
+resolve incomplete settings. See [ADR 0009](../spec/decisions/0009-cpu-spectral-placement-and-export.md#headless-integration-and-test-seams)
+for the exact boundary.
+
+Deterministic runs use explicit candidate/pass budgets. Time-budget runs use
+`budget_seconds`; Ctrl-C or Ctrl-Break requests a stop at a safe search boundary.
+The command reports actual phase ceilings, consumed work and termination reason.
+Only independently validated placements enter the retained `best_found` result.
+Result JSON includes portable source/accepted-mesh artifacts. Optional binary STL
+and its `.stl.json` companion are published only after validating the reread
+float32 geometry. On an operational failure, a nonzero JSON error can identify a
+retained valid result through `error.details.result_path`.
+
+The process suites exercise the real staged executable:
+
+```powershell
+$resultContractValidator = "out/build/windows-ninja-release/bin/spectrapack_result_contract_check.exe"
+python tests/protocol/solve_subprocess_test.py "$packageRoot/bin/spectrapack-engine.exe" --contract-validator $resultContractValidator
+$cliMemoryHelper = "out/build/windows-ninja-release/bin/spectrapack_cli_memory_check.exe"
+python tests/protocol/solve_controls_subprocess_test.py "$packageRoot/bin/spectrapack-engine.exe" --memory-helper $cliMemoryHelper
+```
+
+The first suite uses the test-only result checker built with `BUILD_TESTING=ON`
+to pass emitted JSON through the shared native schema and semantic validator.
+The control suite also uses a test-only CLI build to exercise a lower result-build
+memory cap with the same retained inputs. Neither helper is installed in the
+engine package or built with `BUILD_TESTING=OFF`.
 
 ## Bounded performance checks
 
