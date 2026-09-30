@@ -16,6 +16,34 @@ canonical [spec §10](../doc/spectrapack-spec.md#10-acceptance-tests) for the fu
 
 For each slice, name its requirement and AT case, add a failing observable test, record the intended failure, implement, and record the passing command. Refactor only while preserving those gates. Use fixed work and seeds for deterministic regressions. Do not create an all-green collection of skipped acceptance placeholders.
 
+## Post-T-008 acceptance ownership
+
+The planned [delivery milestones](../doc/MILESTONES.md) and individual tickets
+route remaining coverage without claiming execution. Canonical M0–M6 and AT IDs
+remain unchanged. Ticket-local acceptance IDs supplement this map.
+T-010 delivers its threading gates and the included T-011 preparation/deadline
+gates in one branch/PR. Preserve both sets of acceptance IDs and attribute their
+separate performance comparisons. One integrated run may prove multiple gates;
+identify the assertions in the joint ledger instead of duplicating identical runs.
+
+| Planned tickets | Added or completed evidence |
+| --- | --- |
+| [T-009](../doc/T-009.md) | Pin/materialize the analytical Ulamok 36-copy witness, independently validate it, then find/retain at least 36 in a supported actual packing/export run. Reproduce the reported 1 mm workload/resource path with specific native diagnostics; validate efficient proximity against a direct oracle and qualify both full Pryanik desktop journeys. |
+| [T-010](../doc/T-010.md), including T-011 | SOL-08: 1/2/4 and supported higher thread counts; CPU correlation oracles, same-thread fixed-work reproducibility, independent valid results, total worker memory, faults/Stop and actual phase/end-to-end speedup. Also requires every gate in the included T-011 sheet below. |
+| [T-011 work package](../doc/T-011.md), delivered within T-010 | Prepared-asset reuse with tamper invalidation, cold/warm measurements, Start-origin deadline and overrun reporting; Stop receipt and safe completion measured separately through heavy phases. |
+| [T-012](../doc/T-012.md)–[T-013](../doc/T-013.md) | Original simplified Pryanik stays invalid; explicitly accepted reconstructed derivative passes native validation, project move/reopen and packing/export. STL-container desktop cases cover cavities, separate units and forbidden-material enclosure. |
+| [T-014](../doc/T-014.md)–[T-016](../doc/T-016.md) | AT-08 orientation/refinement and exact AT-11 reinsertion; baseline/spectral incumbent retention; presets and explicit resource-aware settings with no silent manual-pitch change. |
+| [T-017](../doc/T-017.md)–[T-018](../doc/T-018.md) | Required pack/validate/service surface, replay, stale events, Continue, interrupted checkpoints and valid recovery; real process/desktop gates. |
+| [T-019](../doc/T-019.md)–[T-020](../doc/T-020.md) | GPU integer oracles, explicit CPU/Vulkan selection, real Windows Radeon device loss/allocation/fallback and separately measured end-to-end acceleration. |
+| [T-021](../doc/T-021.md) | Deferred live validated snapshots, display-only changes, full/LOD selected inspection, PNG and recorded 1,000-copy viewport gate. |
+| [T-022](../doc/T-022.md)–[T-023](../doc/T-023.md) | Pinned Benchy seed/method matrix, high-detail regressions, offline clean Windows CPU/Radeon installer/CLI workflows and complete requirement/AT release audit. |
+
+Performance comparison profiles/targets are frozen before optimization as defined
+in the milestone evidence rules. An unsupported-grid diagnosis does not substitute
+for the Ulamok successful-packing gate. A formula witness or source-bound geometric
+proof is not a recorded native validator run. T-012's reconstructed derivative has
+its own hash and acceptance, never a changed expectation for the original file.
+
 ## Practical cases and independent checks
 
 [T-008](../doc/T-008.md) defines the first native desktop journey: box settings,
@@ -47,15 +75,15 @@ and moved-project/export round trips remain required by the full gates below.
 | AT-01 | Offline clean Windows 10/11 install; CPU import → solve → save/reopen → JSON/STL through UI and CLI; inspect loaded dependencies | Installation / M6 |
 | AT-02 | Pinned `benchy_small` on actual Radeon and forced CPU; absent loader/device gives Auto→CPU and explicit Vulkan→`GPU_UNAVAILABLE` | Hardware integration / M5 |
 | AT-03 | Equivalent generated ASCII/binary cubes, `solid` binary header, Unicode path, negative origin, 1-inch cube→25.4 mm; malformed/nonfinite files reject. Add all ten `rc/` import regressions | Geometry unit + import integration / M1 |
-| AT-04 | Generated open, duplicate, reversed, seam, non-manifold, self-intersecting, and ambiguous-shell cases; explicit repair acceptance and unchanged source hashes. User assets must diagnose actual defects | Geometry / M1 |
+| AT-04 | Generated open, duplicate, reversed, seam, non-manifold, self-intersecting, and ambiguous-shell cases; explicit repair acceptance and unchanged source hashes. Original simplified Pryanik stays invalid; its accepted library-reconstructed derivative passes project/packing/export | Geometry / M1 |
 | AT-05 | Generated million-triangle solid and thin fin; vary display LOD while hashes, fields, validation, and deterministic poses remain unchanged; resource preflight rejects oversize jobs gracefully | Geometry/resource integration / M1–M5 |
 | AT-06 | Two cubes: separation, contact, tiny overlap, coincidence, full enclosure; hollow solid with legitimate cavity; undersized proxy false pass must reject; `indeterminate` cannot publish | Validator unit/integration / M1 |
 | AT-07 | Every box wall with fractional pitch; U-volume bridge crossing empty space; object enclosing excluded cavity; prescribed concave valid pose. Add user-container solid containment once import is accepted | Validator / M1 |
 | AT-08 | `tilted_bar`: cube catalog zero, Z45/free at least one; upright preserves +Z; reject zero/NaN quaternions and deduplicate q/−q; no discrete-mode drift | Geometry/solver / M1, M4 |
 | AT-09 | `cube_clearance`: 10 mm cubes, 45³ mm box, 1 mm gaps; test `c−10ε`, `c`, `c+10ε`, large translated coordinates and tiny features with independent distances | Validator / M1 |
-| AT-10 | `cube_exact`: 10 mm cube, 40³ mm box, zero gaps→64 validated/exported placements; too-large item→valid empty `best_found`; monotone best count and fixed-volume utilization | Solver + export / M2 |
+| AT-10 | `cube_exact`: 10 mm cube, 40³ mm box, zero gaps→64 validated/exported placements; `ulamok_box_36`→at least 36 in physical baseline and supported packing/export profile; too-large item→valid empty `best_found`; monotone best count and fixed-volume utilization | Solver + export / M2 |
 | AT-11 | Two unit-cube L prisms in 3×2×1 mm; AABB baseline one, improved layout two. Start one L offset +0.5 X, disable fresh restarts, 10,000 candidates/100 passes, 0.25 mm pitch; overlapping blocked cells survive removal | Solver / M4 |
-| AT-12 | Direct integer cross-correlation at every small asymmetric translation; non-power-of-two padding/origins/boundaries; FFT error <0.25 and equal rounding; bad normalization/fault triggers rejection/fallback | Compute unit / M2 CPU, M5 GPU |
+| AT-12 | Direct integer cross-correlation at every small asymmetric translation; non-power-of-two padding/origins/boundaries; FFT error <0.25 and equal rounding; bad normalization/fault triggers rejection/fallback; supported CPU thread counts and fixed-work same-thread reproducibility | Compute unit / M2 CPU, M5 GPU |
 | AT-13 | Duplicate start requests, stop/continue/query; kill during a trial/checkpoint replacement; drop progress events/restart UI; retain last complete validated state | Service/process integration / M3 |
 | AT-14 | Nontrivial source frames; save/move/reopen; JSON/viewer/STL coordinates agree and count matches poses; tamper hashes/matrices/archives, traversal and STL quantization faults reject | Data/export integration / M2–M3 |
 | AT-15 | Both box and user STL container workflows; stale events, selection, clipping, hidden-copy count, keyboard and recovery; recorded 1,000-copy viewport frame-time gate on qualified hardware | Desktop end-to-end / M3, M6 performance |

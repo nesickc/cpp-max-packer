@@ -84,6 +84,17 @@ solid validation; React/Three.js consumes generated desktop DTOs and a shared
 display mesh. This auxiliary adapter does not implement the separate stdio job
 lifecycle. [T-008](T-008.md) records its bounded scope and acceptance evidence.
 
+[ADR 0011](../spec/decisions/0011-cpu-first-follow-up.md) and the
+[post-desktop milestones](MILESTONES.md) add the planned CPU-first delivery order,
+bounded multithreading and explicit reconstructed-solid acceptance. They do not
+change the current CLI/service ABI or schema versions. T-010 includes T-011 in
+one CPU runtime delivery with a joint worker/asset lifetime and deadline design.
+T-009, the combined T-010, and T-012 each use native and product-integration
+worker lanes; one integration owner edits shared CLI/I/O/desktop adapters.
+The repair and later service/checkpoint tickets settle their provenance and
+compatibility contracts before parallel edits. The milestone execution rules
+preserve serial baselines, exclusive file ownership and every acceptance gate.
+
 `spec/schemas/` is the single source for versioned wire/persistence shapes and generated TypeScript types. C++ CLI and service use one decoder and semantic-validation path. `pack_geometry` supplies source-to-local import frames in millimeters with unchanged right-handed Z-up axes and native rigid placement validation using active XYZW quaternions plus translation. Viewer/export integration and its shared transform goldens remain pending. Preserve source mappings; never scale to fit (`GEO-02`, `DATA-01`, `DATA-03`).
 
 Validation returns `valid`, `invalid` or `indeterminate`, with copy IDs and diagnostics. Only `valid` can enter incumbent publication. Validate accepted solids, including enclosure/coincidence, STL-volume difference and separate pair/wall distances; tolerance never reduces clearance. Restore/final/export validation bypasses search certificates. Re-read quantized STL coordinates; retain valid JSON/project if STL export fails (`GEO-05`, `GEO-06`).

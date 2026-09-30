@@ -1,10 +1,17 @@
 # SpectraPack — application specification
 
-**Version:** 0.1 • **Date:** 8 September 2026 • **Status:** proposed implementation baseline
+**Version:** 0.2 • **Date:** 30 September 2026 • **Status:** development baseline; implementation status is tracked separately
 
 This document specifies a local Windows application that packs as many rigid copies of one STL model as it can find into a fixed container, displays the packing, and exports the count and placements. The algorithm is based on spectral packing and the psacking reference implementation. The full v1 includes a C++ backend, CPU operation, AMD-compatible GPU acceleration, rectangular and STL containers, mesh preparation, a desktop UI, and practical benchmarks.
 
 This is a development specification, not an implementation or a claim of measured performance. Requirements, algorithms, interfaces, and tests below define the work to build. “MUST” is a release requirement; “SHOULD” permits a documented exception. Numerical defaults are initial, versioned engineering choices rather than values established as best by the paper.
+
+Version 0.2 adds the post-T-008 CPU-first delivery plan, SOL-08, the Ulamok 36-copy
+regression and explicit library-backed repair acceptance. Existing requirement,
+AT and M0–M6 identifiers are preserved. This document version does not change
+protocol, settings, result or project schema versions; see
+[ADR 0011](../spec/decisions/0011-cpu-first-follow-up.md) and
+[current status](PROJECT_STATUS.md).
 
 ## 1. Product decision
 
@@ -74,6 +81,7 @@ Every requirement in these tables is a MUST. Acceptance case identifiers refer t
 | SOL-05 | Reuse identical-object preprocessing and bounded caches; preflight host/device memory before allocating large fields. | AT-05, AT-16 |
 | SOL-06 | Support stop-and-keep, continued search, and recoverable checkpoints without ever exposing an invalid trial as the best packing. | AT-13, AT-16 |
 | SOL-07 | Record reproducible settings and seeds; provide a deterministic CPU mode with a fixed work budget. | AT-12, AT-17 |
+| SOL-08 | Provide bounded CPU multithreading with an explicit resolved thread count, complete worker-memory accounting, reproducible fixed-work runs at the same thread configuration, and measured useful speedup over the single-thread path. | AT-12, AT-16, AT-17 |
 | UI-01 | Provide import, diagnostics, container editing, search controls, progress, results, project actions, and export in one desktop workflow. | AT-15 |
 | UI-02 | Display an interactive, correctly scaled packing with instanced copies, container transparency, clipping, selection, and dimensions. | AT-14, AT-15 |
 | UI-03 | Keep the UI responsive during preprocessing, solving, stopping, and export; show the actual backend and resolution. | AT-15, AT-16 |
@@ -134,7 +142,9 @@ Import produces a diagnostic report containing file SHA-256, byte size, triangle
 
 The initial unit selection defaults visibly to millimeters; imports must record that choice. Inches and custom positive scale-to-millimeters are supported. Display physical bounds before the first run. Recenter internally to improve numerical conditioning while retaining the exact source-to-local mapping.
 
-Automatic cleanup may merge exactly equal vertices, remove exact duplicate faces and zero-area faces, and correct an unambiguous shell orientation without moving vertices. Record every change and revalidate. Near-vertex welding, hole filling, shell union, and topology-changing reconstruction are separate, explicit repair proposals with before/after previews. v1 must offer bounded tolerance welding; it may reject meshes needing more extensive repair and explain what must be fixed externally. Never replace a missing cavity with solid material silently.
+Automatic cleanup may merge exactly equal vertices, remove exact duplicate faces and zero-area faces, and correct an unambiguous shell orientation without moving vertices. Record every change and revalidate. Near-vertex welding, hole filling, shell union, and topology-changing reconstruction are separate, explicit repair proposals with before/after previews. v1 must offer bounded tolerance welding and a bounded library-backed reconstruction route for the pinned simplified Pryanik repair case in T-012. Other meshes needing unsupported repair may be rejected with an explanation of what must be fixed externally. Never replace a missing cavity with solid material silently.
+
+Reconstruction creates a proposed new authoritative solid; it is not permission to pack an invalid source using an approximate search field. Repair resolution is independent of packing pitch. Preserve original bytes and retain the repair algorithm/library version, parameters, source and repaired hashes, source-frame mapping and explicit acceptance. Revalidate the reconstructed solid before accepting it and use that same accepted geometry for validation, search and export. Preview changes in dimensions, surface, components and cavities; report volume only where meaningful, and distinguish sampled deviation from a certified bound. Changing packing pitch or display LOD cannot rerun or alter an accepted repair. T-012 must demonstrate the repaired practical fixture through Save/Open, packing and export; a welding UI or an external-repair instruction alone does not complete that case. [ADR 0011](../spec/decisions/0011-cpu-first-follow-up.md) records the scope extension; library selection and project/report compatibility require the implementation decision before edits.
 
 Require closed, consistently oriented, non-self-intersecting shell geometry with an unambiguous inside. Nested boundaries represent cavities through a recorded shell containment tree and alternating orientation; disjoint components remain one rigid asset. Intersecting or touching shells with ambiguous volume semantics require repair or rejection. Do not treat “watertight” as sufficient evidence of validity.
 
@@ -270,6 +280,8 @@ In deterministic CPU mode, replace time-dependent search decisions with `search.
 
 ### 6.6 Compute and memory policy
 
+CPU scalability and useful CPU multithreading precede Vulkan optimization in the delivery queue. Resolve and display the CPU thread count; bound worker pools, nested library parallelism and total scratch/plan memory. Preserve a single-thread deterministic path. Fixed-work reproducibility applies to the same build, inputs and resolved thread configuration; identical heuristic poses across different thread counts are not required. Authoritative incumbent admission remains ordered and thread-safe, and every accepted placement passes the same solid checks. Measure kernel and end-to-end scaling separately; multiple active threads alone do not establish SOL-08.
+
 `Auto` selects a qualified Vulkan device if its startup self-test and memory preflight succeed, otherwise CPU. Explicit `CPU` never initializes compute on Vulkan. Explicit `Vulkan` with an unavailable device returns a clear error and offers a CPU retry. During a running Auto job, allocation failure or device loss discards the unfinished trial and continues from the last validated checkpoint on CPU; record the backend transition.
 
 Preflight includes original meshes/BVHs, environment fields, full FFT padding, all live real/complex buffers, shader/planning workspace, host staging, cached spectra, validation, and the viewer reserve. A 512³ float field alone is 512 MiB; a full complex-float field is 1 GiB. Do not estimate memory from the unpadded occupancy byte array.
@@ -277,6 +289,8 @@ Preflight includes original meshes/BVHs, environment fields, full FFT padding, a
 Initially cap engine host allocations at 50% of available RAM and compute-device allocations at 60% of the reported available device budget, both user-adjustable downward. Keep orientation spectra in a bounded LRU cache and process batches; never allocate every orientation eagerly. Shared-memory devices require combined host/device accounting.
 
 In automatic resolution mode, increase pitch before starting until the estimated working set fits, and display the resolved value. A manually specified pitch cannot change silently: return a preflight error with a suggested value. Recheck allocations as a job grows; eviction, smaller batches, and CPU fallback precede termination. Do not shrink geometry, clearance, or the container to solve a memory problem.
+
+Preserve the specific nested resource/failure code and phase in run evidence and actionable UI details. A field-size or memory limit must not be relabeled as malformed geometry or hidden by a generic search error. Keep any previously validated incumbent associated with its original settings. Resource preflight and successful supported packing are separate acceptance cases: early rejection cannot replace the required practical success case.
 
 ## 7. Desktop behavior
 
@@ -454,6 +468,7 @@ Synthetic models must be generated from checked-in parameters and have analytic 
 | `interlocking_l_prisms` | Union of unit cubes at `(0,0,0)`, `(1,0,0)`, `(0,1,0)`; 3×2×1 mm box; zero gaps; upright 0°/180° catalog | Two complementary L prisms fill the box; an AABB grid fits one. Demonstrates concave packing gains. |
 | `concave_container` | Analytic L-shaped permitted volume and an excluded internal cavity, each exported as STL; prescribed valid/invalid poses | Detect concavity crossings and objects enclosing forbidden material. |
 | `thin_features` | Parametric hook/channel and a finely tessellated thin fin; feature widths near/below chosen pitch | Coarsening may lose count; simplification must never allow an invalid fit or remove an authoritative feature. |
+| `ulamok_box_36` | Pinned `rc/items/ulamok_2kg_simplified.stl`; 400×350×285 mm box; 0.1 mm pair / 1 mm wall clearance; 24 cube rotations; reported configuration uses manual 1 mm pitch and 600 s | Physical baseline at least 36, with independently validated poses/export. A +90° X rotation permits a 4×3×3 bounding-box arrangement. Exact 1 mm workload support must be established by preflight; an unsupported host/profile needs a specific early resource result plus a separately demonstrated supported packing profile retaining at least 36. No silent coarsening or optimality claim. |
 | `benchy_small` | 128×128×128 mm box; 1 mm gaps; fixed 1 mm pitch; 24 orientations; 120 s | Quick practical CPU/GPU smoke run; count at least the computed, validated AABB baseline. |
 | `benchy_standard` | 165×165×320 mm box; 1 mm gaps; fixed 1 mm pitch; free catalog of 256; 600 s | Main quality/runtime comparison, five fixed seeds, original STL validation and exported assembly. |
 | `benchy_detail` | Same physical problem; fixed 0.5 mm pitch; free catalog of 2,048; 3,600 s | Optional long quality profile. Preflight may mark unsupported hardware; never silently coarsen this benchmark. |
@@ -468,6 +483,8 @@ Compare three configurations: AABB baseline; this engine's greedy spectral imple
 
 The baseline CPU and Vulkan paths must satisfy the same geometry contract; bit-identical packings across devices are not required. Report GPU acceleration as a measured ratio on FFT work and end-to-end workloads separately. Do not infer an application-wide speedup from an FFT library benchmark.
 
+For CPU improvements, retain a compatible Release baseline and freeze the host/workload-specific numerical improvement target before optimization. Report phase and whole-workflow medians, raw samples, peak memory, cold/warm preparation state, and 1/2/4 plus available bounded higher thread counts. Compare fixed work with count/pose records as well as timed runs with quality/count results. Whole-Start speed comparisons use fixed work or overhead outside intentional timed search; consuming the requested search budget is not itself a regression. The ticket defines its sample plan before measurement and cannot choose a target retrospectively. [Delivery milestones](MILESTONES.md) set the shared evidence rules.
+
 Before M6, freeze one Windows CPU reference host and one actual AMD GPU host with exact specifications. Proposed qualification class: 8 CPU cores, 16 GiB RAM, and an 8 GiB Radeon GPU. This is a test target, not a universal minimum for every STL. Do not invent results for the user's unspecified GPU. Long benchmark suites run on release candidates or dedicated hardware, not on every small UI change.
 
 ## 10. Acceptance tests
@@ -479,15 +496,15 @@ These are required implementation tests, not results obtained while writing this
 | AT-01 | On clean Windows 10 22H2 and Windows 11 x64 installations without NVIDIA tools, Python, Node.js, or a development SDK, install the offline package, import a fixture, solve on CPU, view it, save/open the project, and export JSON/STL with networking disabled. The standalone CLI completes the same job. Record loaded native dependencies. |
 | AT-02 | On a recorded AMD Radeon/driver configuration, run Vulkan capability detection, FFT self-tests, and `benchy_small`. Validation passes. Force CPU and repeat. Simulate a missing Vulkan loader or unsuitable device: Auto selects CPU; explicit Vulkan returns `GPU_UNAVAILABLE`. |
 | AT-03 | Import equivalent ASCII/binary STLs, including a binary header starting with `solid`, negative source coordinates, Unicode paths, and separate components. Equivalent physical models produce equivalent accepted bounds/volume. A 1-inch cube resolves to 25.4 mm, and source-to-world export reconstructs the same vertices. Truncated files and non-finite coordinates produce structured errors. |
-| AT-04 | Exercise reversed normals, duplicate vertices/faces, a repairable small seam, an open surface, a non-manifold edge, a self-intersecting closed mesh, and ambiguous overlapping shells. Safe cleanup is reported. Tolerance welding requires accepted repair; source bytes stay unchanged. Unresolved invalid geometry cannot start a solver job. |
+| AT-04 | Exercise reversed normals, duplicate vertices/faces, a repairable small seam, an open surface, a non-manifold edge, a self-intersecting closed mesh, and ambiguous overlapping shells. Safe cleanup is reported. Tolerance welding requires accepted repair; source bytes stay unchanged. The pinned simplified Pryanik remains rejected as originally supplied; its library-reconstructed derivative must be explicitly accepted, independently valid, and retain repair provenance through project/packing/export. Unresolved invalid geometry cannot start a solver job. |
 | AT-05 | Use a subdivided valid mesh with at least one million triangles and a thin-feature fixture. Changing display LOD does not change authoritative hashes, voxel fields, validation, or deterministic solver results. Geometry is shared across copies. If simplification cannot reach its target within the display error setting, report the actual count; do not force it. Large jobs either pass preflight or fail without exhausting system memory. |
 | AT-06 | Validate separated, touching, intersecting, coincident, and wholly enclosed primitive solids, plus a solid in a legitimate modeled cavity. The validator distinguishes material overlap from empty space. A pose that passes a deliberately undersized proxy but intersects the authoritative solid fails. Both `invalid` and `indeterminate` are rejected by incumbent publication. |
 | AT-07 | For boxes, test all six walls, fractional dimensions/pitch, and gaps at, above, and below the threshold. For a U-shaped STL volume, test a bridge whose vertices lie in the two arms while its middle lies outside. Also test an object that surrounds an excluded internal cavity without crossing its boundary. Both STL cases fail containment. Valid concave-container poses pass. |
 | AT-08 | Run `tilted_bar`: cube rotations yield zero; an explicit 45° Z quaternion and Free 3D yield at least one validated copy. Upright mode never tilts +Z. Custom catalogs reject non-finite/zero quaternions, normalize valid inputs, deduplicate q/−q, and prevent continuous drift outside permitted rotations. |
 | AT-09 | Check `cube_clearance` and pair distances at `c−10*epsilon`, `c`, and `c+10*epsilon`. The short gap fails; the larger gap passes; the exact analytic case resolves correctly. Cover near-coplanar faces, translated large coordinates after conditioning, and tiny features. Report uncertainty rather than widening the allowable gap tolerance. |
-| AT-10 | `cube_exact` returns 64 with original-solid validation and export round-trip. A run given a model too large to fit returns a valid empty packing with `best_found` and a termination reason, not “proved impossible.” The best-count event sequence is monotone and utilization uses fixed container volume. |
+| AT-10 | `cube_exact` returns 64 with original-solid validation and export round-trip. `ulamok_box_36` establishes at least 36 through the physical baseline and a supported packing/export profile as defined in §9.2. A run given a model too large to fit returns a valid empty packing with `best_found` and a termination reason, not “proved impossible.” The best-count event sequence is monotone and utilization uses fixed container volume. |
 | AT-11 | `interlocking_l_prisms` reaches two, exceeding its AABB baseline of one. For rearrangement, start with one L translated by +0.5 mm in X from its lower-left placement: a second cannot fit while it stays fixed. With fresh restarts disabled, a fixed 10,000 candidate-evaluation / 100-pass budget and 0.25 mm pitch, removal/reinsertion reaches the known two-copy layout. Log the operator used. Removing a copy whose clearance field overlaps another's does not erase the other's blocked cells. |
-| AT-12 | Compare every translation of small asymmetric binary fields with a direct integer cross-correlation oracle, including non-power-of-two extents, nonzero kernel origins, rotations, and boundary placements. No circular aliases. CPU/GPU values on the small oracle suite differ from integers by less than 0.25 and round identically; candidate validity always uses discrete/solid checks. Inject bad normalization and an FFT error to verify rejection/fallback. Fixed-work CPU runs reproduce counts and transforms on the same build/configuration. |
+| AT-12 | Compare every translation of small asymmetric binary fields with a direct integer cross-correlation oracle, including non-power-of-two extents, nonzero kernel origins, rotations, and boundary placements. No circular aliases. CPU/GPU values on the small oracle suite differ from integers by less than 0.25 and round identically; candidate validity always uses discrete/solid checks. Inject bad normalization and an FFT error to verify rejection/fallback. Exercise supported CPU thread counts; fixed-work runs reproduce counts and transforms on the same build/configuration, including resolved thread count. |
 | AT-13 | Start, query, stop, continue, and interrupt a job through CLI and service. Duplicate requests do not duplicate work. Kill the process during a trial and during checkpoint replacement; reopening preserves the last complete validated result. Drop/coalesce progress events and restart the UI without corrupting the engine's best state. Errors and terminal states match the protocol. |
 | AT-14 | Save/move/open a project with repaired and unrepaired fixtures, nontrivial source origins, and rotations. JSON transforms, viewer transforms, and exported vertices agree. Result count matches placement records. Tampered hashes, inconsistent matrices, unsupported schemas, truncated archives, path traversal, and STL quantization violations are rejected clearly. Export streams within the memory cap and includes the per-copy triangle map. |
 | AT-15 | Complete the full desktop journey using box and STL containers. Verify controls, settings/result association, copy selection, clipping, LOD switching, keyboard operation, screenshots, Save As, and error recovery. On the qualified AMD host, orbit a 1,000-copy display scene using a 20,000-triangle shared LOD at 1080p with median frame time ≤33 ms and p95 ≤50 ms over a recorded 10-second interaction. Count/placements are not changed by hiding copies. |
@@ -537,7 +554,18 @@ Suggested first implementation tasks, each linked to requirements:
 7. `T-007`: CPU FFT placement and transform export — SOL-02, SOL-03, DATA-03.
 8. `T-008`: first box-to-viewer-to-export desktop journey — UI-01–UI-03, DATA-02.
 
-Subsequent tasks follow M4–M6. This list seeds the backlog; it does not exclude the remaining full-v1 requirements.
+The post-T-008 delivery sequence is specified in [MILESTONES.md](MILESTONES.md):
+T-009 CPU scalability/practical packing, T-010 CPU runtime (including the T-011
+preparation/deadline work package) and T-012 explicit library-backed repair come
+first as three delivery tickets. Native and product-integration workers can work
+in parallel after shared interfaces are frozen; T-011 retains its acceptance IDs
+but has no separate branch or merge. T-013–T-023
+cover STL containers, orientations/count search, presets, jobs/recovery, Vulkan,
+deferred live viewing, benchmarks and offline release. Each delivery has its own
+ticket, requirements, dependencies and acceptance checks. These tasks close remaining
+M0–M6 obligations; M0–M6 and AT identifiers are not renumbered. A planned ticket
+does not establish implementation or qualification. [ADR 0011](../spec/decisions/0011-cpu-first-follow-up.md)
+records the priority and compatibility changes.
 
 ### 11.3 Spec-driven change procedure
 
