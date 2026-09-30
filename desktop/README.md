@@ -15,11 +15,14 @@ the root pnpm lockfile.
 
 Frontend evidence (2026-09-30): the first `desktop:test` run failed four
 behavior assertions for missing pose conversion, hiding, stale-state rejection,
-and uint64/pitch validation. The final run passes five tests, including a
+and uint64/pitch validation. The current run passes eight tests, including a
 pending-settings Save test with a mocked command bridge. The latter establishes
 frontend presentation only, not native geometry or file acceptance.
 The off-origin inch-source coordinate oracle is hand-computed independently;
 instance rendering consumes already-local millimeter PLY without recentering.
+An actual native PLY fixture also exercises Three.js's upload adapter: native
+Float64 coordinates become finite float32 display attributes without changing
+poses or source data. Overflow and render-loop failures show a viewer error.
 
 The final build includes TypeScript checking and passes. Contract checking
 passes the original 31 fixtures, 25 desktop-definition fixtures, generated

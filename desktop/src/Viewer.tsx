@@ -107,7 +107,11 @@ export function Viewer({ mode, preview, placements, dimensions, hidden, selected
         ids.forEach((id, i) => mesh!.setColorAt(i, new THREE.Color(id === coloredSelection ? '#ffbb6b' : '#52caba')));
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
       }
-      controls.update(); renderer.render(scene, camera);
+      try { controls.update(); renderer.render(scene, camera); }
+      catch (e) {
+        renderer.setAnimationLoop(null);
+        if (!disposed) setError(`3D rendering unavailable: ${String(e)}. Packing, project actions and export remain available.`);
+      }
     });
     return () => {
       disposed = true; renderer.setAnimationLoop(null); observer.disconnect(); controls.dispose();
