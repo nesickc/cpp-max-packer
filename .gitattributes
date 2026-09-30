@@ -1,6 +1,5 @@
 # Preserve the checksum-pinned upstream patch, including its context whitespace.
 third_party/vcpkg/0034c113477f83c28d4380de1ee189c25b1168e6.patch -text -whitespace
 
-# Preserve upstream license bytes and indentation in the generated collection.
+# Preserve upstream license bytes.
 desktop/licenses/*.txt -text -whitespace
-desktop/THIRD_PARTY_NOTICES.md -text whitespace=-space-before-tab,-blank-at-eof

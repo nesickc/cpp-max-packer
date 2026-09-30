@@ -342,7 +342,23 @@ the scientific contracts and complete immutable state publication. This is no
 promise to support unavailable future service semantics via the current adapter.
 
 Use verified registry/toolchain evidence when choosing exact dependencies, then
-commit lockfiles and notices. This ADR pins no speculative versions. Follow
+commit lockfiles, the notice generator and any pinned supplemental license
+sources. Generate distribution notices while staging the desktop; do not commit
+a concatenated license report. The generated `engine-resources/third-party/index.md`
+maps packages to `texts/<sha256>.txt`, storing identical complete license/NOTICE
+bytes once while retaining each package's identity and attribution. Frontend
+inventory follows the installed locked production dependency closure, excluding
+test/build tooling except explicitly recorded generated runtime contributions
+(currently Vite's emitted preload helpers, with its core license only). Those
+contributions are version-checked against the manifest and lockfile. Rust
+inventory conservatively includes the Windows MSVC
+normal/build dependency closure because build scripts and macros may contribute
+generated code; this is not a claim of exact linked-binary inventory. Missing
+required source texts stop staging. Existing C++ runtime notices remain packaged.
+
+This changes packaging and repository maintenance only; runtime behavior,
+desktop/project schemas and compatibility are unchanged. This ADR pins no
+speculative versions. Follow
 official [Tauri sidecar documentation](https://v2.tauri.app/develop/sidecar/) and
 [capability documentation](https://v2.tauri.app/security/capabilities/) for the
 selected integration. The renderer contract follows the documented

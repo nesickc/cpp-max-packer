@@ -22,7 +22,7 @@ try {
             $CargoPath = $taskLocalCargo
         } else { $CargoPath = 'cargo' }
     }
-    & (Join-Path $PSScriptRoot 'Stage-Desktop.ps1') -EngineBuildDirectory $EngineBuildDirectory
+    & (Join-Path $PSScriptRoot 'Stage-Desktop.ps1') -EngineBuildDirectory $EngineBuildDirectory -CargoPath $CargoPath
     if ($Mode -eq 'Test') {
         if (-not $TestStlPath) { throw 'TestStlPath must name a real 10mm analytic fixture.' }
         $env:SPECTRAPACK_TEST_ENGINE = Join-Path $taskRepo "$EngineBuildDirectory/bin/spectrapack-engine.exe"

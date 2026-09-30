@@ -2,7 +2,8 @@
 param(
     [string]$EngineBuildDirectory = 'out/build/windows-ninja-release',
     [string]$StageDirectory = '.local/t008/desktop-stage',
-    [string]$CmakePath = 'cmake'
+    [string]$CmakePath = 'cmake',
+    [string]$CargoPath
 )
 $ErrorActionPreference = 'Stop'
 $taskRepo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
@@ -20,7 +21,10 @@ $taskShare = [IO.Path]::GetFullPath((Join-Path $taskNative 'engine-resources/sha
 if (-not $taskShare.StartsWith($taskRepo+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) { throw 'Staged resources must remain inside the workspace.' }
 if (Test-Path -LiteralPath $taskShare) { Remove-Item -LiteralPath $taskShare -Recurse -Force }
 Copy-Item -LiteralPath (Join-Path $taskStage 'share') -Destination $taskShare -Recurse -Force
-Copy-Item -LiteralPath (Join-Path $taskRepo 'desktop/THIRD_PARTY_NOTICES.md') -Destination (Join-Path $taskNative 'engine-resources/desktop-THIRD_PARTY_NOTICES.md') -Force
+& (Join-Path $PSScriptRoot 'Generate-ThirdPartyNotices.ps1') -CargoPath $CargoPath
+$taskObsoleteNotices = [IO.Path]::GetFullPath((Join-Path $taskNative 'engine-resources/desktop-THIRD_PARTY_NOTICES.md'))
+if (-not $taskObsoleteNotices.StartsWith($taskRepo+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) { throw 'Obsolete notice resource must remain inside the workspace.' }
+if (Test-Path -LiteralPath $taskObsoleteNotices) { Remove-Item -LiteralPath $taskObsoleteNotices -Force }
 $taskHash = (Get-FileHash -LiteralPath $taskEngine -Algorithm SHA256).Hash.ToLowerInvariant()
 [IO.File]::WriteAllText((Join-Path $taskNative 'engine-resources/engine.sha256'),$taskHash+"`n",[Text.UTF8Encoding]::new($false))
 $taskCapabilities = & $taskEngine capabilities --json

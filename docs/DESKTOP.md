@@ -73,6 +73,17 @@ with its sibling engine and `engine-resources` directory present. It verifies
 the engine's build-time hash; replacing that binary requires rebuilding the
 shell. WebView2 must be installed. This is a local build, not a qualified installer.
 
+License notices are generated during staging under `engine-resources/third-party/`.
+The index links packages to complete license/NOTICE files, with identical texts
+stored once. The generated bundle is shipped with the app and is not committed
+to Git. Frontend notices follow production dependencies plus recorded build-generated
+runtime code (Vite's preload helpers use its core license); Rust notices retain the
+Windows normal/build closure to cover potential generated code. Existing C++
+dependency notices stay in `engine-resources/share/licenses/`. Keep installed
+locked frontend dependencies available when staging. Cargo uses the selected
+toolchain and downloads missing locked sources during build preparation as needed;
+this adds no runtime network access.
+
 `-Mode Dev` starts the Tauri development window after staging. Test mode with
 `-Mode Test -TestStlPath <file>` runs the Rust core integration suite against an actual
 10 mm analytic cube and native engine. `-EngineBuildDirectory` selects an

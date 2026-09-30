@@ -149,9 +149,11 @@ jobs:
           $env:RUSTUP_TOOLCHAIN = '1.98.1'
           python -c "import pathlib,sys; sys.path.insert(0,'tests/protocol'); from solve_subprocess_test import write_cube_stl; write_cube_stl(pathlib.Path('.local/ci/desktop-cube.stl'),low=(17,-21,33))"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & ./tools/desktop/Invoke-Desktop.ps1 -Mode Test -TestStlPath .local/ci/desktop-cube.stl *> .local/ci/desktop-native.log
+          & ./tools/desktop/Invoke-Desktop.ps1 -Mode Test -TestStlPath .local/ci/desktop-cube.stl -PnpmPath .local/package-manager/node_modules/.bin/pnpm.cmd *> .local/ci/desktop-native.log
           if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/desktop-native.log; exit $LASTEXITCODE }
-          & ./tools/desktop/Invoke-Desktop.ps1 -Mode Build -SkipFrontend *> .local/ci/desktop-shell.log
+          & pwsh -NoProfile -File ./tools/desktop/Test-ThirdPartyNotices.ps1 *> .local/ci/desktop-notices.log
+          if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/desktop-notices.log; exit $LASTEXITCODE }
+          & ./tools/desktop/Invoke-Desktop.ps1 -Mode Build -SkipFrontend -PnpmPath .local/package-manager/node_modules/.bin/pnpm.cmd *> .local/ci/desktop-shell.log
           if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/desktop-shell.log; exit $LASTEXITCODE }
       - name: Bounded reference timings
         run: |

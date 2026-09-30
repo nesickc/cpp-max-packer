@@ -20,3 +20,6 @@ __pycache__/
 /desktop/src-tauri/binaries/
 /desktop/src-tauri/engine-resources/
 /desktop/src-tauri/gen/
+
+# Obsolete generated aggregate; distribution notices live in engine-resources.
+/desktop/THIRD_PARTY_NOTICES.md
