@@ -24,3 +24,15 @@ for (const item of fixtures) {
 if (failed) process.exit(1);
 const counts = Object.fromEntries(['settings','assets','results','protocol','benchmark-summary'].map(k => [k, fixtures.filter(x => x.kind === k).length]));
 console.log(`${fixtures.length} fixture records passed (${JSON.stringify(counts)})`);
+
+const desktopFixtures = JSON.parse(fs.readFileSync(path.join(root, 'tests/contracts/desktop-fixtures.json'), 'utf8'));
+for (const item of desktopFixtures) {
+  const id = `https://spectrapack.invalid/schemas/v1/desktop.schema.json#/definitions/${item.definition}`;
+  const validate = ajv.getSchema(id);
+  if (!validate || validate(item.value) !== item.valid) {
+    console.error(`${item.name}: desktop ${item.definition} expected ${item.valid}: ${validate ? ajv.errorsText(validate.errors) : 'missing definition'}`);
+    failed++;
+  }
+}
+if (failed) process.exit(1);
+console.log(`${desktopFixtures.length} desktop definition fixtures passed`);

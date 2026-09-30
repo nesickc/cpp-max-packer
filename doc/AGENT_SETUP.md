@@ -37,6 +37,13 @@ On 2026-09-30, Python `tomllib` parsed all eight project TOML files. Assertions 
 
 Prior runtime evidence below does not verify the new allocation. On first use in a fresh project chat, inspect the exposed role settings and session metadata. Existing chats may retain earlier role definitions; when a named role is absent or stale, use a fresh/limited-context worker with the exact model, effort, and role-file instructions. A role name in a prompt alone does not select a model. Report unavailable settings rather than silently substituting.
 
+T-008's 2026-09-30 chat exposes all seven named roles with the configured model
+and effort pairs. Named `architect`, `light_worker`, and `expert_worker` dispatch
+has succeeded with fresh context. Current `turn_context` session metadata was
+not accessible during the tooling inventory, so this confirms exposed settings
+and successful dispatch, not independent runtime model verification. Inventory:
+`.local/t008/inventory.md`. The task retains the two-worker cap and leaf policy.
+
 ## Historical observed evidence (before this allocation)
 
 - Installed desktop package `OpenAI.Codex 26.901.6511.0`; CLI and independently observed desktop engine `0.153.4` (first-tranche inspection).

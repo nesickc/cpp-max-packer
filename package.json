@@ -3,16 +3,36 @@
   "version": "0.0.0",
   "private": true,
   "packageManager": "pnpm@11.19.0",
-  "description": "Development-only schema validation and TypeScript generation",
+  "description": "SpectraPack desktop and contract tooling",
   "scripts": {
+    "desktop:dev": "vite --config desktop/vite.config.ts",
+    "desktop:build": "tsc --project desktop/tsconfig.json --noEmit && vite build --config desktop/vite.config.ts",
+    "desktop:check": "tsc --project desktop/tsconfig.json --noEmit",
+    "desktop:test": "vitest run --config desktop/vitest.config.ts",
+    "desktop:native": "cd desktop && tauri",
     "contracts:embed": "node tools/contracts/embed-schemas.cjs",
     "contracts:generate": "node tools/contracts/embed-schemas.cjs && node tools/contracts/generate-types.cjs",
     "contracts:check": "node tools/contracts/embed-schemas.cjs --check && node tools/contracts/generate-types.cjs --check && node tools/contracts/check-schemas.cjs && tsc --project tests/contracts/tsconfig.json --noEmit"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "2.12.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/three": "0.186.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "@testing-library/react": "16.3.3",
+    "jsdom": "30.1.1",
+    "vite": "8.3.1",
+    "vitest": "5.0.2",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "json-schema-to-typescript": "16.0.0",
     "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "three": "0.186.1"
   }
 }

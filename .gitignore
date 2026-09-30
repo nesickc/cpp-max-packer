@@ -11,3 +11,15 @@ __pycache__/
 
 # Development-only schema tooling.
 /node_modules/
+/.pnpm-store/
+
+# Desktop build products and staged native sidecar.
+/desktop/node_modules/
+/desktop/dist/
+/desktop/src-tauri/target/
+/desktop/src-tauri/binaries/
+/desktop/src-tauri/engine-resources/
+/desktop/src-tauri/gen/
+
+# Obsolete generated aggregate; distribution notices live in engine-resources.
+/desktop/THIRD_PARTY_NOTICES.md

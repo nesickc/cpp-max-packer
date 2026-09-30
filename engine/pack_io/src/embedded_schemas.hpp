@@ -2012,5 +2012,598 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
   "additionalProperties": false
 }
 )schema"},
+    {"desktop", R"schema({
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spectrapack.invalid/schemas/v1/desktop.schema.json",
+  "$comment": "T-008 auxiliary desktop DTO and portable-project contract. Existing engine settings/assets/results/protocol schemas remain authoritative and unchanged. Additional semantic/security checks are required by ADR 0010.",
+  "definitions": {
+    "Settings": {
+      "type": "object",
+      "required": [
+        "desktop_version",
+        "box_dimensions_mm",
+        "clearance_mm",
+        "orientation",
+        "pitch_mm",
+        "budget_seconds",
+        "seed"
+      ],
+      "properties": {
+        "desktop_version": {
+          "const": 1
+        },
+        "box_dimensions_mm": {
+          "type": "array",
+          "items": {
+            "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/positive"
+          },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "clearance_mm": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/clearance"
+        },
+        "orientation": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "mode",
+                "quaternion_xyzw"
+              ],
+              "properties": {
+                "mode": {
+                  "const": "fixed"
+                },
+                "quaternion_xyzw": {
+                  "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/quaternion"
+                }
+              },
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "required": [
+                "mode"
+              ],
+              "properties": {
+                "mode": {
+                  "const": "cube"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "pitch_mm": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/positive"
+        },
+        "budget_seconds": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/positive"
+        },
+        "seed": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Preview": {
+      "type": "object",
+      "required": [
+        "preview_id",
+        "format",
+        "sha256",
+        "byte_length",
+        "triangle_count",
+        "coordinate_frame"
+      ],
+      "properties": {
+        "preview_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "format": {
+          "const": "ply"
+        },
+        "sha256": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/sha256"
+        },
+        "byte_length": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/counter"
+        },
+        "triangle_count": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/counter"
+        },
+        "coordinate_frame": {
+          "const": "object_local_mm"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ImportedObject": {
+      "type": "object",
+      "required": [
+        "id",
+        "display_name",
+        "report",
+        "preview"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "display_name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "report": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/assets.schema.json"
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Preview"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ResultSnapshot": {
+      "type": "object",
+      "required": [
+        "id",
+        "document",
+        "preview",
+        "origin"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "document": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/results.schema.json"
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Preview"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "origin": {
+          "enum": [
+            "solve",
+            "project"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "Operation": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "phase",
+        "started_at",
+        "finished_at",
+        "result_id",
+        "detail"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "kind": {
+          "enum": [
+            "import",
+            "solve",
+            "open",
+            "save",
+            "export"
+          ]
+        },
+        "phase": {
+          "enum": [
+            "preparing",
+            "running",
+            "stopping",
+            "validating",
+            "saving",
+            "finished",
+            "failed"
+          ]
+        },
+        "started_at": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/timestamp"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result_id": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "State": {
+      "type": "object",
+      "required": [
+        "desktop_version",
+        "session_id",
+        "revision",
+        "object",
+        "draft_settings",
+        "result",
+        "operation",
+        "last_error"
+      ],
+      "properties": {
+        "desktop_version": {
+          "const": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "revision": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/counter"
+        },
+        "object": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ImportedObject"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "draft_settings": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Settings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ResultSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "operation": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Operation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "last_error": {
+          "anyOf": [
+            {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/error"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ImportRequest": {
+      "type": "object",
+      "required": [
+        "units"
+      ],
+      "properties": {
+        "units": {
+          "enum": [
+            "mm",
+            "inch",
+            "custom"
+          ]
+        },
+        "scale_mm": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/positive"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "units": {
+                "const": "custom"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "scale_mm"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "scale_mm"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "StartRequest": {
+      "type": "object",
+      "required": [
+        "settings"
+      ],
+      "properties": {
+        "settings": {
+          "$ref": "#/definitions/Settings"
+        }
+      },
+      "additionalProperties": false
+    },
+    "SaveRequest": {
+      "$ref": "#/definitions/StartRequest"
+    },
+    "StopRequest": {
+      "type": "object",
+      "required": [
+        "operation_id"
+      ],
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ExportRequest": {
+      "type": "object",
+      "required": [
+        "format"
+      ],
+      "properties": {
+        "format": {
+          "enum": [
+            "json",
+            "stl"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "PreviewRequest": {
+      "type": "object",
+      "required": [
+        "preview_id"
+      ],
+      "properties": {
+        "preview_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "OperationReceipt": {
+      "type": "object",
+      "required": [
+        "operation_id"
+      ],
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "StopResponse": {
+      "type": "object",
+      "required": [
+        "operation_id",
+        "accepted"
+      ],
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "accepted": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProjectFile": {
+      "type": "object",
+      "required": [
+        "path",
+        "sha256",
+        "size_bytes"
+      ],
+      "properties": {
+        "path": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/portable_path"
+        },
+        "sha256": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/sha256"
+        },
+        "size_bytes": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/counter"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProjectManifest": {
+      "type": "object",
+      "required": [
+        "project_version",
+        "format",
+        "saved_at",
+        "object_report",
+        "resolved_settings",
+        "best_result",
+        "draft_settings",
+        "files"
+      ],
+      "properties": {
+        "project_version": {
+          "const": 1
+        },
+        "format": {
+          "const": "spectrapack-project"
+        },
+        "saved_at": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/timestamp"
+        },
+        "object_report": {
+          "const": "object.report.json"
+        },
+        "resolved_settings": {
+          "anyOf": [
+            {
+              "const": "settings.json"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "best_result": {
+          "anyOf": [
+            {
+              "const": "result.json"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "draft_settings": {
+          "$ref": "#/definitions/Settings"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ProjectFile"
+          },
+          "minItems": 1,
+          "maxItems": 1024
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/definitions/Settings"
+    },
+    {
+      "$ref": "#/definitions/State"
+    },
+    {
+      "$ref": "#/definitions/ImportedObject"
+    },
+    {
+      "$ref": "#/definitions/ResultSnapshot"
+    },
+    {
+      "$ref": "#/definitions/Operation"
+    },
+    {
+      "$ref": "#/definitions/ImportRequest"
+    },
+    {
+      "$ref": "#/definitions/StartRequest"
+    },
+    {
+      "$ref": "#/definitions/ExportRequest"
+    },
+    {
+      "$ref": "#/definitions/PreviewRequest"
+    },
+    {
+      "$ref": "#/definitions/OperationReceipt"
+    },
+    {
+      "$ref": "#/definitions/StopResponse"
+    },
+    {
+      "$ref": "#/definitions/ProjectManifest"
+    }
+  ]
+}
+)schema"},
 };
 }

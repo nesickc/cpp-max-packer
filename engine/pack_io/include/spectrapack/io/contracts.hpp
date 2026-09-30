@@ -12,7 +12,7 @@ namespace spectrapack::io {
 
 using Json = nlohmann::json;
 
-enum class ContractKind { settings, assets, results, protocol, benchmark_summary };
+enum class ContractKind { settings, assets, results, protocol, benchmark_summary, desktop };
 enum class ValidationStage { parse, schema, semantic };
 
 struct ValidationIssue {

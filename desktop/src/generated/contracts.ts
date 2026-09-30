@@ -981,3 +981,703 @@ export interface Error {
 }
 
 }
+
+export namespace Desktop {
+export type HttpsSpectrapackInvalidSchemasV1DesktopSchemaJson =
+  | Settings
+  | State
+  | ImportedObject
+  | ResultSnapshot
+  | Operation
+  | ImportRequest
+  | StartRequest
+  | ExportRequest
+  | PreviewRequest
+  | OperationReceipt
+  | StopResponse
+  | ProjectManifest;
+/**
+ * @minItems 4
+ * @maxItems 4
+ *
+ * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+ * via the `definition` "q".
+ */
+export type Q = [number, number, number, number];
+export type HttpsSpectrapackInvalidSchemasV1AssetsSchemaJson =
+  | (Base & {
+      state?: "inspected";
+      [k: string]: unknown;
+    })
+  | (Base & {
+      state?: "accepted";
+      diagnostics?: Diagnostics & {
+        status?: "valid";
+        [k: string]: unknown;
+      };
+      [k: string]: unknown;
+    });
+/**
+ * @minItems 3
+ * @maxItems 3
+ */
+export type Vec3 = [number, number, number];
+/**
+ * @minItems 4
+ * @maxItems 4
+ *
+ * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+ * via the `definition` "m".
+ */
+export type M = [
+  [number, number, number, number],
+  [number, number, number, number],
+  [number, number, number, number],
+  [number, number, number, number]
+];
+export type ImportRequest = {
+  units: "mm" | "inch" | "custom";
+  scale_mm?: number;
+};
+
+export interface Settings {
+  desktop_version: 1;
+  /**
+   * @minItems 3
+   * @maxItems 3
+   */
+  box_dimensions_mm: [number, number, number];
+  clearance_mm: Clearance;
+  orientation:
+    | {
+        mode: "fixed";
+        quaternion_xyzw: Q;
+      }
+    | {
+        mode: "cube";
+      };
+  pitch_mm: number;
+  budget_seconds: number;
+  seed: string;
+}
+export interface Clearance {
+  pair: number;
+  wall: number;
+}
+export interface State {
+  desktop_version: 1;
+  session_id: string;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  revision: number;
+  object: ImportedObject | null;
+  draft_settings: Settings | null;
+  result: ResultSnapshot | null;
+  operation: Operation | null;
+  last_error: Error | null;
+}
+export interface ImportedObject {
+  id: string;
+  display_name: string;
+  report: HttpsSpectrapackInvalidSchemasV1AssetsSchemaJson;
+  preview: Preview1 | null;
+}
+export interface Base {
+  schema_version: 1;
+  role: "object" | "container";
+  state: "inspected" | "accepted";
+  source: Source;
+  frame: Frame;
+  dimensions_mm: Vec3;
+  diagnostics: Diagnostics;
+  accepted_solid?: Solid;
+  repair_record?: null | {
+    path: string;
+    /**
+     * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+     * via the `definition` "hash".
+     */
+    sha256: string;
+    accepted_by_user: true;
+  };
+  preview?: Preview;
+  repair_proposal?: RepairProposal;
+}
+export interface Source {
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "hash".
+   */
+  sha256: string;
+  path: string;
+  units: "mm" | "inch" | "custom";
+  unit_scale_mm: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  byte_size?: number;
+}
+export interface Frame {
+  source_bounds: {
+    min: Vec3;
+    max: Vec3;
+  };
+  source_to_local: M;
+}
+export interface Diagnostics {
+  status: "valid" | "invalid" | "indeterminate";
+  messages: string[];
+  import?: ImportDiagnostics;
+}
+export interface ImportDiagnostics {
+  encoding: "ascii" | "binary";
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  source_byte_size: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  source_triangle_count: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  vertex_count: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  triangle_count: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  component_count: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  boundary_edges: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  nonmanifold_edges: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  nonmanifold_vertices: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  zero_area_faces: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  duplicate_faces: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  self_intersection_pairs: number;
+  cleanup: Cleanup;
+  topology_check: "not_run" | "complete" | "indeterminate";
+  intersection_check: "not_run" | "complete" | "indeterminate";
+  containment_check: "not_run" | "complete" | "indeterminate";
+  mesh_bounds_mm?: Bounds;
+  volume_mm3?: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  candidate_pair_tests: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  predicate_work: number;
+  issues_truncated: boolean;
+  shells: Shell[];
+  issues: ImportIssue[];
+}
+export interface Cleanup {
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  exact_vertices_merged: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  duplicate_faces_removed: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  zero_area_faces_removed: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  faces_reoriented: number;
+}
+export interface Bounds {
+  min: Vec3;
+  max: Vec3;
+}
+export interface Shell {
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  id: number;
+  parent_id?: number | null;
+  depth?: number | null;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  triangle_count: number;
+  input_orientation: "unresolved" | "outward" | "inward";
+  final_orientation: "unresolved" | "outward" | "inward";
+}
+export interface ImportIssue {
+  reason: string;
+  message: string;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  face_id?: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  other_face_id?: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  vertex_id?: number;
+}
+export interface Solid {
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "hash".
+   */
+  sha256: string;
+  path: string;
+  format: "binary_little_endian_ply_f64_u32";
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  vertex_count: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  triangle_count: number;
+}
+export interface Preview {
+  path: string;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "hash".
+   */
+  sha256: string;
+}
+export interface RepairProposal {
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "hash".
+   */
+  sha256: string;
+  path: string;
+  before: Preview;
+  after: Preview;
+  tolerance_mm: number;
+  max_displacement_mm: number;
+  candidate_status: "valid" | "invalid" | "indeterminate";
+}
+export interface Preview1 {
+  preview_id: string;
+  format: "ply";
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "hash".
+   */
+  sha256: string;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  byte_length: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  triangle_count: number;
+  coordinate_frame: "object_local_mm";
+}
+export interface ResultSnapshot {
+  id: string;
+  document: HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson;
+  preview: Preview1 | null;
+  origin: "solve" | "project";
+}
+export interface HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson {
+  schema_version: 1;
+  label: "best_found";
+  job_id: string;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  solution_revision: number;
+  created_at: string;
+  engine: {
+    version: string;
+    commit: string;
+  };
+  assets: {
+    object: Base & {
+      state?: "accepted";
+      diagnostics?: Diagnostics & {
+        status?: "valid";
+        [k: string]: unknown;
+      };
+      [k: string]: unknown;
+    };
+    container?: Base & {
+      state?: "accepted";
+      diagnostics?: Diagnostics & {
+        status?: "valid";
+        [k: string]: unknown;
+      };
+      [k: string]: unknown;
+    };
+  };
+  container:
+    | {
+        kind: "box";
+        /**
+         * @minItems 3
+         * @maxItems 3
+         */
+        dimensions_mm: [number, number, number];
+      }
+    | {
+        kind: "stl_volume";
+        asset: ContentRef;
+        source_to_world: M;
+        semantics: "interior_volume";
+      };
+  constraints: {
+    clearance_mm: Clearance;
+    orientation:
+      | {
+          mode: "fixed";
+          quaternion_xyzw: Q;
+        }
+      | {
+          mode: "upright" | "cube";
+        }
+      | {
+          mode: "free";
+          catalog_size: number;
+        }
+      | {
+          mode: "custom";
+          /**
+           * @minItems 1
+           */
+          quaternions_xyzw: [Q, ...Q[]];
+        };
+    /**
+     * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+     * via the `definition` "hash".
+     */
+    orientation_catalog_sha256: string;
+  };
+  search: {
+    resolved_settings: Resolved;
+    /**
+     * @minItems 1
+     */
+    pitch_levels_mm: [number, ...number[]];
+    seed: string;
+    work_counts: Work;
+    /**
+     * @minItems 1
+     */
+    run_segments: [Segment, ...Segment[]];
+    backend_transitions: Transition[];
+    elapsed_seconds: number;
+  };
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  count: number;
+  placements: Placement[];
+  validation: {
+    status: "valid";
+    tolerance_mm: number;
+    /**
+     * Items: This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+     * via the `definition` "hash".
+     */
+    authoritative_geometry_sha256: string[];
+    validator_version: string;
+    kernel_version: string;
+    checks: {
+      pair: "valid";
+      containment: "valid";
+      clearance: "valid";
+    };
+  };
+  metrics: {
+    solid_volume_mm3: number | null;
+    container_volume_mm3: number | null;
+    utilization: number | null;
+    time_to_best_seconds: number;
+    /**
+     * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+     * via the `definition` "c".
+     */
+    peak_host_bytes: number;
+    /**
+     * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+     * via the `definition` "c".
+     */
+    peak_device_bytes: number;
+    termination_reason: "budget_exhausted" | "user_stopped" | "search_stalled" | "resource_limit" | "error";
+  };
+  artifacts?: {
+    kind: "assembled_stl" | "preview_image" | "benchmark" | "log";
+    path: string;
+    /**
+     * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+     * via the `definition` "hash".
+     */
+    sha256: string;
+  }[];
+}
+export interface ContentRef {
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "hash".
+   */
+  source_sha256: string;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "hash".
+   */
+  accepted_solid_sha256: string;
+}
+export interface Resolved {
+  settings_version: 1;
+  object_asset: ContentRef;
+  container: Box | StlRef;
+  clearance_mm: Clearance;
+  orientation:
+    | {
+        mode: "fixed";
+        quaternion_xyzw: Q;
+      }
+    | {
+        mode: "upright" | "cube";
+      }
+    | {
+        mode: "free";
+        catalog_size: number;
+      }
+    | {
+        mode: "custom";
+        /**
+         * @minItems 1
+         */
+        quaternions_xyzw: [Q, ...Q[]];
+      };
+  search: Search;
+  resolution:
+    | {
+        mode: "auto";
+        longest_object_axis_cells: number;
+      }
+    | {
+        mode: "manual";
+        pitch_mm: number;
+      };
+  compute: Compute;
+  resolved: {
+    pitch_mm: number;
+    /**
+     * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+     * via the `definition` "hash".
+     */
+    orientation_catalog_sha256: string;
+    orientation_catalog_version: number;
+    backend: "cpu" | "vulkan";
+    thread_count: number;
+  };
+}
+export interface Box {
+  kind: "box";
+  /**
+   * @minItems 3
+   * @maxItems 3
+   */
+  dimensions_mm: [number, number, number];
+}
+export interface StlRef {
+  kind: "stl_volume";
+  asset: ContentRef;
+}
+export interface Search {
+  preset: string;
+  seed: string;
+  deterministic: boolean;
+  budget_seconds?: number;
+  work_budget?: {
+    max_candidate_evaluations: number;
+    max_search_passes: number;
+  };
+}
+export interface Compute {
+  backend: "auto" | "cpu" | "vulkan";
+}
+/**
+ * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+ * via the `definition` "work".
+ */
+export interface Work {
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  candidate_evaluations: number;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  search_passes: number;
+}
+/**
+ * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+ * via the `definition` "segment".
+ */
+export interface Segment {
+  segment_id: string;
+  parent_solution_revision: null | number;
+  seed: string;
+  backend: "cpu" | "vulkan";
+  elapsed_seconds: number;
+  work_counts: Work;
+  search_state_reset: boolean;
+  rng: {
+    algorithm: string;
+    state: string;
+  };
+  resolved_settings: Resolved;
+}
+/**
+ * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+ * via the `definition` "transition".
+ */
+export interface Transition {
+  segment_id: string;
+  from: "cpu" | "vulkan";
+  to: "cpu" | "vulkan";
+  reason: string;
+  elapsed_seconds: number;
+  device?: string;
+  driver?: string;
+}
+/**
+ * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+ * via the `definition` "placement".
+ */
+export interface Placement {
+  copy_id: string;
+  translation_mm: Vec3;
+  quaternion_xyzw: Q;
+  local_to_world: M;
+}
+export interface Operation {
+  id: string;
+  kind: "import" | "solve" | "open" | "save" | "export";
+  phase: "preparing" | "running" | "stopping" | "validating" | "saving" | "finished" | "failed";
+  started_at: string;
+  finished_at: string | null;
+  result_id: string | null;
+  detail: string | null;
+}
+export interface Error {
+  code: string;
+  message: string;
+  details: {
+    [k: string]: unknown;
+  };
+  recoverable: boolean;
+}
+export interface StartRequest {
+  settings: Settings;
+}
+export interface ExportRequest {
+  format: "json" | "stl";
+}
+export interface PreviewRequest {
+  preview_id: string;
+}
+export interface OperationReceipt {
+  operation_id: string;
+}
+export interface StopResponse {
+  operation_id: string;
+  accepted: true;
+}
+export interface ProjectManifest {
+  project_version: 1;
+  format: "spectrapack-project";
+  saved_at: string;
+  object_report: "object.report.json";
+  resolved_settings: "settings.json" | null;
+  best_result: "result.json" | null;
+  draft_settings: Settings;
+  /**
+   * @minItems 1
+   * @maxItems 1024
+   */
+  files: [ProjectFile, ...ProjectFile[]];
+}
+export interface ProjectFile {
+  path: string;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "hash".
+   */
+  sha256: string;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  size_bytes: number;
+}
+export interface StopRequest {
+  operation_id: string;
+}
+export type SaveRequest = StartRequest;
+
+}
