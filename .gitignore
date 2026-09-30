@@ -11,3 +11,9 @@ __pycache__/
 
 # Development-only schema tooling.
 /node_modules/
+
+# Desktop build products and staged native sidecar.
+/desktop/node_modules/
+/desktop/dist/
+/desktop/src-tauri/target/
+/desktop/src-tauri/binaries/

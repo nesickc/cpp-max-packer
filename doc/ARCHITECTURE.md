@@ -76,6 +76,14 @@ boundaries. Compute proposes fields; geometry remains authoritative. A separate
 geometry report validates distinct quantized STL copies without replacing the
 accepted search solution. [T-007](T-007.md) tracks implementation and evidence.
 
+[ADR 0010](../spec/decisions/0010-desktop-workflow.md) defines the T-008 first
+desktop journey. Rust owns asynchronous invocation of the fixed bundled CLI,
+scoped file selection, immutable operation/result state and portable project
+archives. Native preparation and restore reuse accepted-asset loading and full
+solid validation; React/Three.js consumes generated desktop DTOs and a shared
+display mesh. This auxiliary adapter does not implement the separate stdio job
+lifecycle. [T-008](T-008.md) records its bounded scope and acceptance evidence.
+
 `spec/schemas/` is the single source for versioned wire/persistence shapes and generated TypeScript types. C++ CLI and service use one decoder and semantic-validation path. `pack_geometry` supplies source-to-local import frames in millimeters with unchanged right-handed Z-up axes and native rigid placement validation using active XYZW quaternions plus translation. Viewer/export integration and its shared transform goldens remain pending. Preserve source mappings; never scale to fit (`GEO-02`, `DATA-01`, `DATA-03`).
 
 Validation returns `valid`, `invalid` or `indeterminate`, with copy IDs and diagnostics. Only `valid` can enter incumbent publication. Validate accepted solids, including enclosure/coincidence, STL-volume difference and separate pair/wall distances; tolerance never reduces clearance. Restore/final/export validation bypasses search certificates. Re-read quantized STL coordinates; retain valid JSON/project if STL export fails (`GEO-05`, `GEO-06`).
