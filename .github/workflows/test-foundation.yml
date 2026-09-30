@@ -142,6 +142,17 @@ jobs:
           if ($diagnosticResult -ne 0) { exit $diagnosticResult }
           python tools/Inspect-CpuBuild.py audit-runtime --package-root $packageRoot --runtime-report $runtimeReport --pe-imports .local/ci/pe-imports.log
           exit $LASTEXITCODE
+      - name: Desktop native adapter and bundled shell
+        run: |
+          rustup toolchain install 1.98.1 --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:RUSTUP_TOOLCHAIN = '1.98.1'
+          python -c "import pathlib,sys; sys.path.insert(0,'tests/protocol'); from solve_subprocess_test import write_cube_stl; write_cube_stl(pathlib.Path('.local/ci/desktop-cube.stl'),low=(17,-21,33))"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./tools/desktop/Invoke-Desktop.ps1 -Mode Test -TestStlPath .local/ci/desktop-cube.stl *> .local/ci/desktop-native.log
+          if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/desktop-native.log; exit $LASTEXITCODE }
+          & ./tools/desktop/Invoke-Desktop.ps1 -Mode Build -SkipFrontend *> .local/ci/desktop-shell.log
+          if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/desktop-shell.log; exit $LASTEXITCODE }
       - name: Bounded reference timings
         run: |
           python benchmarks/run_reference.py --executable out/build/windows-ninja-release/bin/spectrapack_reference_benchmark.exe --output .local/ci/reference.json --samples 5 --warmup 1 --timeout-seconds 60

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SpectraPack",
+  "version": "0.0.0",
+  "identifier": "io.spectrapack.desktop",
+  "build": {
+    "beforeDevCommand": { "script": "pnpm desktop:dev", "cwd": "../.." },
+    "beforeBuildCommand": { "script": "pnpm desktop:build", "cwd": "../.." },
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "label": "main", "title": "SpectraPack", "visible": false, "width": 1280, "height": 800,
+      "minWidth": 800, "minHeight": 600 }],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; frame-src 'none'",
+      "capabilities": ["main"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
+    "externalBin": ["binaries/spectrapack-engine"],
+    "resources": ["engine-resources"],
+    "windows": { "webviewInstallMode": { "type": "skip" } }
+  }
+}

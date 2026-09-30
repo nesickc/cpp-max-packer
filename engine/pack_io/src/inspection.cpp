@@ -1,7 +1,8 @@
-#include <spectrapack/io/inspection.hpp>
-
 #include <spectrapack/geometry/import.hpp>
 #include <spectrapack/io/contracts.hpp>
+#include <spectrapack/io/inspection.hpp>
+
+#include "repair_replay.hpp"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -17,6 +18,7 @@
 #include <cstring>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <limits>
 #include <optional>
 #include <sstream>
@@ -382,7 +384,10 @@ std::variant<std::filesystem::path, InspectFailure> write_unique_temp(
     if (handle == INVALID_HANDLE_VALUE) {
       const auto code = GetLastError();
       if (code == ERROR_FILE_EXISTS || code == ERROR_ALREADY_EXISTS) continue;
-      return failure("INTERNAL_ERROR", "A unique artifact staging file cannot be created.", 4);
+      std::cerr << "inspection: staging Win32 error=" << code << " path_length=" << temporary.native().size() << '\n';
+      return failure("INTERNAL_ERROR",
+                     "A unique artifact staging file cannot be created (Windows error " + std::to_string(code) + ").",
+                     4);
     }
 
     bool complete = true;
@@ -513,7 +518,79 @@ Json solid_reference(
       {"triangle_count", mesh.triangles.size()}};
 }
 
+Json repair_recipe(const std::shared_ptr<const RepairProposal>& proposal, const std::string& source_hash,
+                   std::uint64_t source_size, const std::string& role, const std::string& units, double tolerance,
+                   const std::string& before_hash, const std::string& after_hash)
+{
+    return {
+        { "schema_version",      1                                                           },
+        { "source",              { { "sha256", source_hash }, { "byte_size", source_size } } },
+        { "options",
+         { { "role", role },
+            { "units", units },
+            { "unit_scale_mm", proposal->original()->frame().unit_scale_mm },
+            { "weld_tolerance_mm", tolerance } }                                             },
+        { "before",
+         { { "mesh_sha256", before_hash },
+            { "diagnostics", full_diagnostics_json(proposal->original()->report()) } }       },
+        { "after",
+         { { "mesh_sha256", after_hash },
+            { "diagnostics", full_diagnostics_json(proposal->candidate()->report()) } }      },
+        { "max_displacement_mm", proposal->max_displacement_mm()                             }
+    };
+}
 }  // namespace
+
+std::variant<detail::ReplayedRepair, Error> detail::replay_repair(std::shared_ptr<const geometry::AssetDraft> draft,
+                                                                  const Json& report,
+                                                                  std::span<const std::byte> retained,
+                                                                  std::uint64_t source_size)
+{
+    const auto bad = [] {
+        return Error { "ASSET_MISMATCH", "Retained repair recipe does not replay exactly.", Json::object(), true };
+    };
+    try {
+        const auto recipe =
+            Json::parse(std::string_view(reinterpret_cast<const char*>(retained.data()), retained.size()));
+        const auto tolerance = recipe.at("options").at("weld_tolerance_mm").get<double>();
+        if (!std::isfinite(tolerance) || tolerance <= 0 || report.at("repair_record").at("accepted_by_user") != true) {
+            return bad();
+        }
+        auto proposed = geometry::propose_weld(draft, { tolerance });
+        if (!std::holds_alternative<std::shared_ptr<const RepairProposal>>(proposed)) {
+            return bad();
+        }
+        const auto proposal = std::get<std::shared_ptr<const RepairProposal>>(proposed);
+        Bytes before = serialize_ply(draft->mesh()), after = serialize_ply(proposal->candidate()->mesh());
+        const auto before_digest = sha256(before), after_digest = sha256(after);
+        if (!std::holds_alternative<std::string>(before_digest) || !std::holds_alternative<std::string>(after_digest)) {
+            return bad();
+        }
+        const auto& before_hash = std::get<std::string>(before_digest);
+        const auto& after_hash = std::get<std::string>(after_digest);
+        const auto expected =
+            bytes_from_string(repair_recipe(proposal, report.at("source").at("sha256"), source_size, report.at("role"),
+                                            report.at("source").at("units"), tolerance, before_hash, after_hash)
+                                  .dump());
+        if (retained.size() != expected.size() || !std::equal(retained.begin(), retained.end(), expected.begin())) {
+            return bad();
+        }
+        auto accepted = geometry::accept_repair(proposal);
+        if (!std::holds_alternative<std::shared_ptr<const AcceptedSolid>>(accepted)) {
+            return bad();
+        }
+        detail::ReplayedRepair result { std::get<std::shared_ptr<const AcceptedSolid>>(accepted), {} };
+        result.artifacts.emplace(before_hash + ".ply", std::move(before));
+        result.artifacts.emplace(after_hash + ".ply", std::move(after));
+        return result;
+    }
+    catch (const std::bad_alloc&) {
+        return Error { "MEMORY_LIMIT", "Repair replay exhausted memory.", Json::object(), true };
+    }
+    catch (const std::exception&) {
+        return bad();
+    }
+}
 
 std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectRequest& request) {
   if (request.stl_path.empty() || request.report_path.empty()) {
@@ -611,23 +688,8 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
     const std::string candidate_hash = std::get<std::string>(std::move(candidate_hash_result));
     const auto candidate_path = assets_directory / (candidate_hash + ".ply");
 
-    const Json proposal_record = {
-        {"schema_version", 1},
-        {"source", {
-            {"sha256", source_hash},
-            {"byte_size", source_bytes.size()}}},
-        {"options", {
-            {"role", request.role},
-            {"units", request.units},
-            {"unit_scale_mm", draft->frame().unit_scale_mm},
-            {"weld_tolerance_mm", *request.weld_tolerance_mm}}},
-        {"before", {
-            {"mesh_sha256", draft_hash},
-            {"diagnostics", full_diagnostics_json(draft->report())}}},
-        {"after", {
-            {"mesh_sha256", candidate_hash},
-            {"diagnostics", full_diagnostics_json(candidate->report())}}},
-        {"max_displacement_mm", proposal->max_displacement_mm()}};
+    const Json proposal_record = repair_recipe(proposal, source_hash, source_bytes.size(), request.role, request.units,
+                                               *request.weld_tolerance_mm, draft_hash, candidate_hash);
     Bytes proposal_bytes = bytes_from_string(proposal_record.dump());
     auto token_result = sha256(proposal_bytes);
     if (std::holds_alternative<InspectFailure>(token_result)) {

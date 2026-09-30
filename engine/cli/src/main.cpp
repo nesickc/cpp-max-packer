@@ -1,18 +1,18 @@
-#include <spectrapack/io/inspection.hpp>
-#include <spectrapack/service/service.hpp>
-
 #include <charconv>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <limits>
 #include <optional>
+#include <spectrapack/io/inspection.hpp>
+#include <spectrapack/service/service.hpp>
 #include <string>
 #include <string_view>
 #include <type_traits>
 #include <variant>
 #include <vector>
 
+#include "desktop.hpp"
 #include "solve.hpp"
 
 #ifdef _WIN32
@@ -37,12 +37,15 @@ const spectrapack::service::BuildInfo kBuild{
     SPECTRAPACK_ENGINE_VERSION, SPECTRAPACK_ENGINE_COMMIT};
 
 void usage(std::ostream& stream) {
-  stream << "Usage: spectrapack-engine capabilities --json\n"
-            "       spectrapack-engine inspect --stl <path> --units mm|inch|custom "
-            "--report <path> [options]\n"
-            "       spectrapack-engine serve --stdio\n"
-            "       spectrapack-engine solve --settings <path> --object-report <path> --result <path> "
-            "[--container-report <path>] [--stl <path>]\n";
+    stream << "Usage: spectrapack-engine capabilities --json\n"
+              "       spectrapack-engine inspect --stl <path> --units mm|inch|custom "
+              "--report <path> [options]\n"
+              "       spectrapack-engine serve --stdio\n"
+              "       spectrapack-engine solve --settings <path> --object-report <path> --result <path> "
+              "[--container-report <path>] [--stl <path>] [--stop-file <path>]\n"
+              "       spectrapack-engine desktop-prepare --object-report <path> --request <path> --output <directory>\n"
+              "       spectrapack-engine desktop-restore --object-report <path> --result <path> --output <directory> "
+              "[--stl <path>]\n";
 }
 
 int machine_error(std::string_view code, std::string_view message, int exit_code) {
@@ -231,17 +234,21 @@ int run_engine(int argc, Character** argv) {
       return std::cout ? 0 : 4;
     }
 
-    if (argc >= 2 && equals_ascii(View(argv[1]), "solve")) {
-      std::vector<std::string> arguments;
-      arguments.reserve(static_cast<std::size_t>(argc - 2));
-      for (int index = 2; index < argc; ++index) {
-        const auto converted = utf8(View(argv[index]));
-        if (!converted) {
-          return machine_error("INVALID_REQUEST", "A solve option is not valid Unicode.", 2);
+    if (argc >= 2 && (equals_ascii(View(argv[1]), "solve") || equals_ascii(View(argv[1]), "desktop-prepare") ||
+                      equals_ascii(View(argv[1]), "desktop-restore"))) {
+        std::vector<std::string> arguments;
+        arguments.reserve(static_cast<std::size_t>(argc - 2));
+        for (int index = 2; index < argc; ++index) {
+            const auto converted = utf8(View(argv[index]));
+            if (!converted) {
+                return machine_error("INVALID_REQUEST", "A solve option is not valid Unicode.", 2);
+            }
+            arguments.push_back(*converted);
         }
-        arguments.push_back(*converted);
-      }
-      return run_solve_command(arguments, kBuild.engine_version, kBuild.engine_commit);
+        if (!equals_ascii(View(argv[1]), "solve")) {
+            return run_desktop_command(*utf8(View(argv[1])), arguments);
+        }
+        return run_solve_command(arguments, kBuild.engine_version, kBuild.engine_commit);
     }
 
     if (argc >= 2 &&

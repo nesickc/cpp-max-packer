@@ -2,6 +2,7 @@
 #include <spectrapack/geometry/rigid_transform.hpp>
 #include <spectrapack/io/result_export.hpp>
 
+#include "repair_replay.hpp"
 #include "result_builder_accounting.hpp"
 #include "result_export_test_seam.hpp"
 
@@ -420,7 +421,11 @@ std::variant<std::filesystem::path, Error> artifact_path(const std::filesystem::
             return failure("ASSET_MISMATCH", "A retained artifact path uses a symbolic link.");
         }
     }
-    return root / relative;
+    // Verbatim Win32 paths require native separators. A portable asset reference
+    // contains '/', which CreateFileW does not normalize after the \\?\ prefix.
+    auto result = root / relative;
+    result.make_preferred();
+    return result;
 }
 bool same_frame(const Json& record, const geometry::Frame& frame, std::size_t source_bytes)
 {
@@ -1084,6 +1089,14 @@ void set_export_closed_stage_mutation_for_test(ClosedStageMutation mutation) noe
 }
 }  // namespace test
 
+struct RetainedRepairArtifact {
+    std::filesystem::path path, lexical;
+    Bytes bytes;
+    std::string sha256, suffix;
+#ifdef _WIN32
+    FileIdentity identity;
+#endif
+};
 struct VerifiedAsset::Storage {
     std::shared_ptr<const geometry::AcceptedSolid> solid;
     Json record;
@@ -1094,6 +1107,7 @@ struct VerifiedAsset::Storage {
     FileIdentity report_identity, source_identity, ply_identity;
 #endif
     std::uint64_t record_payload_bytes {};
+    std::vector<RetainedRepairArtifact> repair_artifacts;
 };
 VerifiedAsset::VerifiedAsset(std::shared_ptr<const Storage> storage) noexcept : storage_(std::move(storage)) {}
 const std::shared_ptr<const geometry::AcceptedSolid>& VerifiedAsset::solid() const noexcept { return storage_->solid; }
@@ -1111,6 +1125,18 @@ std::optional<std::uint64_t> VerifiedAsset::resident_buffer_bytes() const noexce
         !add_bytes(total, storage_->source_lexical.native().capacity() * sizeof(std::filesystem::path::value_type)) ||
         !add_bytes(total, storage_->ply_lexical.native().capacity() * sizeof(std::filesystem::path::value_type))) {
         return std::nullopt;
+    }
+    if (!add_repeated_bytes(total, storage_->repair_artifacts.capacity(), sizeof(RetainedRepairArtifact))) {
+        return std::nullopt;
+    }
+    for (const auto& artifact : storage_->repair_artifacts) {
+        if (!add_bytes(total, artifact.bytes.capacity()) || !add_bytes(total, artifact.sha256.capacity()) ||
+            !add_bytes(total, artifact.suffix.capacity()) ||
+            !add_repeated_bytes(total, artifact.path.native().capacity(), sizeof(std::filesystem::path::value_type)) ||
+            !add_repeated_bytes(total, artifact.lexical.native().capacity(),
+                                sizeof(std::filesystem::path::value_type))) {
+            return std::nullopt;
+        }
     }
     return total;
 }
@@ -1135,10 +1161,6 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path)
         Json record = std::get<ValidatedDocument>(std::move(decoded)).value();
         if (record.at("state") != "accepted") {
             return failure("ASSET_MISMATCH", "The report does not retain an accepted asset.");
-        }
-        if (!record.at("repair_record").is_null()) {
-            return failure("REPAIR_RECONSTRUCTION_UNSUPPORTED",
-                           "Repaired assets require recorded repair replay support.");
         }
         const auto root = report_path.has_parent_path() ? report_path.parent_path() : std::filesystem::path(".");
 #ifdef _WIN32
@@ -1177,8 +1199,68 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path)
         if (std::holds_alternative<geometry::ImportFailure>(inspected)) {
             return failure("ASSET_MISMATCH", "The retained source STL no longer reconstructs a valid inspection.");
         }
-        auto accepted =
-            geometry::accept_asset(std::get<std::shared_ptr<const geometry::AssetDraft>>(std::move(inspected)));
+        const auto draft = std::get<std::shared_ptr<const geometry::AssetDraft>>(std::move(inspected));
+        geometry::ImportOutcome<geometry::AcceptedSolid> accepted;
+        std::vector<RetainedRepairArtifact> repair_artifacts;
+        if (record.at("repair_record").is_null()) {
+            accepted = geometry::accept_asset(draft);
+        }
+        else {
+            const auto& reference = record.at("repair_record");
+            auto recipe_path = artifact_path(root, reference.at("path").get<std::string>());
+            if (const auto* problem = std::get_if<Error>(&recipe_path)) {
+                return *problem;
+            }
+            auto recipe_bytes = read_bytes(std::get<std::filesystem::path>(recipe_path), kMaxReportBytes);
+            if (const auto* problem = std::get_if<Error>(&recipe_bytes)) {
+                return *problem;
+            }
+            auto& bytes = std::get<Bytes>(recipe_bytes);
+            auto digest = sha256(bytes);
+            if (const auto* problem = std::get_if<Error>(&digest)) {
+                return *problem;
+            }
+            const auto token = reference.at("sha256").get<std::string>();
+            if (std::get<std::string>(digest) != token || reference.at("path") != "assets/" + token + ".repair.json") {
+                return failure("ASSET_MISMATCH", "Retained repair token or content-addressed path does not match.");
+            }
+            auto replay = detail::replay_repair(draft, record, bytes, source_bytes.size());
+            if (const auto* problem = std::get_if<Error>(&replay)) {
+                return *problem;
+            }
+            auto restored = std::get<detail::ReplayedRepair>(std::move(replay));
+            accepted = restored.solid;
+            restored.artifacts.emplace(token + ".repair.json", std::move(bytes));
+            const auto accepted_name = record.at("accepted_solid").at("sha256").get<std::string>() + ".ply";
+            for (auto& [name, expected_bytes] : restored.artifacts) {
+                if (name == accepted_name) {
+                    continue;
+                }
+                auto retained_path = artifact_path(root, "assets/" + name);
+                if (const auto* problem = std::get_if<Error>(&retained_path)) {
+                    return *problem;
+                }
+                const auto path = std::get<std::filesystem::path>(retained_path);
+                auto retained_bytes = read_bytes(path, kMaxArtifactBytes);
+                if (const auto* problem = std::get_if<Error>(&retained_bytes)) {
+                    return *problem;
+                }
+                if (std::get<Bytes>(retained_bytes) != expected_bytes) {
+                    return failure("ASSET_MISMATCH", "Retained repair mesh does not match native replay.");
+                }
+                const auto resolved = std::filesystem::weakly_canonical(path, error);
+                const auto lexical = std::filesystem::absolute(path, error);
+                if (error) {
+                    return failure("ASSET_MISMATCH", "Repair artifact identity could not be resolved.");
+                }
+                repair_artifacts.push_back({ resolved, lexical, std::move(expected_bytes), name.substr(0, 64),
+                                             name.substr(64),
+#ifdef _WIN32
+                                             file_identity(resolved).value_or(FileIdentity {})
+#endif
+                });
+            }
+        }
         if (std::holds_alternative<geometry::ImportFailure>(accepted)) {
             return failure("ASSET_MISMATCH", "The retained source STL no longer reconstructs an accepted solid.");
         }
@@ -1233,7 +1315,7 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path)
             file_identity(resolved_source).value_or(FileIdentity {}),
             file_identity(resolved_ply).value_or(FileIdentity {}),
 #endif
-            record_payload_bytes });
+            record_payload_bytes, std::move(repair_artifacts) });
         return std::shared_ptr<const VerifiedAsset>(new VerifiedAsset(std::move(storage)));
     }
     catch (const std::bad_alloc&) {
@@ -1404,6 +1486,14 @@ ExportOutcome export_result(const ExportRequest& request)
                     return true;
                 }
 #endif
+                for (const auto& artifact : asset->storage_->repair_artifacts) {
+                    if (same_resolved_location(path, artifact.path) || same_resolved_location(path, artifact.lexical))
+                        return true;
+#ifdef _WIN32
+                    if (same_identity(path, artifact.identity))
+                        return true;
+#endif
+                }
             }
             return false;
         };
@@ -1500,8 +1590,16 @@ ExportOutcome export_result(const ExportRequest& request)
                                              storage.record.at("source").at("sha256").get<std::string>(), ".stl")) {
                 return problem;
             }
-            return publish_asset(storage.ply_bytes, storage.record.at("accepted_solid").at("sha256").get<std::string>(),
-                                 ".ply");
+            if (auto problem = publish_asset(
+                    storage.ply_bytes, storage.record.at("accepted_solid").at("sha256").get<std::string>(), ".ply")) {
+                return problem;
+            }
+            for (const auto& artifact : storage.repair_artifacts) {
+                if (auto problem = publish_asset(artifact.bytes, artifact.sha256, artifact.suffix)) {
+                    return problem;
+                }
+            }
+            return std::nullopt;
         };
         if (auto problem = publish_for(request.object_asset)) {
             return *problem;

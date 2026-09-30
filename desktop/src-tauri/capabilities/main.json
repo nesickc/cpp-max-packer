@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Local SpectraPack window; filesystem and process access are Rust-owned commands.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

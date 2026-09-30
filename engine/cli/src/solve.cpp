@@ -25,6 +25,7 @@
 #include <optional>
 #include <sstream>
 #include <stop_token>
+#include <thread>
 #include <variant>
 
 namespace {
@@ -232,6 +233,68 @@ public:
 
 private:
     bool installed_ {};
+};
+
+class StopFileWatcher final {
+public:
+    explicit StopFileWatcher(const std::optional<std::filesystem::path>& path)
+    {
+        if (!path) {
+            return;
+        }
+        const auto observe = [this, file = *path] {
+            std::error_code error;
+            const auto parent = std::filesystem::status(file.parent_path().empty() ? "." : file.parent_path(), error);
+            if (!error && !std::filesystem::is_directory(parent)) {
+                error = std::make_error_code(std::errc::not_a_directory);
+            }
+            bool marked = false;
+            if (!error) {
+                const auto status = std::filesystem::symlink_status(file, error);
+                if (error == std::errc::no_such_file_or_directory) {
+                    error.clear();
+                }
+                else if (!error && std::filesystem::exists(status)) {
+                    if (!std::filesystem::is_regular_file(status)) {
+                        error = std::make_error_code(std::errc::invalid_argument);
+                    }
+                    else {
+                        marked = true;
+                    }
+                }
+            }
+            if (error) {
+                monitor_error_.store(error.value());
+            }
+            if (marked || error) {
+                console_stop_source().request_stop();
+            }
+            return marked || bool(error);
+        };
+        if (observe()) {
+            return;
+        }
+        watcher_ = std::jthread([observe](std::stop_token done) {
+            while (!done.stop_requested() && !console_stop_source().stop_requested()) {
+                if (observe()) {
+                    return;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+        });
+    }
+    [[nodiscard]] int finish()
+    {
+        watcher_.request_stop();
+        if (watcher_.joinable()) {
+            watcher_.join();
+        }
+        return monitor_error_.load();
+    }
+
+private:
+    std::atomic_int monitor_error_ {};
+    std::jthread watcher_;
 };
 
 std::optional<std::chrono::steady_clock::time_point> deadline_from_seconds(double seconds)
@@ -517,7 +580,8 @@ void set_result_export_max_working_bytes(std::uint64_t bytes) noexcept
 
 int run_solve_command(const std::vector<std::string>& arguments, std::string engine_version, std::string engine_commit)
 {
-    std::optional<std::filesystem::path> settings_path, object_report, container_report, result_path, stl_path;
+    std::optional<std::filesystem::path> settings_path, object_report, container_report, result_path, stl_path,
+        stop_file;
     for (size_t index = 0; index < arguments.size(); ++index) {
         if (index + 1 == arguments.size()) {
             return fail("INVALID_REQUEST", "solve options are invalid.", 2);
@@ -556,6 +620,11 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
                 return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
             }
         }
+        else if (option == "--stop-file") {
+            if (!set(stop_file)) {
+                return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
+            }
+        }
         else {
             return fail("INVALID_REQUEST", "solve options are invalid.", 2);
         }
@@ -565,6 +634,11 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     }
     if (aliases(*settings_path, *result_path)) {
         return fail("INVALID_REQUEST", "Result path aliases the settings input.", 2);
+    }
+    if (stop_file && (aliases(*stop_file, *settings_path) || aliases(*stop_file, *object_report) ||
+                      aliases(*stop_file, *result_path) || (stl_path && aliases(*stop_file, *stl_path)) ||
+                      (container_report && aliases(*stop_file, *container_report)))) {
+        return fail("INVALID_REQUEST", "Stop marker aliases an input or output.", 2);
     }
     Json settings;
     {
@@ -678,6 +752,21 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     std::optional<double> last_snapshot_seconds;
     std::atomic_bool reported_snapshot {};
     ConsoleControlRegistration console_controls;
+    std::shared_ptr<const geo::ValidatedSolution> initial;
+    if (stop_file) {
+        const auto empty =
+            geo::make_candidate(std::get<std::shared_ptr<const geo::ValidationContext>>(context_value), {});
+        if (!std::holds_alternative<std::shared_ptr<const geo::Candidate>>(empty)) {
+            return fail("SOLVE_FAILED", "Initial empty candidate could not be created.", 3);
+        }
+        const auto checked = geo::validate(std::get<std::shared_ptr<const geo::ValidationContext>>(context_value),
+                                           std::get<std::shared_ptr<const geo::Candidate>>(empty));
+        if (!checked.validated_solution || checked.report.validity != geo::Validity::valid) {
+            return fail("SOLVE_FAILED", "Initial empty candidate did not pass native validation.", 3);
+        }
+        initial = checked.validated_solution;
+    }
+    StopFileWatcher stop_watcher(stop_file);
     const solver::RunControl control { console_controls.token(), deadline };
     auto outcome = solver::run_cpu_spectral(std::get<std::shared_ptr<const geo::ValidationContext>>(context_value),
                                             {
@@ -693,7 +782,8 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
                           << std::flush;
             }
         }
-    });
+    }, std::move(initial));
+    const auto stop_monitor_error = stop_watcher.finish();
     const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
     if (!outcome.run.retained_solution) {
         return fail("SOLVE_FAILED", "Search produced no validated solution.", 3,
@@ -710,7 +800,8 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     const auto revision = final_snapshot ? last_snapshot->revision : 0;
     const auto time_to_best_basis = final_snapshot ? "snapshot" : "retained_return";
     const auto diagnostics = command_diagnostics(outcome, limits, caller_reserve, time_to_best_basis);
-    const auto termination_reason = outcome.run.termination_reason;
+    const auto termination_reason =
+        stop_monitor_error ? solver::TerminationReason::error : outcome.run.termination_reason;
     const auto run_stats = outcome.run.stats;
     const auto retained_solution = outcome.run.retained_solution;
     last_snapshot.reset();
@@ -816,6 +907,14 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
         return fail(error.code, error.message, 3, error.details);
     }
     const auto& success = std::get<io::ExportSuccess>(published);
+    if (stop_monitor_error) {
+        return fail(
+            "STOP_MONITOR_FAILED", "Stop marker monitoring failed after publishing the retained valid solution.", 3,
+            {
+                { "result_path",  portable_path(success.result_path) },
+                { "system_error", stop_monitor_error                 }
+        });
+    }
     if (termination_reason == solver::TerminationReason::resource_limit ||
         termination_reason == solver::TerminationReason::error) {
         return fail(termination_reason == solver::TerminationReason::resource_limit ? "RESOURCE_LIMIT" : "SOLVE_FAILED",

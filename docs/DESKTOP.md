@@ -50,8 +50,31 @@ Continue, live incumbent updates, periodic checkpoints, viewport screenshots
 and full-resolution inspection controls remain tracked follow-up work.
 Saving a complete project is distinct from recovering an interrupted search.
 
+Desktop admission limits are 256 MiB per imported STL, 64 MiB for a result or
+preview, and 2 GiB compressed/expanded per project with at most 1,024 entries.
+Projects use ordinary ZIP32 stored/deflated entries; ZIP64 and encrypted
+archives are rejected. These are size limits, not performance guarantees.
+
 The local development checks are `pnpm desktop:check`, `pnpm desktop:test`,
 `pnpm desktop:build` and `pnpm contracts:check`. `pnpm desktop:dev` starts the
 frontend on port 1420; a browser preview alone cannot run the native workflow.
-Native build/staging instructions and measured acceptance evidence are recorded
-with the ticket. See [CPU build instructions](BUILDING.md) for the fixed engine.
+See [CPU build instructions](BUILDING.md) for the fixed engine. The native shell
+uses Rust 1.98.1 with the Windows MSVC target and the committed Cargo lockfile.
+With the Release engine built and frontend dependencies installed, run:
+
+```powershell
+./tools/desktop/Invoke-Desktop.ps1 -Mode Build
+```
+
+The wrapper stages the engine and its dependency notices, builds the frontend
+and shell, then places the fixed engine beside
+`desktop/src-tauri/target/release/spectrapack-desktop.exe`. Launch that executable
+with its sibling engine and `engine-resources` directory present. It verifies
+the engine's build-time hash; replacing that binary requires rebuilding the
+shell. WebView2 must be installed. This is a local build, not a qualified installer.
+
+`-Mode Dev` starts the Tauri development window after staging. Test mode with
+`-Mode Test -TestStlPath <file>` runs the Rust core integration suite against an actual
+10 mm analytic cube and native engine. `-EngineBuildDirectory` selects an
+existing native build; `-DebugBuild` selects a Debug shell. Measured acceptance
+evidence and remaining qualification are recorded in [the ticket](../doc/T-008.md).

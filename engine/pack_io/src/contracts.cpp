@@ -26,7 +26,9 @@ std::string name(ContractKind kind) {
     case ContractKind::results: return "results";
     case ContractKind::protocol: return "protocol";
     case ContractKind::benchmark_summary: return "benchmark_summary";
-  }
+    case ContractKind::desktop:
+        return "desktop";
+    }
   throw std::logic_error("unknown contract kind");
 }
 

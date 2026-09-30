@@ -332,6 +332,71 @@ struct ResultBuilderFixture {
     }
 };
 
+TEST_CASE_METHOD(ResultBuilderFixture, "T008 repaired replay retains accounted dependencies and rejects output aliases",
+                 "[result_builder][writer][loader][T-008][repair]")
+{
+    namespace io = spectrapack::io;
+    namespace geo = spectrapack::geometry;
+    float displaced = 0.05F;
+    std::memcpy(bytes.data() + 96, &displaced, sizeof(displaced));
+    std::ofstream(source, std::ios::binary | std::ios::trunc)
+        .write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    io::InspectRequest inspection { source, report, "mm" };
+    inspection.weld_tolerance_mm = 0.1;
+    const auto proposed = io::inspect_stl_file(inspection);
+    REQUIRE(std::holds_alternative<io::InspectSuccess>(proposed));
+    inspection.accept_repair = std::get<io::InspectSuccess>(proposed).proposal_sha256;
+    REQUIRE(inspection.accept_repair);
+    REQUIRE(std::holds_alternative<io::InspectSuccess>(io::inspect_stl_file(inspection)));
+    const auto loaded = io::load_accepted_asset(report);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const io::VerifiedAsset>>(loaded));
+    asset = std::get<std::shared_ptr<const io::VerifiedAsset>>(loaded);
+    const auto& record = asset->record();
+    const auto recipe_path = root / record.at("repair_record").at("path").get<std::string>();
+    const auto recipe = io::Json::parse(std::ifstream(recipe_path));
+    const auto before_path = root / "assets" / (recipe.at("before").at("mesh_sha256").get<std::string>() + ".ply");
+    const auto recipe_bytes = std::filesystem::file_size(recipe_path);
+    const auto before_bytes = std::filesystem::file_size(before_path);
+    REQUIRE(asset->resident_buffer_bytes());
+    CHECK(*asset->resident_buffer_bytes() >=
+          recipe_bytes + before_bytes + asset->solid()->resident_buffer_bytes().value_or(0));
+    const auto context = geo::make_validation_context(asset->solid(), geo::BoxDimensions { 10, 10, 10 },
+                                                      { 0, 0, { geo::OrientationMode::fixed, {} } });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(context));
+    native_context = std::get<std::shared_ptr<const geo::ValidationContext>>(context);
+    const auto candidate = geo::make_candidate(native_context, { { "copy-1", { 2, 2, 2 }, { 0, 0, 0, 1 } } });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(candidate));
+    solution =
+        geo::validate(native_context, std::get<std::shared_ptr<const geo::Candidate>>(candidate)).validated_solution;
+    REQUIRE(solution);
+    auto metadata =
+        metadata_for(request.metadata, asset,
+                     request.metadata["search"]["resolved_settings"]["resolved"]["orientation_catalog_sha256"],
+                     request.metadata["search"]["resolved_settings"]["orientation"]);
+    request = { solution, asset, {}, { 1, { { 0, 0, 0, 1 } } }, std::move(metadata) };
+    const auto built = io::build_result(request);
+    REQUIRE(std::holds_alternative<io::ValidatedDocument>(built));
+    const auto document = std::get<io::ValidatedDocument>(built);
+    const auto output = root / "repaired-output";
+    REQUIRE(std::filesystem::create_directory(output));
+    io::ExportRequest limited { solution, asset, {}, request.catalog, document, output / "limited.json" };
+    limited.max_working_bytes = *asset->resident_buffer_bytes();
+    const auto refused = io::export_result(limited);
+    REQUIRE(std::holds_alternative<io::Error>(refused));
+    CHECK(std::get<io::Error>(refused).code == "MEMORY_LIMIT");
+    CHECK_FALSE(std::filesystem::exists(limited.result_path));
+    const auto alias = output / "recipe-hardlink.json";
+    std::filesystem::create_hard_link(recipe_path, alias);
+    const auto rejected = io::export_result({ solution, asset, {}, request.catalog, document, alias });
+    REQUIRE(std::holds_alternative<io::Error>(rejected));
+    CHECK(std::get<io::Error>(rejected).code == "EXPORT_PATH_INVALID");
+    CHECK(io::Json::parse(std::ifstream(recipe_path)) == recipe);
+    const auto exported = io::export_result({ solution, asset, {}, request.catalog, document, output / "result.json" });
+    REQUIRE(std::holds_alternative<io::ExportSuccess>(exported));
+    CHECK(io::Json::parse(std::ifstream(output / record.at("repair_record").at("path").get<std::string>())) == recipe);
+    CHECK(std::filesystem::file_size(output / "assets" / before_path.filename()) == before_bytes);
+}
+
 TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 result builder accepts real loaded assets and a fresh native solution",
                  "[result_builder][AT-14]")
 {

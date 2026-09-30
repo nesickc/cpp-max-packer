@@ -217,7 +217,7 @@ TEST_CASE("AT-14 rejects retained accepted-asset provenance tampering", "[result
         expect_rejected(spectrapack::io::load_accepted_asset(report));
         std::filesystem::remove_all(root);
     }
-    SECTION("recorded repair requires supported replay")
+    SECTION("recorded repair requires retained verified replay evidence")
     {
         const auto [root, report] = make_fixture();
         spectrapack::io::Json value = spectrapack::io::Json::parse(std::ifstream(report));
@@ -232,7 +232,7 @@ TEST_CASE("AT-14 rejects retained accepted-asset provenance tampering", "[result
         }
         const auto outcome = spectrapack::io::load_accepted_asset(report);
         REQUIRE(std::holds_alternative<spectrapack::io::Error>(outcome));
-        CHECK(std::get<spectrapack::io::Error>(outcome).code == "REPAIR_RECONSTRUCTION_UNSUPPORTED");
+        CHECK(std::get<spectrapack::io::Error>(outcome).code == "ASSET_MISMATCH");
         std::filesystem::remove_all(root);
     }
 }

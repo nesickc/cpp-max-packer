@@ -1,0 +1,99 @@
+{
+  "packages": [
+    {
+      "name": "alloc-stdlib",
+      "version": "0.3.0",
+      "files": [
+        {
+          "path": "desktop/licenses/alloc-stdlib-0.3.0-LICENSE.txt",
+          "sourceUrl": "https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/0a81fd6928ea3b33c8cd484aa4575d50ffb98012/LICENSE",
+          "sourceRef": "0a81fd6928ea3b33c8cd484aa4575d50ffb98012"
+        }
+      ]
+    },
+    {
+      "name": "selectors",
+      "version": "0.38.0",
+      "files": [
+        {
+          "path": "desktop/licenses/selectors-0.38.0-MPL-2.0.txt",
+          "sourceUrl": "https://www.mozilla.org/media/MPL/2.0/index.815ca599c9df.txt",
+          "sourceRef": "Mozilla Public License 2.0 official text",
+          "packageSourceCommit": "572ecba2d1600e7c3d490586692a209faf703baa",
+          "note": "The pinned selectors source declares MPL-2.0 but has no bundled license text; this file is the official Mozilla text."
+        }
+      ]
+    },
+    {
+      "name": "webview2-com",
+      "version": "0.39.1",
+      "files": [
+        {
+          "path": "desktop/licenses/webview2-com-0.39.1-LICENSE.txt",
+          "sourceUrl": "https://raw.githubusercontent.com/wravery/webview2-rs/edc2caf886175ccaebe86078c9cfe1ae2a187328/LICENSE",
+          "sourceRef": "edc2caf886175ccaebe86078c9cfe1ae2a187328"
+        }
+      ]
+    },
+    {
+      "name": "webview2-com-macros",
+      "version": "0.8.1",
+      "files": [
+        {
+          "path": "desktop/licenses/webview2-com-macros-0.8.1-LICENSE.txt",
+          "sourceUrl": "https://raw.githubusercontent.com/wravery/webview2-rs/dffa41a8a46d3f5565eefbff2de57d38d399f158/LICENSE",
+          "sourceRef": "dffa41a8a46d3f5565eefbff2de57d38d399f158"
+        }
+      ]
+    },
+    {
+      "name": "webview2-com-sys",
+      "version": "0.39.1",
+      "files": [
+        {
+          "path": "desktop/licenses/webview2-com-sys-0.39.1-LICENSE.txt",
+          "sourceUrl": "https://raw.githubusercontent.com/wravery/webview2-rs/edc2caf886175ccaebe86078c9cfe1ae2a187328/LICENSE",
+          "sourceRef": "edc2caf886175ccaebe86078c9cfe1ae2a187328"
+        }
+      ]
+    },
+    {
+      "name": "@rolldown/binding-win32-x64-msvc",
+      "version": "1.2.11",
+      "files": [
+        {
+          "path": "desktop/licenses/binding-win32-x64-msvc-1.2.11-LICENSE.txt",
+          "sourceUrl": "https://raw.githubusercontent.com/rolldown/rolldown/v1.2.11/LICENSE",
+          "sourceRef": "v1.2.11"
+        }
+      ]
+    },
+    {
+      "name": "@tauri-apps/cli-win32-x64-msvc",
+      "version": "2.12.0",
+      "files": [
+        {
+          "path": "desktop/licenses/tauri-cli-win32-x64-msvc-2.12.0-LICENSE-APACHE-2.0.txt",
+          "sourceUrl": "https://raw.githubusercontent.com/tauri-apps/tauri/447fa9f3f993fe77724189e355078b38ce20baea/LICENSE-APACHE-2.0",
+          "sourceRef": "447fa9f3f993fe77724189e355078b38ce20baea"
+        },
+        {
+          "path": "desktop/licenses/tauri-cli-win32-x64-msvc-2.12.0-LICENSE-MIT.txt",
+          "sourceUrl": "https://raw.githubusercontent.com/tauri-apps/tauri/447fa9f3f993fe77724189e355078b38ce20baea/LICENSE-MIT",
+          "sourceRef": "447fa9f3f993fe77724189e355078b38ce20baea"
+        }
+      ]
+    },
+    {
+      "name": "saxes",
+      "version": "6.0.0",
+      "files": [
+        {
+          "path": "desktop/licenses/saxes-6.0.0-LICENSE.txt",
+          "sourceUrl": "https://raw.githubusercontent.com/lddubeau/saxes/v6.0.0/LICENSE",
+          "sourceRef": "v6.0.0"
+        }
+      ]
+    }
+  ]
+}

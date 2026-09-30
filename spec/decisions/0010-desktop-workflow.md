@@ -32,8 +32,11 @@ Box containers are the committed acceptance boundary. STL containers, repair
 proposal acceptance UI, full preset resolution, automatic pitch, Vulkan,
 continued search, periodic checkpoints, exact continuation, live incumbent
 streaming, screenshots and the qualified 1,000-copy performance gate remain
-later work. Existing explicitly accepted repaired reports must still load via
-the native loader; do not add an arbitrary rejection of repaired provenance.
+later work. Explicitly accepted repaired reports must load via the native
+loader. Baseline inspection found that the T-007 loader rejected every repair
+record; T-008 therefore adds bounded replay of the recorded weld proposal and
+explicit acceptance evidence through the existing geometry APIs. Stored PLY
+bytes alone never authorize the repaired solid.
 
 Minimal projects cover portable retained source/accepted geometry, decisions,
 settings and complete results. They do not establish the interruption/checkpoint
@@ -200,8 +203,10 @@ search history, measured metrics and pose order/IDs. Fresh validation evidence
 may reflect the current validator; it does not claim the old search was rerun.
 Drop optional old artifact claims unless their bytes were separately verified;
 new STL references are added only through existing checked export. Unsupported
-catalog/schema versions fail clearly. Old accepted repair records are replayed
-by the existing loader with their explicit acceptance evidence.
+catalog/schema versions fail clearly. Accepted repair records are replayed
+by the extended native loader with their explicit acceptance evidence, original
+source and recorded options. Recomputed proposal/mesh hashes, diagnostics and
+physical frame must match the retained artifacts; mismatches fail closed.
 
 Restore publishes `result.json` and referenced assets in the new output
 directory via existing `export_result`; optional STL is generated from the
@@ -256,6 +261,11 @@ including case-insensitive collisions, unsupported encryption/compression and
 unlisted entries. Enforce lexical and final filesystem containment. These
 are admission limits, not measured performance or a claim that every smaller
 archive will fit memory. Stream assets and never load the entire archive in RAM.
+The supported transport is single-disk ZIP32 with stored or deflated regular
+entries and ordinary data descriptors. ZIP64, multidisk archives and unsupported
+extra fields are rejected explicitly; these formats are not needed within the
+bounded writer's limits. Raw central/local headers are checked before the ZIP
+library reads entries so duplicate names cannot disappear through deduplication.
 
 Verify every entry size/hash and all graph references before native restore.
 Do not swap the active object/result on partial extraction, corrupt hashes,
@@ -270,6 +280,10 @@ Bundle the fixed engine using Tauri's external binary mechanism. Select its
 name and build location in Rust/build configuration; never resolve through
 PATH, a webview argument, a project path or an arbitrary environment override
 in release builds. Pass arguments as distinct OS arguments, never shell text.
+The shell owns child-process lifetime: closing it must not leave an unmanaged
+engine running. Normal Stop remains cooperative; app-exit cleanup may terminate
+owned children, preserving previously complete state without claiming a new
+checkpoint or completed result from the interrupted operation.
 Do not expose generic shell/fs plugins to the webview. Narrow commands still
 perform their own authorization: plugin capabilities alone do not validate
 custom command arguments. Bundle UI assets; release navigation/CSP permits no

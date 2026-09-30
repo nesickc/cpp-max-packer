@@ -1,0 +1,39 @@
+[package]
+name = "spectrapack-desktop"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.98.1"
+publish = false
+
+[lib]
+name = "spectrapack_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "spectrapack-desktop"
+path = "src/main.rs"
+required-features = ["app"]
+
+[features]
+default = ["app"]
+app = ["dep:tauri", "dep:rfd", "dep:tauri-build"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+sha2 = "=0.10.9"
+time = { version = "=0.3.44", features = ["formatting", "parsing"] }
+uuid = { version = "=1.18.1", features = ["v4"] }
+zip = { version = "=8.3.1", default-features = false, features = ["deflate"] }
+tauri = { version = "=2.12.0", optional = true }
+rfd = { version = "=0.17.2", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_Security"] }
+
+[build-dependencies]
+tauri-build = { version = "=2.7.0", optional = true }
+
+[dev-dependencies]
+tempfile = "=3.23.0"
