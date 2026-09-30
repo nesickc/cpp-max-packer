@@ -12,6 +12,7 @@ const files = [
   ['Results', 'results'],
   ['Protocol', 'protocol'],
   ['BenchmarkSummary', 'benchmark-summary'],
+  ['Desktop', 'desktop'],
 ];
 
 function normalizeLf(value) {
@@ -69,13 +70,20 @@ function closedRefOptions(catalog) {
   for (const [namespace, file] of files) {
     const id = `https://spectrapack.invalid/schemas/v1/${file}.schema.json`;
     const schema = JSON.parse(catalog.get(id));
-    const output = await compile(schema, namespace, {
+    let output = await compile(schema, namespace, {
       bannerComment: '',
       unreachableDefinitions: true,
       unknownAny: true,
       cwd: schemaRoot,
       $refOptions: refOptions,
     });
+    if (namespace === 'Desktop') {
+      // The compiler deduplicates these structurally identical definitions;
+      // retain the normative command names as schema-derived declarations.
+      output += await compile(schema.definitions.StopRequest, 'StopRequest', { bannerComment: '' });
+      const saveTarget = schema.definitions.SaveRequest.$ref.split('/').pop();
+      output += `export type SaveRequest = ${saveTarget};\n`;
+    }
     declarations.push(`export namespace ${namespace} {\n${output}\n}`);
   }
 

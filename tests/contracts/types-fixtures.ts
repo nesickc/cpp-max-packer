@@ -1,6 +1,7 @@
 import type {
   BenchmarkSummary,
   Common,
+  Desktop,
   Protocol,
   Results,
   Settings,
@@ -227,3 +228,10 @@ void omittedMetrics;
 void invalidResult;
 void omittedHost;
 void invalidBenchmark;
+
+const desktopSettings: Desktop.Settings = { desktop_version: 1, box_dimensions_mm: [10,20,30], clearance_mm: { pair: 1, wall: 1 }, orientation: { mode: 'fixed', quaternion_xyzw: rotation }, pitch_mm: 1, budget_seconds: 60, seed: '18446744073709551615' };
+const savePending: Desktop.SaveRequest = { settings: desktopSettings };
+const stopDesktop: Desktop.StopRequest = { operation_id: 'solve-opaque' };
+// @ts-expect-error desktop requires separate wall and pair clearances
+const invalidDesktop: Desktop.Settings = { ...desktopSettings, clearance_mm: { pair: 1 } };
+void savePending; void stopDesktop; void invalidDesktop;

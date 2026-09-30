@@ -18,6 +18,13 @@ For each slice, name its requirement and AT case, add a failing observable test,
 
 ## Practical cases and independent checks
 
+[T-008](../doc/T-008.md) defines the first native desktop journey: box settings,
+shared-mesh transforms, asynchronous native operations and Stop, portable
+complete-project Save/Open, and revalidated export. Its ticket separates actual
+red/green evidence from the remaining full AT-13–AT-15 gates. Rust integration
+tests use the real C++ engine; mocked UI calls and screenshots do not establish
+physical validity, project recovery or native desktop acceptance.
+
 [T-003](../doc/T-003.md) adds native STL/frame/solid/repair cases, source-preserving
 CLI publication tests, and bounded inspection of all ten supplied meshes. Analytic
 tests include independent exact-predicate oracles, exhaustive small AABB pair

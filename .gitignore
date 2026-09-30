@@ -11,6 +11,7 @@ __pycache__/
 
 # Development-only schema tooling.
 /node_modules/
+/.pnpm-store/
 
 # Desktop build products and staged native sidecar.
 /desktop/node_modules/

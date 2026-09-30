@@ -14,7 +14,7 @@ The spec's `T-001`–`T-008` are initial implementation tasks; `AT-01`–`AT-17`
 | [T-005 LOD and conservative fields](T-005.md) | `feature/AT-05-geometry-representations` | Merged through PR #6 at `02f62d0`; local and hosted qualification pass |
 | [T-006 physical AABB baseline](T-006.md) | `feature/AT-10-aabb-baseline` | Merged through PR #7 at `bb4a0ef`; local gates, configured review and hosted checks at `a1032bb` pass |
 | [T-007 CPU spectral placement and transform export](T-007.md) | `feature/AT-12-cpu-spectral-placement` | Merged through PR #8 at `1014b39`; local qualification is recorded in the ticket |
-| T-008 desktop workflow | `feature/AT-15-desktop-workflow` | In design from `main` at `21a7033`; prerequisite engine/protocol/result contracts merged |
+| [T-008 desktop workflow](T-008.md) | `feature/AT-15-desktop-workflow` | In implementation from `main` at `21a7033`; ADR/schema agreed and native red evidence recorded |
 
 Later M4–M6 tasks will be bounded and ticketed from the spec when their prerequisites are available. No future task is marked implemented by this queue.
 

@@ -52,6 +52,12 @@ jobs:
           $testResult = $LASTEXITCODE
           Get-Content .local/ci/python.log -Tail 30
           exit $testResult
+      - name: Desktop frontend tests and production assets
+        run: |
+          & .local/package-manager/node_modules/.bin/pnpm.cmd desktop:test *> .local/ci/desktop-tests.log
+          if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/desktop-tests.log; exit $LASTEXITCODE }
+          & .local/package-manager/node_modules/.bin/pnpm.cmd desktop:build *> .local/ci/desktop-build.log
+          if ($LASTEXITCODE -ne 0) { Get-Content .local/ci/desktop-build.log; exit $LASTEXITCODE }
       - name: Prepare pinned vcpkg
         run: |
           New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null

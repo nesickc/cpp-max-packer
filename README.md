@@ -1,8 +1,14 @@
 # SpectraPack
 
-A planned Windows application for packing rigid copies of one STL solid into a fixed box or STL interior volume. The specification selects a C++20 engine with CPU/Vulkan compute and a Tauri/React desktop UI.
+SpectraPack packs rigid copies of one STL solid into a fixed box or STL interior
+volume. Its C++20 CPU engine preserves physical dimensions and independently
+validates placements. The specification selects Tauri/React for the Windows
+desktop and Vulkan for later GPU support.
 
-This repository contains the specification, agent setup, initial architecture, reference-fixture inventory, C++20/Python tests and a pinned CPU dependency diagnostic. There is no packing application or measured packing performance yet.
+The repository includes source-preserving STL import, accepted-solid validation,
+CPU spectral placement, checked JSON/STL export and spec-linked test evidence.
+T-008 adds the first desktop journey; its implementation and qualification status
+are tracked separately from the remaining full-product acceptance gates.
 
 - [Product specification](doc/spectrapack-spec.md)
 - [Current status and next milestone](doc/PROJECT_STATUS.md)
@@ -11,6 +17,7 @@ This repository contains the specification, agent setup, initial architecture, r
 - [Initial architecture](doc/ARCHITECTURE.md) and [architecture decision](spec/decisions/0001-initial-architecture.md)
 - [Executable fixture checks](tests/README.md) and [spec-linked TDD plan](tests/TEST_PLAN.md)
 - [Native build instructions](docs/BUILDING.md), [CPU dependency inventory](docs/DEPENDENCIES.md), [reference timings](benchmarks/README.md), and [feature delivery queue](doc/DELIVERY.md)
+- [Desktop workflow](docs/DESKTOP.md) and [T-008 scope/evidence](doc/T-008.md)
 - [Original setup guide](doc/codex-local-agent-setup-guide.md)
 
 From PowerShell, retrieve only the relevant spec text:
