@@ -1,5 +1,6 @@
 add_library(pack_compute STATIC src/correlation.cpp)
 target_include_directories(pack_compute PUBLIC include)
+target_link_libraries(pack_compute PUBLIC spectrapack_runtime_values)
 target_compile_features(pack_compute PUBLIC cxx_std_20)
 target_compile_options(pack_compute PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/fp:strict>)
 target_link_libraries(pack_compute PRIVATE spectrapack_dependency_cpu_compute)

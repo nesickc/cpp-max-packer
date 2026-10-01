@@ -4,6 +4,7 @@ add_library(pack_geometry STATIC
   src/display_lod.cpp src/conservative_fields.cpp src/physical_bounds.cpp
   src/rigid_transform.cpp src/export_validation.cpp)
 target_include_directories(pack_geometry PUBLIC include)
+target_link_libraries(pack_geometry PUBLIC spectrapack_runtime_values)
 target_compile_features(pack_geometry PUBLIC cxx_std_20)
 target_compile_options(pack_geometry PRIVATE
   $<$<CXX_COMPILER_ID:MSVC>:/fp:strict>)

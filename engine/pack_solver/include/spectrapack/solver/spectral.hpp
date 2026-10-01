@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <string_view>
 
 #include "spectrapack/compute/correlation.hpp"
 #include "spectrapack/geometry/conservative_fields.hpp"
@@ -22,7 +23,11 @@ struct SpectralLimits {
     std::uint64_t max_direct_terms { 200'000'000 };
     std::uint64_t max_proximity_terms { 200'000'000 };
     std::uint64_t max_refinement_evaluations { 128 };
+    std::uint32_t cpu_thread_count { 1 };
 };
+
+[[nodiscard]] std::uint32_t cpu_supported_thread_count() noexcept;
+[[nodiscard]] std::string_view cpu_scheduling_policy() noexcept;
 
 struct SpectralStats {
     std::uint64_t correlations {};

@@ -1522,6 +1522,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
 
 }  // namespace
 
+std::uint32_t cpu_supported_thread_count() noexcept { return 1; }
+std::string_view cpu_scheduling_policy() noexcept { return "serial-v1"; }
+
 SpectralOutcome run_cpu_spectral(std::shared_ptr<const geometry::ValidationContext> context,
                                  geometry::GridLattice lattice, const SpectralLimits& limits, const RunControl& control,
                                  SnapshotSink sink, std::shared_ptr<const geometry::ValidatedSolution> initial)

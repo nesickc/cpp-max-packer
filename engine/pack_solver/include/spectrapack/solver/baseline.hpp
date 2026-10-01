@@ -12,6 +12,7 @@
 #include "spectrapack/geometry/physical_bounds.hpp"
 #include "spectrapack/geometry/validation.hpp"
 #include "spectrapack/solver/incumbent.hpp"
+#include "spectrapack/runtime/operation_control.hpp"
 
 namespace spectrapack::solver {
 
@@ -31,10 +32,7 @@ struct BaselineLimits {
   geometry::ValidationLimits per_validation{};
 };
 
-struct RunControl {
-  std::stop_token stop;
-  std::optional<std::chrono::steady_clock::time_point> deadline;
-};
+using RunControl = runtime::OperationControl;
 
 struct RunStats {
   std::uint64_t candidate_evaluations{}, search_passes{};
