@@ -191,6 +191,22 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
   work cap. Suggested-pitch evidence only establishes preflight admission so far.
   Per-Start field reuse, successful practical serial baselines and actual
   suggested-pitch execution remain open; threading targets are not frozen.
+- Bounded blocked-field clone checkpoint `338f87e` passes the full conservative
+  fields suite in Debug and Release: 27 cases / 4,683 assertions each, with both
+  build and test exits 0. The clone shares the immutable mask while independently
+  owning admitted counts, compressed footprints and IDs; overlap/removal, memory
+  denial, Stop and deadline preserve its source. Actual Debug allocation failures
+  exposed allocating `noexcept` PMR constructors/moves in the selected MSVC STL;
+  throwing count constructors and same-resource swaps now return owned failures.
+  A separate observed red measured 10,927 reported bytes against 11,015 required;
+  the clone peak now includes its initial PMR storage. Full final logs, the four
+  source hashes, two preserved executable hashes and primary hash verification
+  are indexed in `.local/t010/native/stage4-clone/handoff.md`. Independent review
+  read all final build/suite logs; no compiler warnings or errors were found.
+  Earlier failing executable copies were overwritten, so their retained logs and
+  cdb stacks are not presented as preserved red binaries. Partial-construction
+  failure reporting still needs the approved admission-stat hook. The solver
+  workspace remains unqualified; this checkpoint does not close a combined gate.
 - Cold full-Pryanik-2 characterization is retained in
   `.local/t010/integration/cold-red.json` and `cold-green.json`. The old legacy
   search-only 0.01 s request takes 10.162734 s total; its Stop test takes 8.752341 s
