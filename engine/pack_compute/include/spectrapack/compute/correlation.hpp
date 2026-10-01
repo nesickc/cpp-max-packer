@@ -58,6 +58,13 @@ struct CorrelationResult {
 
 using CorrelationOutcome = std::variant<CorrelationResult, CorrelationFailure>;
 
+struct CorrelationEstimate {
+    Shape3 padded_shape;
+    std::uint64_t padded_cells {}, working_bytes {};
+};
+using CorrelationEstimateOutcome = std::variant<CorrelationEstimate, CorrelationFailure>;
+[[nodiscard]] CorrelationEstimateOutcome estimate_correlation_cpu(const CorrelationSpec&);
+
 [[nodiscard]] CorrelationOutcome correlate_binary_cpu(const CorrelationSpec&, std::span<const std::uint8_t> environment,
                                                       std::span<const std::uint8_t> kernel,
                                                       const CorrelationLimits& = {});

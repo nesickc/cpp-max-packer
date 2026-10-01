@@ -65,6 +65,9 @@ class Budget {
 };
 
 class PreparedSolid;
+[[nodiscard]] std::optional<std::uint64_t> estimate_field_kernel_bytes(const AcceptedSolid&) noexcept;
+[[nodiscard]] std::optional<std::uint64_t> estimate_unclipped_raster_work(const AcceptedSolid&, std::uint64_t copies,
+                                                                          std::uint64_t passes) noexcept;
 class PlacedSolid;
 
 [[nodiscard]] std::optional<std::uint64_t> prepared_owned_bytes(const PreparedSolid&) noexcept;

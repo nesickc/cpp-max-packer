@@ -31,6 +31,14 @@ struct GridWindow {
 };
 enum class FieldPurpose { object_kernel, placed_pair_blocker, container_blocker };
 
+// Conservative native prepare/place scratch and field-owner metadata bound.
+// Excludes accepted input, grid arrays, per-copy footprints/IDs and caller reserve.
+[[nodiscard]] std::optional<std::uint64_t> estimate_field_geometry_bytes(const AcceptedSolid&) noexcept;
+// Necessary raster work only when every retained triangle's candidate-cell range
+// is unclipped. The caller must establish that condition; this is not total work.
+[[nodiscard]] std::optional<std::uint64_t> estimate_unclipped_raster_work(const AcceptedSolid&, std::uint64_t copies,
+                                                                          std::uint64_t passes) noexcept;
+
 class VoxelGeometry {
 public:
     VoxelGeometry(const VoxelGeometry&) = delete;
@@ -46,6 +54,7 @@ private:
     std::shared_ptr<const Storage> storage_;
     explicit VoxelGeometry(std::shared_ptr<const Storage>) noexcept;
     friend struct detail::FieldBuilder;
+    friend std::optional<std::uint64_t> estimate_field_geometry_bytes(const AcceptedSolid&) noexcept;
     friend RepresentationOutcome<VoxelGeometry> prepare_voxel_geometry(std::shared_ptr<const AcceptedSolid>,
                                                                        const RepresentationLimits&);
     friend RepresentationOutcome<VoxelGeometry> prepare_voxel_geometry(std::shared_ptr<const AcceptedSolid>,
@@ -70,6 +79,7 @@ private:
     std::shared_ptr<const Storage> storage_;
     explicit CellField(std::shared_ptr<const Storage>) noexcept;
     friend struct detail::FieldBuilder;
+    friend std::optional<std::uint64_t> estimate_field_geometry_bytes(const AcceptedSolid&) noexcept;
     friend RepresentationOutcome<CellField> detail_make_solid_field(std::shared_ptr<const VoxelGeometry>, GridWindow,
                                                                     Vec3, Quaternion, FieldPurpose,
                                                                     const RepresentationLimits&);
@@ -122,6 +132,7 @@ private:
     struct Storage;
     std::unique_ptr<Storage> storage_;
     explicit BlockedField(std::unique_ptr<Storage>) noexcept;
+    friend std::optional<std::uint64_t> estimate_field_geometry_bytes(const AcceptedSolid&) noexcept;
     friend std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_field(
         std::shared_ptr<const CellField>, const RepresentationLimits&);
     friend std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_field(

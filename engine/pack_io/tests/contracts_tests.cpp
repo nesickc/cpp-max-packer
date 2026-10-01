@@ -483,6 +483,27 @@ Json shared_fixture_value(std::string_view name) {
   throw std::runtime_error("Shared contract fixture was not found.");
 }
 
+TEST_CASE("T009 retained failure details accept uint64 strings and reject malformed evidence", "[contracts][T-009]") {
+  ContractValidator validator;
+  const auto result = shared_fixture_value("results-one-positive");
+  REQUIRE(std::holds_alternative<spectrapack::io::ValidatedDocument>(
+      validator.validate(ContractKind::results, result)));
+  for (const auto* owner : {"search", "segment"}) {
+    for (const auto* mutation : {"numeric", "malformed", "overflow", "cause", "pitch"}) {
+      INFO(owner << ": " << mutation);
+      auto changed = result;
+      auto& failure = (std::string_view(owner) == "search" ? changed["search"] : changed["search"]["run_segments"][0])
+                          ["diagnostics"]["failure"];
+      if (std::string_view(mutation) == "numeric") failure["resource"]["required"] = 9007199254740992ULL;
+      if (std::string_view(mutation) == "malformed") failure["resource"]["required"] = "1e9";
+      if (std::string_view(mutation) == "overflow") failure["resource"]["limit"] = "18446744073709551616";
+      if (std::string_view(mutation) == "cause") failure["cause_code"] = "";
+      if (std::string_view(mutation) == "pitch") failure["suggested_pitch_mm"] = 0;
+      REQUIRE(std::holds_alternative<ContractFailure>(validator.validate(ContractKind::results, changed)));
+    }
+  }
+}
+
 Json mixed_benchmark_summary() {
   Json report = shared_fixture_value("benchmark-completed-positive");
   Json first = report["runs"][0];

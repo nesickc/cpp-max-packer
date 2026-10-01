@@ -227,6 +227,13 @@ bool physical_resource_code(std::string_view code) noexcept {
          code == "PHYSICAL_ALLOCATION_FAILURE";
 }
 
+bool inexact_sum(double first, double second) noexcept
+{
+    const double sum = first + second;
+    const double recovered = sum - first;
+    return (first - (sum - recovered)) + (second - recovered) != 0;
+}
+
 std::string_view physical_diagnostic(std::string_view code) noexcept {
   if (code == "PHYSICAL_QUERY_LIMIT_INVALID") return code;
   if (code == "PHYSICAL_SOLID_REQUIRED") return code;
@@ -252,12 +259,12 @@ std::string_view physical_diagnostic(std::string_view code) noexcept {
   return "PHYSICAL_QUERY_ERROR";
 }
 
-void apply_physical_failure(BaselineOutcome& out,
-                            std::string_view code) noexcept {
-  out.termination_reason = physical_resource_code(code)
-                               ? TerminationReason::resource_limit
-                               : TerminationReason::error;
-  out.diagnostic_code = physical_diagnostic(code);
+void apply_physical_failure(BaselineOutcome& out, std::string_view code)
+{
+    out.termination_reason =
+        physical_resource_code(code) ? TerminationReason::resource_limit : TerminationReason::error;
+    out.diagnostic_code = physical_diagnostic(code);
+    out.failure_details = RunFailureDetails { out.termination_reason, "physical_query", std::string(code), {}, {} };
 }
 
 std::optional<geometry::Bounds> container_bounds(
@@ -735,6 +742,46 @@ BaselineOutcome run_aabb_baseline_impl(
           out.diagnostic_code = "PHYSICAL_AXIS_LIMIT";
           return out;
         }
+        // A search-only margin prevents the observed non-dyadic gap rounding
+        // below the immutable requested clearance. Preserve the exact count.
+        const auto& original = grid[axis];
+        const auto pair = context->constraints().pair_clearance_mm;
+        const auto wall = context->constraints().wall_clearance_mm;
+        const double span = shape.bounds_mm.max[axis] - shape.bounds_mm.min[axis];
+        const double anchor = bounds->min[axis] + wall;
+        const bool rounding = inexact_sum(shape.bounds_mm.max[axis], -shape.bounds_mm.min[axis]) ||
+                              inexact_sum(span, pair) || inexact_sum(bounds->min[axis], wall) ||
+                              inexact_sum(anchor, -shape.bounds_mm.min[axis]);
+        if (original.count && (pair > 0 || wall > 0) && rounding) {
+            const double count = static_cast<double>(original.count);
+            const double slack = (bounds->max[axis] - bounds->min[axis]) - 2 * wall - count * span - (count - 1) * pair;
+            const double margin = .5 * slack / (count + 1);
+            if (std::isfinite(margin) && margin > 0) {
+                auto padded = geometry::plan_regular_axis(
+                    shape.bounds_mm.min[axis], shape.bounds_mm.max[axis], bounds->min[axis], bounds->max[axis],
+                    pair + margin, wall + margin, limits.max_axis_cells, query_limits(limits, out.stats, *live));
+                if (const auto* value = std::get_if<geometry::RegularAxisGrid>(&padded)) {
+                    if (!record_geometry(out.stats, value->stats, *live, limits)) {
+                        retain_best();
+                        out.termination_reason = TerminationReason::resource_limit;
+                        out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
+                        return out;
+                    }
+                    if (value->count == original.count && !value->count_capped) {
+                        grid[axis] = *value;
+                    }
+                }
+                else {
+                    const auto& failure = std::get<geometry::PhysicalQueryFailure>(padded);
+                    if (!record_geometry(out.stats, failure.stats, *live, limits)) {
+                        retain_best();
+                        out.termination_reason = TerminationReason::resource_limit;
+                        out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
+                        return out;
+                    }
+                }
+            }
+        }
       }
       if (skip_orientation) continue;
 
@@ -848,6 +895,9 @@ BaselineOutcome run_aabb_baseline_impl(
               if (resource_code(checked.report.code)) {
                 out.termination_reason = TerminationReason::resource_limit;
                 out.diagnostic_code = "PHYSICAL_VALIDATION_RESOURCE";
+                out.failure_details = RunFailureDetails {
+                    TerminationReason::resource_limit, "baseline_validation", checked.report.code, {}, {}
+                };
                 interrupted = true;
                 break;
               }

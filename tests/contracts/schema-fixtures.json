@@ -744,11 +744,37 @@
                 "backend": "cpu",
                 "thread_count": 1
               }
+            },
+            "diagnostics": {
+              "diagnostic_code": "ENVIRONMENT_PREFLIGHT_RESOURCE",
+              "failure": {
+                "phase": "spectral_preflight",
+                "cause_code": "GRID_CELL_LIMIT",
+                "resource": {
+                  "name": "grid_cells",
+                  "required": "18446744073709551615",
+                  "limit": "16777216"
+                },
+                "suggested_pitch_mm": 5
+              }
             }
           }
         ],
         "backend_transitions": [],
-        "elapsed_seconds": 0
+        "elapsed_seconds": 0,
+        "diagnostics": {
+          "diagnostic_code": "ENVIRONMENT_PREFLIGHT_RESOURCE",
+          "failure": {
+            "phase": "spectral_preflight",
+            "cause_code": "GRID_CELL_LIMIT",
+            "resource": {
+              "name": "grid_cells",
+              "required": "18446744073709551615",
+              "limit": "16777216"
+            },
+            "suggested_pitch_mm": 5
+          }
+        }
       },
       "count": 1,
       "placements": [

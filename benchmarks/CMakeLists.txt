@@ -48,3 +48,12 @@ target_link_libraries(spectrapack_baseline_support_tests PRIVATE
 target_compile_features(spectrapack_baseline_support_tests PRIVATE cxx_std_20)
 include(Catch)
 catch_discover_tests(spectrapack_baseline_support_tests)
+
+add_executable(spectrapack_t009_benchmark native/t009_benchmark.cpp)
+target_link_libraries(spectrapack_t009_benchmark PRIVATE pack_solver spectrapack_dependency_json)
+target_compile_features(spectrapack_t009_benchmark PRIVATE cxx_std_20)
+target_compile_options(spectrapack_t009_benchmark PRIVATE $<$<CXX_COMPILER_ID:MSVC>:/fp:strict>)
+if(WIN32)
+  target_link_libraries(spectrapack_t009_benchmark PRIVATE Psapi)
+endif()
+set_target_properties(spectrapack_t009_benchmark PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")

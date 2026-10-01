@@ -349,6 +349,14 @@ class SolveControls(unittest.TestCase):
         self.assertFalse(response["ok"])
         self.assertEqual(response["error"]["code"], "RESOURCE_LIMIT")
         self.assertEqual(response["error"]["details"]["result_path"], result_path.as_posix())
+        # T009-A1/A3: the native cause survives the transport and the portable result.
+        failure = response["error"]["details"]["failure"]
+        self.assertTrue(failure["phase"])
+        self.assertTrue(failure["cause_code"])
+        self.assertTrue(failure["resource"]["name"])
+        self.assertGreater(int(failure["resource"]["required"]), int(failure["resource"]["limit"]))
+        self.assertIsInstance(failure["resource"]["required"], str)
+        self.assertGreater(failure["suggested_pitch_mm"], 1e-9)
         diagnostics = response["error"]["details"]["diagnostics"]
         self.assertEqual(diagnostics["time_to_best_basis"], "snapshot")
         self.assertIn("baseline", diagnostics["phase_ceilings"])
@@ -359,6 +367,10 @@ class SolveControls(unittest.TestCase):
         self.assertTrue(diagnostics["diagnostic_code"])
         retained = json.loads(result_path.read_text(encoding="utf-8"))
         self.assertEqual((retained["label"], retained["count"]), ("best_found", 1))
+        evidence = retained["search"]["diagnostics"]
+        self.assertEqual(evidence["failure"], failure)
+        self.assertEqual(evidence["diagnostic_code"], diagnostics["diagnostic_code"])
+        self.assertEqual(retained["search"]["run_segments"][0]["diagnostics"], evidence)
         self.assertEqual(self.source.read_bytes(), self.original_source)
 
     def test_caller_reserve(self) -> None:

@@ -593,6 +593,28 @@ std::optional<std::uint64_t> prepared_owned_bytes(const PreparedSolid& solid) no
     return sizeof(PreparedSolid) + static_cast<std::uint64_t>(solid.shell_witnesses.capacity()) * sizeof(std::uint32_t);
 }
 
+std::optional<std::uint64_t> estimate_field_kernel_bytes(const AcceptedSolid& solid) noexcept
+{
+    const auto mesh = solid.mesh();
+    std::uint64_t bytes = sizeof(PreparedSolid) + 2 * sizeof(PlacedSolid) + 6 * 64;
+    const auto add_array = [&](std::size_t count, std::uint64_t width) {
+        if (count > (UINT64_MAX - bytes) / width) {
+            return false;
+        }
+        bytes += count * width;
+        return true;
+    };
+    // Shell witnesses plus union-find scratch; two simultaneously owned placed
+    // vertex/interval/exact-coordinate sets and shared-owner control blocks.
+    if (!add_array(mesh.triangles.size(), 3 * sizeof(std::uint32_t)) ||
+        !add_array(mesh.vertices.size(),
+                   2 * sizeof(std::uint32_t) +
+                       2 * (sizeof(Vec3) + sizeof(std::array<Interval, 3>) + sizeof(std::array<AxisCoordinate, 3>)))) {
+        return {};
+    }
+    return bytes;
+}
+
 std::optional<std::uint64_t> placed_owned_bytes(const PlacedSolid& solid) noexcept
 {
     constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
@@ -1861,6 +1883,28 @@ std::optional<PairResult> cardinal_bounds_clearance_certificate(
                     exact_failure_code(budget)};
 }
 
+namespace {
+constexpr std::uint64_t kRasterFaceWork = 32;
+constexpr std::uint64_t kRasterCellWork = 180;
+}  // namespace
+
+std::optional<std::uint64_t> estimate_unclipped_raster_work(const AcceptedSolid& solid, std::uint64_t copies,
+                                                            std::uint64_t passes) noexcept
+{
+    if (copies == 0 || passes == 0) {
+        return std::uint64_t {};
+    }
+    std::uint64_t work = solid.mesh().triangles.size();
+    // floor(high) >= floor(low), with one extra cell on both ends: at least 3^3.
+    for (const auto factor : { copies, passes, kRasterFaceWork + 27 * kRasterCellWork }) {
+        if (factor != 0 && work > UINT64_MAX / factor) {
+            return {};
+        }
+        work *= factor;
+    }
+    return work;
+}
+
 std::optional<KernelFailure> rasterize_boundary(
     const PlacedSolid& solid,const GridWindow& window,
     std::span<std::uint8_t> boundary,Budget& budget,
@@ -1883,7 +1927,7 @@ std::optional<KernelFailure> rasterize_boundary(
   }
   const auto mesh=solid.prepared->asset->mesh();
   for (const auto& face:mesh.triangles) {
-    if (!budget.consume_work(32))
+    if (!budget.consume_work(kRasterFaceWork))
       return KernelFailure{"FIELD_KERNEL_WORK_LIMIT","rasterize-boundary"};
     std::array<IntervalVec3,3> triangle{{solid.vertex_intervals[face[0]],
                                         solid.vertex_intervals[face[1]],
@@ -1921,7 +1965,7 @@ std::optional<KernelFailure> rasterize_boundary(
             return KernelFailure{"FIELD_CELL_VISIT_LIMIT","rasterize-boundary"};
           }
           ++cell_visits;
-          if (!budget.consume_work(180))
+          if (!budget.consume_work(kRasterCellWork))
             return KernelFailure{"FIELD_KERNEL_WORK_LIMIT","rasterize-boundary"};
           const CellIndex index{x,y,z};
           const auto cell=grid_cell_interval(window,index);

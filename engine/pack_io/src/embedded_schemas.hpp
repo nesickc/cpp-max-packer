@@ -956,6 +956,35 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://spectrapack.invalid/schemas/v1/results.schema.json",
   "definitions": {
+    "failure": {
+      "type": "object",
+      "required": ["phase", "cause_code"],
+      "properties": {
+        "phase": {"type": "string", "minLength": 1},
+        "cause_code": {"type": "string", "minLength": 1},
+        "resource": {
+          "type": "object",
+          "required": ["name", "required", "limit"],
+          "properties": {
+            "name": {"type": "string", "minLength": 1},
+            "required": {"$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"},
+            "limit": {"$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"}
+          },
+          "additionalProperties": false
+        },
+        "suggested_pitch_mm": {"type": "number", "exclusiveMinimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "diagnostics": {
+      "type": "object",
+      "required": ["diagnostic_code"],
+      "properties": {
+        "diagnostic_code": {"type": "string"},
+        "failure": {"$ref": "#/definitions/failure"}
+      },
+      "additionalProperties": false
+    },
     "c": {
       "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/counter"
     },
@@ -998,6 +1027,7 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "resolved_settings"
       ],
       "properties": {
+        "diagnostics": {"$ref": "#/definitions/diagnostics"},
         "segment_id": {
           "type": "string",
           "minLength": 1
@@ -1271,6 +1301,7 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "elapsed_seconds"
       ],
       "properties": {
+        "diagnostics": {"$ref": "#/definitions/diagnostics"},
         "resolved_settings": {
           "$ref": "https://spectrapack.invalid/schemas/v1/settings.schema.json#/definitions/resolved"
         },

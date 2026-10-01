@@ -430,6 +430,19 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         return outcome;
     }
 
+    std::optional<RunFailureDetails> admission_failure;
+    try {
+        const auto& admission_limits = limits;
+        if (auto failure = detail::spectral_admission(context, lattice, admission_limits, initial)) {
+            admission_failure = std::move(failure);
+        }
+    }
+    catch (const std::bad_alloc&) {
+        outcome.run.retained_solution = std::move(initial);
+        outcome.run.termination_reason = TerminationReason::resource_limit;
+        outcome.run.diagnostic_code = "SPECTRAL_ALLOCATION_FAILURE";
+        return outcome;
+    }
     // Baseline is deliberately silent: the central incumbent owns every visible revision.
     // Its phase cap remains independent, while the wrapper cap/reserve applies
     // to every phase that the wrapper retains.
@@ -446,7 +459,10 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                                                        std::move(initial));
     outcome.baseline_stats = outcome.run.stats;
     const auto retained = outcome.run.best ? outcome.run.best->solution : outcome.run.retained_solution;
-
+    if (outcome.run.termination_reason == TerminationReason::resource_limit ||
+        outcome.run.termination_reason == TerminationReason::error) {
+        return outcome;
+    }
     if (const auto after_baseline = boundary(control); after_baseline != Boundary::none) {
         outcome.run.best.reset();
         outcome.run.retained_solution = retained;
@@ -454,6 +470,58 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         return outcome;
     }
 
+    try {
+        if (!admission_failure) {
+            admission_failure = detail::spectral_admission(context, lattice, limits, retained);
+        }
+    }
+    catch (const std::bad_alloc&) {
+        outcome.run.termination_reason = TerminationReason::resource_limit;
+        outcome.run.diagnostic_code = "SPECTRAL_ALLOCATION_FAILURE";
+        return outcome;
+    }
+    if (admission_failure) {
+        bool retained_work_impossible = false;
+        // A native-valid box placement lies inside the environment. Positive
+        // pair clearance expands its raster window by at least two more cells,
+        // leaving every triangle's padded candidate range unclipped.
+        if (retained && std::holds_alternative<geometry::BoxDimensions>(context->container()) &&
+            context->constraints().pair_clearance_mm > 0) {
+            const auto floor = geometry::estimate_unclipped_raster_work(*context->object(), retained->copies().size(),
+                                                                        catalog.quaternions.size());
+            retained_work_impossible = !floor || *floor > limits.max_representation_kernel_work;
+        }
+        try {
+            auto suggestion = lattice;
+            for (int attempt = 0; attempt != 64 && !retained_work_impossible; ++attempt) {
+                suggestion.pitch_mm *= 2;
+                if (!std::isfinite(suggestion.pitch_mm)) {
+                    break;
+                }
+                if (!detail::spectral_admission(context, suggestion, limits, retained)) {
+                    admission_failure->suggested_pitch_mm = suggestion.pitch_mm;
+                    break;
+                }
+            }
+        }
+        catch (const std::bad_alloc&) {
+            admission_failure->suggested_pitch_mm.reset();
+        }
+        outcome.run.termination_reason = admission_failure->reason;
+        outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
+        outcome.run.failure_details = std::move(admission_failure);
+        try {
+            if (sink && outcome.run.best) {
+                sink(outcome.run.best);
+            }
+        }
+        catch (...) {
+            outcome.run.termination_reason = TerminationReason::error;
+            outcome.run.diagnostic_code = "PHYSICAL_OBSERVER_ERROR";
+            outcome.run.failure_details.reset();
+        }
+        return outcome;
+    }
     const auto original_baseline_best = outcome.run.best;
     std::shared_ptr<const geometry::ValidatedSolution> latest = retained;
     try {
@@ -1037,14 +1105,10 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                             return TrialStatus::failed;
                         }
                         if (!pipeline.complete) {
-                            outcome.run.termination_reason =
-                                pipeline.diagnostic.find("LIMIT") != std::string_view::npos ||
-                                        pipeline.diagnostic.find("RESOURCE") != std::string_view::npos ||
-                                        pipeline.diagnostic.find("RESIDENCY") != std::string_view::npos ||
-                                        pipeline.diagnostic.find("ALLOCATION") != std::string_view::npos ||
-                                        pipeline.diagnostic == "SPECTRAL_PIPELINE_ADD"
-                                    ? TerminationReason::resource_limit
-                                    : TerminationReason::error;
+                            outcome.run.termination_reason = pipeline.failure_details
+                                                                 ? pipeline.failure_details->reason
+                                                                 : TerminationReason::resource_limit;
+                            outcome.run.failure_details = std::move(pipeline.failure_details);
                             outcome.run.diagnostic_code = pipeline.diagnostic;
                             return TrialStatus::failed;
                         }
@@ -1247,14 +1311,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                         return TrialStatus::failed;
                     }
                     if (!pipeline.complete) {
-                        outcome.run.termination_reason =
-                            pipeline.diagnostic.find("LIMIT") != std::string_view::npos ||
-                                    pipeline.diagnostic.find("RESOURCE") != std::string_view::npos ||
-                                    pipeline.diagnostic.find("RESIDENCY") != std::string_view::npos ||
-                                    pipeline.diagnostic.find("ALLOCATION") != std::string_view::npos ||
-                                    pipeline.diagnostic == "SPECTRAL_PIPELINE_ADD"
-                                ? TerminationReason::resource_limit
-                                : TerminationReason::error;
+                        outcome.run.termination_reason = pipeline.failure_details ? pipeline.failure_details->reason
+                                                                                  : TerminationReason::resource_limit;
+                        outcome.run.failure_details = std::move(pipeline.failure_details);
                         outcome.run.diagnostic_code = pipeline.diagnostic;
                         return TrialStatus::failed;
                     }

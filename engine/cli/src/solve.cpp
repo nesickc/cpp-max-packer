@@ -489,6 +489,7 @@ struct ExportResidualBytes {
 
 std::optional<ExportResidualBytes> export_residual_bytes(const std::vector<std::string>& arguments,
                                                          const Json& diagnostics,
+                                                         const Json& retained_diagnostics,
                                                          const std::optional<std::filesystem::path>& settings_path,
                                                          const std::optional<std::filesystem::path>& object_report,
                                                          const std::optional<std::filesystem::path>& container_report,
@@ -499,7 +500,8 @@ std::optional<ExportResidualBytes> export_residual_bytes(const std::vector<std::
     ExportResidualBytes bytes;
     if (!add_bytes(bytes.non_context, sizeof(arguments)) ||
         !add_repeated_bytes(bytes.non_context, arguments.capacity(), sizeof(std::string)) ||
-        !json_payload_bytes(diagnostics, bytes.non_context)) {
+        !json_payload_bytes(diagnostics, bytes.non_context) ||
+        !json_payload_bytes(retained_diagnostics, bytes.non_context)) {
         return {};
     }
     for (const auto& argument : arguments) {
@@ -562,6 +564,20 @@ Json command_diagnostics(const solver::SpectralOutcome& outcome, const solver::S
         { "tracked_working_bytes_peak", outcome.run.stats.tracked_working_bytes_peak },
         { "diagnostic_code",            std::string(outcome.run.diagnostic_code)     }
     };
+}
+
+Json failure_details(const solver::RunFailureDetails& failure)
+{
+    Json value { { "phase", failure.phase }, { "cause_code", failure.cause_code } };
+    if (failure.resource) {
+        value["resource"] = { { "name", failure.resource->resource },
+                              { "required", std::to_string(failure.resource->required) },
+                              { "limit", std::to_string(failure.resource->limit) } };
+    }
+    if (failure.suggested_pitch_mm) {
+        value["suggested_pitch_mm"] = *failure.suggested_pitch_mm;
+    }
+    return value;
 }
 }  // namespace
 
@@ -785,11 +801,22 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     }, std::move(initial));
     const auto stop_monitor_error = stop_watcher.finish();
     const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+    Json retained_diagnostics { { "diagnostic_code", std::string(outcome.run.diagnostic_code) } };
+    if (outcome.run.failure_details) {
+        retained_diagnostics["failure"] = failure_details(*outcome.run.failure_details);
+    }
+    if (stop_monitor_error) {
+        retained_diagnostics["diagnostic_code"] = "STOP_MONITOR_FAILED";
+        retained_diagnostics["failure"] = { { "phase", "stop_monitor" }, { "cause_code", "STOP_MONITOR_FAILED" } };
+    }
     if (!outcome.run.retained_solution) {
-        return fail("SOLVE_FAILED", "Search produced no validated solution.", 3,
-                    {
-                        { "diagnostics", command_diagnostics(outcome, limits, caller_reserve, "retained_return") }
-        });
+        Json details { { "diagnostics", command_diagnostics(outcome, limits, caller_reserve, "retained_return") } };
+        if (retained_diagnostics.contains("failure")) {
+            details["failure"] = retained_diagnostics["failure"];
+        }
+        const bool resource = outcome.run.termination_reason == solver::TerminationReason::resource_limit;
+        return fail(resource ? "RESOURCE_LIMIT" : "SOLVE_FAILED", "Search produced no validated solution.",
+                    resource ? 3 : 4, std::move(details));
     }
     const auto host = peak_rss();
     if (!host) {
@@ -842,6 +869,8 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
             { "peak_device_bytes", 0 },
             { "termination_reason", reason(termination_reason) } }                                                  }
     };
+    metadata["search"]["diagnostics"] = retained_diagnostics;
+    metadata["search"]["run_segments"][0]["diagnostics"] = retained_diagnostics;
     std::string().swap(engine_version);
     std::string().swap(engine_commit);
     uint64_t build_metadata_bytes {};
@@ -863,6 +892,7 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     uint64_t build_live_bytes {};
     const auto build_limit = result_build_max_working_bytes(limits.max_working_bytes);
     if (!build_command_reserve || !build_native_reserve || !json_payload_bytes(diagnostics, build_diagnostics_bytes) ||
+        !json_payload_bytes(retained_diagnostics, build_diagnostics_bytes) ||
         !add_bytes(build_live_bytes, *input_reserve) || !add_bytes(build_live_bytes, *build_command_reserve) ||
         !add_bytes(build_live_bytes, build_diagnostics_bytes) || !add_bytes(build_live_bytes, build_metadata_bytes) ||
         !add_bytes(build_live_bytes, *build_native_reserve) || build_live_bytes > build_limit) {
@@ -882,8 +912,9 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     }
     settings = Json();
     result_request.metadata = Json();
-    const auto export_reserve = export_residual_bytes(arguments, diagnostics, settings_path, object_report,
-                                                      container_report, result_path, stl_path, *retained_solution);
+    const auto export_reserve = export_residual_bytes(arguments, diagnostics, retained_diagnostics, settings_path,
+                                                     object_report, container_report, result_path, stl_path,
+                                                     *retained_solution);
     const auto export_limit = result_export_max_working_bytes(limits.max_working_bytes);
     uint64_t export_live_bytes {};
     const bool export_representable = export_reserve && add_bytes(export_live_bytes, export_reserve->non_context) &&
@@ -912,20 +943,21 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
             "STOP_MONITOR_FAILED", "Stop marker monitoring failed after publishing the retained valid solution.", 3,
             {
                 { "result_path",  portable_path(success.result_path) },
+                { "failure",      retained_diagnostics["failure"]  },
                 { "system_error", stop_monitor_error                 }
         });
     }
     if (termination_reason == solver::TerminationReason::resource_limit ||
         termination_reason == solver::TerminationReason::error) {
+        Json details { { "result_path", portable_path(success.result_path) }, { "diagnostics", diagnostics } };
+        if (retained_diagnostics.contains("failure")) {
+            details["failure"] = retained_diagnostics["failure"];
+        }
         return fail(termination_reason == solver::TerminationReason::resource_limit ? "RESOURCE_LIMIT" : "SOLVE_FAILED",
                     termination_reason == solver::TerminationReason::resource_limit
                         ? "Search stopped at a resource limit after publishing the retained solution."
                         : "Search failed after publishing the retained solution.",
-                    3,
-                    {
-                        { "result_path", portable_path(success.result_path) },
-                        { "diagnostics", diagnostics                        }
-        });
+                    termination_reason == solver::TerminationReason::resource_limit ? 3 : 4, std::move(details));
     }
     Json reply {
         { "ok",                 true                               },
