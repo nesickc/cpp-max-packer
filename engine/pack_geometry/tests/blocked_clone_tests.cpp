@@ -106,6 +106,7 @@ TEST_CASE("T010 blocked clone preserves overlapping footprints and source owners
         }
     }
     CHECK(attempt.working_bytes_peak >= required_peak);
+    CHECK(attempt.admitted_bytes_upper_bound >= required_peak);
     for (std::int64_t z = 0; z != 7; ++z) {
         for (std::int64_t y = 0; y != 7; ++y) {
             for (std::int64_t x = 0; x != 7; ++x) {
@@ -127,8 +128,10 @@ TEST_CASE("T010 blocked clone preserves overlapping footprints and source owners
     geo::RepresentationAttemptStats limited;
     const auto failed = source->clone(cap, limited);
     CHECK(std::holds_alternative<geo::RepresentationFailure>(failed));
+    CHECK(limited.admitted_bytes_upper_bound <= cap.max_working_bytes);
     CHECK(source->placed_count({ 3, 3, 3 }) == 2);
     bool first_allocation_denied = false;
+    std::uint64_t fixed_only_peak {};
     // Find the exact portable fixed-owner boundary from the attempt, rather
     // than guessing the opaque Storage size or Debug proxy allocation width.
     for (auto bytes = attempt.input_resident_bytes; bytes < attempt.working_bytes_peak; ++bytes) {
@@ -139,9 +142,26 @@ TEST_CASE("T010 blocked clone preserves overlapping footprints and source owners
             failure && failure->code == "FIELD_ALLOCATION_FAILURE" && early.kernel_work == 0 &&
             early.working_bytes_peak == bytes && bytes > early.input_resident_bytes) {
             first_allocation_denied = true;
+            fixed_only_peak = bytes;
+            CHECK(early.admitted_bytes_upper_bound == bytes);
             break;
         }
     }
     CHECK(first_allocation_denied);
     CHECK(source->placed_count({ 3, 3, 3 }) == 2);
+#if defined(_MSC_VER) && _ITERATOR_DEBUG_LEVEL != 0
+    // Counts' Debug iterator proxy is admitted, then list construction is
+    // denied its next allocation. Both are selected-library portable payloads.
+    REQUIRE(fixed_only_peak > attempt.input_resident_bytes);
+    cap.max_working_bytes = fixed_only_peak + sizeof(std::_Container_proxy);
+    geo::RepresentationAttemptStats partial;
+    const auto constructor_failed = source->clone(cap, partial);
+    REQUIRE(std::holds_alternative<geo::RepresentationFailure>(constructor_failed));
+    CHECK(std::get<geo::RepresentationFailure>(constructor_failed).code == "FIELD_ALLOCATION_FAILURE");
+    CHECK(partial.kernel_work == 0);
+    CHECK(partial.working_bytes_peak >= fixed_only_peak + sizeof(std::_Container_proxy));
+    CHECK(partial.admitted_bytes_upper_bound >= fixed_only_peak + sizeof(std::_Container_proxy));
+    CHECK(partial.admitted_bytes_upper_bound == cap.max_working_bytes);
+    CHECK(source->placed_count({ 3, 3, 3 }) == 2);
+#endif
 }

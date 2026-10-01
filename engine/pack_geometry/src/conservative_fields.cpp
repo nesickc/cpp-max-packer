@@ -676,6 +676,7 @@ public:
             budget_.bytes_peak() >= limits_.reserved_bytes ? budget_.bytes_peak() - limits_.reserved_bytes : 0;
         output_.working_bytes_peak = std::max({ output_.input_resident_bytes, operation_peak, observed_peak_ });
         output_.additional_bytes_peak = output_.working_bytes_peak - output_.input_resident_bytes;
+        output_.admitted_bytes_upper_bound = std::max(operation_peak, admitted_peak_);
     }
     bool set_input(const RepresentationResidency& residency) noexcept
     {
@@ -689,6 +690,7 @@ public:
     }
     void set_empty_input() noexcept { output_.input_accounting_complete = true; }
     void observe_working_bytes(std::uint64_t bytes) noexcept { observed_peak_ = std::max(observed_peak_, bytes); }
+    void observe_admitted_bytes(std::uint64_t bytes) noexcept { admitted_peak_ = std::max(admitted_peak_, bytes); }
 
 private:
     RepresentationAttemptStats& output_;
@@ -696,6 +698,7 @@ private:
     kernel::Budget& budget_;
     std::uint64_t& cell_visits_;
     std::uint64_t observed_peak_ {};
+    std::uint64_t admitted_peak_ {};
 };
 const RepresentationStats& VoxelGeometry::stats() const noexcept { return storage_->stats; }
 std::optional<RepresentationResidency> VoxelGeometry::representation_residency() const noexcept
@@ -1041,15 +1044,25 @@ RepresentationOutcome<CellField> voxelize_container(Container container, GridWin
 
 class CountingResource final : public std::pmr::memory_resource {
 public:
-    explicit CountingResource(std::uint64_t initial_ceiling) noexcept { begin_operation(initial_ceiling); }
+    CountingResource(std::uint64_t initial_ceiling, AttemptScope& attempt, std::uint64_t input_bytes) noexcept
+    {
+        begin_operation(initial_ceiling, attempt, input_bytes);
+    }
     [[nodiscard]] std::uint64_t current() const noexcept { return current_; }
-    void begin_operation(std::uint64_t owned_ceiling) noexcept
+    void begin_operation(std::uint64_t owned_ceiling, AttemptScope& attempt, std::uint64_t input_bytes) noexcept
     {
         owned_ceiling_ = owned_ceiling;
         operation_peak_ = current_;
         operation_active_ = true;
+        attempt_ = &attempt;
+        input_bytes_ = input_bytes;
+        initial_ = current_;
     }
-    void end_operation() noexcept { operation_active_ = false; }
+    void end_operation() noexcept
+    {
+        operation_active_ = false;
+        attempt_ = nullptr;
+    }
     [[nodiscard]] std::uint64_t operation_peak() const noexcept { return operation_peak_; }
 
 private:
@@ -1058,9 +1071,19 @@ private:
         if (!operation_active_ || current_ > owned_ceiling_ || bytes > owned_ceiling_ - current_) {
             throw std::bad_alloc {};
         }
+        const auto prospective = current_ + bytes;
+        auto total = input_bytes_;
+        if (!checked_add(total, prospective > initial_ ? prospective - initial_ : 0)) {
+            throw std::bad_alloc {};
+        }
+        // The hook is already active while Storage's containers construct.
+        // Denied requests never raise this bound; an upstream allocation may
+        // still fail after this successful admission.
+        attempt_->observe_admitted_bytes(total);
         void* result = std::pmr::new_delete_resource()->allocate(bytes, alignment);
-        current_ += bytes;
+        current_ = prospective;
         operation_peak_ = std::max(operation_peak_, current_);
+        attempt_->observe_working_bytes(total);
         return result;
     }
     void do_deallocate(void* pointer, std::size_t bytes, std::size_t alignment) override
@@ -1072,6 +1095,9 @@ private:
     std::uint64_t owned_ceiling_ {};
     std::uint64_t current_ {};
     std::uint64_t operation_peak_ {};
+    AttemptScope* attempt_ {};
+    std::uint64_t input_bytes_ {};
+    std::uint64_t initial_ {};
     bool operation_active_ {};
 };
 
@@ -1093,10 +1119,11 @@ struct BlockedField::Storage {
     std::pmr::vector<std::uint32_t> counts;
     Footprints footprints;
 
-    Storage(std::shared_ptr<const CellField> value, RepresentationLimits admission, std::uint64_t owned_ceiling) :
+    Storage(std::shared_ptr<const CellField> value, RepresentationLimits admission, std::uint64_t owned_ceiling,
+            AttemptScope& attempt, std::uint64_t input_bytes) :
         mask(std::move(value)),
         limits(admission),
-        resource(owned_ceiling),
+        resource(owned_ceiling, attempt, input_bytes),
         counts(std::size_t {}, &resource),
         footprints(&resource)
     {
@@ -1162,7 +1189,7 @@ public:
         input_bytes_(input_bytes),
         initial_(resource.current())
     {
-        resource_.begin_operation(ceiling);
+        resource_.begin_operation(ceiling, attempt, input_bytes);
     }
     ~ResourceOperation()
     {
@@ -1294,7 +1321,8 @@ std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> BlockedField:
     try {
         // PMR checks every requested count/index/string/list allocation before
         // operator new, including overlap with the complete committed owner.
-        auto staged = std::make_unique<Storage>(storage_->mask, limits, limits.max_working_bytes - fixed);
+        auto staged = std::make_unique<Storage>(storage_->mask, limits, limits.max_working_bytes - fixed, attempt_scope,
+                                                fixed - limits.reserved_bytes);
         ResourceOperation operation(
             staged->resource, limits.max_working_bytes - fixed, attempt_scope,
             attempt.input_resident_bytes + sizeof(Storage) + sizeof(BlockedField) + staged->resource.current());
@@ -1614,10 +1642,11 @@ std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_
         return fail("FIELD_MEMORY_LIMIT", "container mask and count storage exceed byte limit");
     }
     try {
-        auto storage =
-            std::make_unique<BlockedField::Storage>(std::move(mask), limits, limits.max_working_bytes - fixed);
-        ResourceOperation operation(storage->resource, limits.max_working_bytes - fixed, attempt_scope,
-                                    attempt.input_resident_bytes + sizeof(BlockedField::Storage));
+        auto storage = std::make_unique<BlockedField::Storage>(
+            std::move(mask), limits, limits.max_working_bytes - fixed, attempt_scope, fixed - limits.reserved_bytes);
+        ResourceOperation operation(
+            storage->resource, limits.max_working_bytes - fixed, attempt_scope,
+            attempt.input_resident_bytes + sizeof(BlockedField::Storage) + storage->resource.current());
         storage->counts.resize(count);
         if (!budget.reserve_bytes(storage->resource.current())) {
             return fail("FIELD_MEMORY_LIMIT", "blocked-field count allocation exceeds byte limit");

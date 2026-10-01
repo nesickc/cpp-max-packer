@@ -208,6 +208,8 @@ TEST_CASE("T007 scratch peaks are excluded from retained residency")
     CHECK(bytes(*field->representation_residency()) == bytes(*reserved_field->representation_residency()));
     CHECK(reserved_field->stats().working_bytes_peak == field->stats().working_bytes_peak + 4096);
     CHECK(reserved_field_attempt.working_bytes_peak == field_attempt.working_bytes_peak);
+    CHECK(field_attempt.admitted_bytes_upper_bound >= field_attempt.working_bytes_peak);
+    CHECK(reserved_field_attempt.admitted_bytes_upper_bound == field_attempt.admitted_bytes_upper_bound);
 }
 
 TEST_CASE("T007 failed factories publish partial work")
@@ -247,6 +249,7 @@ TEST_CASE("T007 failed factories publish partial work")
     REQUIRE(std::holds_alternative<geo::RepresentationFailure>(missing));
     CHECK_FALSE(malformed.input_accounting_complete);
     CHECK(malformed.kernel_work == 0);
+    CHECK(malformed.admitted_bytes_upper_bound == 0);
 }
 
 TEST_CASE("T007 blocked mutation uses the current caller reserve")
@@ -264,6 +267,7 @@ TEST_CASE("T007 blocked mutation uses the current caller reserve")
     REQUIRE(blocked->add("copy", placed, denied, failed));
     CHECK(failed.input_accounting_complete);
     CHECK(failed.additional_bytes_peak == 0);
+    CHECK(failed.admitted_bytes_upper_bound == 0);
     CHECK(blocked->placed_count({ 1, 1, 1 }) == 0);
 
     geo::RepresentationLimits allowed;
@@ -271,6 +275,7 @@ TEST_CASE("T007 blocked mutation uses the current caller reserve")
     CHECK_FALSE(blocked->add("copy", placed, allowed, accepted));
     CHECK(accepted.input_accounting_complete);
     CHECK(accepted.additional_bytes_peak > 0);
+    CHECK(accepted.admitted_bytes_upper_bound >= accepted.working_bytes_peak);
     CHECK(blocked->placed_count({ 1, 1, 1 }) != 0);
 }
 
