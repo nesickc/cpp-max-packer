@@ -239,6 +239,17 @@ other owners and pinned artifacts; it does not subtract the original again when
 passing an allowance whose native bound already includes that owner. This retained
 original allowance is conservative and may reject a later larger repair request.
 
+Before constructing the runtime request DOM, a bounded SAX pass admits at most
+2,048 value nodes, 64 KiB of decoded key/string bytes and depth 32, in addition to
+the 1 MiB wire limit. Auxiliary contract parsing may use source-compatible
+per-call diagnostic limits (at most 16 retained issues and 256 UTF-8-safe bytes
+per path/message); default public parsing preserves existing diagnostics.
+Truncation limits diagnostic storage only and must never turn a validation error
+into acceptance, including a zero diagnostic allowance. Keep the 1 MiB terminal
+record capability for admitted path metadata. Audit simultaneous raw/canonical
+records, DOM copies, diagnostics, writer queue and schema-validator ownership
+against the adapter reserve before accepting the integrated memory gate.
+
 The initial cold prepare reserves 8 MiB for bounded adapter records/DOM/writer
 metadata. Transactional replacement additionally reserves 64 MiB for the still-live
 viewer, plus all distinct native old owners. Actual preview payload/staging receives
@@ -254,10 +265,11 @@ building and export. This operational allowance does not rewrite saved settings,
 geometry, thread policy or host-cap provenance.
 
 Completed session `prepare`, `run` and `release` responses, including owned
-failures, carry optional envelope `retained_native_bytes`: the checked union of
-actual persistent verified buffers, accepted solids, display handles and retained
-solution/context/catalog owners after operation ownership settles. Shared owners
-count once. Adapter/viewer reserves are excluded and charged separately. Rust
+failures, carry optional envelope `retained_native_bytes`: a checked conservative
+portable-payload bound for persistent verified buffers, accepted solids, display
+handles and retained solution/context/catalog owners after ownership settles.
+Deduplicate public owner identities. Adapter/viewer reserves are excluded and
+charged separately. Rust
 tracks this value per child epoch and subtracts it before launching an auxiliary
 native process. Missing or unrepresentable residency is never zero; reject the
 auxiliary operation if a safe remaining allowance cannot be established. Busy,
@@ -265,6 +277,20 @@ phase and malformed-input records may omit the field; do not inspect concurrentl
 changing ownership to decorate such records. The fixed engine hash lets Rust
 require the field on completed mutating operations. Replacement failure preserves
 the prior complete state and its ownership; test this accounting transaction.
+
+Native `ValidationContext::resident_buffer_bytes()` and
+`ValidatedSolution::resident_buffer_bytes()` return `optional<uint64_t>` without
+allocation or exceptions. The context query includes its own wrapper/storage and
+orientation capacity, excluding accepted-solid owners. The solution query includes
+its own solution/candidate storage, copy poses/ID capacities and owned validation
+report data, excluding the context and accepted solids. Overflow is unavailable
+residency, not zero. The adapter deduplicates these owner identities separately.
+Revalidation can create a distinct solution handle sharing candidate storage;
+summing both query values may conservatively count that storage twice. The
+session retains one solution, and no extra Candidate-identity ABI is introduced.
+These are portable payload bounds, not exact unique-allocation measurements;
+allocator headers/control blocks and process RSS retain their separately declared
+accounting convention. A conservative overlap must never become an undercount.
 
 ## Start clock, Stop and terminal ownership
 
