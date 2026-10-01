@@ -153,11 +153,27 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
   peak bytes. The complete simultaneous variable-buffer capacity ledger, bounded
   runtime diagnostics from nested I/O and whole-process peaks remain open. This
   is not a process-RSS bound or completed integrated memory gate.
+- Additional hardening reproducers are now observed, before their fixes. A 1 MiB
+  malformed runtime record allocates 26,712,966 parser/error bytes; a 512 KiB asset
+  token allocates 2,000,168 scratch bytes beyond its admitted allowance; a finite
+  129-character number passes the new auxiliary limit. Increasing escaped request
+  paths grows the cached canonical capacity to 540,262 bytes above 524,352, and a
+  real result rejection retains a 204,895-byte diagnostic despite requested
+  16-issue/256-byte limits. Complete logs are
+  `.local/t010/integration/runtime-memory-corrected-red.log`,
+  `runtime-canonical-red.log` and `runtime-diagnostics-red.log`.
+  Against the preserved `be81da1` engine, prepare A / prepare B / release B /
+  prepare C fails with `ASSET_BUSY`; `runtime-replacement-release-red.log` records
+  this transactional rollback defect. These are open failures, not qualification.
 - Shared field-admission declaration `9eba3cd` compiles in the following native
   Release build. Its optional value remains empty until actual-layout admission
   is implemented. Serial raster, ranked-orientation and full-catalog reproducers
-  still fail as intended in `stage3-{raster,ranked,ulamok}-red.log`; the existing
+  show their intended failures in `stage3-{raster,ranked,ulamok}-red.log`; the existing
   10,000-cell cap and Ulamok's 48-correlation assertion remain unchanged.
+  A further translated-window red shows the prior estimate allows 8 cells where
+  actual voxelization at origin 2^50 mm uses 10. Its full log and source/binary
+  identities are in `.local/t010/native/stage3-window-red-*`; ADR `85eb3bd`
+  specifies interval-based admission. The serial checkpoint remains in progress.
 - Cold full-Pryanik-2 characterization is retained in
   `.local/t010/integration/cold-red.json` and `cold-green.json`. The old legacy
   search-only 0.01 s request takes 10.162734 s total; its Stop test takes 8.752341 s
