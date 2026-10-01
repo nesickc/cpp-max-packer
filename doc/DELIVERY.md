@@ -16,7 +16,7 @@ The spec's `T-001`–`T-008` are initial implementation tasks; `AT-01`–`AT-17`
 | [T-007 CPU spectral placement and transform export](T-007.md) | `feature/AT-12-cpu-spectral-placement` | Merged through PR #8 at `1014b39`; local qualification is recorded in the ticket |
 | [T-008 desktop workflow](T-008.md) | `feature/AT-15-desktop-workflow` | Merged through PR #10 at `a05fa2c`; bounded first-journey evidence and remaining full-v1 gates are recorded in the ticket |
 | [T-009 CPU field scalability](T-009.md) | `feature/SOL-05-cpu-field-scalability` | Merged through PR #12 at `b82117a`; bounded local gates and three retained-result desktop journeys pass. Reviewed scope revision carries successful practical spectral/STL support into T-010 without raising caps |
-| [T-010 CPU runtime, including T-011](T-010.md) | `feature/SOL-08-cpu-runtime` | Started from merged `b82117a`; architecture and baseline capture in progress. All T010-A1–A7 and T011-A1–A7 gates remain required |
+| [T-010 CPU runtime, including T-011](T-010.md) | `feature/SOL-08-cpu-runtime` | Started from merged `b82117a`; ADR 0013 and preparation/Start targets frozen; implementation in progress. All T010-A1–A7 and T011-A1–A7 gates remain required |
 
 [Delivery milestones](MILESTONES.md) define T-009–T-023 and their merged
 prerequisites. Each delivery ticket has a planned feature branch, requirements

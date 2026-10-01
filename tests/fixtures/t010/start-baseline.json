@@ -1,0 +1,333 @@
+{
+  "ticket": "T-010",
+  "baseline_engine_sha256": "a593d750f7a4fd09e324bdb70b8feccc33c47799e001ee171614888a65332b8d",
+  "scope": "T011-A6 preparation-only fixed-work comparison; not spectral or threading acceptance",
+  "warmups": 1,
+  "serial_samples": 5,
+  "profiles": [
+    {
+      "id": "analytic-medium",
+      "count": 1,
+      "work": {
+        "candidate_evaluations": 1,
+        "search_passes": 0
+      },
+      "placements": [
+        {
+          "copy_id": "baseline-0-0",
+          "local_to_world": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              1.25
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              1.75
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              0.75
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "quaternion_xyzw": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "translation_mm": [
+            1.25,
+            1.75,
+            0.75
+          ]
+        }
+      ],
+      "total_seconds": [
+        0.13468480005394667,
+        0.14600019995123148,
+        0.15350239991676062,
+        0.14335039991419762,
+        0.1504052000818774
+      ],
+      "median_total_seconds": 0.14600019995123148,
+      "peak_working_set_bytes": 8609792,
+      "sample_record_sha256": [
+        "3096c9b58fe96eff7490ac7641b80a47ad696d0bede8d2ac8806ed60c09186f5",
+        "b9eb675cbb5fbc6fabe21c54affbcae3d4735bba6f29c1802f7733f6e41408a7",
+        "af388fceb0d14625a0e05e4f74ebfffe9a67bd98b49e59a026ce01c30e71dc43",
+        "44839686c99146158a8b10b27b86486acbaae8028190742d5ca6af42cf7e861d",
+        "90f56a38a90a5a567f175042ddff73a03aea8f062fb815b2402eb182c14b96ad",
+        "d6b056ae5a84e910c276b92daadb09d322454be39dee8326803b7f9fee38c47e"
+      ],
+      "validation": {
+        "authoritative_geometry_sha256": [
+          "08c737108f2ccefbc266bdc5eef4c586518cff4bb18f0d758814d5840d3b69c0"
+        ],
+        "checks": {
+          "clearance": "valid",
+          "containment": "valid",
+          "pair": "valid"
+        },
+        "kernel_version": "homogeneous-rational-interval-v2",
+        "status": "valid",
+        "tolerance_mm": 1e-06,
+        "validator_version": "native-validation"
+      }
+    },
+    {
+      "id": "ulamok",
+      "count": 1,
+      "work": {
+        "candidate_evaluations": 1,
+        "search_passes": 0
+      },
+      "placements": [
+        {
+          "copy_id": "baseline-0-0",
+          "local_to_world": [
+            [
+              -1.0,
+              0.0,
+              0.0,
+              49.816014785766605
+            ],
+            [
+              0.0,
+              -1.0,
+              0.0,
+              55.782518005371095
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              65.73457310994466
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "quaternion_xyzw": [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          "translation_mm": [
+            49.816014785766605,
+            55.782518005371095,
+            65.73457310994466
+          ]
+        }
+      ],
+      "total_seconds": [
+        0.45393600000534207,
+        0.4588843999663368,
+        0.4644771000603214,
+        0.4851903999224305,
+        0.477394700050354
+      ],
+      "median_total_seconds": 0.4644771000603214,
+      "peak_working_set_bytes": 8822784,
+      "sample_record_sha256": [
+        "5859903f20963cbc5347fe2b2155c5d7031baa1ba7692c9f10f6a5d235f51e43",
+        "d7031227e772c48ed24c3a67c23c723b70de3b95b8d04b982cbbdd02adb315ea",
+        "71b2789ae5aaf926dde5e270fceeb25645c6a226272063feb3ef7fc1f3e36278",
+        "6dfc16703d99b844de0c2686aac51e09366930843785582315cf51643894e44e",
+        "f70b1e10c7f9913fa608526b89ab6aa17f0463243bdb29c18528fb25e9afb6e3",
+        "106fcea3c50ad52740eb9e8d66b7e76735f749963fa739879d0728808c417e1e"
+      ],
+      "validation": {
+        "authoritative_geometry_sha256": [
+          "ad27df7247b019e8ff3fdaad6e3ecebd94a00bbb16f8e5c8a5b1c2be61e9c277"
+        ],
+        "checks": {
+          "clearance": "valid",
+          "containment": "valid",
+          "pair": "valid"
+        },
+        "kernel_version": "homogeneous-rational-interval-v2",
+        "status": "valid",
+        "tolerance_mm": 1e-06,
+        "validator_version": "native-validation"
+      }
+    },
+    {
+      "id": "pryanik-1",
+      "count": 1,
+      "work": {
+        "candidate_evaluations": 1,
+        "search_passes": 0
+      },
+      "placements": [
+        {
+          "copy_id": "baseline-0-0",
+          "local_to_world": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              40.71695361286402
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              40.772753562778234
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              11.9
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "quaternion_xyzw": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "translation_mm": [
+            40.71695361286402,
+            40.772753562778234,
+            11.9
+          ]
+        }
+      ],
+      "total_seconds": [
+        11.700173599994741,
+        12.100027099950239,
+        11.78920660004951,
+        12.17133909999393,
+        12.878302700002678
+      ],
+      "median_total_seconds": 12.100027099950239,
+      "peak_working_set_bytes": 81268736,
+      "sample_record_sha256": [
+        "ae2e6209cdf70409c87af3779cb1a218e07da9571b560471c15c21bc7a688475",
+        "8d15d018a51918a4f5eec18fe6b76f5a615e428d67fcf25ed5e31fae818c3fc0",
+        "1939aef72db8f89a778518366f654c4f3f9b0c2955af0479ce975d17c2f395b4",
+        "37a26e1620104259d056256ec77fb8be492eaa7f9ff06c35fb230d3a74419c83",
+        "53ef08a3f7949d1be87171daddea2d6461b6561b35084f3372d273da50aba20b",
+        "16fec125007766feb265be95e7624173ef5c59c52d4c334380ec8b9ab383e97e"
+      ],
+      "validation": {
+        "authoritative_geometry_sha256": [
+          "b615cdbfdf55f274fb7ec9c7cc1a5b2761b3fe4ed5334e8859902769d074d26f"
+        ],
+        "checks": {
+          "clearance": "valid",
+          "containment": "valid",
+          "pair": "valid"
+        },
+        "kernel_version": "homogeneous-rational-interval-v2",
+        "status": "valid",
+        "tolerance_mm": 1e-06,
+        "validator_version": "native-validation"
+      }
+    },
+    {
+      "id": "pryanik-2",
+      "count": 1,
+      "work": {
+        "candidate_evaluations": 1,
+        "search_passes": 0
+      },
+      "placements": [
+        {
+          "copy_id": "baseline-0-0",
+          "local_to_world": [
+            [
+              1.0,
+              0.0,
+              0.0,
+              46.920040130615234
+            ],
+            [
+              0.0,
+              1.0,
+              0.0,
+              40.83361912146211
+            ],
+            [
+              0.0,
+              0.0,
+              1.0,
+              11.983333353201548
+            ],
+            [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ]
+          ],
+          "quaternion_xyzw": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "translation_mm": [
+            46.920040130615234,
+            40.83361912146211,
+            11.983333353201548
+          ]
+        }
+      ],
+      "total_seconds": [
+        19.466977800009772,
+        19.44892140000593,
+        19.913539299974218,
+        19.342664299998432,
+        19.64229610003531
+      ],
+      "median_total_seconds": 19.466977800009772,
+      "peak_working_set_bytes": 128602112,
+      "sample_record_sha256": [
+        "567bb2c6ea9da1dcf4497890df3201080e9fab2830b622da6b2d917afd34ca9b",
+        "02ac789656e54ad14e5e664b649a87ee87726808a95607917e2163205ac68008",
+        "93b7672663630ba0adbffcd53f9b24a3f7a219aff2777b2e76b5f0e1c8b47a77",
+        "20b38a949769c06119e58be17ae3a439b6f86567210f4581247bbaca7d1fbd1b",
+        "4955f83e70f5ba24a3b2ece51f07efc04fba9d57e5ca1279fe13d5456db9e0b6",
+        "c951872c8e94c6b17f332a7043543f07bd651fe4005f8ee3683f818f46469064"
+      ],
+      "validation": {
+        "authoritative_geometry_sha256": [
+          "cce45f37cb3c6ac7aea02f1994c4b17a3d508c2354383c33048ac88e4b260a86"
+        ],
+        "checks": {
+          "clearance": "valid",
+          "containment": "valid",
+          "pair": "valid"
+        },
+        "kernel_version": "homogeneous-rational-interval-v2",
+        "status": "valid",
+        "tolerance_mm": 1e-06,
+        "validator_version": "native-validation"
+      }
+    }
+  ]
+}

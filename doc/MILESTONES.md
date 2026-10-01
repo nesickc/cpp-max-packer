@@ -1,7 +1,9 @@
 # Delivery milestones after T-008
 
-Status: planned, 2026-09-30. T-008 merged through PR #10 at `a05fa2c`.
-T-009–T-023 below have specifications, not implementation or passing evidence.
+Status: updated 2026-10-01. T-008 merged through PR #10 at `a05fa2c`;
+T-009 merged through PR #12 at `b82117a` under its recorded scope revision.
+T-010 is in progress; its ticket distinguishes baseline evidence from acceptance.
+Later tickets below remain specifications without implementation claims.
 The first four specification IDs form three delivery tickets: T-009, T-010
 (including the T-011 work package), then T-012. No acceptance IDs are retired.
 The user prioritizes CPU speed/multithreading, practical packing and explicit
