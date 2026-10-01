@@ -1,4 +1,5 @@
 #include "validation_kernel.hpp"
+#include "field_profile.hpp"
 
 #include "exact_predicates.hpp"
 #include "field_kernel.hpp"
@@ -1909,6 +1910,7 @@ std::optional<KernelFailure> rasterize_boundary(
     const PlacedSolid& solid,const GridWindow& window,
     std::span<std::uint8_t> boundary,Budget& budget,
     std::uint64_t& cell_visits,std::uint64_t max_cell_visits) {
+  detail::FieldProfileTimer profile(detail::FieldProfilePhase::raster, budget, cell_visits);
   std::uint64_t cell_count=1;
   for (const auto extent:window.shape) {
     if (extent==0 || cell_count>std::numeric_limits<std::uint64_t>::max()/extent)

@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "field_proximity.hpp"
+#include "pipeline_profile.hpp"
 #include "spectrapack/solver/orientations.hpp"
 #include "storage_accounting.hpp"
 
@@ -653,6 +654,7 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
                                                const CandidatePageQuery& query,
                                                BinaryObservationSink binary_observation)
 {
+    PipelineProfileTimer profile;
     SpectralPipelineResult result;
     if (!context || !std::isfinite(lattice.pitch_mm) || lattice.pitch_mm <= 0) {
         result.diagnostic = "SPECTRAL_PIPELINE_INPUT";
@@ -697,6 +699,7 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
             };
             return result;
         }
+        profile.phase(PipelineProfilePhase::prepare);
         {
             geometry::RepresentationAttemptStats attempt;
             AttemptRecorder recorder(result, limits, *nested, attempt);
@@ -712,6 +715,7 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
             owners.geometry = std::get<std::shared_ptr<const geometry::VoxelGeometry>>(prepared);
         }
 
+        profile.phase(PipelineProfilePhase::container);
         std::array<geometry::RepresentationResidency, 1> mask_inputs {};
         std::size_t mask_input_count {};
         if (const auto* solid = std::get_if<std::shared_ptr<const geometry::AcceptedSolid>>(&context->container())) {
@@ -781,6 +785,7 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
         }
         owners.blocked = blockers.get();
 
+        profile.phase(PipelineProfilePhase::placed);
         if (baseline) {
             for (const auto& pose : baseline->copies()) {
                 const auto geometry_snapshot = owners.geometry->representation_residency();
@@ -873,6 +878,7 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
             return result;
         }
 
+        profile.phase(PipelineProfilePhase::object);
         const auto object_input = owners.geometry->representation_residency();
         if (!object_input) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
@@ -905,6 +911,7 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
             owners.kernel = std::get<std::shared_ptr<const geometry::CellField>>(object);
         }
 
+        profile.phase(PipelineProfilePhase::occupancy);
         const auto environment_cells = *cells(environment->shape);
         auto arrays = product(environment_cells, sizeof(std::uint8_t) + sizeof(double));
         live = current_bytes(owners, limits);
@@ -936,6 +943,7 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
                 }
             }
         }
+        profile.phase(PipelineProfilePhase::proximity);
         const auto proximity_start = std::chrono::steady_clock::now();
         auto proximity_live = current_bytes(owners, limits);
         if (!proximity_live || !add(*proximity_live, proximity_scratch_bytes(environment->shape)) ||
@@ -956,6 +964,7 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
         }
         result.proximity_ms =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - proximity_start).count();
+        profile.phase(PipelineProfilePhase::binary_fft);
         compute::CorrelationSpec spec { environment->shape, owners.kernel->window().shape, environment->first,
                                         owners.kernel->window().first };
         auto correlation_limits = limits.per_correlation;
@@ -999,6 +1008,7 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
                                  owners.binary->translation_first,
                                  owners.binary->shape });
         }
+        profile.phase(PipelineProfilePhase::proximity_fft);
         live = current_bytes(owners, limits);
         if (!live || !observe(result, limits, *live)) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
@@ -1034,6 +1044,7 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
                                  owners.binary->values, proximity, std::get<compute::CorrelationResult>(ranked).values,
                                  owners.binary->translation_first, owners.binary->shape });
         }
+        profile.phase(PipelineProfilePhase::ranking);
         const auto kernel_cells = owners.kernel->cells();
         const auto occupied_kernel =
             static_cast<std::uint64_t>(std::count(kernel_cells.begin(), kernel_cells.end(), std::uint8_t { 1 }));

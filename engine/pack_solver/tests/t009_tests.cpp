@@ -282,8 +282,8 @@ TEST_CASE("T009 Ulamok analytical witness and real baseline retain 36", "[solver
     CHECK(retained->copies().size() >= 36);
 }
 
-// Explicitly pending T-010 obligation; excluded from routine gates, not claimed passing.
-TEST_CASE("T010 pending Ulamok full cube field pass preserves 36", "[solver][T010][.qualification]")
+// T010-A2/A7: a retained resource failure does not qualify the practical catalog.
+TEST_CASE("T010 Ulamok full cube field pass preserves 36", "[solver][T010][qualification]")
 {
     const auto native_context = ulamok_context();
     const auto baseline = sol::run_aabb_baseline(native_context, {}, {});
