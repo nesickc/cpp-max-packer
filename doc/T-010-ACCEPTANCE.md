@@ -259,6 +259,25 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
   0.019/0.014 s. Canonical case/junction references, post-rename pathname mutation,
   the complete simultaneous 16 MiB adapter ledger, remaining lifecycle/DTO work
   and final integrated practical/performance checks remain open.
+- The retained-session benchmark harness in `benchmarks/runtime/` passes six
+  evidence/transport safeguards, all-four-profile input verification and one real
+  analytic cold/retained smoke pair. Each result is native-valid with one copy and
+  the frozen ordered pose/work; both children exit 0 without forced termination or
+  reader/writer/sampler faults. This is a smoke check, not repeated performance
+  acceptance. It uses the held `9303a8c` integration executable, SHA-256
+  `b15303e3dfdfa8ef5c169f58fef012d6acf90bfa4a46bf220282620fcec85028`.
+  Full logs and command records are in `.local/t010/runtime-benchmark/HANDOFF.md`;
+  primary verified 115 final source/input/executable hashes and independent log
+  review read the complete referenced records. Failed timing-reader, blocked-pipe,
+  nested-reference and old-settings probes remain recorded. The final change after
+  smoke only strengthens frozen-settings provenance; safeguards and input checks
+  were rerun. A consistent final engine and the full repeated series remain open.
+- [ADR 0013](../spec/decisions/0013-cpu-runtime.md) now approves certified
+  placed-field support reduction after selective architecture review. It requires
+  outward-cell omission proofs, original-window fallback and full-solid component
+  classification, and explicitly permits newly proved conservative masks to differ
+  from historical false positives. Implementation, independent cell oracles and
+  actual suggested-pitch success remain pending; this is no new passing gate.
 - Original source preservation: all ten assets match their pinned SHA-256 values
   in `.local/t010/source-preservation.json`.
 
