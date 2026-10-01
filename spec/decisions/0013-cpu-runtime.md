@@ -456,6 +456,79 @@ are unchanged. Preserve the original ranked-orientation cell cap and add a red
 large-origin enclosure case, then check positive/negative origins, adjacent pitch
 boundaries and cardinal permutations against actual produced field windows.
 
+### Certified placed-field support reduction
+
+The serial workspace still exhausts the unchanged 1.3B work cap at the actual
+4 mm Ulamok advice after 46 of 48 correlations. The 16 mm profile and both full
+Pryanik retained-two profiles pass their current Release trials; these are
+distinct observations, not a successful advised-pitch or timing baseline.
+Following selective geometry review, approve this bounded proposal-field change
+under GEO-04/GEO-06, SOL-02 and AT-09/AT-12/AT-16 before implementation.
+
+Preserve the requested output window R, existing clearance stencil and its halo
+H, and all current input/expanded-window W = expand(R,H) checks and cell caps.
+Admit the existing owners and place the solid once. Derive B from that immutable
+placed solid's actual conservative bounds, including its vertex intervals or
+certified cardinal-cuboid path. Do not substitute physical translation for the
+lattice origin. Form a candidate support S with the existing checked padded trim
+and intersect it with W, but do not treat padding as proof of exterior material.
+
+First require finite outward cells at W's first and last diagonal indices; checked
+index conversion, positive pitch and monotone outward arithmetic then enclose all
+cells between them. For each actually omitted lower/upper slab, certify its nearest
+omitted cell strictly below/above B on that axis using `outward_grid_cell`. Strict
+separation extends to every farther cell in the slab; the six slabs cover W minus
+the cropped window. Equality, unsupported arithmetic or unavailable certificates
+select the original W. An empty intersection permits a full-R zero blocker only
+after a separate strict separation certificate for the whole outward W envelope.
+Never represent uncertified emptiness by a zero-shape window. Cancellation or work
+exhaustion remains failure and cannot be erased by numerical fallback.
+
+Rasterize the selected domain in the original triangle order and classify every
+surface-free component against the full placed solid. An artificial crop edge is
+never an exterior seed. Conservative boundary tags separate material transitions;
+narrowing the domain may split components but does not invalidate a full-solid
+witness for each resulting component. Current boundary, occupied and indeterminate
+cells remain dilation seeds. Every stencil offset is bounded by H, so seeds outside
+W cannot reach R; independently certified omitted cells inside W contain no material.
+Retain the full requested output, physical pose, source and clearance ownership.
+
+Explicitly allow conservative reclassification of proposal fields: a different
+witness or a certified exterior support region can change historical false-positive
+bits. Neither universal legacy bit equality nor a subset relation is promised.
+Every newly free region still requires a current support/component proof; a crop
+edge alone never authorizes it. Work/uncertainty counts, candidate ranking and
+heuristic poses may differ across builds. Same-build/configuration determinism is
+unchanged. Raw uncertainty counts describe the domain actually classified. Record
+private policy `certified-placed-support-v1` separately from the existing raster
+work revision in native benchmark provenance. Per-Start derivative caches are
+disposable; source/repair hashes, validator revisions, schemas, saved projects,
+physical dimensions, container masks and validity/export authority are unchanged.
+
+Implement private geometry helpers, with no new public signature. Pass the already
+placed immutable owner into raw-field construction. Keep an explicit source-local
+full-window reference seam that bypasses the planner and executes the old behavior;
+do not use a mutable global switch. Admit simultaneous raw cells/labels/queue and
+raw/stencil/full output, placed geometry, IDs and publication metadata. Freed scratch
+still contributes to the successful admitted maximum. Charge actual new certificate
+arithmetic, scans including skipped-zero cells, full output initialization and all
+existing executed work. Keep bounded polls and transactional publication; do not
+claim interruption inside an uninterruptible allocation/initialization operation.
+
+First observe the old resource failure on a sparse analytic placed-field case,
+then compare every output cell against an independent closed-cell/Euclidean-dilation
+oracle and the old full-window path. Require equality on ordinary determinate
+cases; explain any uncertainty-driven difference with an independent exterior or
+occupancy proof. Cover rotated/asymmetric and hollow/thin/disconnected solids,
+windows wholly inside material, off-grid poses, large origins/near-limit indices,
+strict-separation ambiguity, empty/fallback paths and support entering through a
+clearance halo. Verify cap/overflow/allocation/Stop/deadline rollback in Debug and
+Release. Execute the actual returned Ulamok pitch through the full catalog while
+retaining at least 36 native-valid copies, and preserve both full Pryanik cases.
+Only then freeze a successful serial repeated benchmark. This decision provides
+no sufficient pitch-advice bound, hidden trial/retry, cap increase or threading
+authorization; audit changed necessary-floor terms without reversing their meaning.
+
 ## CPU policy and aggregate admission
 
 Add `std::uint32_t cpu_thread_count{1}` to `SpectralLimits`. Native integration
