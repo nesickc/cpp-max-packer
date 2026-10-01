@@ -408,6 +408,25 @@ diagnostic would not fix execution. Do not simply lower costs for unchanged work
 If this does not suffice, report the bounded remaining kernel; broader geometry
 algorithm changes need a focused amendment/review, not a cap increase.
 
+Object-grid admission must enclose the actual translated interval window. Exact
+cardinal rotations alone do not justify a fixed `ceil(width / pitch) + padding`
+bound at arbitrarily large lattice origins. Add the read-only native helper
+`estimate_object_window(const AcceptedSolid&, GridLattice, Quaternion) noexcept`
+returning `optional<GridWindow>` in the conservative-field API. It uses the
+existing homogeneous rotation and transformed-interval arithmetic on the eight
+source-AABB corners at the actual lattice origin, with the production trim and
+overflow rules. It allocates no mesh and returns no bound for unsupported floating
+environments or unrepresentable input. Its enclosure must cover the cardinal
+cuboid fast path as well as the ordinary placed-vertex path. A failed estimate
+cannot fall back to an unproved narrower bound. Cover every admitted catalog
+orientation, including axis-dependent translation widening in cube mode.
+
+This is an additive native admission API requiring normal consumer rebuilds;
+persisted projects, placement/solid authority and legacy validation work revisions
+are unchanged. Preserve the original ranked-orientation cell cap and add a red
+large-origin enclosure case, then check positive/negative origins, adjacent pitch
+boundaries and cardinal permutations against actual produced field windows.
+
 ## CPU policy and aggregate admission
 
 Add `std::uint32_t cpu_thread_count{1}` to `SpectralLimits`. Native integration
