@@ -22,10 +22,10 @@ establish the corresponding runtime gate.
 | T010-A6 — measured speed | Failed practical phase profiles identify raster work; these are not a successful speed baseline. | Successful serial revision, frozen phase/end-to-end/memory targets, one warmup plus five Release samples at 1/2/4/8 threads, preparation held fixed. |
 | T010-A7 — product regression | Original full-catalog Ulamok and full36 checked-STL failures are reproduced. | Supported full-catalog Ulamok count >=36; both full Pryanik runs; pitch advice; invalid-original rejection; complete product journeys and independently reread exports; timed quality. |
 | T011-A1 — one budget | Native injected-clock red allows work after expiry. The controlled checkpoint now expires before bootstrap without work or a new handle. | Cold production loading/preparation, planning and validation consume one Start budget; no work begins after deadline; pre-incumbent expiry and cleanup/overrun measurements. |
-| T011-A2 — real reuse | Exact old preparation and fixed-work Start records are pinned. Rust retained-session code passes a compile check. | Native replay/LOD reuse and identity evidence; New/replacement/units/frame/repair/epoch invalidation; fresh job derivatives for changed constraints/pitch/catalog; bounded replacement ownership. |
+| T011-A2 — real reuse | Exact old preparation and fixed-work Start records are pinned. The first native session process check reuses an immutable cube token and preview after source/report mutation. | Practical replay/LOD work and timing evidence; New/replacement/units/frame/repair/epoch invalidation; fresh job derivatives for changed constraints/pitch/catalog; bounded replacement ownership. |
 | T011-A3 — tamper resistance | Native authority/pinned-input contract is frozen. | Independent source/PLY/repair/settings/catalog/pose mutations; moved archive restore; failed Open preserves complete state. |
 | T011-A4 — Stop phases | Session availability red and shared cancellation APIs are retained. | Actual cold-preparation cancellation red and green; real loading/preparation/fields/FFT/validation/publication Stop; receipt <=250 ms and safe completion <=5 s; UI stopping/result behavior. |
-| T011-A5 — lifecycle races | Rust retained transport and test targets compile. | Repeated/stale Stop, completion race, marker/transport failure, child failure, EOF/shutdown and late completion using built native code. |
+| T011-A5 — lifecycle races | Initial native process checks pass shutdown, Stop followed by a fresh run, exact duplicate replay and conflicting request identity. | Repeated/stale Stop, completion race, marker/transport failure, child failure, active EOF/shutdown, backpressure and late completion using built native code. |
 | T011-A6 — startup measurements | Four old profiles each have one warmup plus five successful preparation and Start samples; numerical targets and peaks are frozen. | Equivalent new cold/warm samples at thread 1, identical fixed work and ordered valid poses, measured peak/cleanup bounds, complete response time and regressions. |
 | T011-A7 — compatibility | Optional runtime schemas, shared fixtures and generated types pass their checks. | Legacy and new Save/move/Open, original timing semantics, pending/result association, thread policy, independent JSON/STL export and repaired-geometry invariance. |
 
@@ -56,12 +56,30 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 - Rust retained transport: `cargo check --locked --no-default-features --tests`
   exits 0 in `.local/t010/integration/cargo-check-3.log`. Earlier infrastructure
   and compilation failures remain retained. This is compilation, not runtime evidence.
-- Native controlled checkpoint: Release passes 23 assertions / 3 cases in
+- Native controlled checkpoint `25fdbac`: Release passes 23 assertions / 3 cases in
   `.local/t010/native/stage2-controls-green-2.log`, covering expired inspect/weld/
   display/validation, pre-bootstrap expiry, and unsupported counts without work.
   Its intermediate 22/23 run exposed an empty bootstrap publication after expiry;
   that failure and its repair remain retained. Fields/FFT cancellation, whole
   process lifecycle and ordinary practical safe-stop measurements are still open.
+- Combined Release engine builds in `.local/t010/integration/engine-build-1.log`.
+  Initial retained-session process checks pass 2/2 in
+  `.local/t010/integration/session-green-1.log`. They exercise a real cube token,
+  pinned authority after source/report mutation, immutable preview, Stop followed
+  by a fresh deadline run, request replay/conflict and idle shutdown. They do not
+  qualify practical phase latency, active shutdown or transactional memory admission.
+  The source checkpoint is `6e6fbda`; formatting followed that successful build,
+  so the formatted source still requires rebuild verification. Its pre-format
+  executable is retained in `.local/t010/integration/checkpoints/initial-session-green/`,
+  SHA-256 `4e6f8fbffa401e907f698efa027318c90590debfdb773ca2e8122d5288d9408f`.
+- Cold full-Pryanik-2 characterization is retained in
+  `.local/t010/integration/cold-red.json` and `cold-green.json`. The old legacy
+  search-only 0.01 s request takes 10.162734 s total; its Stop test takes 8.752341 s
+  after the marker. The new total-Start request expires before accepted loading
+  and returns in 0.338446 s; Stop returns in 0.044026 s after the marker
+  (0.257469 s total). Both new outcomes return owned interruption errors without a
+  result. These establish pre-incumbent command boundaries; the fixed marker delay
+  does not establish which heavy preparation phase was active.
 - Original source preservation: all ten assets match their pinned SHA-256 values
   in `.local/t010/source-preservation.json`.
 

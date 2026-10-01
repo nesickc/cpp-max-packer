@@ -96,8 +96,13 @@ declarations together. Do not add a solver dependency to geometry.
 
 The integration-owned I/O signature is
 `AssetLoadOutcome load_accepted_asset(const filesystem::path&, const
-runtime::OperationControl& control = {})`. Apply the same final optional control
-argument to `build_result` and `export_result`. Propagate control into reads,
+runtime::OperationControl& control = {}, const AssetLoadLimits& limits = {})`,
+where `AssetLoadLimits::max_working_bytes` defaults to 512 MiB. Existing call
+forms remain source compatible; the loader now rejects excess aggregate import
+memory before allocation with an owned `MEMORY_LIMIT` cause. This bounded-loader
+policy is a deliberate behavior change, not a promise that formerly unbounded
+loads remain accepted. Apply the final optional control argument to `build_result`
+and `export_result`. Propagate control into reads,
 hashing, native import/repair replay and independent validation. Poll during bounded
 read/hash chunks as well as before and after each heavy native call.
 
@@ -182,8 +187,13 @@ before parsing mesh allocations; rejection uses `MEMORY_LIMIT` with reason
 `IMPORT_WORKING_BYTES`. Overflow rejects. Existing callers retain their old
 default allowance; the retained adapter explicitly supplies the remaining cap.
 
-The adapter subtracts existing bundle/result owners, pinned incoming artifacts and
-its declared reserve before import. Repair replay receives the remaining allowance
+The adapter subtracts existing bundle/result owners and its declared reserve before
+calling the loader. The loader charges incoming pinned artifacts, JSON parsing and
+its own scratch before passing the remaining allowance to native import. Callers
+that load multiple bundles, including standalone solve/restore, subtract already
+live owners instead of granting each load an independent full allowance. Preserve
+the nested native memory reason rather than relabeling it as an asset mismatch.
+Repair replay receives the remaining allowance
 and includes distinct retained original/candidate owners. Display generation uses
 its existing `RepresentationLimits::reserved_bytes`; preview serialization checks
 its computed byte requirement and growth before allocation. A failed replacement
@@ -192,6 +202,21 @@ capacity/lifetime audit and below-bound tests. Its initial coefficient is not ye
 accepted: 4,096 bytes per triangle alone exceeds 512 MiB for the required 139,212
 triangle Pryanik 2. A tighter justified bound must preserve that practical profile
 and admitted transactional replacement; raising the host cap is not permitted.
+
+Append `WeldOptions::max_working_bytes` with compatibility default `UINT64_MAX`.
+Weld admission derives its bound from the actual retained vertex/triangle spans,
+includes the original draft payload once plus proposal scratch/candidate storage,
+and excludes caller-owned pinned artifacts. Enforce the minimum of the original
+draft's import allowance and the explicit weld allowance. The I/O caller subtracts
+other owners and pinned artifacts; it does not subtract the original again when
+passing an allowance whose native bound already includes that owner. This retained
+original allowance is conservative and may reject a later larger repair request.
+
+The initial cold prepare reserves 8 MiB for bounded adapter records/DOM/writer
+metadata. Transactional replacement additionally reserves 64 MiB for the still-live
+viewer, plus all distinct native old owners. Actual preview payload/staging receives
+separate checked admission; these reserves are not permission to allocate a full
+64 MiB preview without accounting. Start retains its 64 MiB viewer reserve.
 
 ## Start clock, Stop and terminal ownership
 
