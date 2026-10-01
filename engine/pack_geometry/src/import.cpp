@@ -646,7 +646,10 @@ ImportOutcome<AssetDraft> detail::ImportAccess::inspect(std::span<const std::byt
     decltype(compact_source) {}.swap(compact_source);
     decltype(local_index) {}.swap(local_index);
 
-    auto analysis = detail::analyze_solid({ storage->vertices, storage->triangles }, options.limits, cleanup_budget);
+    auto analysis = detail::analyze_solid(
+        { storage->vertices, storage->triangles }, options.limits, cleanup_budget,
+        baked_world ? exact::TriangleRelationPolicy::projected_separation_v1 : exact::TriangleRelationPolicy::legacy,
+        baked_world && attempt_stats ? &attempt_stats->projected : nullptr);
     detail::operation_checkpoint(control);
     storage->report = std::move(analysis.report);
     if (attempt_stats) {

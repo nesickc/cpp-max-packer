@@ -223,57 +223,60 @@ bool visit_overlapping_leaf_pairs(const fcl::BVHModel<fcl::AABBd>& model, Callba
 
 }  // namespace
 
-SolidAnalysis analyze_solid(
-    MeshView mesh, const ImportLimits& limits, exact::WorkBudget& predicate_budget) {
-  SolidAnalysis result;
-  const auto& control = predicate_budget.control();
-  operation_checkpoint(control);
-  ImportProfileTimer profile(ImportProfilePhase::topology, predicate_budget);
-  auto& report = result.report;
-  const auto finish = [&]() {
-    report.predicate_work = predicate_budget.used();
-    return std::move(result);
-  };
-  report.vertex_count = mesh.vertices.size();
-  report.triangle_count = mesh.triangles.size();
-  result.flip_faces.assign(mesh.triangles.size(), 0);
+SolidAnalysis analyze_solid(MeshView mesh, const ImportLimits& limits, exact::WorkBudget& predicate_budget,
+                            exact::TriangleRelationPolicy policy, exact::ProjectedSeparationStats* stats)
+{
+    SolidAnalysis result;
+    const auto& control = predicate_budget.control();
+    operation_checkpoint(control);
+    ImportProfileTimer profile(ImportProfilePhase::topology, predicate_budget);
+    auto& report = result.report;
+    const auto finish = [&]() {
+        report.predicate_work = predicate_budget.used();
+        return std::move(result);
+    };
+    report.vertex_count = mesh.vertices.size();
+    report.triangle_count = mesh.triangles.size();
+    result.flip_faces.assign(mesh.triangles.size(), 0);
 
-  std::map<Edge, std::vector<EdgeUse>> edges;
-  std::vector<std::vector<std::uint32_t>> incident_faces(mesh.vertices.size());
-  bool valid_indices = true;
-  bool first_bound = true;
-  Bounds referenced_bounds{};
-  for (std::uint32_t face = 0; face != mesh.triangles.size(); ++face) {
-      if ((face & 255U) == 0) {
-          operation_checkpoint(control);
-      }
-    const auto& triangle = mesh.triangles[face];
-    for (const auto vertex : triangle) {
-      if (vertex >= mesh.vertices.size()) {
-        valid_indices = false;
-        add_issue(report, limits, "INVALID_INDEX", "A triangle references a missing vertex.", face);
-        continue;
-      }
-      incident_faces[vertex].push_back(face);
-      extend(referenced_bounds, mesh.vertices[vertex], first_bound);
+    std::map<Edge, std::vector<EdgeUse>> edges;
+    std::vector<std::vector<std::uint32_t>> incident_faces(mesh.vertices.size());
+    bool valid_indices = true;
+    bool first_bound = true;
+    Bounds referenced_bounds {};
+    for (std::uint32_t face = 0; face != mesh.triangles.size(); ++face) {
+        if ((face & 255U) == 0) {
+            operation_checkpoint(control);
+        }
+        const auto& triangle = mesh.triangles[face];
+        for (const auto vertex : triangle) {
+            if (vertex >= mesh.vertices.size()) {
+                valid_indices = false;
+                add_issue(report, limits, "INVALID_INDEX", "A triangle references a missing vertex.", face);
+                continue;
+            }
+            incident_faces[vertex].push_back(face);
+            extend(referenced_bounds, mesh.vertices[vertex], first_bound);
+        }
+        if (triangle[0] >= mesh.vertices.size() || triangle[1] >= mesh.vertices.size() ||
+            triangle[2] >= mesh.vertices.size())
+            continue;
+        for (int side = 0; side != 3; ++side) {
+            const auto first = triangle[side];
+            const auto second = triangle[(side + 1) % 3];
+            edges[edge_key(first, second)].push_back({ face, first < second });
+        }
     }
-    if (triangle[0] >= mesh.vertices.size() || triangle[1] >= mesh.vertices.size() ||
-        triangle[2] >= mesh.vertices.size()) continue;
-    for (int side = 0; side != 3; ++side) {
-      const auto first = triangle[side];
-      const auto second = triangle[(side + 1) % 3];
-      edges[edge_key(first, second)].push_back({face, first < second});
-    }
-  }
-  if (!first_bound) report.mesh_bounds_mm = referenced_bounds;
+    if (!first_bound)
+        report.mesh_bounds_mm = referenced_bounds;
 
-  std::vector<std::vector<FaceAdjacency>> adjacency(mesh.triangles.size());
-  for (const auto& [edge, uses] : edges) {
-      operation_checkpoint(control);
-      if (uses.size() == 1) {
-          ++report.boundary_edges;
-          add_issue(report, limits, "BOUNDARY_EDGE", "A solid edge has only one incident face.", uses.front().face);
-      } else if (uses.size() != 2) {
+    std::vector<std::vector<FaceAdjacency>> adjacency(mesh.triangles.size());
+    for (const auto& [edge, uses] : edges) {
+        operation_checkpoint(control);
+        if (uses.size() == 1) {
+            ++report.boundary_edges;
+            add_issue(report, limits, "BOUNDARY_EDGE", "A solid edge has only one incident face.", uses.front().face);
+        } else if (uses.size() != 2) {
       ++report.nonmanifold_edges;
       add_issue(report, limits, "NONMANIFOLD_EDGE", "A solid edge does not have two incident faces.",
                 uses.front().face);
@@ -383,8 +386,9 @@ SolidAnalysis analyze_solid(
       std::array<int, 3> shared_second {};
       const auto shared_count =
           shared_vertices(mesh.triangles[first], mesh.triangles[second], shared_first, shared_second);
-      const auto relation = exact::triangle_relation(triangle_points(mesh, first), triangle_points(mesh, second),
-                                                     shared_first, shared_second, shared_count, predicate_budget);
+      const auto relation =
+          exact::triangle_relation(triangle_points(mesh, first), triangle_points(mesh, second), shared_first,
+                                   shared_second, shared_count, predicate_budget, policy, stats);
       if (relation == exact::TriangleRelation::uncertain) {
           uncertain = true;
           return false;

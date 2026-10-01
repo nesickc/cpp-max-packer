@@ -149,7 +149,8 @@ BakedWorldOutcome inspect_baked_world_stl(std::span<const std::byte> bytes, cons
         return unresolved("EXPORT_IMPORT_PAIR_LIMIT", "Cumulative import candidate-pair work was exhausted.");
     }
     if (import_profile_sink) {
-        import_profile_sink(import_profile_context, { ImportProfilePhase::total, 0, attempt_stats.predicate_work });
+        import_profile_sink(import_profile_context, { ImportProfilePhase::total, 0, attempt_stats.predicate_work, 0, 0,
+                                                      0, 0, 0, attempt_stats.projected });
     }
     if (const auto* failure = std::get_if<ImportFailure>(&inspected)) {
         if (failure->code == "OPERATION_CANCELLED" || failure->code == "DEADLINE_EXCEEDED") {

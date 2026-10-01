@@ -83,6 +83,14 @@ enum class TriangleRelation : std::uint8_t {
   uncertain,
 };
 
+// Only baked-world export imports select the certificate. Legacy callers keep
+// their original classifier and exact work counters, including repair replay.
+enum class TriangleRelationPolicy : std::uint8_t { legacy, projected_separation_v1 };
+struct ProjectedSeparationStats {
+    std::uint64_t attempts {}, certificates {}, fallbacks {}, uncertain {};
+    std::uint64_t attempt_work {}, certified_work {}, failed_attempt_work {}, fallback_work {};
+};
+
 enum class SegmentTriangleCrossing : std::uint8_t {
   none,
   crossing,
@@ -91,11 +99,12 @@ enum class SegmentTriangleCrossing : std::uint8_t {
   uncertain,
 };
 
-[[nodiscard]] TriangleRelation triangle_relation(
-    const std::array<Vec3, 3>& first, const std::array<Vec3, 3>& second,
-    const std::array<int, 3>& shared_first,
-    const std::array<int, 3>& shared_second, std::size_t shared_count,
-    WorkBudget& budget) noexcept;
+[[nodiscard]] TriangleRelation triangle_relation(const std::array<Vec3, 3>& first, const std::array<Vec3, 3>& second,
+                                                 const std::array<int, 3>& shared_first,
+                                                 const std::array<int, 3>& shared_second, std::size_t shared_count,
+                                                 WorkBudget& budget,
+                                                 TriangleRelationPolicy policy = TriangleRelationPolicy::legacy,
+                                                 ProjectedSeparationStats* stats = nullptr) noexcept;
 [[nodiscard]] SegmentTriangleCrossing segment_triangle_crossing(
     const Vec3& first, const Vec3& second,
     const std::array<Vec3, 3>& triangle, WorkBudget& budget) noexcept;

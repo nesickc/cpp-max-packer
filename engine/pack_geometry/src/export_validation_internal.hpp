@@ -2,6 +2,7 @@
 
 #include <optional>
 
+#include "exact_predicates.hpp"
 #include "spectrapack/geometry/import.hpp"
 #include "validation_kernel.hpp"
 
@@ -10,6 +11,7 @@ namespace spectrapack::geometry::detail {
 struct ImportAttemptStats {
     std::uint64_t predicate_work {};
     std::uint64_t candidate_pair_tests {};
+    exact::ProjectedSeparationStats projected;
 };
 
 class ImportAccess {

@@ -13,6 +13,7 @@ struct ImportProfileSample {
     double elapsed_ms {};
     std::uint64_t predicate_work {}, orient2_calls {}, orient3_calls {}, interval_hits {}, structural_zeros {},
         exact_fallbacks {};
+    exact::ProjectedSeparationStats projected;
 };
 using ImportProfileSink = void (*)(void*, const ImportProfileSample&) noexcept;
 // Private, operation-thread-only evidence seam. Production leaves it empty.

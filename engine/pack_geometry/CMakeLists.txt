@@ -24,7 +24,8 @@ catch_discover_tests(spectrapack_import_tests)
 
 add_executable(spectrapack_solid_analysis_tests
   tests/solid_analysis_tests.cpp
-  tests/predicate_tests.cpp)
+  tests/predicate_tests.cpp
+  tests/projected_separation_tests.cpp)
 target_link_libraries(spectrapack_solid_analysis_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
 catch_discover_tests(spectrapack_solid_analysis_tests)
 

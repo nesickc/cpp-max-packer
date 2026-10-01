@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <iostream>
 
+#include "../../pack_geometry/src/export_validation_internal.hpp"
 #include "../../pack_geometry/src/import_profile.hpp"
 #include "../../pack_geometry/tests/validation_fixtures.hpp"
 #include "spectrapack/geometry/display_lod.hpp"
@@ -209,7 +210,13 @@ TEST_CASE("T010 full Pryanik retained2 quantized export preserves native found c
                           << " ms=" << sample.elapsed_ms << " predicate_work=" << sample.predicate_work
                           << " orient2=" << sample.orient2_calls << " orient3=" << sample.orient3_calls
                           << " interval=" << sample.interval_hits << " structural=" << sample.structural_zeros
-                          << " exact=" << sample.exact_fallbacks << '\n';
+                          << " exact=" << sample.exact_fallbacks << " projected_attempts=" << sample.projected.attempts
+                          << " projected_hits=" << sample.projected.certificates
+                          << " projected_fallbacks=" << sample.projected.fallbacks
+                          << " projected_attempt_work=" << sample.projected.attempt_work
+                          << " projected_hit_work=" << sample.projected.certified_work
+                          << " projected_failed_work=" << sample.projected.failed_attempt_work
+                          << " legacy_fallback_work=" << sample.projected.fallback_work << '\n';
             }
         }
         export_evidence(filename, *solution, checked, reads);
@@ -219,4 +226,37 @@ TEST_CASE("T010 full Pryanik retained2 quantized export preserves native found c
         CHECK(checked.code == "VALID");
         CHECK(solution->copies().size() == 2);
     }
+}
+
+TEST_CASE("T010 actual first quantized Pryanik2 copy completes within diagnostic half-aggregate work",
+          "[solver][T010][qualification]")
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .1;
+    constraints.wall_clearance_mm = 1;
+    const auto made =
+        geo::make_validation_context(accepted_file("pryanik_2.STL"), geo::BoxDimensions { 100, 100, 50 }, constraints);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+    const auto native_context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+    sol::BaselineLimits baseline_limits;
+    baseline_limits.max_candidate_evaluations = 2;
+    const auto baseline = sol::run_aabb_baseline(native_context, baseline_limits, {});
+    REQUIRE(baseline.best);
+    REQUIRE(baseline.best->solution->copies().size() == 2);
+    const auto bytes = quantized_copy(*native_context->object(), baseline.best->solution->copies().front());
+    geo::ImportLimits import_limits;
+    // Diagnostic single-copy target. The separate actual two-copy export must
+    // still pass its original 1.3-billion aggregate allowance.
+    import_limits.max_predicate_work = 650'000'000;
+    geo::detail::ImportAttemptStats stats;
+    const auto imported = geo::detail::inspect_baked_world_draft(bytes, import_limits, stats);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::AssetDraft>>(imported));
+    const auto& report = std::get<std::shared_ptr<const geo::AssetDraft>>(imported)->report();
+    std::cout << "projected_separation_v1 diagnostic_copy_work=" << stats.predicate_work
+              << " attempts=" << stats.projected.attempts << " hits=" << stats.projected.certificates
+              << " failed_attempt_work=" << stats.projected.failed_attempt_work
+              << " legacy_fallback_work=" << stats.projected.fallback_work << '\n';
+    CAPTURE(report.validity, stats.predicate_work, stats.candidate_pair_tests);
+    CHECK(report.validity == geo::Validity::valid);
+    CHECK(stats.predicate_work <= import_limits.max_predicate_work);
 }

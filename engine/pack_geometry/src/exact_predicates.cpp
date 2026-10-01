@@ -756,45 +756,189 @@ Comparison compare_squared_distance(const Vec3& a, const Vec3& b, double radius,
          sign == Sign::positive ? Comparison::greater : Comparison::equal;
 }
 
-TriangleRelation triangle_relation(
-    const std::array<Vec3, 3>& first, const std::array<Vec3, 3>& second,
-    const std::array<int, 3>& shared_first, const std::array<int, 3>& shared_second,
-    std::size_t shared_count, WorkBudget& budget) noexcept {
-  if (shared_count >= 3) return TriangleRelation::forbidden;
-  if (shared_count == 2) {
-    const int other = 3 - shared_second[0] - shared_second[1];
-    const Sign side = orient3d(
-        first[0], first[1], first[2], second[other], budget);
-    if (side == Sign::uncertain) return TriangleRelation::uncertain;
-    if (side != Sign::zero) return TriangleRelation::shared_feature_only;
-    return coplanar_relation(
-        first, second, shared_first, shared_second, shared_count, budget);
-  }
+namespace {
+// A coordinate projection is affine. A strict opposite half-plane places every
+// nonshared second-triangle vertex outside the first triangle; intersection
+// barycentric weights can therefore use only the actual shared vertices. The
+// exact nonzero first projection is injective on its plane, so its shared point
+// or edge also identifies the same 3D feature. Approximate normal selection is
+// only a heuristic: all authorizing signs below come from exact predicates.
+std::optional<TriangleRelation> projected_separation(const std::array<Vec3, 3>& first,
+                                                     const std::array<Vec3, 3>& second,
+                                                     const std::array<int, 3>& shared_first,
+                                                     const std::array<int, 3>& shared_second, std::size_t shared_count,
+                                                     WorkBudget& budget) noexcept
+{
+    if (budget.exhausted() || !budget.consume(1) || shared_count > 3) {
+        return TriangleRelation::uncertain;
+    }
+    std::array<bool, 3> shared_a {}, shared_b {};
+    for (std::size_t item = 0; item != shared_count; ++item) {
+        if (!budget.consume(4)) {
+            return TriangleRelation::uncertain;
+        }
+        const auto a = shared_first[item], b = shared_second[item];
+        if (a < 0 || a >= 3 || b < 0 || b >= 3) {
+            return TriangleRelation::uncertain;
+        }
+        for (std::size_t prior = 0; prior != item; ++prior) {
+            if (!budget.consume(2)) {
+                return TriangleRelation::uncertain;
+            }
+            if (a == shared_first[prior] || b == shared_second[prior]) {
+                return TriangleRelation::uncertain;
+            }
+        }
+        for (int axis = 0; axis != 3; ++axis) {
+            // Three operations for bit extraction/equality; differing bit patterns
+            // need three more for signed-zero equivalence. DAZ cannot hide a mismatch.
+            if (!budget.consume(3)) {
+                return TriangleRelation::uncertain;
+            }
+            const auto abits = std::bit_cast<std::uint64_t>(first[a][axis]);
+            const auto bbits = std::bit_cast<std::uint64_t>(second[b][axis]);
+            if (abits != bbits) {
+                if (!budget.consume(3)) {
+                    return TriangleRelation::uncertain;
+                }
+                if (((abits | bbits) & 0x7fff'ffff'ffff'ffffULL) != 0) {
+                    return TriangleRelation::uncertain;
+                }
+            }
+        }
+        shared_a[a] = true;
+        shared_b[b] = true;
+    }
+    if (!budget.consume(18)) {
+        return TriangleRelation::uncertain;
+    }
+    for (const auto& triangle : { first, second }) {
+        for (const auto& point : triangle) {
+            if (!finite(point)) {
+                return TriangleRelation::uncertain;
+            }
+        }
+    }
+    if (shared_count == 3) {
+        return std::nullopt;
+    }
 
-  std::array<Sign, 3> b_side{Sign::zero, Sign::zero, Sign::zero};
-  std::array<Sign, 3> a_side{Sign::zero, Sign::zero, Sign::zero};
-  if (shared_count == 1) {
-    for (int index = 0; index != 3; ++index) {
-      if (index == shared_second[0]) continue;
-      b_side[index] = orient3d(first[0], first[1], first[2], second[index], budget);
-      if (b_side[index] == Sign::uncertain) return TriangleRelation::uncertain;
+    // Six differences, six products, three subtractions, three absolute values
+    // and two largest-component comparisons: 20 scalar operations, then three
+    // finite checks. Strict comparisons deterministically break ties X/Y/Z.
+    if (!budget.consume(23)) {
+        return TriangleRelation::uncertain;
     }
-    const int b_first = (shared_second[0] + 1) % 3;
-    const int b_second = (shared_second[0] + 2) % 3;
-    if (same_strict_side(b_side[b_first], b_side[b_second])) {
-      return TriangleRelation::shared_feature_only;
+    const Vec3 u { first[1][0] - first[0][0], first[1][1] - first[0][1], first[1][2] - first[0][2] };
+    const Vec3 v { first[2][0] - first[0][0], first[2][1] - first[0][1], first[2][2] - first[0][2] };
+    const Vec3 normal { std::abs(u[1] * v[2] - u[2] * v[1]), std::abs(u[2] * v[0] - u[0] * v[2]),
+                        std::abs(u[0] * v[1] - u[1] * v[0]) };
+    if (!finite(normal)) {
+        return std::nullopt;
     }
-    for (int index = 0; index != 3; ++index) {
-      if (index == shared_first[0]) continue;
-      a_side[index] = orient3d(second[0], second[1], second[2], first[index], budget);
-      if (a_side[index] == Sign::uncertain) return TriangleRelation::uncertain;
+    int dropped = 0;
+    if (normal[1] > normal[dropped]) {
+        dropped = 1;
     }
-    const int a_first = (shared_first[0] + 1) % 3;
-    const int a_second = (shared_first[0] + 2) % 3;
-    if (same_strict_side(a_side[a_first], a_side[a_second])) {
-      return TriangleRelation::shared_feature_only;
+    if (normal[2] > normal[dropped]) {
+        dropped = 2;
     }
-  } else {
+    // The projection helper performs at most two coordinate-index comparisons
+    // for each point. Only this one projection is attempted.
+    if (!budget.consume(12)) {
+        return TriangleRelation::uncertain;
+    }
+    const std::array<Point2, 3> a { project(first[0], dropped), project(first[1], dropped),
+                                    project(first[2], dropped) };
+    const std::array<Point2, 3> b { project(second[0], dropped), project(second[1], dropped),
+                                    project(second[2], dropped) };
+    const auto inside = orient2d(a[0], a[1], a[2], budget);
+    if (!budget.consume(2) || inside == Sign::uncertain) {
+        return TriangleRelation::uncertain;
+    }
+    if (inside == Sign::zero) {
+        return std::nullopt;
+    }
+    for (int edge = 0; edge != 3; ++edge) {
+        if (!budget.consume(7)) {
+            return TriangleRelation::uncertain;
+        }
+        const auto next = (edge + 1) % 3;
+        if (shared_count == 1 && !shared_a[edge] && !shared_a[next]) {
+            continue;
+        }
+        if (shared_count == 2 && (!shared_a[edge] || !shared_a[next])) {
+            continue;
+        }
+        bool opposite = true;
+        for (int point = 0; point != 3; ++point) {
+            if (!budget.consume(1)) {
+                return TriangleRelation::uncertain;
+            }
+            if (shared_b[point]) {
+                continue;
+            }
+            const auto side = orient2d(a[edge], a[next], b[point], budget);
+            if (!budget.consume(3) || side == Sign::uncertain) {
+                return TriangleRelation::uncertain;
+            }
+            if (side == Sign::zero || side == inside) {
+                opposite = false;
+                break;
+            }
+        }
+        if (opposite) {
+            return shared_count == 0 ? TriangleRelation::disjoint : TriangleRelation::shared_feature_only;
+        }
+    }
+    return std::nullopt;
+}
+
+TriangleRelation legacy_triangle_relation(const std::array<Vec3, 3>& first, const std::array<Vec3, 3>& second,
+                                          const std::array<int, 3>& shared_first,
+                                          const std::array<int, 3>& shared_second, std::size_t shared_count,
+                                          WorkBudget& budget) noexcept
+{
+    if (shared_count >= 3)
+        return TriangleRelation::forbidden;
+    if (shared_count == 2) {
+        const int other = 3 - shared_second[0] - shared_second[1];
+        const Sign side = orient3d(first[0], first[1], first[2], second[other], budget);
+        if (side == Sign::uncertain)
+            return TriangleRelation::uncertain;
+        if (side != Sign::zero)
+            return TriangleRelation::shared_feature_only;
+        return coplanar_relation(first, second, shared_first, shared_second, shared_count, budget);
+    }
+
+    std::array<Sign, 3> b_side { Sign::zero, Sign::zero, Sign::zero };
+    std::array<Sign, 3> a_side { Sign::zero, Sign::zero, Sign::zero };
+    if (shared_count == 1) {
+        for (int index = 0; index != 3; ++index) {
+            if (index == shared_second[0])
+                continue;
+            b_side[index] = orient3d(first[0], first[1], first[2], second[index], budget);
+            if (b_side[index] == Sign::uncertain)
+                return TriangleRelation::uncertain;
+        }
+        const int b_first = (shared_second[0] + 1) % 3;
+        const int b_second = (shared_second[0] + 2) % 3;
+        if (same_strict_side(b_side[b_first], b_side[b_second])) {
+            return TriangleRelation::shared_feature_only;
+        }
+        for (int index = 0; index != 3; ++index) {
+            if (index == shared_first[0])
+                continue;
+            a_side[index] = orient3d(second[0], second[1], second[2], first[index], budget);
+            if (a_side[index] == Sign::uncertain)
+                return TriangleRelation::uncertain;
+        }
+        const int a_first = (shared_first[0] + 1) % 3;
+        const int a_second = (shared_first[0] + 2) % 3;
+        if (same_strict_side(a_side[a_first], a_side[a_second])) {
+            return TriangleRelation::shared_feature_only;
+        }
+    } else {
     for (int index = 0; index != 3; ++index) {
       b_side[index] = orient3d(first[0], first[1], first[2], second[index], budget);
       if (b_side[index] == Sign::uncertain) return TriangleRelation::uncertain;
@@ -854,6 +998,46 @@ TriangleRelation triangle_relation(
     if (!ok) return TriangleRelation::uncertain;
   }
   return TriangleRelation::shared_feature_only;
+}
+}  // namespace
+
+TriangleRelation triangle_relation(const std::array<Vec3, 3>& first, const std::array<Vec3, 3>& second,
+                                   const std::array<int, 3>& shared_first, const std::array<int, 3>& shared_second,
+                                   std::size_t shared_count, WorkBudget& budget, TriangleRelationPolicy policy,
+                                   ProjectedSeparationStats* stats) noexcept
+{
+    if (policy == TriangleRelationPolicy::legacy) {
+        return legacy_triangle_relation(first, second, shared_first, shared_second, shared_count, budget);
+    }
+    const auto before = budget.used();
+    const auto certificate = projected_separation(first, second, shared_first, shared_second, shared_count, budget);
+    const auto attempted_work = budget.used() - before;
+    if (stats) {
+        ++stats->attempts;
+        stats->attempt_work += attempted_work;
+        if (certificate && *certificate != TriangleRelation::uncertain) {
+            ++stats->certificates;
+            stats->certified_work += attempted_work;
+        }
+        else {
+            stats->failed_attempt_work += attempted_work;
+            if (certificate) {
+                ++stats->uncertain;
+            }
+            else {
+                ++stats->fallbacks;
+            }
+        }
+    }
+    if (certificate) {
+        return *certificate;
+    }
+    const auto legacy_start = budget.used();
+    const auto result = legacy_triangle_relation(first, second, shared_first, shared_second, shared_count, budget);
+    if (stats) {
+        stats->fallback_work += budget.used() - legacy_start;
+    }
+    return result;
 }
 
 SegmentTriangleCrossing segment_triangle_crossing(
