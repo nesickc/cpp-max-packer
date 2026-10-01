@@ -18,7 +18,10 @@ struct SpectralPipelineResult {
     // pipeline adds it; correlation peaks already include their reserve.
     std::uint64_t working_bytes_peak {};
     std::string_view diagnostic { "SPECTRAL_PIPELINE_PENDING" };
+    std::optional<RunFailureDetails> failure_details;
     bool complete {};
+    // Private benchmark evidence; elapsed proximity phase, without correlation.
+    double proximity_ms {};
     struct RankedCandidate {
         geometry::CellIndex translation {};
         double score {};
@@ -53,6 +56,10 @@ struct BinaryObservation {
 };
 
 using BinaryObservationSink = void (*)(const BinaryObservation&) noexcept;
+
+[[nodiscard]] std::optional<RunFailureDetails> spectral_admission(
+    const std::shared_ptr<const geometry::ValidationContext>&, geometry::GridLattice, const SpectralLimits&,
+    const std::shared_ptr<const geometry::ValidatedSolution>& = {});
 
 // Fixed-size, allocation-free union of the public ownership snapshots.  The
 // tokens borrow their owners, which the pipeline keeps alive through a call.

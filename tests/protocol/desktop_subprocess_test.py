@@ -7,11 +7,13 @@ import pathlib
 import math
 import struct
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
 
 import solve_subprocess_test as fixtures
+import t009_practical_journey as qualification
 
 ENGINE = None
 
@@ -22,6 +24,25 @@ def run(*arguments):
 
 
 class DesktopTests(unittest.TestCase):
+    def test_t009_failed_and_timed_out_invocations_keep_evidence(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            with self.assertRaises(AssertionError):
+                qualification.run(sys.executable, root / "failed", "-c",
+                                  "import sys;print('failure');sys.stderr.write('cause');sys.exit(7)")
+            failed = json.loads((root / "failed/invocation.json").read_text())
+            self.assertEqual((failed["status"], failed["returncode"]), ("completed", 7))
+            self.assertEqual((root / "failed/stderr.log").read_bytes(), b"cause")
+            with self.assertRaises(subprocess.TimeoutExpired):
+                qualification.run(sys.executable, root / "timeout", "-c",
+                                  "import time;print('started',flush=True);time.sleep(10)", timeout_seconds=.5)
+            timed_out = json.loads((root / "timeout/invocation.json").read_text())
+            self.assertEqual((timed_out["status"], timed_out["returncode"]), ("timeout", None))
+            self.assertGreater(timed_out["elapsed_seconds"], 0)
+            self.assertIn(b"started", (root / "timeout/stdout.json").read_bytes())
+            with self.assertRaises(FileExistsError):
+                qualification.benchmark(pathlib.Path(sys.executable), root)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="desktop-")
         self.root = pathlib.Path(self.temp.name) / "перенос with spaces"

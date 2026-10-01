@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <new>
@@ -10,6 +11,7 @@
 #include <variant>
 #include <vector>
 
+#include "field_proximity.hpp"
 #include "spectrapack/solver/orientations.hpp"
 #include "storage_accounting.hpp"
 
@@ -27,6 +29,9 @@ bool add(std::uint64_t& total, std::uint64_t value) noexcept
 
 std::optional<std::uint64_t> product(std::size_t count, std::size_t width) noexcept
 {
+    if (width == 0) {
+        return std::uint64_t {};
+    }
     if (count > std::numeric_limits<std::uint64_t>::max() / width) {
         return {};
     }
@@ -408,15 +413,167 @@ const compute::CorrelationStats& correlation_stats(const compute::CorrelationOut
     return std::get<compute::CorrelationFailure>(outcome).stats;
 }
 
-void record_correlation_failure(SpectralPipelineResult& result, const compute::CorrelationFailure& failure) noexcept
+void record_correlation_failure(SpectralPipelineResult& result, const compute::CorrelationFailure& failure)
 {
     result.diagnostic = failure.code;
+    const bool resource = failure.code == "CORRELATION_PADDED_CELL_LIMIT" ||
+                          failure.code == "CORRELATION_MEMORY_LIMIT" ||
+                          failure.code == "CORRELATION_DIRECT_TERM_LIMIT" || failure.code == "CORRELATION_ALLOCATION" ||
+                          failure.code == "CORRELATION_SHAPE_OVERFLOW" || failure.code == "CORRELATION_INDEX_OVERFLOW";
+    result.failure_details =
+        RunFailureDetails { resource ? TerminationReason::resource_limit : TerminationReason::error,
+                            "correlation",
+                            std::string(failure.code),
+                            {},
+                            {} };
     if (failure.code == "CORRELATION_NUMERIC") {
         ++result.stats.unreliable_passes;
     }
 }
 
+void record_field_failure(SpectralPipelineResult& result, std::string_view phase,
+                          const geometry::RepresentationFailure* failure)
+{
+    const std::string_view code = failure ? std::string_view(failure->code) : "FIELD_ACCOUNTING_LIMIT";
+    const bool resource =
+        !failure || code == "FIELD_MEMORY_LIMIT" || code == "FIELD_CELL_LIMIT" || code == "FIELD_CELL_VISIT_LIMIT" ||
+        code == "FIELD_KERNEL_WORK_LIMIT" || code == "FIELD_INPUT_TRIANGLE_LIMIT" ||
+        code == "FIELD_ALLOCATION_FAILURE" || code == "FIELD_INDEX_OVERFLOW" || code == "KERNEL_WORK_LIMIT" ||
+        code == "KERNEL_MEMORY_LIMIT" || code == "KERNEL_RESOURCE_LIMIT" || code == "KERNEL_ALLOCATION_FAILURE" ||
+        code == "KERNEL_VERTEX_LIMIT" || code == "KERNEL_ARITHMETIC_CAPACITY" || code == "KERNEL_EXACT_LIMIT";
+    result.failure_details =
+        RunFailureDetails { resource ? TerminationReason::resource_limit : TerminationReason::error,
+                            std::string(phase),
+                            std::string(code),
+                            {},
+                            {} };
+}
+
 }  // namespace
+
+std::optional<RunFailureDetails> spectral_admission(const std::shared_ptr<const geometry::ValidationContext>& context,
+                                                    geometry::GridLattice lattice, const SpectralLimits& limits,
+                                                    const std::shared_ptr<const geometry::ValidatedSolution>& retained)
+{
+    const auto reject = [](std::string_view code, std::string_view name, std::uint64_t required, std::uint64_t limit) {
+        return RunFailureDetails {
+            TerminationReason::resource_limit,
+            "preflight",
+            std::string(code),
+            ResourceLimitDetails { std::string(name), required, limit },
+            {}
+        };
+    };
+    const auto reject_unknown = [](std::string_view code) {
+        return RunFailureDetails { TerminationReason::resource_limit, "preflight", std::string(code), {}, {} };
+    };
+    const auto container = bounds(*context);
+    const auto environment = container ? window(*container, lattice) : std::optional<geometry::GridWindow> {};
+    const auto count = environment ? cells(environment->shape) : std::optional<std::size_t> {};
+    if (!count) {
+        if (container) {
+            for (std::size_t axis = 0; axis != 3; ++axis) {
+                const double low = (container->min[axis] - lattice.origin_mm[axis]) / lattice.pitch_mm;
+                const double high = (container->max[axis] - lattice.origin_mm[axis]) / lattice.pitch_mm;
+                const double width = std::ceil(high) - std::floor(low) + 2;
+                if (std::isfinite(width) && width > UINT32_MAX && width < 0x1p64) {
+                    return reject("FIELD_INDEX_OVERFLOW", "environment_axis_cells", static_cast<std::uint64_t>(width),
+                                  UINT32_MAX);
+                }
+            }
+        }
+        return RunFailureDetails { TerminationReason::resource_limit, "preflight", "FIELD_INDEX_OVERFLOW", {}, {} };
+    }
+    if (*count > limits.per_representation.max_cells) {
+        return reject("FIELD_CELL_LIMIT", "environment_cells", *count, limits.per_representation.max_cells);
+    }
+    if (!proximity_shape_supported(environment->shape)) {
+        return reject_unknown("SPECTRAL_PROXIMITY_RANGE");
+    }
+    const auto object = context->object()->bounds_mm();
+    double radius2 {};
+    for (std::size_t axis = 0; axis != 3; ++axis) {
+        radius2 += std::pow(std::max(std::abs(object.min[axis]), std::abs(object.max[axis])), 2);
+    }
+    geometry::CellShape kernel {};
+    const double extent = std::ceil(2 * std::sqrt(radius2) / lattice.pitch_mm) + 3;
+    if (!std::isfinite(extent) || extent >= UINT32_MAX) {
+        return reject_unknown("FIELD_INDEX_OVERFLOW");
+    }
+    kernel.fill(static_cast<std::uint32_t>(extent));
+    const auto kernel_cells = cells(kernel);
+    if (!kernel_cells) {
+        return reject_unknown("FIELD_CELL_LIMIT");
+    }
+    if (*kernel_cells > limits.per_representation.max_cells) {
+        return reject("FIELD_CELL_LIMIT", "kernel_cells", *kernel_cells, limits.per_representation.max_cells);
+    }
+    const auto estimate = compute::estimate_correlation_cpu({ environment->shape, kernel, environment->first, {} });
+    if (const auto* failure = std::get_if<compute::CorrelationFailure>(&estimate)) {
+        return reject_unknown(failure->code);
+    }
+    const auto& fft = std::get<compute::CorrelationEstimate>(estimate);
+    if (fft.padded_cells > limits.per_correlation.max_padded_cells) {
+        return reject("CORRELATION_PADDED_CELL_LIMIT", "padded_cells", fft.padded_cells,
+                      limits.per_correlation.max_padded_cells);
+    }
+    PipelineOwners owners { context, retained };
+    auto bytes = current_bytes(owners, limits);
+    const auto cap = std::min({ limits.max_working_bytes, limits.per_representation.max_working_bytes,
+                                limits.per_correlation.max_working_bytes });
+    // Bound every per-copy footprint by the full environment. Account arrays
+    // separately from prepare/place metadata, expanded fill/dilation/crop and FFT.
+    const auto copy_count = retained ? retained->copies().size() : 0;
+    const long double halo_value =
+        std::ceil(static_cast<long double>(
+                      std::max(context->constraints().pair_clearance_mm, context->constraints().wall_clearance_mm)) /
+                  lattice.pitch_mm) +
+        2;
+    if (!std::isfinite(halo_value) || halo_value >= UINT32_MAX) {
+        return RunFailureDetails { TerminationReason::resource_limit, "preflight", "FIELD_INDEX_OVERFLOW", {}, {} };
+    }
+    auto expanded = environment->shape;
+    for (auto& axis : expanded) {
+        const auto size = static_cast<std::uint64_t>(axis) + 2 * static_cast<std::uint64_t>(halo_value);
+        if (size >= UINT32_MAX) {
+            return RunFailureDetails { TerminationReason::resource_limit, "preflight", "FIELD_INDEX_OVERFLOW", {}, {} };
+        }
+        axis = static_cast<std::uint32_t>(size);
+    }
+    const auto expanded_cells = cells(expanded);
+    if (expanded_cells && *expanded_cells > limits.per_representation.max_cells) {
+        return reject("FIELD_CELL_LIMIT", "expanded_cells", *expanded_cells, limits.per_representation.max_cells);
+    }
+    auto geometry_bytes = geometry::estimate_field_geometry_bytes(*context->object());
+    if (const auto* solid = std::get_if<std::shared_ptr<const geometry::AcceptedSolid>>(&context->container());
+        solid && solid->get() != context->object().get()) {
+        const auto extra = geometry::estimate_field_geometry_bytes(**solid);
+        if (!geometry_bytes || !extra || !add(*geometry_bytes, *extra)) {
+            geometry_bytes.reset();
+        }
+    }
+    const auto footprints = product(*count, copy_count);
+    const auto stencil_width = 2 * static_cast<std::uint64_t>(halo_value) + 1;
+    auto stencil = product(stencil_width, stencil_width);
+    if (stencil) {
+        stencil = product(*stencil, stencil_width);
+    }
+    if (!bytes || !geometry_bytes || !expanded_cells || !footprints || !stencil || !add(*bytes, *geometry_bytes) ||
+        !add_optional(*bytes, product(*footprints, sizeof(std::size_t))) ||
+        (retained && (!add_optional(*bytes, pose_bytes(retained->copies())) ||
+                      !add_optional(*bytes, product(copy_count, 2 * sizeof(void*))))) ||
+        !add_optional(*bytes, product(*count, 15)) || !add_optional(*bytes, product(*expanded_cells, 10)) ||
+        !add_optional(*bytes, product(*kernel_cells, 10)) ||
+        !add_optional(*bytes, product(*stencil, sizeof(geometry::CellIndex))) ||
+        !add(*bytes, proximity_scratch_bytes(environment->shape)) || !add(*bytes, fft.working_bytes) ||
+        !add_optional(*bytes, product(fft.padded_cells, sizeof(double)))) {
+        return reject_unknown("SPECTRAL_MEMORY_OVERFLOW");
+    }
+    if (*bytes > cap) {
+        return reject("SPECTRAL_MEMORY_LIMIT", "working_bytes", *bytes, cap);
+    }
+    return {};
+}
 
 bool ResidencyLedger::include(const geometry::RepresentationResidency& residency) noexcept
 {
@@ -499,6 +656,8 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
     SpectralPipelineResult result;
     if (!context || !std::isfinite(lattice.pitch_mm) || lattice.pitch_mm <= 0) {
         result.diagnostic = "SPECTRAL_PIPELINE_INPUT";
+        result.failure_details =
+            RunFailureDetails { TerminationReason::error, "pipeline", "SPECTRAL_PIPELINE_INPUT", {}, {} };
         return result;
     }
     const auto container_bounds = bounds(*context);
@@ -506,6 +665,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
         container_bounds ? window(*container_bounds, lattice) : std::optional<geometry::GridWindow> {};
     if (!environment || !cells(environment->shape)) {
         result.diagnostic = "SPECTRAL_PIPELINE_WINDOW_LIMIT";
+        result.failure_details = RunFailureDetails {
+            TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_WINDOW_LIMIT", {}, {}
+        };
         return result;
     }
     try {
@@ -514,16 +676,25 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
         const auto initial_bytes = current_bytes(owners, limits);
         if (!initial_bytes || !observe(result, limits, *initial_bytes)) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
         const auto source = context->object()->representation_residency();
         if (!source) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
         auto nested = representation_limits(result, limits, owners, std::span { &*source, 1 });
         if (!nested) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
         {
@@ -533,6 +704,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
             if (!recorder.finish() || !attempt.input_accounting_complete ||
                 !std::holds_alternative<std::shared_ptr<const geometry::VoxelGeometry>>(prepared)) {
                 result.diagnostic = "SPECTRAL_PIPELINE_PREPARE";
+                result.failure_details =
+                    RunFailureDetails { TerminationReason::error, "pipeline", "SPECTRAL_PIPELINE_PREPARE", {}, {} };
+                record_field_failure(result, "prepare", std::get_if<geometry::RepresentationFailure>(&prepared));
                 return result;
             }
             owners.geometry = std::get<std::shared_ptr<const geometry::VoxelGeometry>>(prepared);
@@ -544,6 +718,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
             const auto residency = (*solid)->representation_residency();
             if (!residency) {
                 result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+                result.failure_details = RunFailureDetails {
+                    TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+                };
                 return result;
             }
             mask_inputs[mask_input_count++] = *residency;
@@ -551,6 +728,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
         nested = representation_limits(result, limits, owners, std::span { mask_inputs }.first(mask_input_count));
         if (!nested) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
         {
@@ -561,6 +741,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
             if (!recorder.finish() || !attempt.input_accounting_complete ||
                 !std::holds_alternative<std::shared_ptr<const geometry::CellField>>(mask)) {
                 result.diagnostic = "SPECTRAL_PIPELINE_MASK";
+                result.failure_details =
+                    RunFailureDetails { TerminationReason::error, "pipeline", "SPECTRAL_PIPELINE_MASK", {}, {} };
+                record_field_failure(result, "mask", std::get_if<geometry::RepresentationFailure>(&mask));
                 return result;
             }
             owners.mask = std::get<std::shared_ptr<const geometry::CellField>>(mask);
@@ -568,11 +751,17 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
         const auto mask_snapshot = owners.mask->representation_residency();
         if (!mask_snapshot) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
         nested = representation_limits(result, limits, owners, std::span { &*mask_snapshot, 1 });
         if (!nested) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
         std::unique_ptr<geometry::BlockedField> blockers;
@@ -583,6 +772,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
             if (!recorder.finish() || !attempt.input_accounting_complete ||
                 !std::holds_alternative<std::unique_ptr<geometry::BlockedField>>(blocked)) {
                 result.diagnostic = "SPECTRAL_PIPELINE_BLOCKED";
+                result.failure_details =
+                    RunFailureDetails { TerminationReason::error, "pipeline", "SPECTRAL_PIPELINE_BLOCKED", {}, {} };
+                record_field_failure(result, "blocked", std::get_if<geometry::RepresentationFailure>(&blocked));
                 return result;
             }
             blockers = std::get<std::unique_ptr<geometry::BlockedField>>(std::move(blocked));
@@ -594,11 +786,17 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
                 const auto geometry_snapshot = owners.geometry->representation_residency();
                 if (!geometry_snapshot) {
                     result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+                    result.failure_details = RunFailureDetails {
+                        TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+                    };
                     return result;
                 }
                 nested = representation_limits(result, limits, owners, std::span { &*geometry_snapshot, 1 });
                 if (!nested) {
                     result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+                    result.failure_details = RunFailureDetails {
+                        TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+                    };
                     return result;
                 }
                 {
@@ -610,6 +808,10 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
                     if (!recorder.finish() || !attempt.input_accounting_complete ||
                         !std::holds_alternative<std::shared_ptr<const geometry::CellField>>(placed)) {
                         result.diagnostic = "SPECTRAL_PIPELINE_PLACED";
+                        result.failure_details = RunFailureDetails {
+                            TerminationReason::error, "pipeline", "SPECTRAL_PIPELINE_PLACED", {}, {}
+                        };
+                        record_field_failure(result, "placed", std::get_if<geometry::RepresentationFailure>(&placed));
                         return result;
                     }
                     owners.placed = std::get<std::shared_ptr<const geometry::CellField>>(placed);
@@ -618,12 +820,18 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
                 const auto blocked_snapshot = blockers->representation_residency();
                 if (!placed_snapshot || !blocked_snapshot) {
                     result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+                    result.failure_details = RunFailureDetails {
+                        TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+                    };
                     return result;
                 }
                 const std::array add_inputs { *blocked_snapshot, *placed_snapshot };
                 nested = representation_limits(result, limits, owners, add_inputs);
                 if (!nested) {
                     result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+                    result.failure_details = RunFailureDetails {
+                        TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+                    };
                     return result;
                 }
                 {
@@ -632,6 +840,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
                     const auto failure = blockers->add(pose.copy_id, owners.placed, *nested, attempt);
                     if (!recorder.finish() || !attempt.input_accounting_complete || failure) {
                         result.diagnostic = "SPECTRAL_PIPELINE_ADD";
+                        result.failure_details =
+                            RunFailureDetails { TerminationReason::error, "pipeline", "SPECTRAL_PIPELINE_ADD", {}, {} };
+                        record_field_failure(result, "add", failure ? &*failure : nullptr);
                         return result;
                     }
                 }
@@ -639,6 +850,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
                 const auto live = current_bytes(owners, limits);
                 if (!live || !observe(result, limits, *live)) {
                     result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+                    result.failure_details = RunFailureDetails {
+                        TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+                    };
                     return result;
                 }
             }
@@ -647,22 +861,32 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
         auto live = current_bytes(owners, limits);
         if (supplied_catalog.quaternions.empty() || !live || !observe(result, limits, *live)) {
             result.diagnostic = "SPECTRAL_PIPELINE_CATALOG";
+            result.failure_details =
+                RunFailureDetails { TerminationReason::error, "pipeline", "SPECTRAL_PIPELINE_CATALOG", {}, {} };
             return result;
         }
         const auto& rotations = owners.catalog->quaternions;
         if (rotations.empty() || query.orientation_index >= rotations.size()) {
             result.diagnostic = "SPECTRAL_PIPELINE_CATALOG";
+            result.failure_details =
+                RunFailureDetails { TerminationReason::error, "pipeline", "SPECTRAL_PIPELINE_CATALOG", {}, {} };
             return result;
         }
 
         const auto object_input = owners.geometry->representation_residency();
         if (!object_input) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
         nested = representation_limits(result, limits, owners, std::span { &*object_input, 1 });
         if (!nested) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
         {
@@ -673,6 +897,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
             if (!recorder.finish() || !attempt.input_accounting_complete ||
                 !std::holds_alternative<std::shared_ptr<const geometry::CellField>>(object)) {
                 result.diagnostic = "SPECTRAL_PIPELINE_OBJECT";
+                result.failure_details =
+                    RunFailureDetails { TerminationReason::error, "pipeline", "SPECTRAL_PIPELINE_OBJECT", {}, {} };
+                record_field_failure(result, "object", std::get_if<geometry::RepresentationFailure>(&object));
                 return result;
             }
             owners.kernel = std::get<std::shared_ptr<const geometry::CellField>>(object);
@@ -683,6 +910,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
         live = current_bytes(owners, limits);
         if (!arrays || !live || !add(*live, *arrays) || !observe(result, limits, *live)) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
         std::vector<std::uint8_t> occupancy(environment_cells);
@@ -692,6 +922,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
         live = current_bytes(owners, limits);
         if (!live || !observe(result, limits, *live)) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
         for (std::uint32_t z = 0; z != environment->shape[2]; ++z) {
@@ -703,33 +936,26 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
                 }
             }
         }
-        // Bounded direct nearest-blocker calculation including the exterior halo.
-        const auto n = occupancy.size();
-        const auto proximity_scan = product(n, n);
-        if (!proximity_scan || *proximity_scan > remaining(limits.max_proximity_terms, result.stats.proximity_terms)) {
-            result.diagnostic = "SPECTRAL_PIPELINE_PROXIMITY_LIMIT";
+        const auto proximity_start = std::chrono::steady_clock::now();
+        auto proximity_live = current_bytes(owners, limits);
+        if (!proximity_live || !add(*proximity_live, proximity_scratch_bytes(environment->shape)) ||
+            !observe(result, limits, *proximity_live)) {
+            result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
-        for (std::uint32_t z = 0; z != environment->shape[2]; ++z) {
-            for (std::uint32_t y = 0; y != environment->shape[1]; ++y) {
-                for (std::uint32_t x = 0; x != environment->shape[0]; ++x) {
-                    double best = std::numeric_limits<double>::infinity();
-                    for (std::uint32_t bz = 0; bz != environment->shape[2]; ++bz) {
-                        for (std::uint32_t by = 0; by != environment->shape[1]; ++by) {
-                            for (std::uint32_t bx = 0; bx != environment->shape[0]; ++bx) {
-                                if (occupancy[at(environment->shape, bx, by, bz)]) {
-                                    const double dx = static_cast<double>(x) - bx, dy = static_cast<double>(y) - by,
-                                                 dz = static_cast<double>(z) - bz;
-                                    best = std::min(best, std::sqrt(dx * dx + dy * dy + dz * dz));
-                                }
-                            }
-                        }
-                    }
-                    proximity[at(environment->shape, x, y, z)] = std::isfinite(best) ? std::exp(-best / 2.) : 0.;
-                }
-            }
+        if (!build_proximity(environment->shape, occupancy, proximity, limits.max_proximity_terms,
+                             result.stats.proximity_terms)) {
+            result.diagnostic = "SPECTRAL_PIPELINE_PROXIMITY_LIMIT";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_PROXIMITY_LIMIT", {}, {}
+            };
+            return result;
         }
-        (void)add(result.stats.proximity_terms, *proximity_scan);
+        result.proximity_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - proximity_start).count();
         compute::CorrelationSpec spec { environment->shape, owners.kernel->window().shape, environment->first,
                                         owners.kernel->window().first };
         auto correlation_limits = limits.per_correlation;
@@ -739,6 +965,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
         live = current_bytes(owners, limits);
         if (!live || !observe(result, limits, *live)) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
         correlation_limits.reserved_bytes = *live;
@@ -749,6 +978,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
             !add(result.stats.direct_terms, binary_stats.direct_terms) ||
             !observe(result, limits, binary_stats.working_bytes_peak)) {
             result.diagnostic = "SPECTRAL_PIPELINE_OVERFLOW";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_OVERFLOW", {}, {}
+            };
             return result;
         }
         if (!std::holds_alternative<compute::CorrelationResult>(binary)) {
@@ -770,6 +1002,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
         live = current_bytes(owners, limits);
         if (!live || !observe(result, limits, *live)) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
         correlation_limits.reserved_bytes = *live;
@@ -784,6 +1019,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
             !add(result.stats.proximity_terms, ranked_stats.direct_terms) ||
             !observe(result, limits, ranked_stats.working_bytes_peak)) {
             result.diagnostic = "SPECTRAL_PIPELINE_OVERFLOW";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_OVERFLOW", {}, {}
+            };
             return result;
         }
         if (!std::holds_alternative<compute::CorrelationResult>(ranked)) {
@@ -801,6 +1039,8 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
             static_cast<std::uint64_t>(std::count(kernel_cells.begin(), kernel_cells.end(), std::uint8_t { 1 }));
         if (occupied_kernel == 0) {
             result.diagnostic = "SPECTRAL_PIPELINE_EMPTY_KERNEL";
+            result.failure_details =
+                RunFailureDetails { TerminationReason::error, "pipeline", "SPECTRAL_PIPELINE_EMPTY_KERNEL", {}, {} };
             return result;
         }
         const auto& binary_values = owners.binary->values;
@@ -829,12 +1069,18 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
             const auto legal_first = checked_subtract(environment->first[axis], owners.kernel->window().first[axis]);
             if (!legal_first) {
                 result.diagnostic = "SPECTRAL_PIPELINE_TRANSLATION_RANGE";
+                result.failure_details = RunFailureDetails {
+                    TerminationReason::error, "pipeline", "SPECTRAL_PIPELINE_TRANSLATION_RANGE", {}, {}
+                };
                 return result;
             }
             first[axis] = *legal_first;
             const auto span = static_cast<std::int64_t>(environment->shape[axis] - owners.kernel->window().shape[axis]);
             if (first[axis] > std::numeric_limits<std::int64_t>::max() - span) {
                 result.diagnostic = "SPECTRAL_PIPELINE_TRANSLATION_RANGE";
+                result.failure_details = RunFailureDetails {
+                    TerminationReason::error, "pipeline", "SPECTRAL_PIPELINE_TRANSLATION_RANGE", {}, {}
+                };
                 return result;
             }
             last[axis] = first[axis] + span;
@@ -843,6 +1089,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
         live = current_bytes(owners, limits);
         if (!live) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
         auto query_limits = limits.spectral.per_query;
@@ -866,16 +1115,32 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
         auto combined_peak = *live;
         if (!add(combined_peak, query_stats.working_bytes_peak) || !observe(result, limits, combined_peak)) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
         if (!std::holds_alternative<geometry::OrientedBounds>(oriented)) {
             result.diagnostic = std::get<geometry::PhysicalQueryFailure>(oriented).code;
+            const auto code = result.diagnostic;
+            const bool resource = code == "PHYSICAL_MEMORY_LIMIT" || code == "PHYSICAL_WORK_LIMIT" ||
+                                  code == "PHYSICAL_VERTEX_LIMIT" || code == "PHYSICAL_ARITHMETIC_CAPACITY" ||
+                                  code == "PHYSICAL_ALLOCATION_FAILURE";
+            result.failure_details =
+                RunFailureDetails { resource ? TerminationReason::resource_limit : TerminationReason::error,
+                                    "ranking_bounds",
+                                    std::string(code),
+                                    {},
+                                    {} };
             return result;
         }
         const auto& oriented_bounds = std::get<geometry::OrientedBounds>(oriented);
         const double container_height = container_bounds->max[2] - container_bounds->min[2];
         if (!std::isfinite(container_height) || container_height <= 0.) {
             result.diagnostic = "SPECTRAL_PIPELINE_CONTAINER_HEIGHT";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::error, "pipeline", "SPECTRAL_PIPELINE_CONTAINER_HEIGHT", {}, {}
+            };
             return result;
         }
         constexpr std::size_t page_size = 32;
@@ -883,6 +1148,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
         live = current_bytes(owners, limits);
         if (!page_bytes || !live || !add(*live, *page_bytes) || !observe(result, limits, *live)) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
         result.ranked_candidates.reserve(page_size);
@@ -890,6 +1158,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
         live = current_bytes(owners, limits);
         if (!live || !observe(result, limits, *live)) {
             result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+            result.failure_details = RunFailureDetails {
+                TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_RESIDENCY", {}, {}
+            };
             return result;
         }
         const auto rank_less = [](const SpectralPipelineResult::RankedCandidate& left,
@@ -918,6 +1189,9 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
                 for (std::uint64_t x_offset = 0; x_offset != legal_extents[0]; ++x_offset) {
                     if (result.stats.direct_terms >= limits.max_direct_terms || !add(result.stats.direct_terms, 1)) {
                         result.diagnostic = "SPECTRAL_PIPELINE_DIRECT_TERM_LIMIT";
+                        result.failure_details = RunFailureDetails {
+                            TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_DIRECT_TERM_LIMIT", {}, {}
+                        };
                         return result;
                     }
                     const std::array<std::int64_t, 3> translation { first[0] + static_cast<std::int64_t>(x_offset),
@@ -977,6 +1251,11 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
                             if (result.stats.direct_terms >= limits.max_direct_terms ||
                                 !add(result.stats.direct_terms, 1)) {
                                 result.diagnostic = "SPECTRAL_PIPELINE_DIRECT_TERM_LIMIT";
+                                result.failure_details = RunFailureDetails { TerminationReason::resource_limit,
+                                                                             "pipeline",
+                                                                             "SPECTRAL_PIPELINE_DIRECT_TERM_LIMIT",
+                                                                             {},
+                                                                             {} };
                                 return result;
                             }
                             if (!kernel_cells[at(owners.kernel->window().shape, kx, ky, kz)]) {
@@ -1009,6 +1288,7 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
     }
     catch (const std::bad_alloc&) {
         result.diagnostic = "SPECTRAL_PIPELINE_ALLOCATION";
+        result.failure_details.reset();
         return result;
     }
 }
@@ -1026,6 +1306,8 @@ SpectralPipelineResult build_spectral_pipeline(const std::shared_ptr<const geome
     if (!std::holds_alternative<OrientationCatalog>(catalog)) {
         SpectralPipelineResult result;
         result.diagnostic = "SPECTRAL_PIPELINE_CATALOG";
+        result.failure_details =
+            RunFailureDetails { TerminationReason::error, "pipeline", "SPECTRAL_PIPELINE_CATALOG", {}, {} };
         return result;
     }
     return build_spectral_pipeline(context, lattice, limits, baseline, std::get<OrientationCatalog>(catalog), {},

@@ -8,6 +8,29 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[test]
+fn native_result_decimals_survive_desktop_json_roundtrip() {
+    // AT-14: decimals from the real Ulamok native snapshot that previously
+    // changed by one ULP while Save parsed and rewrote the result.
+    let decimals = [
+        "90.46014404296875",
+        "105.50743865966797",
+        "-1.5022964477539062",
+        "105.69591522216797",
+        "143.96210350036623",
+    ];
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("result.json");
+    std::fs::write(&file, format!("[{}]", decimals.join(","))).unwrap();
+    let parsed = spectrapack_desktop::security::json(&file, 1024).unwrap();
+    let saved = serde_json::to_vec(&parsed).unwrap();
+    let restored: Vec<f64> = serde_json::from_slice(&saved).unwrap();
+    for (decimal, actual) in decimals.iter().zip(restored) {
+        let native = decimal.parse::<f64>().unwrap();
+        assert_eq!(actual.to_bits(), native.to_bits(), "{decimal}");
+    }
+}
+
 fn fixture() -> (tempfile::TempDir, Core, PathBuf) {
     let engine = PathBuf::from(
         std::env::var_os("SPECTRAPACK_TEST_ENGINE").expect("real test engine required"),
@@ -20,7 +43,14 @@ fn fixture() -> (tempfile::TempDir, Core, PathBuf) {
     (root, core, source)
 }
 fn wait(core: &Core) -> State {
-    let deadline = Instant::now() + Duration::from_secs(60);
+    let deadline = Instant::now()
+        + Duration::from_secs(
+            if std::env::var_os("SPECTRAPACK_JOURNEY_REQUEST").is_some() {
+                1800
+            } else {
+                60
+            },
+        );
     loop {
         let state = core.state();
         if state
@@ -196,21 +226,107 @@ fn real_native_import_at_appdata_depth_keeps_long_artifact_paths_usable() {
 
 #[test]
 fn real_project_move_open_and_checked_stl_export_preserve_native_snapshot() {
+    let request = std::env::var_os("SPECTRAPACK_JOURNEY_REQUEST")
+        .map(|path| serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap())
+        .unwrap_or_else(|| settings(0.2));
+    project_roundtrip(request, false, true);
+}
+
+#[test]
+fn retained_resource_failure_survives_save_move_open_and_exports() {
+    // T009-A1/A3: real unsupported field work keeps a positive analytic incumbent.
+    let mut request = settings(1.0);
+    request["box_dimensions_mm"] = json!([20, 10, 10]);
+    request["pitch_mm"] = json!(1e-9);
+    project_roundtrip(request, true, true);
+}
+
+#[test]
+#[ignore = "requires the pinned full Ulamok STL and a real native engine"]
+fn ulamok_retained_resource_json_project_roundtrip() {
+    assert_eq!(project_roundtrip(ulamok_request(), true, false), 36);
+}
+
+#[test]
+#[ignore = "T010 pending: full36 checked STL hits EXPORT_IMPORT_WORK_LIMIT"]
+fn ulamok_retained_resource_checked_stl_qualification() {
+    assert_eq!(project_roundtrip(ulamok_request(), true, true), 36);
+}
+
+fn ulamok_request() -> Value {
+    // AT-14 / T009-A6: the actual GUI regression, including rotated poses.
+    let source = PathBuf::from(std::env::var_os("SPECTRAPACK_TEST_STL").unwrap());
+    assert_eq!(
+        spectrapack_desktop::security::hash(&std::fs::read(source).unwrap()),
+        "39bcc1c3a5849176fc83473ce191ec5106854ea68836aed412c7c93b11b5bb7e"
+    );
+    json!({"desktop_version":1,"box_dimensions_mm":[400,350,285],
+        "clearance_mm":{"pair":0.1,"wall":1},"orientation":{"mode":"cube"},
+        "pitch_mm":1,"budget_seconds":600,"seed":"0"})
+}
+
+fn project_roundtrip(request: Value, expect_failure: bool, checked_stl: bool) -> u64 {
     let (root, core, source) = fixture();
+    let source_bytes = std::fs::read(&source).unwrap();
     import(&core, &source);
-    core.start(settings(0.2)).unwrap();
+    let started = Instant::now();
+    core.start(request).unwrap();
     let state = wait(&core);
-    assert!(state.last_error.is_none(), "{state:?}");
+    let start_seconds = started.elapsed().as_secs_f64();
     let document = state.result.as_ref().unwrap()["document"].clone();
+    let minimum: u64 = std::env::var("SPECTRAPACK_JOURNEY_MIN_COUNT")
+        .unwrap_or_else(|_| "1".into())
+        .parse()
+        .unwrap();
+    assert!(document["count"].as_u64().unwrap() >= minimum, "{document}");
+    if expect_failure {
+        let error = state
+            .last_error
+            .as_ref()
+            .expect("resource failure required");
+        assert_eq!(error.code, "RESOURCE_LIMIT");
+        assert_eq!(document["metrics"]["termination_reason"], "resource_limit");
+        let failure = &error.details["failure"];
+        assert!(failure["cause_code"]
+            .as_str()
+            .is_some_and(|code| !code.is_empty()));
+        assert!(failure["phase"]
+            .as_str()
+            .is_some_and(|phase| !phase.is_empty()));
+        assert!(failure["resource"]["required"].as_str().is_some());
+        assert!(failure["resource"]["limit"].as_str().is_some());
+        assert_eq!(document["search"]["diagnostics"]["failure"], *failure);
+        assert_eq!(
+            document["search"]["run_segments"][0]["diagnostics"]["failure"],
+            *failure
+        );
+    } else {
+        assert!(state.last_error.is_none(), "{state:?}");
+    }
+    let evidence = std::env::var_os("SPECTRAPACK_JOURNEY_OUTPUT").map(PathBuf::from);
+    let destination = evidence.as_deref().unwrap_or(root.path());
+    std::fs::create_dir_all(destination).unwrap();
+    if evidence.is_some() {
+        std::fs::write(
+            destination.join("document.json"),
+            serde_json::to_vec_pretty(&document).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            destination.join("start-seconds.json"),
+            start_seconds.to_string(),
+        )
+        .unwrap();
+    }
     let mut pending = settings(2.0);
     pending["box_dimensions_mm"] = json!([60, 60, 60]);
-    let archive = root.path().join("saved.spectrapack");
+    let archive = destination.join("saved.spectrapack");
     core.save_to(&archive, pending.clone()).unwrap();
     let state = wait(&core);
     assert!(state.last_error.is_none(), "{state:?}");
     let bytes = std::fs::read(&archive).unwrap();
     assert_eq!(&bytes[..2], b"PK");
-    let directory = root.path().join("перенос with spaces");
+    let directory = destination.join("перенос with spaces");
     std::fs::create_dir(&directory).unwrap();
     let moved = directory.join("moved.spectrapack");
     std::fs::rename(archive, &moved).unwrap();
@@ -231,22 +347,43 @@ fn real_project_move_open_and_checked_stl_export_preserve_native_snapshot() {
     ] {
         assert_eq!(restored[field], document[field], "{field}");
     }
-    let outputs = root.path().join("outputs");
+    let outputs = destination.join("exports");
     std::fs::create_dir(&outputs).unwrap();
-    core.export_to(&outputs, "stl").unwrap();
+    core.export_to(&outputs, "json").unwrap();
     let exported = wait(&core);
     assert!(exported.last_error.is_none(), "{exported:?}");
-    let bundle = std::fs::read_dir(outputs)
-        .unwrap()
-        .next()
-        .unwrap()
-        .unwrap()
-        .path();
-    let stl = std::fs::read(bundle.join("packed.stl")).unwrap();
-    let triangles = u32::from_le_bytes(stl[80..84].try_into().unwrap());
-    assert_eq!(triangles as u64, document["count"].as_u64().unwrap() * 12);
-    assert!(bundle.join("packed.stl.json").is_file());
+    if checked_stl {
+        core.export_to(&outputs, "stl").unwrap();
+        let exported = wait(&core);
+        assert!(exported.last_error.is_none(), "{exported:?}");
+    }
+    let mut stl_count = 0;
+    for entry in std::fs::read_dir(outputs).unwrap() {
+        let bundle = entry.unwrap().path();
+        let exported: Value =
+            serde_json::from_slice(&std::fs::read(bundle.join("result.json")).unwrap()).unwrap();
+        for field in ["search", "metrics", "placements", "count"] {
+            assert_eq!(exported[field], document[field], "{field}");
+        }
+        if let Ok(stl) = std::fs::read(bundle.join("packed.stl")) {
+            stl_count += 1;
+            let triangles = u32::from_le_bytes(stl[80..84].try_into().unwrap());
+            let per_copy = document["assets"]["object"]["accepted_solid"]["triangle_count"]
+                .as_u64()
+                .unwrap();
+            assert_eq!(
+                triangles as u64,
+                document["count"].as_u64().unwrap() * per_copy
+            );
+            assert!(bundle.join("packed.stl.json").is_file());
+        }
+    }
+    if checked_stl {
+        assert_eq!(stl_count, 1, "the requested checked STL must exist");
+    }
     assert_eq!(std::fs::read(moved).unwrap(), bytes);
+    assert_eq!(std::fs::read(source).unwrap(), source_bytes);
+    document["count"].as_u64().unwrap()
 }
 
 #[test]

@@ -16,7 +16,9 @@ add_executable(spectrapack_solver_tests
   tests/baseline_tests.cpp
   tests/orientations_tests.cpp
   tests/spectral_tests.cpp
+  tests/t009_tests.cpp
 )
+target_compile_definitions(spectrapack_solver_tests PRIVATE SPECTRAPACK_TEST_ROOT="${PROJECT_SOURCE_DIR}")
 target_link_libraries(spectrapack_solver_tests PRIVATE
   pack_solver spectrapack_test_support Catch2::Catch2WithMain)
 include(Catch)

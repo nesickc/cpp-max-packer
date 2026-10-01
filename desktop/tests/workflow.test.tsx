@@ -11,6 +11,16 @@ import { App } from '../src/App';
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
+  it('shows the retained native cause and a pitch suggestion without changing settings', async () => {
+    const initial: Desktop.State = { desktop_version: 1, session_id: 'session-failure', revision: 1, object: null, draft_settings: structuredClone(defaultSettings), result: null, operation: null, last_error: { code: 'RESOURCE_LIMIT', message: 'Search stopped; the valid result was retained.', recoverable: true, details: { failure: { phase: 'spectral_preflight', cause_code: 'GRID_CELL_LIMIT', resource: { name: 'grid_cells', required: '40611648', limit: '16777216' }, suggested_pitch_mm: 5 } } } };
+    native.state.mockResolvedValue(initial);
+    render(<App />);
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('GRID_CELL_LIMIT'));
+    expect(screen.getByRole('alert').textContent).toContain('40611648');
+    expect(screen.getByRole('alert').textContent).toContain('Try a voxel pitch of 5 mm');
+    expect((screen.getByLabelText('Voxel pitch') as HTMLInputElement).value).toBe(String(defaultSettings.pitch_mm));
+    expect(screen.getByText('Diagnostic details')).toBeDefined();
+  });
   it('saves edited pending settings while old result viewer keeps original box/preview', async () => {
     const fixture = fixtures.find(f => f.kind === 'results' && f.schema_valid && f.semantic_valid)!;
     const document = structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];

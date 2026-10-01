@@ -15,10 +15,12 @@ The spec's `T-001`–`T-008` are initial implementation tasks; `AT-01`–`AT-17`
 | [T-006 physical AABB baseline](T-006.md) | `feature/AT-10-aabb-baseline` | Merged through PR #7 at `bb4a0ef`; local gates, configured review and hosted checks at `a1032bb` pass |
 | [T-007 CPU spectral placement and transform export](T-007.md) | `feature/AT-12-cpu-spectral-placement` | Merged through PR #8 at `1014b39`; local qualification is recorded in the ticket |
 | [T-008 desktop workflow](T-008.md) | `feature/AT-15-desktop-workflow` | Merged through PR #10 at `a05fa2c`; bounded first-journey evidence and remaining full-v1 gates are recorded in the ticket |
+| [T-009 CPU field scalability](T-009.md) | `feature/SOL-05-cpu-field-scalability` | Ready for review from merged `ebb0e07`; bounded local gates and three retained-result desktop journeys pass. Reviewed scope revision carries successful practical spectral/STL support into T-010 without raising caps |
 
 [Delivery milestones](MILESTONES.md) define T-009–T-023 and their merged
 prerequisites. Each delivery ticket has a planned feature branch, requirements
-and observable acceptance; no implementation branch has been created by this plan.
+and observable acceptance. T-009 is the current implementation; later dependent
+branches wait for the preceding user merge.
 The first four specifications form three deliveries: T-009 CPU scalability and
 the Ulamok regression; T-010 CPU runtime including T-011 preparation/deadlines;
 then T-012 library repair. T-011 retains every acceptance ID as an included work
@@ -29,8 +31,8 @@ geometry workflows follow. Live result rendering is low priority after CPU,
 repair and core packing/usability work; Vulkan follows measured CPU parallelism.
 [Motivating evidence](NEXT_WORK.md) and
 [ADR 0011](../spec/decisions/0011-cpu-first-follow-up.md) retain the findings and
-compatibility boundaries. Merge this planning change before implementation;
-dependent feature branches still wait for prerequisite merges.
+compatibility boundaries. The planning change is merged; dependent feature
+branches still wait for prerequisite merges.
 Freeze shared interfaces before concurrent implementation. Reuse one integrated
 gate run/review across included work packages when it proves each acceptance;
 performance measurements remain serial and preserve attributable baselines.

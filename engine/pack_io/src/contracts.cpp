@@ -582,6 +582,17 @@ std::vector<ValidationIssue> semantics(ContractKind kind, const Json& value) {
           "Time to best must not exceed total search elapsed time.");
 
     const auto solution_revision = value.at("solution_revision").get<std::uint64_t>();
+    const auto check_failure_counters = [&](const Json& owner, const std::string& base) {
+      if (!owner.contains("diagnostics") || !owner.at("diagnostics").contains("failure") ||
+          !owner.at("diagnostics").at("failure").contains("resource")) return;
+      const auto& resource = owner.at("diagnostics").at("failure").at("resource");
+      for (const auto* key : {"required", "limit"}) {
+        if (!seed_in_range(resource.at(key).get<std::string>()))
+          semantic_issue(issues, base + "/diagnostics/failure/resource/" + key, "RESOURCE_COUNTER_OUT_OF_RANGE",
+              "Resource counters must fit uint64.");
+      }
+    };
+    check_failure_counters(search, "/search");
     double elapsed = 0;
     std::uint64_t candidates = 0;
     std::uint64_t passes = 0;
@@ -598,6 +609,7 @@ std::vector<ValidationIssue> semantics(ContractKind kind, const Json& value) {
     for (std::size_t i = 0; i < run_segments.size(); ++i) {
       const auto& segment = run_segments.at(i);
       const std::string base = "/search/run_segments/" + std::to_string(i);
+      check_failure_counters(segment, base);
       const auto segment_id = segment.at("segment_id").get<std::string>();
       if (!segment_ids.insert(segment_id).second) {
         semantic_issue(issues, base + "/segment_id", "SEGMENT_ID_DUPLICATE", "Run segment IDs must be unique.");

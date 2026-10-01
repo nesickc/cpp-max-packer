@@ -36,4 +36,7 @@ add('benchmark-completed-missing-result','benchmark-summary',bench1,v=>delete v.
 add('benchmark-failed-missing-error','benchmark-summary',bench2,v=>delete v.runs[0].error,false,false);
 add('requested-unsafe-work-counter','settings',requested,v=>v.search.work_budget={max_candidate_evaluations:9007199254740992,max_search_passes:1},false,false);
 add('resolved-thread-count-unsafe','settings',rs,v=>v.resolved.thread_count=9007199254740992,false,false);
+// T009-A1: one existing positive result carries retained evidence; zero result stays legacy.
+const diagnostics={diagnostic_code:'ENVIRONMENT_PREFLIGHT_RESOURCE',failure:{phase:'spectral_preflight',cause_code:'GRID_CELL_LIMIT',resource:{name:'grid_cells',required:'18446744073709551615',limit:'16777216'},suggested_pitch_mm:5}};
+result1.search.diagnostics=diagnostics; result1.search.run_segments[0].diagnostics=diagnostics;
 fs.writeFileSync(path.join(__dirname,'schema-fixtures.json'),JSON.stringify(entries.map(([name,kind,value,schema_valid=true,semantic_valid=true])=>({name,kind,value,schema_valid,semantic_valid})),null,2)+'\n');

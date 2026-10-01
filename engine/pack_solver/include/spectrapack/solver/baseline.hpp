@@ -1,16 +1,17 @@
 #pragma once
 
-#include "spectrapack/geometry/physical_bounds.hpp"
-#include "spectrapack/geometry/validation.hpp"
-#include "spectrapack/solver/incumbent.hpp"
-
 #include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <stop_token>
+#include <string>
 #include <string_view>
+
+#include "spectrapack/geometry/physical_bounds.hpp"
+#include "spectrapack/geometry/validation.hpp"
+#include "spectrapack/solver/incumbent.hpp"
 
 namespace spectrapack::solver {
 
@@ -48,6 +49,19 @@ enum class TerminationReason {
   budget_exhausted, user_stopped, search_stalled, resource_limit, error
 };
 
+struct ResourceLimitDetails {
+    std::string resource;
+    std::uint64_t required {}, limit {};
+};
+
+struct RunFailureDetails {
+    TerminationReason reason { TerminationReason::error };
+    std::string phase;
+    std::string cause_code;
+    std::optional<ResourceLimitDetails> resource;
+    std::optional<double> suggested_pitch_mm;
+};
+
 struct BaselineOutcome {
   SnapshotHandle best;
   // Equals best->solution when a native snapshot exists. If allocation fails
@@ -57,6 +71,7 @@ struct BaselineOutcome {
   TerminationReason termination_reason{TerminationReason::error};
   RunStats stats;
   std::string_view diagnostic_code;
+  std::optional<RunFailureDetails> failure_details;
 };
 
 using SnapshotSink = std::function<void(SnapshotHandle)>;

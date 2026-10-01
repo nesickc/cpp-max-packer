@@ -476,6 +476,7 @@ export interface HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson {
     orientation_catalog_sha256: Hash;
   };
   search: {
+    diagnostics?: Diagnostics1;
     resolved_settings: Resolved;
     /**
      * @minItems 1
@@ -633,6 +634,28 @@ export interface Clearance {
   pair: number;
   wall: number;
 }
+/**
+ * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+ * via the `definition` "diagnostics".
+ */
+export interface Diagnostics1 {
+  diagnostic_code: string;
+  failure?: Failure;
+}
+/**
+ * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+ * via the `definition` "failure".
+ */
+export interface Failure {
+  phase: string;
+  cause_code: string;
+  resource?: {
+    name: string;
+    required: string;
+    limit: string;
+  };
+  suggested_pitch_mm?: number;
+}
 export interface Resolved {
   settings_version: 1;
   object_asset: ContentRef;
@@ -714,6 +737,7 @@ export interface Work {
  * via the `definition` "segment".
  */
 export interface Segment {
+  diagnostics?: Diagnostics1;
   segment_id: string;
   parent_solution_revision: null | C;
   seed: string;
@@ -1411,6 +1435,7 @@ export interface HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson {
     orientation_catalog_sha256: string;
   };
   search: {
+    diagnostics?: Diagnostics1;
     resolved_settings: Resolved;
     /**
      * @minItems 1
@@ -1485,6 +1510,28 @@ export interface ContentRef {
    * via the `definition` "hash".
    */
   accepted_solid_sha256: string;
+}
+/**
+ * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+ * via the `definition` "diagnostics".
+ */
+export interface Diagnostics1 {
+  diagnostic_code: string;
+  failure?: Failure;
+}
+/**
+ * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+ * via the `definition` "failure".
+ */
+export interface Failure {
+  phase: string;
+  cause_code: string;
+  resource?: {
+    name: string;
+    required: string;
+    limit: string;
+  };
+  suggested_pitch_mm?: number;
 }
 export interface Resolved {
   settings_version: 1;
@@ -1579,6 +1626,7 @@ export interface Work {
  * via the `definition` "segment".
  */
 export interface Segment {
+  diagnostics?: Diagnostics1;
   segment_id: string;
   parent_solution_revision: null | number;
   seed: string;

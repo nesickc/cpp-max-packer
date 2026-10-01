@@ -2367,6 +2367,7 @@ TEST_CASE("AT-12 stage A preserves a throwing representation attempt", "[solver]
 
     REQUIRE_FALSE(allocation.complete);
     CHECK(allocation.diagnostic == "SPECTRAL_PIPELINE_ALLOCATION");
+    CHECK_FALSE(allocation.failure_details);
     CHECK(allocation.stats.representation_cell_visits == exhausted.stats.representation_cell_visits);
     CHECK(allocation.stats.representation_kernel_work == exhausted.stats.representation_kernel_work);
     CHECK(allocation.working_bytes_peak == exhausted.working_bytes_peak);

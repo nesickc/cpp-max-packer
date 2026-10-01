@@ -288,18 +288,14 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
     }
 
     std::uint64_t complex_buffer_bytes {};
-    std::uint64_t output_bytes {};
-    std::uint64_t workspace_bytes {};
+    const auto estimated = estimate_correlation_cpu(spec);
+    if (const auto* issue = std::get_if<CorrelationFailure>(&estimated)) {
+        return *issue;
+    }
+    const auto& estimate = std::get<CorrelationEstimate>(estimated);
     std::uint64_t working_bytes = limits.reserved_bytes;
-    const auto longest_axis = static_cast<std::uint64_t>(*std::max_element(padded.begin(), padded.end()));
     if (!checked_multiply(padded_count, sizeof(Complex), complex_buffer_bytes) ||
-        !checked_multiply(padded_count, sizeof(double), output_bytes) ||
-        !calculate_pocketfft_workspace(longest_axis, workspace_bytes) ||
-        !checked_add(working_bytes, complex_buffer_bytes, working_bytes) ||
-        !checked_add(working_bytes, complex_buffer_bytes, working_bytes) ||
-        !checked_add(working_bytes, output_bytes, working_bytes) ||
-        !checked_add(working_bytes, workspace_bytes, working_bytes) ||
-        !checked_add(working_bytes, sizeof(std::array<std::size_t, kMaximumProbeCount>), working_bytes) ||
+        !checked_add(working_bytes, estimate.working_bytes, working_bytes) ||
         working_bytes > limits.max_working_bytes) {
         return failure("CORRELATION_MEMORY_LIMIT", "Correlation buffers and FFT workspace exceed their memory limit.",
                        stats);
@@ -465,6 +461,46 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
 }
 
 }  // namespace
+
+CorrelationEstimateOutcome estimate_correlation_cpu(const CorrelationSpec& spec)
+{
+    CorrelationEstimate estimate {};
+    estimate.padded_cells = 1;
+    for (std::size_t axis = 0; axis != 3; ++axis) {
+        const auto length = static_cast<std::uint64_t>(spec.environment_shape[axis]) + spec.kernel_shape[axis] - 1;
+        if (spec.environment_shape[axis] == 0 || spec.kernel_shape[axis] == 0 ||
+            length > std::numeric_limits<std::uint32_t>::max() ||
+            !checked_multiply(estimate.padded_cells, length, estimate.padded_cells)) {
+            return CorrelationFailure { "CORRELATION_SHAPE_OVERFLOW",
+                                        "Correlation extents exceed the representable range.",
+                                        {} };
+        }
+        estimate.padded_shape[axis] = static_cast<std::uint32_t>(length);
+        std::int64_t first {}, last {};
+        if (!checked_subtract(spec.environment_first[axis], spec.kernel_first[axis], first) ||
+            !checked_subtract(first, static_cast<std::int64_t>(spec.kernel_shape[axis]) - 1, first) ||
+            !checked_add_extent(first, length - 1, last)) {
+            return CorrelationFailure { "CORRELATION_INDEX_OVERFLOW",
+                                        "Correlation indices exceed the representable range.",
+                                        {} };
+        }
+    }
+    std::uint64_t workspace {};
+    if (!checked_multiply(estimate.padded_cells, 2 * sizeof(Complex) + sizeof(double), estimate.working_bytes) ||
+        !calculate_pocketfft_workspace(*std::max_element(estimate.padded_shape.begin(), estimate.padded_shape.end()),
+                                       workspace) ||
+        !checked_add(estimate.working_bytes, workspace, estimate.working_bytes) ||
+        !checked_add(estimate.working_bytes, sizeof(std::array<std::size_t, kMaximumProbeCount>),
+                     estimate.working_bytes) ||
+        estimate.padded_cells > std::numeric_limits<std::size_t>::max() ||
+        estimate.padded_cells >
+            static_cast<std::uint64_t>(std::numeric_limits<std::ptrdiff_t>::max()) / sizeof(Complex)) {
+        return CorrelationFailure { "CORRELATION_SHAPE_OVERFLOW",
+                                    "Correlation storage exceeds the representable range.",
+                                    {} };
+    }
+    return estimate;
+}
 
 CorrelationOutcome correlate_binary_cpu(const CorrelationSpec& spec, std::span<const std::uint8_t> environment,
                                         std::span<const std::uint8_t> kernel, const CorrelationLimits& limits)

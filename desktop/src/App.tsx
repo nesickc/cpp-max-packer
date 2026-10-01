@@ -9,6 +9,24 @@ function errorMessage(error: unknown): string {
   if (typeof error === 'object' && error && 'message' in error) return String(error.message);
   return String(error);
 }
+function failureFrom(details: unknown): Results.Failure | undefined {
+  if (!details || typeof details !== 'object' || !('failure' in details)) return;
+  const failure = details.failure;
+  if (!failure || typeof failure !== 'object' || !('phase' in failure) || !('cause_code' in failure)) return;
+  if (typeof failure.phase !== 'string' || typeof failure.cause_code !== 'string') return;
+  const result: Results.Failure = { phase: failure.phase, cause_code: failure.cause_code };
+  if ('resource' in failure && failure.resource && typeof failure.resource === 'object') {
+    const resource = failure.resource;
+    if ('name' in resource && typeof resource.name === 'string' && 'required' in resource && typeof resource.required === 'string' && 'limit' in resource && typeof resource.limit === 'string') {
+      result.resource = { name: resource.name, required: resource.required, limit: resource.limit };
+    }
+  }
+  if ('suggested_pitch_mm' in failure && typeof failure.suggested_pitch_mm === 'number' && Number.isFinite(failure.suggested_pitch_mm) && failure.suggested_pitch_mm > 0) result.suggested_pitch_mm = failure.suggested_pitch_mm;
+  return result;
+}
+function FailureDetail({ failure, details }: { failure?: Results.Failure; details: unknown }) {
+  return <>{failure && <span> {failure.phase}: {failure.cause_code}.{failure.resource && <> {failure.resource.name}: required {failure.resource.required}, limit {failure.resource.limit}.</>}{failure.suggested_pitch_mm && <> Try a voxel pitch of {failure.suggested_pitch_mm} mm and Start again.</>}</span>}<details><summary>Diagnostic details</summary><pre>{JSON.stringify(details, null, 2)}</pre></details></>;
+}
 function NumberField({ label, value, onChange, min = 0, suffix = 'mm' }: { label: string; value: number; onChange: (v: number) => void; min?: number; suffix?: string }) {
   return <label className="number-field"><span>{label}</span><div><input aria-label={label} type="number" min={min} step="any" value={Number.isFinite(value) ? value : ''} onChange={e => onChange(e.target.value === '' ? NaN : Number(e.target.value))} /><span>{suffix}</span></div></label>;
 }
@@ -19,7 +37,7 @@ export function App() {
   const [settings, setSettings] = useState<Desktop.Settings>(() => structuredClone(defaultSettings));
   const [units, setUnits] = useState<Desktop.ImportRequest['units']>('mm');
   const [scale, setScale] = useState(1);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [commandPending, setCommandPending] = useState(false);
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(null);
@@ -43,7 +61,7 @@ export function App() {
     const poll = async () => {
       if (inFlight) return; inFlight = true; const requestGeneration = generation.current;
       try { const next = await bridge.state(); if (alive && requestGeneration === generation.current) updateState(next); }
-      catch (e) { if (alive) setError(errorMessage(e)); }
+      catch (e) { if (alive) setError(e); }
       finally { inFlight = false; }
     };
     void poll(); const timer = window.setInterval(poll, 250);
@@ -53,7 +71,7 @@ export function App() {
   useEffect(() => { setHidden(new Set()); setSelected(null); }, [state?.result?.id, state?.object?.id]);
   const run = async (action: () => Promise<unknown>) => {
     setCommandPending(true); setError(null);
-    try { await action(); updateState(await bridge.state()); } catch (e) { setError(errorMessage(e)); }
+    try { await action(); updateState(await bridge.state()); } catch (e) { setError(e); }
     finally { setCommandPending(false); }
   };
   const newProject = () => run(async () => {
@@ -78,10 +96,13 @@ export function App() {
   const setDimension = (index: number, value: number) => setSettings(s => { const dimensions: [number, number, number] = [...s.box_dimensions_mm]; dimensions[index] = value; return { ...s, box_dimensions_mm: dimensions }; });
   const importObject = () => run(() => bridge.importObject(units === 'custom' ? { units, scale_mm: scale } : { units }));
 
+  const errorDetails = error && typeof error === 'object' && 'details' in error ? error.details : state?.last_error?.details;
+  const retainedFailure = state?.result?.document.search.diagnostics?.failure;
+  const failure = failureFrom(errorDetails) ?? retainedFailure;
   return <div className="app-shell">
     <header className="app-header"><div className="brand"><span className="brand-mark">S</span><div>Spectra<span>Pack</span><small>SPACE, WELL USED.</small></div></div><div className="header-center"><span className="status-dot" />Desktop workspace </div><nav aria-label="Project actions"><button disabled={disabled} onClick={newProject}>New</button><button disabled={disabled} onClick={() => void run(() => bridge.open())}>Open project</button><button disabled={disabled || !accepted || !!validationError} onClick={() => void run(() => bridge.save({ settings: structuredClone(settings) }))}>Save project</button></nav></header>
     {!native && <div className="preview-banner" role="status"><span>Browser preview</span> Launch the SpectraPack desktop app to import files, run CPU packing, and save projects.</div>}
-    {(error || state?.last_error) && <div className="error-banner" role="alert"><strong>{state?.last_error?.code ?? 'Operation error'}</strong> {error ?? state?.last_error?.message}{error && <button aria-label="Dismiss operation error" onClick={() => setError(null)}>×</button>}</div>}
+    {(!!error || state?.last_error || failure) && <div className="error-banner" role="alert"><strong>{state?.last_error?.code ?? 'Run diagnostics'}</strong> {error ? errorMessage(error) : state?.last_error?.message ?? 'The valid result was retained after a search failure.'}<FailureDetail failure={failure} details={errorDetails ?? { failure }} />{!!error && <button aria-label="Dismiss operation error" onClick={() => setError(null)}>×</button>}</div>}
     <main className="workspace">
       <aside className="configuration" aria-label="Packing configuration"><div className="config-scroll"><div className="panel-heading"><span className="eyebrow">SET UP YOUR PACKING</span><h1>Packing setup</h1><p>Import an object and configure a box.</p></div>
         <section className="config-section"><div className="section-title"><span className="step">01</span><h2>Object</h2>{accepted && <span className="pill valid">Accepted</span>}</div>

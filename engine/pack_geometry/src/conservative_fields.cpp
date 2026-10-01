@@ -1235,6 +1235,23 @@ std::optional<RepresentationResidency> BlockedField::representation_residency() 
     return result;
 }
 
+std::optional<std::uint64_t> estimate_field_geometry_bytes(const AcceptedSolid& solid) noexcept
+{
+    auto bytes = kernel::estimate_field_kernel_bytes(solid);
+    constexpr auto metadata =
+        sizeof(VoxelGeometry::Storage) + 3 * sizeof(CellField::Storage) + sizeof(BlockedField::Storage) + 4 * 64;
+    if (!bytes || metadata > UINT64_MAX - *bytes) {
+        return {};
+    }
+    return *bytes + metadata;
+}
+
+std::optional<std::uint64_t> estimate_unclipped_raster_work(const AcceptedSolid& solid, std::uint64_t copies,
+                                                            std::uint64_t passes) noexcept
+{
+    return kernel::estimate_unclipped_raster_work(solid, copies, passes);
+}
+
 bool BlockedField::blocked(CellIndex index) const
 {
     const auto& value = window();

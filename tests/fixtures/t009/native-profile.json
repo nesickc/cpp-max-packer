@@ -1,0 +1,33 @@
+{
+  "ticket": "T-009",
+  "source": {
+    "path": "rc/items/ulamok_2kg_simplified.stl",
+    "sha256": "39bcc1c3a5849176fc83473ce191ec5106854ea68836aed412c7c93b11b5bb7e",
+    "units": "mm"
+  },
+  "witness": {
+    "box_mm": [400, 350, 285],
+    "pair_clearance_mm": 0.1,
+    "wall_clearance_mm": 1,
+    "rotation": "+90 degrees X; (x,y,z) => (x,-z,y)",
+    "counts": [4, 3, 3],
+    "local_span_mm": ["90.46014785766602", "90.46014404296875", "105.50743865966797"],
+    "first_center_mm": ["64.1222782135009765625", "69.36756134033203125", "51.91485595703125"],
+    "step_mm": ["90.585147857666015625", "105.63243865966796875", "90.58514404296875"]
+  },
+  "serial_measurement": {
+    "warmups": 1,
+    "samples": 5,
+    "cuboid_min_mm": [-1, -1.5, -0.5],
+    "cuboid_max_mm": [1, 1.5, 0.5],
+    "boxes_mm": [[10, 8, 6], [22, 18, 12], [38, 28, 20]],
+    "pair_clearance_mm": 0.125,
+    "wall_clearance_mm": 0.25,
+    "pitch_mm": 1,
+    "lattice_origin_mm": [-0.25, 0.25, -0.5],
+    "baseline_candidate_cap": 1,
+    "spectral_candidate_cap": 1,
+    "refinement_cap": 0,
+    "medium_targets_ms": {"proximity": 69.19365, "field": 120.70688, "fixed_work": 141.2829}
+  }
+}
