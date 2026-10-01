@@ -2,6 +2,7 @@
 #include <spectrapack/geometry/rigid_transform.hpp>
 #include <spectrapack/io/result_export.hpp>
 
+#include "operation_guard.hpp"
 #include "repair_replay.hpp"
 #include "result_builder_accounting.hpp"
 #include "result_export_test_seam.hpp"
@@ -13,6 +14,7 @@
 // clang-format off
 #include <windows.h>
 #include <bcrypt.h>
+#include "pinned_stage.hpp"
 // clang-format on
 #endif
 
@@ -179,9 +181,13 @@ std::variant<Bytes, Error> read_bytes(const std::filesystem::path& path, std::ui
             return failure("ASSET_MISMATCH", "A retained provenance artifact cannot be opened.");
         }
         Bytes bytes(static_cast<std::size_t>(size));
-        if (!bytes.empty() &&
-            !input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) {
-            return failure("ASSET_MISMATCH", "A retained provenance artifact could not be read completely.");
+        for (std::size_t offset = 0; offset < bytes.size();) {
+            detail::poll_operation();
+            const auto size = std::min<std::size_t>(64 * 1024, bytes.size() - offset);
+            if (!input.read(reinterpret_cast<char*>(bytes.data() + offset), static_cast<std::streamsize>(size))) {
+                return failure("ASSET_MISMATCH", "A retained provenance artifact could not be read completely.");
+            }
+            offset += size;
         }
         char extra {};
         if (input.read(&extra, 1) || !input.eof()) {
@@ -241,9 +247,13 @@ std::variant<std::string, Error> sha256(const Bytes& bytes)
     if (status >= 0 && bytes.size() > std::numeric_limits<ULONG>::max()) {
         status = -1;
     }
-    if (status >= 0) {
-        status = BCryptHashData(hash_handle.get(), reinterpret_cast<PUCHAR>(const_cast<std::byte*>(bytes.data())),
-                                static_cast<ULONG>(bytes.size()), 0);
+    for (std::size_t offset = 0; status >= 0 && offset < bytes.size();) {
+        detail::poll_operation();
+        const auto size = std::min<std::size_t>(64 * 1024, bytes.size() - offset);
+        status =
+            BCryptHashData(hash_handle.get(), reinterpret_cast<PUCHAR>(const_cast<std::byte*>(bytes.data() + offset)),
+                           static_cast<ULONG>(size), 0);
+        offset += size;
     }
     if (status >= 0) {
         status = BCryptFinishHash(hash_handle.get(), digest.data(), digest_size, 0);
@@ -264,7 +274,7 @@ std::variant<std::string, Error> sha256(const Bytes& bytes)
 }
 
 std::variant<std::string, Error> sha256_file(const std::filesystem::path& path, std::uint64_t expected_size,
-                                             std::uint64_t max_working_bytes)
+                                             std::uint64_t max_working_bytes, std::istream* pinned = nullptr)
 {
 #ifdef _WIN32
     constexpr std::size_t kReadBufferBytes = 64 * 1024;
@@ -321,10 +331,15 @@ std::variant<std::string, Error> sha256_file(const std::filesystem::path& path, 
         BCRYPT_HASH_HANDLE hash {};
         status = BCryptCreateHash(provider.get(), &hash, object.data(), object_size, nullptr, 0, 0);
         BCryptHash hash_handle(hash);
-        std::ifstream input(path, std::ios::binary);
+        std::ifstream file;
+        if (!pinned) {
+            file.open(path, std::ios::binary);
+        }
+        auto& input = pinned ? *pinned : file;
         std::array<std::byte, kReadBufferBytes> buffer {};
         std::uint64_t total {};
         while (status >= 0 && input) {
+            detail::poll_operation();
             input.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
             const auto count = input.gcount();
             if (count < 0 || static_cast<std::uint64_t>(count) > expected_size - total) {
@@ -372,11 +387,13 @@ Bytes serialize_ply(geometry::MeshView mesh)
         bytes.insert(bytes.end(), first, first + sizeof(value));
     };
     for (const auto& vertex : mesh.vertices) {
+        detail::poll_operation();
         for (const auto coordinate : vertex) {
             append(coordinate);
         }
     }
     for (const auto& triangle : mesh.triangles) {
+        detail::poll_operation();
         append(std::uint8_t { 3 });
         for (const auto index : triangle) {
             append(index);
@@ -747,6 +764,7 @@ public:
     OwnedStage(const OwnedStage&) = delete;
     ~OwnedStage() { cleanup(); }
     [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
+    void publication_complete() noexcept { published_ = true; }
     [[nodiscard]] std::optional<Error> write(std::span<const std::byte> bytes)
     {
 #ifdef SPECTRAPACK_ASSET_LOADER_TESTING
@@ -764,11 +782,14 @@ public:
             throw std::runtime_error("Injected stage write exception.");
         }
 #endif
-        DWORD wrote {};
-        if (bytes.size() > std::numeric_limits<DWORD>::max() ||
-            !WriteFile(handle_, bytes.data(), static_cast<DWORD>(bytes.size()), &wrote, nullptr) ||
-            wrote != bytes.size()) {
-            return failure("EXPORT_WRITE_FAILED", "Export stage could not be written.");
+        for (std::size_t offset = 0; offset < bytes.size();) {
+            detail::poll_operation();
+            const auto count = static_cast<DWORD>(std::min<std::size_t>(64 * 1024, bytes.size() - offset));
+            DWORD wrote {};
+            if (!WriteFile(handle_, bytes.data() + offset, count, &wrote, nullptr) || wrote != count) {
+                return failure("EXPORT_WRITE_FAILED", "Export stage could not be written.");
+            }
+            offset += count;
         }
         return std::nullopt;
     }
@@ -904,14 +925,19 @@ std::optional<Error> mutate_closed_stage_for_test(const std::filesystem::path& p
 std::optional<Error> validate_closed_stl_stage(const std::filesystem::path& path,
                                                const std::shared_ptr<const geometry::ValidatedSolution>& solution,
                                                geometry::MeshView mesh, std::uint64_t triangle_count,
-                                               const std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges)
+                                               const std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges,
+                                               std::istream* pinned = nullptr)
 {
     const auto expected_size = 84 + 50 * triangle_count;
     std::error_code error;
     if (std::filesystem::file_size(path, error) != expected_size || error) {
         return failure("EXPORT_CHECK_FAILED", "Closed STL stage has an unexpected extent.");
     }
-    std::ifstream input(path, std::ios::binary);
+    std::ifstream file;
+    if (!pinned) {
+        file.open(path, std::ios::binary);
+    }
+    auto& input = pinned ? *pinned : file;
     std::array<std::byte, 84> prefix {};
     if (!input.read(reinterpret_cast<char*>(prefix.data()), static_cast<std::streamsize>(prefix.size()))) {
         return failure("EXPORT_CHECK_FAILED", "Closed STL stage has an incomplete header.");
@@ -1140,9 +1166,12 @@ std::optional<std::uint64_t> VerifiedAsset::resident_buffer_bytes() const noexce
     }
     return total;
 }
-AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path)
+AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path, const runtime::OperationControl& control)
 {
+    const detail::OperationGuard operation(control);
     try {
+        detail::poll_operation();
+        control.phase(runtime::Phase::loading);
         std::error_code error;
         if (report_path.empty() || std::filesystem::is_symlink(report_path, error) || error) {
             return failure("ASSET_MISMATCH", "The report path is invalid or symbolic.");
@@ -1195,7 +1224,9 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path)
                            : units_name == "inch" ? geometry::Units::inch
                                                   : geometry::Units::custom;
         const auto scale = record.at("source").at("unit_scale_mm").get<double>();
-        auto inspected = geometry::inspect_stl(source_bytes, { role, units, scale });
+        control.phase(runtime::Phase::preparing);
+        auto inspected = geometry::inspect_stl(source_bytes, { role, units, scale }, control);
+        detail::poll_operation();
         if (std::holds_alternative<geometry::ImportFailure>(inspected)) {
             return failure("ASSET_MISMATCH", "The retained source STL no longer reconstructs a valid inspection.");
         }
@@ -1224,7 +1255,8 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path)
             if (std::get<std::string>(digest) != token || reference.at("path") != "assets/" + token + ".repair.json") {
                 return failure("ASSET_MISMATCH", "Retained repair token or content-addressed path does not match.");
             }
-            auto replay = detail::replay_repair(draft, record, bytes, source_bytes.size());
+            auto replay = detail::replay_repair(draft, record, bytes, source_bytes.size(), control);
+            detail::poll_operation();
             if (const auto* problem = std::get_if<Error>(&replay)) {
                 return *problem;
             }
@@ -1318,6 +1350,9 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path)
             record_payload_bytes, std::move(repair_artifacts) });
         return std::shared_ptr<const VerifiedAsset>(new VerifiedAsset(std::move(storage)));
     }
+    catch (const detail::Interrupted& interruption) {
+        return detail::interrupted_error(interruption);
+    }
     catch (const std::bad_alloc&) {
         return failure("MEMORY_LIMIT", "Accepted-asset reconstruction exhausted memory.");
     }
@@ -1326,8 +1361,9 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path)
     }
 }
 
-ExportOutcome export_result(const ExportRequest& request)
+ExportOutcome export_result(const ExportRequest& request, const runtime::OperationControl& control)
 {
+    const detail::OperationGuard operation(control);
     bool primary_published {};
     const auto post_primary_error = [&request, &primary_published](Error error) {
         if (primary_published) {
@@ -1336,6 +1372,7 @@ ExportOutcome export_result(const ExportRequest& request)
         return error;
     };
     try {
+        detail::poll_operation();
         if (!request.solution || !request.object_asset || request.result.kind() != ContractKind::results) {
             return failure("EXPORT_INPUT_INVALID", "A bound result, solution, and object asset are required.");
         }
@@ -1417,7 +1454,9 @@ ExportOutcome export_result(const ExportRequest& request)
             std::min(builder_limits.max_working_bytes, request.max_working_bytes - builder_validation_live_bytes);
         const auto rebuilt =
             detail::build_result_with_report({ request.solution, request.object_asset, request.container_asset,
-                                               request.catalog, std::move(metadata), builder_limits });
+                                               request.catalog, std::move(metadata), builder_limits },
+                                             control);
+        detail::poll_operation();
         if (!std::holds_alternative<ValidatedDocument>(rebuilt.result) ||
             !exact_json_equal(std::get<ValidatedDocument>(rebuilt.result).value(), supplied)) {
             if (const auto* error = std::get_if<Error>(&rebuilt.result);
@@ -1607,13 +1646,31 @@ ExportOutcome export_result(const ExportRequest& request)
         if (auto problem = publish_for(request.container_asset)) {
             return *problem;
         }
+        Json committed_result;
+        if (request.runtime_before_commit) {
+            control.phase(runtime::Phase::saving);
+            committed_result = supplied;
+            committed_result["search"]["runtime"] = request.runtime_before_commit(request.runtime_context);
+            committed_result["search"]["run_segments"].back()["runtime"] = committed_result["search"]["runtime"];
+            std::uint64_t runtime_payload_bytes {};
+            if (!json_payload_bytes(committed_result, runtime_payload_bytes) ||
+                !add_bytes(writer_live_bytes, runtime_payload_bytes) || writer_live_bytes > request.max_working_bytes) {
+                return failure("MEMORY_LIMIT", "Commit timing metadata exceeds checked export residency.");
+            }
+            ContractValidator timing_validator;
+            if (!std::holds_alternative<ValidatedDocument>(
+                    timing_validator.validate(ContractKind::results, committed_result))) {
+                return failure("RESULT_RUNTIME_INVALID", "Final timing metadata does not satisfy the result contract.");
+            }
+        }
+        const auto& persisted_result = request.runtime_before_commit ? committed_result : supplied;
         {
             auto result_stage = create_protected_stage(request.result_path);
             if (const auto* problem = std::get_if<Error>(&result_stage)) {
                 return *problem;
             }
             auto stage = std::get<OwnedStage>(std::move(result_stage));
-            const auto text = request.result.value().dump(2);
+            const auto text = persisted_result.dump(2);
             std::uint64_t primary_write_live_bytes = writer_live_bytes;
             if (!add_bytes(primary_write_live_bytes, text.capacity()) ||
                 primary_write_live_bytes > request.max_working_bytes) {
@@ -1672,6 +1729,7 @@ ExportOutcome export_result(const ExportRequest& request)
             }
             std::uint64_t first {};
             for (const auto& copy : request.solution->copies()) {
+                detail::poll_operation();
                 const auto transform = geometry::RigidTransform::make(copy.rotation_xyzw, copy.translation_mm);
                 if (!transform) {
                     return post_primary_error(
@@ -1679,6 +1737,7 @@ ExportOutcome export_result(const ExportRequest& request)
                 }
                 ranges.emplace_back(first, mesh.triangles.size());
                 for (const auto& face : mesh.triangles) {
+                    detail::poll_operation();
                     std::array<std::array<float, 3>, 3> points {};
                     for (std::size_t vertex = 0; vertex != 3; ++vertex) {
                         const auto point = transform->apply(mesh.vertices[face[vertex]]);
@@ -1733,10 +1792,22 @@ ExportOutcome export_result(const ExportRequest& request)
         if (auto problem = mutate_closed_stage_for_test(stl_stage_path)) {
             return post_primary_error(*problem);
         }
-        if (auto problem = validate_closed_stl_stage(stl_stage_path, request.solution, mesh, triangle_count, ranges)) {
+        if (!add_bytes(stl_writer_live_bytes, detail::PinnedStage::kScratchBytes) ||
+            stl_writer_live_bytes > request.max_working_bytes ||
+            !add_bytes(stl_validation_live_bytes, detail::PinnedStage::kScratchBytes) ||
+            stl_validation_live_bytes > request.max_working_bytes) {
+            return post_primary_error(failure("MEMORY_LIMIT", "Immutable STL stage pin exceeds checked residency."));
+        }
+        detail::PinnedStage pinned_stage(stl_stage_path);
+        if (!pinned_stage.valid()) {
+            return post_primary_error(
+                failure("EXPORT_CHECK_FAILED", "Closed STL stage could not be pinned immutably."));
+        }
+        if (auto problem = validate_closed_stl_stage(stl_stage_path, request.solution, mesh, triangle_count, ranges,
+                                                     &pinned_stage.stream())) {
             return post_primary_error(*problem);
         }
-        const auto reader = [&stl_stage_path, &ranges](std::size_t index) -> geometry::ExportCopyRead {
+        const auto reader = [&pinned_stage, &ranges](std::size_t index) -> geometry::ExportCopyRead {
 #ifdef SPECTRAPACK_ASSET_LOADER_TESTING
             if (export_closed_stage_reader_failure.exchange(false)) {
                 return geometry::ExportReadFailure { "EXPORT_READ", "Injected STL stage reader failure." };
@@ -1745,10 +1816,7 @@ ExportOutcome export_result(const ExportRequest& request)
             if (index >= ranges.size()) {
                 return geometry::ExportReadFailure { "EXPORT_RANGE", "Copy range is absent." };
             }
-            std::ifstream input(stl_stage_path, std::ios::binary);
-            if (!input) {
-                return geometry::ExportReadFailure { "EXPORT_READ", "STL stage could not be reopened." };
-            }
+            auto& input = pinned_stage.stream();
             const auto [first, count] = ranges[index];
             std::vector<std::byte> bytes(84 + count * 50);
             input.read(reinterpret_cast<char*>(bytes.data()), 84);
@@ -1769,12 +1837,15 @@ ExportOutcome export_result(const ExportRequest& request)
         const auto quantized =
             geometry::validate_quantized_export(request.solution, reader,
                                                 { remaining_validation_limits, request.per_copy_import_limits,
-                                                  request.max_working_bytes - stl_validation_live_bytes });
+                                                  request.max_working_bytes - stl_validation_live_bytes },
+                                                control);
+        detail::poll_operation();
         if (quantized.validity != geometry::Validity::valid) {
             return post_primary_error(validation_failure(quantized, true, &rebuilt.validation_report));
         }
         const auto assembly_hash =
-            sha256_file(stl_stage_path, 84 + 50 * triangle_count, request.max_working_bytes - stl_writer_live_bytes);
+            sha256_file(stl_stage_path, 84 + 50 * triangle_count, request.max_working_bytes - stl_writer_live_bytes,
+                        &pinned_stage.stream());
         if (const auto* problem = std::get_if<Error>(&assembly_hash)) {
             return post_primary_error(*problem);
         }
@@ -1788,10 +1859,10 @@ ExportOutcome export_result(const ExportRequest& request)
 #ifdef SPECTRAPACK_ASSET_LOADER_TESTING
         export_post_hash_base_before_reuse_comparison.store(post_hash_live_bytes, std::memory_order_relaxed);
 #endif
-        if (auto problem =
-                stl_stage.publish(*request.stl_path, false, request.max_working_bytes - post_hash_live_bytes)) {
-            return post_primary_error(*problem);
+        if (!pinned_stage.publish(*request.stl_path)) {
+            return post_primary_error(failure("EXPORT_WRITE_FAILED", "Certified STL handle could not be published."));
         }
+        stl_stage.publication_complete();
         Json companion {
             { "schema_version",        1                                                                },
             { "units",                 "mm"                                                             },
@@ -1847,7 +1918,7 @@ ExportOutcome export_result(const ExportRequest& request)
             return post_primary_error(
                 failure("MEMORY_LIMIT", "Final result copies exceed the configured working-memory limit."));
         }
-        Json final_result = supplied;
+        Json final_result = persisted_result;
         final_result["artifacts"] = Json::array({
             { { "kind", "assembled_stl" }, { "path", *artifact_path }, { "sha256", assembly_hash_value } }
         });
@@ -1890,6 +1961,9 @@ ExportOutcome export_result(const ExportRequest& request)
         success.stl_path = *request.stl_path;
         success.companion_path = companion_path;
         return success;
+    }
+    catch (const detail::Interrupted& interruption) {
+        return post_primary_error(detail::interrupted_error(interruption));
     }
     catch (const std::bad_alloc&) {
         return post_primary_error(failure("MEMORY_LIMIT", "Checked export exhausted memory."));

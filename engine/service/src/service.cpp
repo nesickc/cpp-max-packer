@@ -51,29 +51,29 @@ struct CachedResponse { std::string canonical_request; std::string serialized_re
 
 Json capabilities(const BuildInfo& build) {
     return Json {
-        { "engine",                 { { "version", build.engine_version }, { "commit", build.engine_commit } } },
-        { "protocol_versions",      Json::array({ 1 })                                                         },
+        { "engine",                 { { "version", build.engine_version }, { "commit", build.engine_commit } }           },
+        { "protocol_versions",      Json::array({ 1 })                                                                   },
         { "schema_versions",
          { { "settings", Json::array({ 1 }) },
             { "assets", Json::array({ 1 }) },
             { "results", Json::array({ 1 }) },
             { "protocol", Json::array({ 1 }) },
-            { "benchmark_summary", Json::array({ 1 }) } }                                                      },
-        { "implemented_methods",    Json::array({ "capabilities.get" })                                        },
-        { "implemented_commands",
-         Json::array({ "capabilities", "serve", "inspect", "solve", "desktop-prepare", "desktop-restore" })    },
+            { "benchmark_summary", Json::array({ 1 }) } }                                                                },
+        { "implemented_methods",    Json::array({ "capabilities.get" })                                                  },
+        { "implemented_commands",   Json::array({ "capabilities", "serve", "inspect", "solve", "desktop-prepare",
+                                                "desktop-restore", "desktop-session" }) },
         { "unsupported_methods",
          Json::array({ "asset.import", "asset.accept_repair", "job.preflight", "job.start", "job.stop", "job.continue",
-                        "job.status", "project.open", "project.save", "result.validate", "result.export" })    },
-        { "max_record_bytes",       1048576                                                                    },
-        { "max_active_solver_jobs", 1                                                                          },
-        { "compute_backends",       Json::array()                                                              },
+                        "job.status", "project.open", "project.save", "result.validate", "result.export" })              },
+        { "max_record_bytes",       1048576                                                                              },
+        { "max_active_solver_jobs", 1                                                                                    },
+        { "compute_backends",       Json::array()                                                                        },
         { "features",
          { { "asset_import", false },
             { "packing", false },
             { "project_io", false },
             { "result_validation", false },
-            { "result_export", false } }                                                                       }
+            { "result_export", false } }                                                                                 }
     };
 }
 

@@ -544,7 +544,8 @@ Json repair_recipe(const std::shared_ptr<const RepairProposal>& proposal, const 
 std::variant<detail::ReplayedRepair, Error> detail::replay_repair(std::shared_ptr<const geometry::AssetDraft> draft,
                                                                   const Json& report,
                                                                   std::span<const std::byte> retained,
-                                                                  std::uint64_t source_size)
+                                                                  std::uint64_t source_size,
+                                                                  const runtime::OperationControl& control)
 {
     const auto bad = [] {
         return Error { "ASSET_MISMATCH", "Retained repair recipe does not replay exactly.", Json::object(), true };
@@ -556,7 +557,7 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(std::shared_pt
         if (!std::isfinite(tolerance) || tolerance <= 0 || report.at("repair_record").at("accepted_by_user") != true) {
             return bad();
         }
-        auto proposed = geometry::propose_weld(draft, { tolerance });
+        auto proposed = geometry::propose_weld(draft, { tolerance }, control);
         if (!std::holds_alternative<std::shared_ptr<const RepairProposal>>(proposed)) {
             return bad();
         }

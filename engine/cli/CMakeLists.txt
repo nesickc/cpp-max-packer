@@ -1,4 +1,4 @@
-add_executable(spectrapack-engine src/main.cpp src/solve.cpp src/desktop.cpp)
+add_executable(spectrapack-engine src/main.cpp src/solve.cpp src/desktop.cpp src/desktop_session.cpp)
 target_link_libraries(spectrapack-engine PRIVATE pack_service pack_solver)
 if(WIN32)
   target_link_libraries(spectrapack-engine PRIVATE Psapi bcrypt)

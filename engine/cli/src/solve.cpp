@@ -4,6 +4,8 @@
 #include <spectrapack/solver/orientations.hpp>
 #include <spectrapack/solver/spectral.hpp>
 
+#include "timeline.hpp"
+
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -33,6 +35,16 @@ namespace geo = spectrapack::geometry;
 namespace io = spectrapack::io;
 namespace solver = spectrapack::solver;
 using io::Json;
+thread_local const spectrapack::cli::SolveRuntime* current_runtime {};
+std::ostream& output() { return current_runtime && current_runtime->output ? *current_runtime->output : std::cout; }
+struct RuntimeGuard {
+    const spectrapack::cli::SolveRuntime* old;
+    explicit RuntimeGuard(const spectrapack::cli::SolveRuntime* value) : old(current_runtime)
+    {
+        current_runtime = value;
+    }
+    ~RuntimeGuard() { current_runtime = old; }
+};
 
 #ifdef SPECTRAPACK_CLI_TESTING
 std::atomic_uint64_t result_build_max_working_bytes_for_test {};
@@ -41,12 +53,12 @@ std::atomic_uint64_t result_export_max_working_bytes_for_test {};
 
 int fail(std::string code, std::string message, int exit_code, Json details = Json::object())
 {
-    std::cout << Json{{"protocol_version", 1}, {"request_id", nullptr}, {"ok", false},
+    output() << Json{{"protocol_version", 1}, {"request_id", nullptr}, {"ok", false},
                     {"error", {{"code", std::move(code)}, {"message", std::move(message)},
                                {"details", std::move(details)}, {"recoverable", true}}}}
                    .dump()
             << '\n' << std::flush;
-    return std::cout ? exit_code : 4;
+    return output() ? exit_code : 4;
 }
 
 std::optional<std::string> read_file(const std::filesystem::path& path)
@@ -201,48 +213,47 @@ std::optional<uint64_t> peak_rss()
     return static_cast<uint64_t>(counters.PeakWorkingSetSize);
 }
 
-std::stop_source& console_stop_source()
-{
-    // The handler can run concurrently with teardown. Process lifetime avoids
-    // leaving it with a pointer to a completed solve invocation.
-    static std::stop_source source;
-    return source;
-}
-
+std::atomic<std::shared_ptr<std::stop_source>> active_console_source;
 BOOL WINAPI console_control_handler(DWORD type)
 {
     if (type == CTRL_C_EVENT || type == CTRL_BREAK_EVENT) {
-        console_stop_source().request_stop();
+        if (const auto source = active_console_source.load()) {
+            source->request_stop();
+        }
         return TRUE;
     }
     return FALSE;
 }
-
 class ConsoleControlRegistration final {
 public:
-    ConsoleControlRegistration() : installed_(SetConsoleCtrlHandler(console_control_handler, TRUE) != FALSE) {}
-
+    ConsoleControlRegistration() : source_(std::make_shared<std::stop_source>())
+    {
+        active_console_source.store(source_);
+        installed_ = SetConsoleCtrlHandler(console_control_handler, TRUE) != FALSE;
+    }
     ~ConsoleControlRegistration()
     {
         if (installed_) {
             SetConsoleCtrlHandler(console_control_handler, FALSE);
         }
+        active_console_source.store({});
     }
-
-    [[nodiscard]] std::stop_token token() const noexcept { return console_stop_source().get_token(); }
+    std::stop_token token() const noexcept { return source_->get_token(); }
+    std::shared_ptr<std::stop_source> source() const noexcept { return source_; }
 
 private:
+    std::shared_ptr<std::stop_source> source_;
     bool installed_ {};
 };
 
 class StopFileWatcher final {
 public:
-    explicit StopFileWatcher(const std::optional<std::filesystem::path>& path)
+    explicit StopFileWatcher(const std::optional<std::filesystem::path>& path, std::shared_ptr<std::stop_source> source)
     {
         if (!path) {
             return;
         }
-        const auto observe = [this, file = *path] {
+        const auto observe = [this, file = *path, source] {
             std::error_code error;
             const auto parent = std::filesystem::status(file.parent_path().empty() ? "." : file.parent_path(), error);
             if (!error && !std::filesystem::is_directory(parent)) {
@@ -267,15 +278,15 @@ public:
                 monitor_error_.store(error.value());
             }
             if (marked || error) {
-                console_stop_source().request_stop();
+                source->request_stop();
             }
             return marked || bool(error);
         };
         if (observe()) {
             return;
         }
-        watcher_ = std::jthread([observe](std::stop_token done) {
-            while (!done.stop_requested() && !console_stop_source().stop_requested()) {
+        watcher_ = std::jthread([observe, source](std::stop_token done) {
+            while (!done.stop_requested() && !source->stop_requested()) {
                 if (observe()) {
                     return;
                 }
@@ -297,7 +308,8 @@ private:
     std::jthread watcher_;
 };
 
-std::optional<std::chrono::steady_clock::time_point> deadline_from_seconds(double seconds)
+std::optional<std::chrono::steady_clock::time_point> deadline_from_seconds(double seconds,
+                                                                           std::chrono::steady_clock::time_point anchor)
 {
     using Clock = std::chrono::steady_clock;
     using Duration = Clock::duration;
@@ -312,7 +324,7 @@ std::optional<std::chrono::steady_clock::time_point> deadline_from_seconds(doubl
     if (duration <= Clock::duration::zero()) {
         return {};
     }
-    const auto now = Clock::now();
+    const auto now = anchor;
     if (duration > Clock::time_point::max().time_since_epoch() - now.time_since_epoch()) {
         return {};
     }
@@ -594,8 +606,21 @@ void set_result_export_max_working_bytes(std::uint64_t bytes) noexcept
 }  // namespace spectrapack::cli::test
 #endif
 
-int run_solve_command(const std::vector<std::string>& arguments, std::string engine_version, std::string engine_commit)
+int run_solve_prepared(const std::vector<std::string>& arguments, std::string engine_version, std::string engine_commit,
+                       const spectrapack::cli::SolveRuntime& run_runtime)
 {
+    const RuntimeGuard runtime_guard(&run_runtime);
+    const auto registered_start = run_runtime.native_start;
+    ConsoleControlRegistration console_controls;
+    std::stop_callback forwarded_stop(run_runtime.control.stop, [source = console_controls.source()] {
+        source->request_stop();
+    });
+    spectrapack::cli::Timeline timeline(registered_start, run_runtime.elapsed_before_native_seconds,
+                                        run_runtime.control);
+    auto control = run_runtime.control;
+    control.stop = console_controls.token();
+    control.phase_sink = spectrapack::cli::Timeline::phase_sink;
+    control.phase_context = &timeline;
     std::optional<std::filesystem::path> settings_path, object_report, container_report, result_path, stl_path,
         stop_file;
     for (size_t index = 0; index < arguments.size(); ++index) {
@@ -656,6 +681,8 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
                       (container_report && aliases(*stop_file, *container_report)))) {
         return fail("INVALID_REQUEST", "Stop marker aliases an input or output.", 2);
     }
+    StopFileWatcher stop_watcher(stop_file, console_controls.source());
+    control.phase(spectrapack::runtime::Phase::loading);
     Json settings;
     {
         auto source = read_file(*settings_path);
@@ -665,6 +692,18 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
         io::ContractValidator validator;
         auto decoded = validator.parse(io::ContractKind::settings, *source);
         if (!std::holds_alternative<io::ValidatedDocument>(decoded)) {
+            const auto raw = Json::parse(*source, nullptr, false);
+            if (raw.is_object() && raw.contains("compute") && raw["compute"].is_object()) {
+                const auto threads = raw["compute"].value("thread_count", Json());
+                if (threads.is_number_integer() && (threads < 1 || threads > solver::cpu_supported_thread_count())) {
+                    return fail("UNSUPPORTED_THREAD_COUNT", "CPU count is outside actual native support.", 3,
+                                {
+                                    { "supported_min", 1                                    },
+                                    { "supported_max", solver::cpu_supported_thread_count() },
+                                    { "requested",     threads                              }
+                    });
+                }
+            }
             return fail("INVALID_SETTINGS", "Settings do not satisfy the contract.", 2);
         }
         settings = std::get<io::ValidatedDocument>(decoded).value();
@@ -672,7 +711,24 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     if (!settings.contains("resolved")) {
         return fail("UNSUPPORTED_SETTINGS", "solve requires resolved settings.", 3);
     }
-    const auto loaded_object = io::load_accepted_asset(*object_report);
+    const auto budget_scope = settings["search"].value("budget_scope", "search_only");
+    const auto deterministic = settings["search"]["deterministic"].get<bool>();
+    if (!deterministic && budget_scope == "total_start" && !control.deadline) {
+        control.deadline = deadline_from_seconds(settings["search"]["budget_seconds"].get<double>(), registered_start);
+        if (!control.deadline) {
+            return fail("INVALID_SETTINGS", "Start deadline is not representable.", 2);
+        }
+    }
+    if (const auto cause = control.poll(); cause != spectrapack::runtime::StopCause::none) {
+        return fail(
+            cause == spectrapack::runtime::StopCause::user_stopped ? "OPERATION_CANCELLED" : "DEADLINE_EXCEEDED",
+            "Operation interrupted before accepted-asset loading.", 3,
+            {
+                { "no_nonempty_incumbent", true }
+        });
+    }
+    const io::AssetLoadOutcome loaded_object = run_runtime.object ? io::AssetLoadOutcome(run_runtime.object)
+                                                                  : io::load_accepted_asset(*object_report, control);
     if (!std::holds_alternative<std::shared_ptr<const io::VerifiedAsset>>(loaded_object)) {
         const auto& error = std::get<io::Error>(loaded_object);
         return fail(error.code, error.message, 3, error.details);
@@ -694,7 +750,7 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
         if (!container_report) {
             return fail("ASSET_MISMATCH", "STL container settings require a report.", 2);
         }
-        const auto loaded = io::load_accepted_asset(*container_report);
+        const auto loaded = io::load_accepted_asset(*container_report, control);
         if (!std::holds_alternative<std::shared_ptr<const io::VerifiedAsset>>(loaded)) {
             const auto& error = std::get<io::Error>(loaded);
             return fail(error.code, error.message, 3, error.details);
@@ -708,10 +764,32 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     if (settings["resolution"].value("mode", "") != "manual" ||
         settings["resolution"]["pitch_mm"].get<double>() != settings["resolved"]["pitch_mm"].get<double>() ||
         settings["resolved"].value("backend", "") != "cpu" ||
-        settings["resolved"]["thread_count"].get<uint64_t>() != 1 ||
         (settings["compute"].value("backend", "") != "cpu" && settings["compute"].value("backend", "") != "auto")) {
         return fail("UNSUPPORTED_SETTINGS", "Resolution or backend is unsupported.", 3);
     }
+    const auto thread_count = settings["resolved"]["thread_count"].get<uint64_t>();
+    const auto supported_max = solver::cpu_supported_thread_count();
+    if (thread_count < 1 || thread_count > supported_max) {
+        return fail("UNSUPPORTED_THREAD_COUNT", "Explicit CPU thread count is outside the supported range.", 3,
+                    {
+                        { "supported_min", 1             },
+                        { "supported_max", supported_max },
+                        { "requested",     thread_count  }
+        });
+    }
+    if (!settings["resolved"].contains("cpu_runtime") && thread_count != 1) {
+        return fail("CPU_RUNTIME_REQUIRED",
+                    "Legacy execution is serial; explicit parallel settings need runtime provenance.", 3);
+    }
+    if (settings["resolved"].contains("cpu_runtime") &&
+        settings["resolved"]["cpu_runtime"]["scheduling_policy"] != std::string(solver::cpu_scheduling_policy()) &&
+        !(thread_count == 1 && settings["resolved"]["cpu_runtime"]["scheduling_policy"] == "serial-v1")) {
+        return fail("CPU_RUNTIME_UNSUPPORTED", "CPU scheduling policy is unsupported by this build.", 3);
+    }
+    if (settings["compute"].contains("thread_count") && settings["compute"]["thread_count"] != thread_count) {
+        return fail("THREAD_COUNT_MISMATCH", "Explicit request must equal actual resolved CPU count.", 3);
+    }
+    control.phase(spectrapack::runtime::Phase::preparing);
     auto orientation = policy(settings["orientation"]);
     if (!orientation) {
         return fail("UNSUPPORTED_SETTINGS", "Orientation mode is unsupported.", 3);
@@ -739,6 +817,7 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     orientation.reset();
     const auto started = std::chrono::steady_clock::now();
     solver::SpectralLimits limits;
+    limits.cpu_thread_count = static_cast<std::uint32_t>(thread_count);
     const auto& search = settings["search"];
     if (search["deterministic"].get<bool>()) {
         const auto candidates = search["work_budget"]["max_candidate_evaluations"].get<uint64_t>();
@@ -750,7 +829,10 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     }
     std::optional<std::chrono::steady_clock::time_point> deadline;
     if (!search["deterministic"].get<bool>()) {
-        deadline = deadline_from_seconds(search["budget_seconds"].get<double>());
+        deadline = control.deadline;
+        if (!deadline) {
+            deadline = deadline_from_seconds(search["budget_seconds"].get<double>(), started);
+        }
         if (!deadline) {
             return fail("INVALID_SETTINGS", "budget_seconds cannot form a representable steady-clock deadline.", 2);
         }
@@ -763,11 +845,13 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
         !add_bytes(caller_reserve, *command_reserve)) {
         return fail("MEMORY_LIMIT", "CLI input residency cannot be represented.", 3);
     }
+    if (!add_bytes(caller_reserve, run_runtime.retained_reserve_bytes)) {
+        return fail("MEMORY_LIMIT", "Retained session residency overflows.", 3);
+    }
     limits.reserved_bytes = caller_reserve;
     solver::SnapshotHandle last_snapshot;
     std::optional<double> last_snapshot_seconds;
     std::atomic_bool reported_snapshot {};
-    ConsoleControlRegistration console_controls;
     std::shared_ptr<const geo::ValidatedSolution> initial;
     if (stop_file) {
         const auto empty =
@@ -776,14 +860,14 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
             return fail("SOLVE_FAILED", "Initial empty candidate could not be created.", 3);
         }
         const auto checked = geo::validate(std::get<std::shared_ptr<const geo::ValidationContext>>(context_value),
-                                           std::get<std::shared_ptr<const geo::Candidate>>(empty));
+                                           std::get<std::shared_ptr<const geo::Candidate>>(empty), {}, control);
         if (!checked.validated_solution || checked.report.validity != geo::Validity::valid) {
             return fail("SOLVE_FAILED", "Initial empty candidate did not pass native validation.", 3);
         }
         initial = checked.validated_solution;
     }
-    StopFileWatcher stop_watcher(stop_file);
-    const solver::RunControl control { console_controls.token(), deadline };
+    control.deadline = deadline;
+    control.phase(spectrapack::runtime::Phase::placing);
     auto outcome = solver::run_cpu_spectral(std::get<std::shared_ptr<const geo::ValidationContext>>(context_value),
                                             {
                                                 { 0, 0, 0 },
@@ -829,8 +913,20 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     const auto diagnostics = command_diagnostics(outcome, limits, caller_reserve, time_to_best_basis);
     const auto termination_reason =
         stop_monitor_error ? solver::TerminationReason::error : outcome.run.termination_reason;
+    if (run_runtime.object && run_runtime.preserve_previous_on_empty &&
+        outcome.run.retained_solution->copies().empty() &&
+        (termination_reason == solver::TerminationReason::user_stopped ||
+         termination_reason == solver::TerminationReason::budget_exhausted)) {
+        output() << Json{{"ok",true},{"termination_reason",reason(termination_reason)},
+                         {"no_nonempty_incumbent",true},{"preparation_reused",run_runtime.preparation_reused},
+                         {"runtime",timeline.record(budget_scope,deterministic?0:search["budget_seconds"].get<double>(),run_runtime.preparation_reused,true)}}.dump() << '\n' << std::flush;
+        return output() ? 0 : 4;
+    }
     const auto run_stats = outcome.run.stats;
     const auto retained_solution = outcome.run.retained_solution;
+    if (run_runtime.last_validated && !retained_solution->copies().empty()) {
+        *run_runtime.last_validated = retained_solution;
+    }
     last_snapshot.reset();
     last_snapshot_seconds.reset();
     outcome = {};
@@ -871,6 +967,10 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     };
     metadata["search"]["diagnostics"] = retained_diagnostics;
     metadata["search"]["run_segments"][0]["diagnostics"] = retained_diagnostics;
+    const auto time_budget = deterministic ? 0 : search["budget_seconds"].get<double>();
+    metadata["search"]["runtime"] =
+        timeline.record(budget_scope, time_budget, run_runtime.preparation_reused, retained_solution->copies().empty());
+    metadata["search"]["run_segments"][0]["runtime"] = metadata["search"]["runtime"];
     std::string().swap(engine_version);
     std::string().swap(engine_commit);
     uint64_t build_metadata_bytes {};
@@ -895,6 +995,7 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
         !json_payload_bytes(retained_diagnostics, build_diagnostics_bytes) ||
         !add_bytes(build_live_bytes, *input_reserve) || !add_bytes(build_live_bytes, *build_command_reserve) ||
         !add_bytes(build_live_bytes, build_diagnostics_bytes) || !add_bytes(build_live_bytes, build_metadata_bytes) ||
+        !add_bytes(build_live_bytes, run_runtime.retained_reserve_bytes) ||
         !add_bytes(build_live_bytes, *build_native_reserve) || build_live_bytes > build_limit) {
         return fail("MEMORY_LIMIT", "CLI result live residency exceeds the checked build reservation.", 3,
                     {
@@ -905,7 +1006,11 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
         });
     }
     result_request.validation_limits.max_working_bytes = build_limit - build_live_bytes;
-    auto document = io::build_result(result_request);
+    auto cleanup_control = control;
+    cleanup_control.stop = {};
+    cleanup_control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(5);
+    control.phase(spectrapack::runtime::Phase::cleanup);
+    auto document = io::build_result(result_request, cleanup_control);
     if (!std::holds_alternative<io::ValidatedDocument>(document)) {
         const auto& error = std::get<io::Error>(document);
         return fail(error.code, error.message, 3, error.details);
@@ -918,7 +1023,8 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     const auto export_limit = result_export_max_working_bytes(limits.max_working_bytes);
     uint64_t export_live_bytes {};
     const bool export_representable = export_reserve && add_bytes(export_live_bytes, export_reserve->non_context) &&
-                                      add_bytes(export_live_bytes, export_reserve->context_catalog);
+                                      add_bytes(export_live_bytes, export_reserve->context_catalog) &&
+                                      add_bytes(export_live_bytes, run_runtime.retained_reserve_bytes);
     if (!export_representable || export_live_bytes > export_limit) {
         return fail("MEMORY_LIMIT", "CLI export residency cannot be represented.", 3,
                     export_reserve ? export_admission_details(export_limit, export_live_bytes, *export_reserve)
@@ -932,7 +1038,19 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
                                        *result_path,
                                        stl_path };
     export_request.max_working_bytes = export_limit - export_live_bytes;
-    auto published = io::export_result(export_request);
+    struct FinalRuntime {
+        spectrapack::cli::Timeline& timeline;
+        const std::string& scope;
+        double budget;
+        bool reused, empty;
+    } final_runtime { timeline, budget_scope, time_budget, run_runtime.preparation_reused,
+                      retained_solution->copies().empty() };
+    export_request.runtime_context = &final_runtime;
+    export_request.runtime_before_commit = [](void* context) {
+        const auto& value = *static_cast<const FinalRuntime*>(context);
+        return value.timeline.record(value.scope, value.budget, value.reused, value.empty);
+    };
+    auto published = io::export_result(export_request, cleanup_control);
     if (!std::holds_alternative<io::ExportSuccess>(published)) {
         const auto& error = std::get<io::Error>(published);
         return fail(error.code, error.message, 3, error.details);
@@ -960,15 +1078,27 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
                     termination_reason == solver::TerminationReason::resource_limit ? 3 : 4, std::move(details));
     }
     Json reply {
-        { "ok",                 true                               },
-        { "result_path",        portable_path(success.result_path) },
-        { "count",              retained_solution->copies().size() },
-        { "termination_reason", reason(termination_reason)         },
-        { "diagnostics",        diagnostics                        }
+        { "ok",                    true                                },
+        { "result_path",           portable_path(success.result_path)  },
+        { "count",                 retained_solution->copies().size()  },
+        { "termination_reason",    reason(termination_reason)          },
+        { "diagnostics",           diagnostics                         },
+        { "no_nonempty_incumbent", retained_solution->copies().empty() },
+        { "preparation_reused",    run_runtime.preparation_reused      }
     };
     if (success.stl_path) {
         reply["stl_path"] = portable_path(*success.stl_path);
     }
-    std::cout << reply.dump() << '\n' << std::flush;
-    return std::cout ? 0 : 4;
+    output() << reply.dump() << '\n' << std::flush;
+    return output() ? 0 : 4;
+}
+
+int run_solve_command(const std::vector<std::string>& arguments, std::string engine_version, std::string engine_commit)
+{
+    const spectrapack::cli::SolveRuntime runtime;
+    return run_solve_prepared(arguments, std::move(engine_version), std::move(engine_commit), runtime);
+}
+std::optional<std::uint64_t> spectrapack::cli::retained_solution_bytes(const geometry::ValidatedSolution& solution)
+{
+    return solution_resident_bytes(solution);
 }

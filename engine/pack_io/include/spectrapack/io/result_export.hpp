@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <spectrapack/runtime/operation_control.hpp>
 #include <variant>
 #include <vector>
 
@@ -26,13 +27,14 @@ public:
     [[nodiscard]] std::optional<std::uint64_t> resident_buffer_bytes() const noexcept;
 
 private:
-    friend AssetLoadOutcome load_accepted_asset(const std::filesystem::path&);
-    friend ExportOutcome export_result(const ExportRequest&);
+    friend AssetLoadOutcome load_accepted_asset(const std::filesystem::path&, const runtime::OperationControl&);
+    friend ExportOutcome export_result(const ExportRequest&, const runtime::OperationControl&);
     struct Storage;
     std::shared_ptr<const Storage> storage_;
     explicit VerifiedAsset(std::shared_ptr<const Storage>) noexcept;
 };
-[[nodiscard]] AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path);
+[[nodiscard]] AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path,
+                                                   const runtime::OperationControl& control = {});
 
 enum class ResultCatalogBinding { normalized_policy, resolved_policy };
 struct ResultCatalog {
@@ -50,7 +52,7 @@ struct ResultRequest {
     geometry::ValidationLimits validation_limits {};
 };
 using ResultOutcome = std::variant<ValidatedDocument, Error>;
-[[nodiscard]] ResultOutcome build_result(const ResultRequest&);
+[[nodiscard]] ResultOutcome build_result(const ResultRequest&, const runtime::OperationControl& control = {});
 
 struct ExportRequest {
     std::shared_ptr<const geometry::ValidatedSolution> solution;
@@ -63,11 +65,15 @@ struct ExportRequest {
     geometry::ImportLimits per_copy_import_limits {};
     std::uint64_t max_working_bytes { 512ULL << 20 };
     std::uint64_t max_output_bytes { 8ULL << 30 };
+    // Only versioned timing metadata may be refreshed after checked validation
+    // and asset staging, immediately before the primary immutable result commit.
+    Json (*runtime_before_commit)(void*) {};
+    void* runtime_context {};
 };
 struct ExportSuccess {
     std::filesystem::path result_path;
     std::optional<std::filesystem::path> stl_path, companion_path;
 };
-[[nodiscard]] ExportOutcome export_result(const ExportRequest& request);
+[[nodiscard]] ExportOutcome export_result(const ExportRequest& request, const runtime::OperationControl& control = {});
 
 }  // namespace spectrapack::io

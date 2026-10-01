@@ -41,6 +41,7 @@ void usage(std::ostream& stream) {
               "       spectrapack-engine inspect --stl <path> --units mm|inch|custom "
               "--report <path> [options]\n"
               "       spectrapack-engine serve --stdio\n"
+              "       spectrapack-engine desktop-session\n"
               "       spectrapack-engine solve --settings <path> --object-report <path> --result <path> "
               "[--container-report <path>] [--stl <path>] [--stop-file <path>]\n"
               "       spectrapack-engine desktop-prepare --object-report <path> --request <path> --output <directory>\n"
@@ -234,6 +235,9 @@ int run_engine(int argc, Character** argv) {
       return std::cout ? 0 : 4;
     }
 
+    if (argc == 2 && equals_ascii(View(argv[1]), "desktop-session")) {
+        return run_desktop_session(kBuild.engine_version, kBuild.engine_commit);
+    }
     if (argc >= 2 && (equals_ascii(View(argv[1]), "solve") || equals_ascii(View(argv[1]), "desktop-prepare") ||
                       equals_ascii(View(argv[1]), "desktop-restore"))) {
         std::vector<std::string> arguments;

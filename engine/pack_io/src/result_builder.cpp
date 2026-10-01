@@ -1,6 +1,7 @@
 #include <spectrapack/geometry/rigid_transform.hpp>
 #include <spectrapack/io/result_export.hpp>
 
+#include "operation_guard.hpp"
 #include "result_builder_accounting.hpp"
 #include "result_export_test_seam.hpp"
 #ifdef _WIN32
@@ -391,14 +392,17 @@ std::variant<std::string, Error> result_catalog_sha256(const ResultCatalog& cata
     }
     return catalog_digest(catalog);
 }
-detail::ResultBuildAttempt detail::build_result_with_report(const ResultRequest& r)
+detail::ResultBuildAttempt detail::build_result_with_report(const ResultRequest& r,
+                                                            const runtime::OperationControl& control)
 {
+    const OperationGuard operation(control);
     geometry::ValidationReport validation_report;
     bool validation_attempted {};
     const auto finish = [&validation_report, &validation_attempted](ResultOutcome result) {
         return ResultBuildAttempt { std::move(result), std::move(validation_report), validation_attempted };
     };
     try {
+        poll_operation();
         if (!r.solution || !r.object_asset) {
             return finish(bad("RESULT_INPUT_INVALID", "Solution and verified object asset are required."));
         }
@@ -455,7 +459,9 @@ detail::ResultBuildAttempt detail::build_result_with_report(const ResultRequest&
             }
         }
         validation_attempted = true;
-        auto fresh = geometry::revalidate(r.solution, r.validation_limits);
+        control.phase(runtime::Phase::validating);
+        auto fresh = geometry::revalidate(r.solution, r.validation_limits, control);
+        poll_operation();
         validation_report = fresh.report;
         if (!fresh.validated_solution || validation_report.validity != geometry::Validity::valid) {
             auto error = bad("RESULT_VALIDATION_FAILED", "Fresh native validation did not certify solution.");
@@ -579,6 +585,9 @@ detail::ResultBuildAttempt detail::build_result_with_report(const ResultRequest&
         }
         return finish(contract_error(std::get<ContractFailure>(checked)));
     }
+    catch (const Interrupted& interruption) {
+        return finish(interrupted_error(interruption));
+    }
     catch (const std::bad_alloc&) {
         return finish(bad("MEMORY_LIMIT", "Result construction exhausted memory."));
     }
@@ -587,5 +596,8 @@ detail::ResultBuildAttempt detail::build_result_with_report(const ResultRequest&
     }
 }
 
-ResultOutcome build_result(const ResultRequest& request) { return detail::build_result_with_report(request).result; }
+ResultOutcome build_result(const ResultRequest& request, const runtime::OperationControl& control)
+{
+    return detail::build_result_with_report(request, control).result;
+}
 }  // namespace spectrapack::io

@@ -3,6 +3,7 @@
 #include <spectrapack/geometry/display_lod.hpp>
 #include <spectrapack/io/result_export.hpp>
 #include <spectrapack/solver/orientations.hpp>
+#include <spectrapack/solver/spectral.hpp>
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -145,52 +146,11 @@ int prepare(const std::map<std::string, std::filesystem::path>& options, const A
     if (!request || !request->contains("desktop_version") || !request->contains("orientation")) {
         return fail("INVALID_SETTINGS", "Desktop settings do not satisfy version 1.");
     }
-    const auto input_policy = policy(request->at("orientation"));
-    if (!input_policy) {
-        return fail("INVALID_SETTINGS", "Desktop orientation is unsupported.");
+    const auto resolved = resolve_desktop_settings(*request, asset);
+    if (const auto* error = std::get_if<io::Error>(&resolved)) {
+        return fail(error->code, error->message, 2, error->details);
     }
-    auto made = solver::make_orientation_catalog(*input_policy, 24);
-    if (const auto* error = std::get_if<solver::CatalogFailure>(&made)) {
-        return fail(std::string(error->code), error->message);
-    }
-    const auto& catalog = std::get<solver::OrientationCatalog>(made);
-    Json orientation = request->at("orientation");
-    auto resolved_policy = *input_policy;
-    if (resolved_policy.mode == geo::OrientationMode::fixed) {
-        resolved_policy.catalog_xyzw = catalog.quaternions;
-        orientation["quaternion_xyzw"] = catalog.quaternions.front();
-    }
-    const io::ResultCatalog bound { 1, catalog.quaternions, io::ResultCatalogBinding::resolved_policy };
-    const auto hashed = io::result_catalog_sha256(bound, resolved_policy);
-    if (const auto* error = std::get_if<io::Error>(&hashed)) {
-        return fail(error->code, error->message);
-    }
-    const auto& record = asset->record();
-    Json settings {
-        { "settings_version", 1                                                                            },
-        { "object_asset",
-         { { "source_sha256", record.at("source").at("sha256") },
-            { "accepted_solid_sha256", record.at("accepted_solid").at("sha256") } }                        },
-        { "container",        { { "kind", "box" }, { "dimensions_mm", request->at("box_dimensions_mm") } } },
-        { "clearance_mm",     request->at("clearance_mm")                                                  },
-        { "orientation",      orientation                                                                  },
-        { "search",
-         { { "preset", "desktop-cpu-v1" },
-            { "deterministic", false },
-            { "budget_seconds", request->at("budget_seconds") },
-            { "seed", request->at("seed") } }                                                              },
-        { "resolution",       { { "mode", "manual" }, { "pitch_mm", request->at("pitch_mm") } }            },
-        { "compute",          { { "backend", "cpu" } }                                                     },
-        { "resolved",
-         { { "pitch_mm", request->at("pitch_mm") },
-            { "orientation_catalog_sha256", std::get<std::string>(hashed) },
-            { "orientation_catalog_version", 1 },
-            { "backend", "cpu" },
-            { "thread_count", 1 } }                                                                        }
-    };
-    if (!std::holds_alternative<io::ValidatedDocument>(validator.validate(io::ContractKind::settings, settings))) {
-        return fail("INVALID_SETTINGS", "Resolved settings are not valid; check the quaternion and uint64 seed.");
-    }
+    const auto& settings = std::get<Json>(resolved);
     const auto output = options.at("--output");
     Json preview = nullptr, preview_path = nullptr, warnings = Json::array();
     auto lod = geo::make_display_lod(asset->solid());
@@ -349,4 +309,77 @@ int run_desktop_command(const std::string& command, const std::vector<std::strin
         return fail("ASSET_MISMATCH", "Desktop object report has the wrong role.");
     }
     return command == "desktop-prepare" ? prepare(options, asset) : restore(options, asset);
+}
+
+std::variant<spectrapack::io::Json, spectrapack::io::Error> resolve_desktop_settings(const Json& request,
+                                                                                     const Asset& asset)
+{
+    io::ContractValidator validator;
+    if (!asset ||
+        !std::holds_alternative<io::ValidatedDocument>(validator.validate(io::ContractKind::desktop, request)) ||
+        !request.contains("orientation")) {
+        return io::Error { "INVALID_SETTINGS", "Desktop settings do not satisfy version 1.", Json::object(), true };
+    }
+    const auto input_policy = policy(request.at("orientation"));
+    if (!input_policy) {
+        return io::Error { "INVALID_SETTINGS", "Desktop orientation is unsupported.", Json::object(), true };
+    }
+    auto made = solver::make_orientation_catalog(*input_policy, 24);
+    if (const auto* error = std::get_if<solver::CatalogFailure>(&made)) {
+        return io::Error { std::string(error->code), error->message, Json::object(), true };
+    }
+    const auto& catalog = std::get<solver::OrientationCatalog>(made);
+    Json orientation = request.at("orientation");
+    auto resolved_policy = *input_policy;
+    if (resolved_policy.mode == geo::OrientationMode::fixed) {
+        resolved_policy.catalog_xyzw = catalog.quaternions;
+        orientation["quaternion_xyzw"] = catalog.quaternions.front();
+    }
+    const io::ResultCatalog bound { 1, catalog.quaternions, io::ResultCatalogBinding::resolved_policy };
+    const auto hashed = io::result_catalog_sha256(bound, resolved_policy);
+    if (const auto* error = std::get_if<io::Error>(&hashed)) {
+        return *error;
+    }
+    const auto& record = asset->record();
+    Json settings {
+        { "settings_version", 1                                                                           },
+        { "object_asset",
+         { { "source_sha256", record.at("source").at("sha256") },
+            { "accepted_solid_sha256", record.at("accepted_solid").at("sha256") } }                       },
+        { "container",        { { "kind", "box" }, { "dimensions_mm", request.at("box_dimensions_mm") } } },
+        { "clearance_mm",     request.at("clearance_mm")                                                  },
+        { "orientation",      orientation                                                                 },
+        { "search",
+         { { "preset", "desktop-cpu-v1" },
+            { "deterministic", false },
+            { "budget_seconds", request.at("budget_seconds") },
+            { "seed", request.at("seed") } }                                                              },
+        { "resolution",       { { "mode", "manual" }, { "pitch_mm", request.at("pitch_mm") } }            },
+        { "compute",          { { "backend", "cpu" } }                                                    },
+        { "resolved",
+         { { "pitch_mm", request.at("pitch_mm") },
+            { "orientation_catalog_sha256", std::get<std::string>(hashed) },
+            { "orientation_catalog_version", 1 },
+            { "backend", "cpu" },
+            { "thread_count", 1 } }                                                                       }
+    };
+    settings["search"]["budget_scope"] = request.value("budget_scope", "search_only");
+    const auto threads = request.value("thread_count", 1u);
+    if (threads > solver::cpu_supported_thread_count()) {
+        return io::Error { "UNSUPPORTED_THREAD_COUNT",
+                           "CPU thread count exceeds this build's actual support.",
+                           { { "supported_max", solver::cpu_supported_thread_count() } },
+                           true };
+    }
+    settings["compute"]["thread_count"] = threads;
+    settings["resolved"]["thread_count"] = threads;
+    settings["resolved"]["cpu_runtime"] = {
+        { "version",           1                               },
+        { "scheduling_policy", solver::cpu_scheduling_policy() }
+    };
+    if (!std::holds_alternative<io::ValidatedDocument>(validator.validate(io::ContractKind::settings, settings))) {
+        return io::Error { "INVALID_SETTINGS", "Resolved settings are not valid; check the quaternion and uint64 seed.",
+                           Json::object(), true };
+    }
+    return settings;
 }
