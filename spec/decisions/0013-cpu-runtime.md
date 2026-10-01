@@ -482,6 +482,30 @@ estimate for that copy and thread count; show prepared residency and the host ca
 separately. It is not an estimate of an unknown final Start copy count. Every later
 growth still requires admission including all simultaneously live owners.
 
+The wire representation is the closed, versioned
+`results.schema.json#/definitions/cpu_field_admission` object with required
+`version:1` and the five native fields above. Byte/copy values are existing safe
+integer counters; `cpu_thread_count` is 1 through 8; `scheduling_policy` is an owned
+string of 1 through 128 bytes. The effective host cap is at most 536,870,912 bytes,
+and semantic validation requires the admitted byte bound not to exceed it.
+An optional `runtime.field_admission` references this definition, so both
+`search.runtime` and each segment's runtime retain the complete basis. Native
+terminal runtime uses the same DTO, including owned failures only when an actual
+admission occurred. The associated copy count need not equal the final count.
+Stored estimates are observational metadata, never authority for a subsequent
+allocation, placement or restored project.
+
+Desktop `State.cpu_runtime` gains optional `prepared_resident_bytes`,
+`field_admission` and `host_cap_bytes:536870912`. This last value is the total host
+policy cap; the field DTO retains the operation's actual effective allowance.
+Emit prepared bytes under their explicit name. Continue accepting the old optional
+`working_set_estimate_bytes` desktop field for compatibility, but stop emitting it
+or interpreting it as a whole-job estimate. Show the displayed result's field basis
+from its own saved runtime metadata, separately from prepared residency and pending
+settings. Absence means unknown. Outer schema versions and legacy documents remain
+unchanged; as with the other optional runtime additions, old strict readers may
+reject new metadata while new readers continue accepting old documents.
+
 ## Checked STL reduction
 
 Keep fresh source-solution revalidation and actual quantized per-copy solid and
