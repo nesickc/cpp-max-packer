@@ -75,7 +75,6 @@ using BakedPlacementOutcome = std::variant<ResidentPlacedSolid, ClassifiedFailur
 // with a zero anchor. Public import frame behavior is unchanged.
 ImportOutcome<AssetDraft> inspect_baked_world_draft(std::span<const std::byte>, const ImportLimits&,
                                                     ImportAttemptStats&, const runtime::OperationControl& = {});
-[[nodiscard]] std::optional<std::uint64_t> baked_import_scratch_bound(std::size_t source_bytes) noexcept;
 [[nodiscard]] BakedWorldOutcome inspect_baked_world_stl(std::span<const std::byte>, const ImportLimits&, ExportBudget&);
 [[nodiscard]] BakedPlacementOutcome prepare_baked_world(std::shared_ptr<const AcceptedSolid>, ExportBudget&);
 

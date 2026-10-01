@@ -2,7 +2,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
+#include <iostream>
 
+#include "../../pack_geometry/src/import_profile.hpp"
 #include "../../pack_geometry/tests/validation_fixtures.hpp"
 #include "spectrapack/geometry/display_lod.hpp"
 #include "spectrapack/geometry/export_validation.hpp"
@@ -24,9 +27,9 @@ runtime::Clock::time_point expired_now(void* value) noexcept
 {
     return *static_cast<runtime::Clock::time_point*>(value);
 }
-std::shared_ptr<const geo::AcceptedSolid> ulamok()
+std::shared_ptr<const geo::AcceptedSolid> accepted_file(const char* filename)
 {
-    std::ifstream file(std::string(SPECTRAPACK_TEST_ROOT) + "/rc/items/ulamok_2kg_simplified.stl", std::ios::binary);
+    std::ifstream file(std::string(SPECTRAPACK_TEST_ROOT) + "/rc/items/" + filename, std::ios::binary);
     REQUIRE(file);
     file.seekg(0, std::ios::end);
     std::vector<std::byte> bytes(static_cast<std::size_t>(file.tellg()));
@@ -39,6 +42,7 @@ std::shared_ptr<const geo::AcceptedSolid> ulamok()
     REQUIRE(std::holds_alternative<std::shared_ptr<const geo::AcceptedSolid>>(accepted));
     return std::get<std::shared_ptr<const geo::AcceptedSolid>>(accepted);
 }
+std::shared_ptr<const geo::AcceptedSolid> ulamok() { return accepted_file("ulamok_2kg_simplified.stl"); }
 std::vector<std::byte> quantized_copy(const geo::AcceptedSolid& object, const geo::CopyPose& pose)
 {
     const auto mesh = object.mesh();
@@ -59,6 +63,23 @@ std::vector<std::byte> quantized_copy(const geo::AcceptedSolid& object, const ge
         }
     }
     return bytes;
+}
+void export_evidence(const char* source, const geo::ValidatedSolution& solution, const geo::ValidationReport& report,
+                     std::uint64_t reads)
+{
+    std::cout << std::setprecision(17) << "export_check source=" << source << " copies=" << solution.copies().size()
+              << " reads=" << reads << " code=" << report.code << " kernel_work=" << report.kernel_work
+              << " pair_tests=" << report.aabb_pair_tests << " peak_bytes=" << report.working_bytes_peak << '\n';
+    for (const auto& pose : solution.copies()) {
+        std::cout << "export_pose source=" << source << " id=" << pose.copy_id;
+        for (const auto value : pose.translation_mm) {
+            std::cout << " translation=" << value;
+        }
+        for (const auto value : pose.rotation_xyzw) {
+            std::cout << " rotation=" << value;
+        }
+        std::cout << '\n';
+    }
 }
 }  // namespace
 
@@ -137,10 +158,65 @@ TEST_CASE("T010 full36 independently quantized Ulamok export fits unchanged caps
     REQUIRE(baseline.best);
     REQUIRE(baseline.best->solution->copies().size() >= 36);
     const auto solution = baseline.best->solution;
+    std::uint64_t reads {};
     const auto result = geo::validate_quantized_export(solution, [&](std::size_t index) -> geo::ExportCopyRead {
+        ++reads;
         return quantized_copy(*native_context->object(), solution->copies()[index]);
     });
+    export_evidence("ulamok_2kg_simplified.stl", *solution, result, reads);
     CAPTURE(result.code, result.kernel_work, result.aabb_pair_tests, result.working_bytes_peak);
     CHECK(result.validity == geo::Validity::valid);
     CHECK(result.code == "VALID");
+}
+
+TEST_CASE("T010 full Pryanik retained2 quantized export preserves native found copies", "[solver][T010][qualification]")
+{
+    for (const auto filename : { "pryanik_1.STL", "pryanik_2.STL" }) {
+        geo::Constraints constraints;
+        constraints.pair_clearance_mm = .1;
+        constraints.wall_clearance_mm = 1;
+        const auto made =
+            geo::make_validation_context(accepted_file(filename), geo::BoxDimensions { 100, 100, 50 }, constraints);
+        REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+        const auto native_context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+        sol::BaselineLimits limits;
+        limits.max_candidate_evaluations = 2;
+        const auto baseline = sol::run_aabb_baseline(native_context, limits, {});
+        REQUIRE(baseline.best);
+        REQUIRE(baseline.best->solution->copies().size() == 2);
+        const auto solution = baseline.best->solution;
+        std::uint64_t reads = 0;
+        struct Trace {
+            std::size_t current {};
+            std::array<std::array<geo::detail::ImportProfileSample, 6>, 2> samples {};
+        } trace;
+        geo::detail::ImportProfileBinding profiling(
+            [](void* context, const geo::detail::ImportProfileSample& sample) noexcept {
+            auto& trace = *static_cast<Trace*>(context);
+            if (trace.current < trace.samples.size()) {
+                trace.samples[trace.current][static_cast<std::size_t>(sample.phase)] = sample;
+            }
+        }, &trace);
+        const auto checked = geo::validate_quantized_export(solution, [&](std::size_t index) -> geo::ExportCopyRead {
+            ++reads;
+            trace.current = index;
+            return quantized_copy(*native_context->object(), solution->copies()[index]);
+        });
+        for (std::size_t copy = 0; copy != trace.samples.size(); ++copy) {
+            for (std::size_t phase = 0; phase != trace.samples[copy].size(); ++phase) {
+                const auto& sample = trace.samples[copy][phase];
+                std::cout << "import_profile source=" << filename << " copy=" << copy << " phase=" << phase
+                          << " ms=" << sample.elapsed_ms << " predicate_work=" << sample.predicate_work
+                          << " orient2=" << sample.orient2_calls << " orient3=" << sample.orient3_calls
+                          << " interval=" << sample.interval_hits << " structural=" << sample.structural_zeros
+                          << " exact=" << sample.exact_fallbacks << '\n';
+            }
+        }
+        export_evidence(filename, *solution, checked, reads);
+        CAPTURE(filename, checked.code, checked.message, checked.kernel_work, checked.aabb_pair_tests,
+                checked.working_bytes_peak, reads);
+        CHECK(checked.validity == geo::Validity::valid);
+        CHECK(checked.code == "VALID");
+        CHECK(solution->copies().size() == 2);
+    }
 }

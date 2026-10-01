@@ -11,6 +11,32 @@
 
 namespace spectrapack::geometry {
 namespace {
+class ResidentBytes {
+public:
+    bool add(std::size_t count, std::size_t width) noexcept
+    {
+        if (count > (std::numeric_limits<std::uint64_t>::max() - bytes_) / width) {
+            return false;
+        }
+        bytes_ += static_cast<std::uint64_t>(count) * width;
+        return true;
+    }
+    bool add(const std::string& value) noexcept
+    {
+        const auto data = reinterpret_cast<std::uintptr_t>(value.data());
+        const auto begin = reinterpret_cast<std::uintptr_t>(&value);
+        // An inline string buffer is already included in its containing object.
+        if (data >= begin && data - begin < sizeof(value)) {
+            return true;
+        }
+        return value.capacity() != std::numeric_limits<std::size_t>::max() && add(value.capacity() + 1, sizeof(char));
+    }
+    std::uint64_t value() const noexcept { return bytes_; }
+
+private:
+    std::uint64_t bytes_ {};
+};
+
 ValidationInputFailure failure(std::string code, std::string message) {
   return {std::move(code), std::move(message)};
 }
@@ -389,6 +415,35 @@ const std::shared_ptr<const ValidationContext>& ValidatedSolution::context() con
 const std::vector<CopyPose>& ValidatedSolution::copies() const noexcept { return candidate_->copies(); }
 const ValidationReport& ValidatedSolution::report() const noexcept { return report_; }
 
+std::optional<std::uint64_t> ValidatedSolution::resident_buffer_bytes() const noexcept
+{
+    ResidentBytes bytes;
+    if (!candidate_ || !candidate_->storage_ || !bytes.add(1, sizeof(ValidatedSolution)) ||
+        !bytes.add(1, sizeof(Candidate)) || !bytes.add(1, sizeof(Candidate::Storage)) ||
+        !bytes.add(candidate_->copies().capacity(), sizeof(CopyPose)) ||
+        !bytes.add(report_.affected_copy_ids.capacity(), sizeof(std::string)) ||
+        !bytes.add(report_.checks.capacity(), sizeof(ValidationCheckReport)) || !bytes.add(report_.code) ||
+        !bytes.add(report_.message) || !bytes.add(report_.kernel_revision)) {
+        return {};
+    }
+    for (const auto& copy : candidate_->copies()) {
+        if (!bytes.add(copy.copy_id)) {
+            return {};
+        }
+    }
+    for (const auto& id : report_.affected_copy_ids) {
+        if (!bytes.add(id)) {
+            return {};
+        }
+    }
+    for (const auto& check : report_.checks) {
+        if (!bytes.add(check.method)) {
+            return {};
+        }
+    }
+    return bytes.value();
+}
+
 ValidationOutcome revalidate(std::shared_ptr<const ValidatedSolution> solution, const ValidationLimits& limits,
                              const runtime::OperationControl& control)
 {
@@ -403,6 +458,16 @@ ValidationContext::ValidationContext(std::shared_ptr<const Storage> storage) noe
 const std::shared_ptr<const AcceptedSolid>& ValidationContext::object() const noexcept { return storage_->object_; }
 const Container& ValidationContext::container() const noexcept { return storage_->container_; }
 const Constraints& ValidationContext::constraints() const noexcept { return storage_->constraints_; }
+
+std::optional<std::uint64_t> ValidationContext::resident_buffer_bytes() const noexcept
+{
+    ResidentBytes bytes;
+    if (!storage_ || !bytes.add(1, sizeof(ValidationContext)) || !bytes.add(1, sizeof(Storage)) ||
+        !bytes.add(storage_->constraints_.orientations.catalog_xyzw.capacity(), sizeof(Quaternion))) {
+        return {};
+    }
+    return bytes.value();
+}
 
 Candidate::Candidate(std::shared_ptr<const Storage> storage) noexcept : storage_(std::move(storage)) {}
 const std::shared_ptr<const ValidationContext>& Candidate::context() const noexcept { return storage_->context_; }

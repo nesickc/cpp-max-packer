@@ -93,8 +93,11 @@ class ValidationContext {
   [[nodiscard]] const std::shared_ptr<const AcceptedSolid>& object() const noexcept;
   [[nodiscard]] const Container& container() const noexcept;
   [[nodiscard]] const Constraints& constraints() const noexcept;
+  // Portable owned payload: this wrapper, private storage and catalog capacity.
+  // Excludes accepted solids, allocator metadata and shared ownership control blocks.
+  [[nodiscard]] std::optional<std::uint64_t> resident_buffer_bytes() const noexcept;
 
- private:
+  private:
   struct Storage;
   std::shared_ptr<const Storage> storage_;
   explicit ValidationContext(std::shared_ptr<const Storage>) noexcept;
@@ -117,6 +120,7 @@ class Candidate {
   explicit Candidate(std::shared_ptr<const Storage>) noexcept;
   friend ValidationInputOutcome<Candidate> make_candidate(
       std::shared_ptr<const ValidationContext>, std::vector<CopyPose>);
+  friend class ValidatedSolution;
 };
 struct ValidationOutcome;
 class ValidatedSolution {
@@ -128,8 +132,14 @@ class ValidatedSolution {
   [[nodiscard]] const std::shared_ptr<const ValidationContext>& context() const noexcept;
   [[nodiscard]] const std::vector<CopyPose>& copies() const noexcept;
   [[nodiscard]] const ValidationReport& report() const noexcept;
+  // Portable owned payload: solution/candidate wrappers and storage, retained
+  // poses/IDs and report capacities. Excludes context/accepted-solid owners,
+  // allocator metadata and shared ownership control blocks. Overflow is nullopt.
+  // Distinct revalidated handles may conservatively charge shared candidate
+  // storage more than once; this is a payload bound, not unique allocation/RSS.
+  [[nodiscard]] std::optional<std::uint64_t> resident_buffer_bytes() const noexcept;
 
- private:
+  private:
   std::shared_ptr<const ValidationContext> context_;
   std::shared_ptr<const Candidate> candidate_;
   ValidationReport report_;

@@ -85,6 +85,52 @@ TEST_CASE("AT-06 public revalidation forwards the original immutable candidate")
   CHECK_FALSE(capped.validated_solution);
 }
 
+TEST_CASE("T010 retained validation residency charges large owned IDs and catalog capacity", "[T010][residency]")
+{
+    // The session keeps these authoritative handles after a run. Its admission
+    // must include their opaque owners without charging the source solid twice.
+    const auto residency = []<class Handle>(const Handle& value) -> std::optional<std::uint64_t> {
+        static_assert(noexcept(value.resident_buffer_bytes()));
+        return value.resident_buffer_bytes();
+    };
+    const auto plain = context();
+    geo::Constraints constraints;
+    constraints.orientations.mode = geo::OrientationMode::catalog;
+    constraints.orientations.catalog_xyzw.assign(256, { 0, 0, 0, 1 });
+    const auto expanded = context({ 10, 10, 10 }, constraints);
+    const auto plain_bytes = residency(*plain);
+    const auto expanded_bytes = residency(*expanded);
+    REQUIRE(plain_bytes);
+    REQUIRE(expanded_bytes);
+    CHECK(*expanded_bytes >= *plain_bytes + 256 * sizeof(geo::Quaternion));
+
+    const auto small = validate_copies(plain, {
+                                                  { "short", { 5, 5, 5 }, { 0, 0, 0, 1 } }
+    });
+    const auto large = validate_copies(plain, {
+                                                  { std::string(8192, 'x'), { 5, 5, 5 }, { 0, 0, 0, 1 } }
+    });
+    REQUIRE(small.validated_solution);
+    REQUIRE(large.validated_solution);
+    const auto small_bytes = residency(*small.validated_solution);
+    const auto large_bytes = residency(*large.validated_solution);
+    REQUIRE(small_bytes);
+    REQUIRE(large_bytes);
+    CHECK(*large_bytes >= *small_bytes + 8192);
+    CHECK(residency(*large.validated_solution) == large_bytes);
+    CHECK(residency(*plain) == plain_bytes);
+
+    const auto alias = geo::revalidate(large.validated_solution);
+    REQUIRE(alias.validated_solution);
+    CHECK(&alias.validated_solution->copies() == &large.validated_solution->copies());
+    const auto alias_bytes = residency(*alias.validated_solution);
+    REQUIRE(alias_bytes);
+    CHECK(*alias_bytes >= 8192 + sizeof(geo::CopyPose));
+    // Distinct public solution handles can share their candidate storage.
+    // Charging both complete kept-alive payloads is conservatively duplicated.
+    CHECK(*large_bytes + *alias_bytes >= 2 * (8192 + sizeof(geo::CopyPose)));
+}
+
 TEST_CASE("AT-07 rejects an authoritative cube through a box wall") {
   CHECK(validate_one(context(), {0.5, 5, 5}).report.validity == geo::Validity::invalid);
 }

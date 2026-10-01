@@ -20,6 +20,8 @@ struct ExportValidationLimits {
     std::uint64_t max_working_bytes { 512ULL << 20 };
 };
 
+// The reader must return the same immutable staged bytes for each copy index
+// throughout this call. Caller publication must use those exact staged bytes.
 // Validates the independently quantized, baked-world copy streams. It never
 // produces a replacement ValidatedSolution: it only authorizes STL publication.
 [[nodiscard]] ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSolution>,
