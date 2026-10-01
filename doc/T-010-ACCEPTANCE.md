@@ -205,8 +205,24 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
   read all final build/suite logs; no compiler warnings or errors were found.
   Earlier failing executable copies were overwritten, so their retained logs and
   cdb stacks are not presented as preserved red binaries. Partial-construction
-  failure reporting still needs the approved admission-stat hook. The solver
+  failure reporting was still pending at this checkpoint. The solver
   workspace remains unqualified; this checkpoint does not close a combined gate.
+- Admission-stat checkpoint `ea8d60d` passes complete conservative fields in Debug
+  (27 cases / 4,694 assertions) and Release (27 / 4,686), plus representation
+  accounting in each configuration (13 / 239). Build and test exits are 0. The
+  focused clone/add reruns are subsets, not additional full-suite coverage.
+  Successful checked planned-live reservations now contribute to the separate
+  `admitted_bytes_upper_bound`; refused requests do not. A constructor observer
+  captures allocations freed after a later constructor failure, while caller
+  reserve stays excluded. The actual Debug red reported 6,243 bytes where 6,259
+  were required, and the successful clone reported a zero admitted bound in both
+  builds. Both red executables and four final executables are preserved with the
+  four source hashes in `.local/t010/native/stage4-admission/`; primary verified all
+  ten hashes. Independent review read the complete red, final build/suite and exit
+  logs. Five wrapper builds retain D9025 (`/EHc` overridden by `/EHc-`); the
+  accounting-only builds have none. Final header wording changed comment-only
+  after testing. This closes the bounded reporting defect, not workspace,
+  integrated memory or practical performance acceptance.
 - Cold full-Pryanik-2 characterization is retained in
   `.local/t010/integration/cold-red.json` and `cold-green.json`. The old legacy
   search-only 0.01 s request takes 10.162734 s total; its Stop test takes 8.752341 s
