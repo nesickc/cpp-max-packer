@@ -20,6 +20,7 @@ struct SolveRuntime {
     std::string operation_id;
     std::ostream* output {};
     std::shared_ptr<const geometry::ValidatedSolution>* last_validated {};
+    io::ContractDiagnosticLimits diagnostic_limits {};
 };
 std::optional<std::uint64_t> retained_solution_bytes(
     const geometry::ValidatedSolution&, std::span<const geometry::AcceptedSolid* const> already_charged = {});

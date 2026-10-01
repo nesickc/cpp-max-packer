@@ -20,6 +20,7 @@ using ExportOutcome = std::variant<ExportSuccess, Error>;
 class VerifiedAsset;
 struct AssetLoadLimits {
     std::uint64_t max_working_bytes { 512ULL << 20 };
+    ContractDiagnosticLimits diagnostic_limits {};
 };
 using AssetLoadOutcome = std::variant<std::shared_ptr<const VerifiedAsset>, Error>;
 
@@ -56,6 +57,7 @@ struct ResultRequest {
     ResultCatalog catalog;
     Json metadata;
     geometry::ValidationLimits validation_limits {};
+    ContractDiagnosticLimits diagnostic_limits {};
 };
 using ResultOutcome = std::variant<ValidatedDocument, Error>;
 [[nodiscard]] ResultOutcome build_result(const ResultRequest&, const runtime::OperationControl& control = {});
@@ -75,6 +77,7 @@ struct ExportRequest {
     // and asset staging, immediately before the primary immutable result commit.
     Json (*runtime_before_commit)(void*) {};
     void* runtime_context {};
+    ContractDiagnosticLimits diagnostic_limits {};
 };
 struct ExportSuccess {
     std::filesystem::path result_path;

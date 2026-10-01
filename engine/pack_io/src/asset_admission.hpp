@@ -1,5 +1,7 @@
 #pragma once
 
+#include <spectrapack/io/detail/json_scratch.hpp>
+
 #include "operation_guard.hpp"
 
 namespace spectrapack::io::detail {
@@ -71,8 +73,14 @@ private:
 };
 inline bool admit_asset_json(std::string_view text, AssetBudget& budget)
 {
-    // SAX's token scratch is bounded by the already bounded input span.
-    budget.charge(text.size());
+    // Admission happens before the lexer scans a token, including malformed
+    // tokens that never reach a SAX string/key callback. Keep the scratch
+    // allowance through the subsequent real parser; its DOM is charged below.
+    const auto scratch = json_lexer_scratch_bytes(text.size());
+    if (!scratch) {
+        throw AssetMemoryLimit {};
+    }
+    budget.charge(*scratch);
     AssetJsonAdmission admission(budget);
     return Json::sax_parse(text, &admission);
 }

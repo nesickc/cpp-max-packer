@@ -8,6 +8,16 @@ namespace spectrapack::cli {
 inline constexpr std::size_t runtime_wire_limit = 1ULL << 20;
 inline constexpr std::size_t runtime_wire_capacity_limit = runtime_wire_limit + 64;
 
+class CanonicalRecord final {
+public:
+    void replace(std::string value) noexcept { value_.swap(value); }
+    const std::string& value() const noexcept { return value_; }
+    std::size_t capacity() const noexcept { return value_.capacity(); }
+
+private:
+    std::string value_;
+};
+
 namespace detail {
 // The pinned serializer uses the same escaping/number rules as Json::dump().
 // A count-only pass bounds output before its allocation; the second pass has

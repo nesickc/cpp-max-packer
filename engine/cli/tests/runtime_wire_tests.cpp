@@ -32,3 +32,25 @@ TEST_CASE("T011 runtime encoding counts actual JSON escapes and rejects growth b
     REQUIRE_THROWS_AS(cli::encode_runtime_record(value, true, expected.size() - 1), std::length_error);
     REQUIRE(cli::encode_runtime_record(value).back() == '\n');
 }
+
+TEST_CASE("T011 increasing escaped requests retain a bounded canonical cache", "[runtime][T-011]")
+{
+    namespace cli = spectrapack::cli;
+    cli::CanonicalRecord cached;
+    for (const auto length : { 30000, 32500 }) {
+        const auto request = spectrapack::io::Json {
+            { "runtime_version", 1                                    },
+            { "request_id",      "cache-increasing"                   },
+            { "operation_id",    "cache-increasing-op"                },
+            { "method",          "prepare"                            },
+            { "params",
+             { { "object_report", std::string(length, '\x01') },
+                { "output_directory", std::string(length, '\x01') } } }
+        };
+        auto canonical = cli::encode_runtime_record(request, false, 512 * 1024);
+        const auto expected = canonical;
+        cached.replace(std::move(canonical));
+        REQUIRE(cached.value() == expected);
+        REQUIRE(cached.capacity() <= 512 * 1024 + 64);
+    }
+}

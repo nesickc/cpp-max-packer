@@ -24,10 +24,12 @@ enum class ClosedStageMutation : std::uint8_t {
 };
 
 #ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+void fail_pinned_reference_query_for_test(bool enabled) noexcept;
 struct ExportResidencyObservation {
     std::uint64_t builder_base_before_native_inputs {};
     std::uint64_t post_hash_base_before_reuse_comparison {};
     std::uint64_t companion_write_base_before_final_documents {};
+    std::uint64_t stl_base_before_hash {};
 };
 
 void reset_export_residency_observation_for_test() noexcept;

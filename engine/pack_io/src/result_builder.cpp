@@ -579,7 +579,7 @@ detail::ResultBuildAttempt detail::build_result_with_report(const ResultRequest&
         }
         result["metrics"] = metrics;
         ContractValidator v;
-        auto checked = v.validate(ContractKind::results, result);
+        auto checked = v.validate(ContractKind::results, result, r.diagnostic_limits);
         if (auto* x = std::get_if<ValidatedDocument>(&checked)) {
             return finish(std::move(*x));
         }

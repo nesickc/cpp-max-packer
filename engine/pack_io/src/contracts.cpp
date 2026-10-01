@@ -919,7 +919,7 @@ DecodeOutcome ContractValidator::parse(ContractKind kind, std::string_view utf8,
                    : failed("NESTING_TOO_DEEP", "JSON nesting must not exceed 64.");
     }
     catch (const nlohmann::json::parse_error& error) {
-        const std::string message = error.what();
+        const std::string_view message = error.what();
         if (message.find("UTF-8") != std::string::npos || message.find("utf-8") != std::string::npos) {
             return failed("INVALID_UTF8", "Input must be well-formed UTF-8.");
         }

@@ -908,7 +908,8 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
         }
 
         ContractValidator validator;
-        if (!std::holds_alternative<ValidatedDocument>(validator.validate(ContractKind::assets, report))) {
+        if (!std::holds_alternative<ValidatedDocument>(
+                validator.validate(ContractKind::assets, report, request.diagnostic_limits))) {
             return failure("INTERNAL_ERROR", "Inspection report failed contract validation.", 4);
         }
 

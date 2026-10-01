@@ -156,7 +156,8 @@ struct Session {
     std::optional<PreparedAsset> asset, previous_asset;
     std::shared_ptr<std::stop_source> active_stop;
     bool active {};
-    std::string last_request_id, last_canonical;
+    std::string last_request_id;
+    cli::CanonicalRecord last_canonical;
     Json last_response;
     // Bounded, insertion-only history has no false negatives. Old identities
     // may conservatively expire; they can never restart completed work.
@@ -665,7 +666,10 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
                                                      "Preparation requires an empty private output directory.")));
             }
             const auto report = std::filesystem::u8path(params.at("object_report").get<std::string>());
-            const auto loaded = io::load_accepted_asset(report, control, { kHostCap - other_reserve },
+            const auto loaded = io::load_accepted_asset(report, control,
+                                                        {
+                                                            kHostCap - other_reserve, { 16, 256 }
+            },
                                                         session.asset ? session.asset->verified : Asset {});
             if (const auto* failure = std::get_if<io::Error>(&loaded)) {
                 return response(request, false, io::error_json(*failure));
@@ -734,7 +738,7 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
                 // Together with the command-loop owner, at most two overlap.
                 io::ContractValidator validator;
                 if (!std::holds_alternative<io::ValidatedDocument>(
-                        validator.validate(io::ContractKind::settings, settings))) {
+                        validator.validate(io::ContractKind::settings, settings, { 16, 256 }))) {
                     return response(
                         request, false,
                         io::error_json(error("INVALID_SETTINGS", "Run requires validated resolved native settings.")));
@@ -766,6 +770,7 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
             }
             std::ostringstream terminal;
             cli::SolveRuntime runtime_run;
+            runtime_run.diagnostic_limits = { 16, 256 };
             runtime_run.object = prepared->verified;
             runtime_run.control = control;
             runtime_run.native_start = clock.native_start;
@@ -936,13 +941,14 @@ int run_desktop_session(std::string engine_version, std::string engine_commit)
                 session.send(response(value, false, io::error_json(failure)));
                 continue;
             }
-            const auto request = std::get<io::ValidatedDocument>(std::move(parsed)).value();
+            auto document = std::get<io::ValidatedDocument>(std::move(parsed));
+            const auto& request = document.value();
             if (!request.contains("method")) {
                 std::cerr << "desktop-session: expected request\n";
                 continue;
             }
             const auto request_id = request.at("request_id").get<std::string>();
-            const auto canonical = cli::encode_runtime_record(request, false, 512 * 1024);
+            auto canonical = cli::encode_runtime_record(request, false, 512 * 1024);
             std::unique_lock lock(session.state_mutex);
             if (request.at("method") == "shutdown" && session.active) {
                 if (session.active_stop) {
@@ -966,7 +972,7 @@ int run_desktop_session(std::string engine_version, std::string engine_commit)
                 lock.lock();
             }
             if (request_id == session.last_request_id) {
-                session.send(canonical == session.last_canonical
+                session.send(canonical == session.last_canonical.value()
                                  ? session.last_response
                                  : response(request, false,
                                             io::error_json(error("REQUEST_ID_CONFLICT",
@@ -992,7 +998,10 @@ int run_desktop_session(std::string engine_version, std::string engine_commit)
                     released = true;
                 }
                 if (session.asset && session.asset->token == token) {
-                    session.asset.reset();
+                    // A failed replacement releases the new token. Restore its
+                    // prior authority and empty the rollback slot atomically.
+                    session.asset = std::move(session.previous_asset);
+                    session.previous_asset.reset();
                     released = true;
                 }
                 if (released && session.retained_solution &&
@@ -1010,30 +1019,32 @@ int run_desktop_session(std::string engine_version, std::string engine_commit)
                     reply["retained_native_bytes"] = *bytes;
                 }
                 session.last_request_id = request_id;
-                session.last_canonical = canonical;
-                session.last_response = reply;
+                session.last_canonical.replace(std::move(canonical));
+                session.last_response = std::move(reply);
                 session.remember(request_id);
-                session.send(reply);
+                session.send(session.last_response);
                 continue;
             }
             session.active = true;
             session.active_stop = std::make_shared<std::stop_source>();
             const auto source = session.active_stop;
-            worker = std::jthread([&session, request, canonical, request_id, source] {
+            worker = std::jthread([&session, document = std::move(document), canonical = std::move(canonical),
+                                   request_id, source]() mutable {
                 try {
+                    const auto& request = document.value();
                     auto reply = operate(session, request, source);
                     std::lock_guard lock(session.state_mutex);
                     if (const auto bytes = retained_other_bytes(session, nullptr, false)) {
                         reply["retained_native_bytes"] = *bytes;
                     }
                     session.last_request_id = request_id;
-                    session.last_canonical = canonical;
-                    session.last_response = reply;
+                    session.last_canonical.replace(std::move(canonical));
+                    session.last_response = std::move(reply);
                     session.remember(request_id);
                     session.active = false;
                     session.active_stop.reset();
                     try {
-                        session.send(reply);
+                        session.send(session.last_response);
                     }
                     catch (...) {
                         session.wire_failed = true;

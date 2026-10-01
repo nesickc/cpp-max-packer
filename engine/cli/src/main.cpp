@@ -160,6 +160,7 @@ int run_engine(int argc, Character** argv) {
     }
     if (argc >= 2 && equals_ascii(View(argv[1]), "inspect")) {
       spectrapack::io::InspectRequest request;
+      request.diagnostic_limits = { 16, 256 };
       SeenOptions seen;
       for (int index = 2; index < argc; ++index) {
         const View flag(argv[index]);

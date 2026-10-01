@@ -4,6 +4,8 @@
 #include <spectrapack/solver/orientations.hpp>
 #include <spectrapack/solver/spectral.hpp>
 
+#include "host_admission.hpp"
+#include "settings_reader.hpp"
 #include "timeline.hpp"
 
 #ifndef NOMINMAX
@@ -91,25 +93,6 @@ int fail(std::string code, std::string message, int exit_code, Json details = Js
                    .dump()
             << '\n' << std::flush;
     return output() ? exit_code : 4;
-}
-
-std::optional<std::string> read_file(const std::filesystem::path& path)
-{
-    std::ifstream input(path, std::ios::binary);
-    if (!input) {
-        return {};
-    }
-    input.seekg(0, std::ios::end);
-    const auto size = input.tellg();
-    if (size < 0 || size > static_cast<std::streamoff>(16ULL << 20)) {
-        return {};
-    }
-    std::string text(static_cast<size_t>(size), '\0');
-    input.seekg(0);
-    if (!text.empty() && !input.read(text.data(), size)) {
-        return {};
-    }
-    return text;
 }
 
 bool aliases(const std::filesystem::path& a, const std::filesystem::path& b)
@@ -721,13 +704,27 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
     timing.cleanup_context = &stop_watcher;
     control.phase(spectrapack::runtime::Phase::loading);
     Json settings;
-    {
-        auto source = read_file(*settings_path);
+    try {
+        std::uint64_t settings_owners = run_runtime.retained_reserve_bytes;
+        const auto object_bytes =
+            run_runtime.object ? run_runtime.object->resident_buffer_bytes() : std::optional<std::uint64_t>(0);
+        const auto solid_bytes =
+            run_runtime.object ? run_runtime.object->solid()->resident_buffer_bytes() : std::optional<std::uint64_t>(0);
+        if (!object_bytes || !solid_bytes || !add_bytes(settings_owners, *object_bytes) ||
+            !add_bytes(settings_owners, *solid_bytes) || settings_owners >= (512ULL << 20)) {
+            return fail("MEMORY_LIMIT", "Settings admission cannot retain current native owners.", 3);
+        }
+        spectrapack::cli::HostAdmission settings_admission((512ULL << 20) - settings_owners);
+        auto source = spectrapack::cli::read_settings_file(*settings_path, settings_admission);
         if (!source) {
             return fail("SETTINGS_LOAD", "Settings file cannot be read.", 3);
         }
+        spectrapack::cli::HostJsonAdmission syntax_admission(settings_admission);
+        if (!Json::sax_parse(*source, &syntax_admission)) {
+            return fail("INVALID_SETTINGS", "Settings JSON is malformed or too deeply nested.", 2);
+        }
         io::ContractValidator validator;
-        auto decoded = validator.parse(io::ContractKind::settings, *source);
+        auto decoded = validator.parse(io::ContractKind::settings, *source, run_runtime.diagnostic_limits);
         if (!std::holds_alternative<io::ValidatedDocument>(decoded)) {
             const auto raw = Json::parse(*source, nullptr, false);
             if (raw.is_object() && raw.contains("compute") && raw["compute"].is_object()) {
@@ -744,6 +741,9 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
             return fail("INVALID_SETTINGS", "Settings do not satisfy the contract.", 2);
         }
         settings = std::get<io::ValidatedDocument>(decoded).value();
+    }
+    catch (const spectrapack::cli::HostMemoryLimit&) {
+        return fail("MEMORY_LIMIT", "Settings parser scratch exceeds remaining host allowance.", 3);
     }
     if (!settings.contains("resolved")) {
         return fail("UNSUPPORTED_SETTINGS", "solve requires resolved settings.", 3);
@@ -775,7 +775,8 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
     }
     const io::AssetLoadOutcome loaded_object =
         run_runtime.object ? io::AssetLoadOutcome(run_runtime.object)
-                           : io::load_accepted_asset(*object_report, control, { host_cap - loading_reserve });
+                           : io::load_accepted_asset(*object_report, control,
+                                                     { host_cap - loading_reserve, run_runtime.diagnostic_limits });
     if (!std::holds_alternative<std::shared_ptr<const io::VerifiedAsset>>(loaded_object)) {
         const auto& error = std::get<io::Error>(loaded_object);
         return fail(error.code, error.message, 3, error.details);
@@ -802,7 +803,8 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
             loading_reserve >= host_cap) {
             return fail("MEMORY_LIMIT", "Container loading exceeds remaining host allowance.", 3);
         }
-        const auto loaded = io::load_accepted_asset(*container_report, control, { host_cap - loading_reserve });
+        const auto loaded = io::load_accepted_asset(*container_report, control,
+                                                    { host_cap - loading_reserve, run_runtime.diagnostic_limits });
         if (!std::holds_alternative<std::shared_ptr<const io::VerifiedAsset>>(loaded)) {
             const auto& error = std::get<io::Error>(loaded);
             return fail(error.code, error.message, 3, error.details);
@@ -1033,6 +1035,7 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
     }
     io::ResultRequest result_request { retained_solution, object, container_asset, std::move(output_catalog),
                                        std::move(metadata) };
+    result_request.diagnostic_limits = run_runtime.diagnostic_limits;
     uint64_t build_catalog_bytes {};
     if (!add_repeated_bytes(build_catalog_bytes, result_request.catalog.quaternions.capacity(),
                             sizeof(geo::Quaternion)) ||
@@ -1091,6 +1094,7 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
                                        std::get<io::ValidatedDocument>(std::move(document)),
                                        *result_path,
                                        stl_path };
+    export_request.diagnostic_limits = run_runtime.diagnostic_limits;
     export_request.max_working_bytes = export_limit - export_live_bytes;
     struct FinalRuntime {
         spectrapack::cli::Timeline& timeline;
@@ -1149,7 +1153,8 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
 
 int run_solve_command(const std::vector<std::string>& arguments, std::string engine_version, std::string engine_commit)
 {
-    const spectrapack::cli::SolveRuntime runtime;
+    spectrapack::cli::SolveRuntime runtime;
+    runtime.diagnostic_limits = { 16, 256 };
     return run_solve_prepared(arguments, std::move(engine_version), std::move(engine_commit), runtime);
 }
 std::optional<std::uint64_t> spectrapack::cli::retained_solution_bytes(

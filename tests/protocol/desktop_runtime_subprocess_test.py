@@ -30,6 +30,9 @@ class Session:
         self.child = subprocess.Popen([str(ENGINE), "desktop-session"], stdin=subprocess.PIPE,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                       text=True, encoding="utf-8", bufsize=1)
+        # The native transport is binary NDJSON. Preserve the exact record limit
+        # instead of adding a Windows CR byte to the tested 1 MiB payload.
+        self.child.stdin.reconfigure(newline="\n")
         self.records = queue.Queue()
         self.stderr = []
         self.reader = threading.Thread(target=self._read, daemon=True)
@@ -74,6 +77,83 @@ class Session:
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_increasing_escaped_requests_cache_owned_failure_without_losing_epoch(self):
+        session = Session()
+        try:
+            for length in (30000, 32500):
+                name = f"escaped-path-{length}"
+                request = {'runtime_version': 1, 'request_id': name, 'operation_id': name + '-op',
+                           'method': 'prepare', 'params': {'object_report': '\x01' * length,
+                                                        'output_directory': '\x01' * length}}
+                reply, _ = session.request(request)
+                self.assertFalse(reply['ok'], reply)
+                replay, phases = session.request(request)
+                self.assertEqual(replay, reply)
+                self.assertFalse(phases)
+            reply, _ = session.request({'runtime_version': 1, 'request_id': 'after-increasing-escaped-paths',
+                                        'method': 'shutdown', 'params': {}})
+            self.assertTrue(reply['ok'], reply)
+        finally:
+            session.close()
+
+    def test_prelexer_rejections_keep_the_session_epoch_usable(self):
+        session = Session()
+        try:
+            records = [("invalid-request", "\t" * ((1 << 20) - 1) + "!", "INVALID_RUNTIME_RECORD")]
+            for length in (127, 128, 129):
+                name = f"numeric-spelling-{length}"
+                raw = ('{"runtime_version":1,"request_id":"' + name +
+                       '","operation_id":"' + name + '-op","method":"run","params":{"value":1.' +
+                       '0' * (length - 2) + '}}')
+                records.append((name, raw, "INVALID_DOCUMENT" if length <= 128 else "INVALID_RUNTIME_RECORD"))
+            for identity, raw, code in records:
+                session.child.stdin.write(raw + "\n")
+                session.child.stdin.flush()
+                reply = session.records.get(timeout=5)
+                self.assertIsNotNone(reply)
+                self.assertEqual(reply['kind'], 'response', reply)
+                self.assertFalse(reply['ok'], reply)
+                self.assertEqual(reply['request_id'], identity, reply)
+                self.assertEqual(reply['error']['code'], code, reply)
+            reply, _ = session.request({'runtime_version': 1, 'request_id': 'after-prelexer-rejections',
+                                        'method': 'shutdown', 'params': {}})
+            self.assertTrue(reply['ok'], reply)
+        finally:
+            session.close()
+
+    def test_releasing_failed_replacement_preserves_authority_and_allows_next_prepare(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            source, report = root / 'cube.stl', root / 'object.report.json'
+            fixtures.write_cube_stl(source)
+            imported = subprocess.run([str(ENGINE), 'inspect', '--stl', str(source), '--units', 'mm',
+                                       '--report', str(report)], capture_output=True, text=True, timeout=15)
+            self.assertEqual(imported.returncode, 0, imported.stdout + imported.stderr)
+            session = Session()
+            try:
+                def prepare(name):
+                    output = root / name
+                    output.mkdir()
+                    reply, _ = session.request({'runtime_version': 1, 'request_id': name,
+                        'operation_id': name + '-op', 'method': 'prepare', 'params': {
+                            'object_report': str(report), 'output_directory': str(output)}})
+                    return reply
+                first = prepare('prepare-a')
+                self.assertTrue(first['ok'], first)
+                first_token = first['result']['asset_token']
+                second = prepare('prepare-b')
+                self.assertTrue(second['ok'], second)
+                released, _ = session.request({'runtime_version': 1, 'request_id': 'rollback-b',
+                    'method': 'release', 'params': {'asset_token': second['result']['asset_token']}})
+                self.assertTrue(released['ok'], released)
+                self.assertEqual(released['retained_native_bytes'], first['retained_native_bytes'])
+                third = prepare('prepare-c')
+                self.assertTrue(third['ok'], third)
+                self.assertNotEqual(third['result']['asset_token'], first_token)
+                self.assertEqual(third['retained_native_bytes'], first['retained_native_bytes'])
+            finally:
+                session.close()
+
     def test_malformed_compute_object_returns_owned_error_without_losing_epoch(self):
         session = Session()
         try:

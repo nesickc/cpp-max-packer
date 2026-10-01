@@ -18,16 +18,64 @@
 #include <variant>
 #include <vector>
 #ifdef _WIN32
+// clang-format off: Windows types are prerequisites for bcrypt.h.
 #include <windows.h>
+#include <bcrypt.h>
+// clang-format on
 #endif
 
 #include "../src/result_builder_accounting.hpp"
+#include "allocation_probe.hpp"
 #include "result_export_test_seam.hpp"
 
 namespace {
 
 namespace geo = spectrapack::geometry;
 namespace io = spectrapack::io;
+
+std::string independently_hash_file(const std::filesystem::path& path)
+{
+    std::ifstream input(path, std::ios::binary);
+    REQUIRE(input.is_open());
+    const std::vector<char> bytes { std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>() };
+    struct HashHandles {
+        BCRYPT_ALG_HANDLE algorithm {};
+        BCRYPT_HASH_HANDLE hash {};
+        ~HashHandles()
+        {
+            if (hash) {
+                BCryptDestroyHash(hash);
+            }
+            if (algorithm) {
+                BCryptCloseAlgorithmProvider(algorithm, 0);
+            }
+        }
+    } handles;
+    REQUIRE(BCryptOpenAlgorithmProvider(&handles.algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) >= 0);
+    REQUIRE(BCryptCreateHash(handles.algorithm, &handles.hash, nullptr, 0, nullptr, 0, 0) >= 0);
+    REQUIRE(bytes.size() <= (std::numeric_limits<ULONG>::max)());
+    REQUIRE(BCryptHashData(handles.hash, reinterpret_cast<PUCHAR>(const_cast<char*>(bytes.data())),
+                           static_cast<ULONG>(bytes.size()), 0) >= 0);
+    std::array<UCHAR, 32> digest {};
+    REQUIRE(BCryptFinishHash(handles.hash, digest.data(), static_cast<ULONG>(digest.size()), 0) >= 0);
+    constexpr std::string_view digits = "0123456789abcdef";
+    std::string result;
+    for (const auto byte : digest) {
+        result.push_back(digits[byte >> 4]);
+        result.push_back(digits[byte & 15]);
+    }
+    return result;
+}
+
+std::vector<std::wstring> output_names(const std::filesystem::path& directory)
+{
+    std::vector<std::wstring> names;
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+        names.push_back(entry.path().filename().native());
+    }
+    std::sort(names.begin(), names.end());
+    return names;
+}
 
 bool checked_add(std::uint64_t& total, std::uint64_t bytes)
 {
@@ -332,6 +380,49 @@ struct ResultBuilderFixture {
     }
 };
 
+TEST_CASE_METHOD(ResultBuilderFixture, "T011 real result rejection retains only requested diagnostic capacities",
+                 "[result_builder][T-011][memory]")
+{
+    namespace io = spectrapack::io;
+    request.metadata["search"]["unknown-" + std::string(200 * 1024, 'x')] = true;
+    {
+        const auto ordinary = io::build_result(request);
+        REQUIRE(std::holds_alternative<io::Error>(ordinary));
+        const auto& ordinary_issues = std::get<io::Error>(ordinary).details.at("issues");
+        REQUIRE_FALSE(ordinary_issues.empty());
+        REQUIRE(ordinary_issues.front().at("message").get_ref<const std::string&>().capacity() > 256);
+    }
+    request.diagnostic_limits = { 16, 256 };
+    struct AllocationWindow {
+        std::size_t baseline { live.load() };
+        AllocationWindow()
+        {
+            peak = baseline;
+            counting = true;
+        }
+        ~AllocationWindow() { counting = false; }
+        std::size_t finish()
+        {
+            counting = false;
+            return peak.load() - baseline;
+        }
+    } allocations;
+    const auto rejected = io::build_result(request);
+    const auto scratch_peak = allocations.finish();
+    INFO("actual result/schema/escaped-pointer/message peak bytes=" << scratch_peak);
+    CHECK(scratch_peak <= (200 * 1024) * 80ULL + (7ULL << 20));
+    REQUIRE(std::holds_alternative<io::Error>(rejected));
+    const auto& issues = std::get<io::Error>(rejected).details.at("issues");
+    REQUIRE_FALSE(issues.empty());
+    REQUIRE(issues.size() <= 16);
+    for (const auto& issue : issues) {
+        const auto& message = issue.at("message").get_ref<const std::string&>();
+        const auto& path = issue.at("path").get_ref<const std::string&>();
+        CHECK(message.capacity() <= 256 + 32);
+        CHECK(path.capacity() <= 256 + 32);
+    }
+}
+
 TEST_CASE_METHOD(ResultBuilderFixture, "T008 repaired replay retains accounted dependencies and rejects output aliases",
                  "[result_builder][writer][loader][T-008][repair]")
 {
@@ -436,9 +527,9 @@ TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 writer publishes a checked binary 
         destination / "packed.stl"
     };
     const auto exported = io::export_result(std::move(export_request));
-    if (const auto* error = std::get_if<io::Error>(&exported)) {
-        INFO(error->code << ": " << error->message);
-    }
+    const auto export_diagnostic =
+        std::holds_alternative<io::Error>(exported) ? io::error_json(std::get<io::Error>(exported)).dump() : "success";
+    INFO(export_diagnostic);
     REQUIRE(std::holds_alternative<io::ExportSuccess>(exported));
     const auto& success = std::get<io::ExportSuccess>(exported);
     REQUIRE(std::filesystem::file_size(success.result_path) > 0);
@@ -770,7 +861,7 @@ TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 writer classifies a stricter check
     REQUIRE(std::filesystem::exists(output / "result.json"));
     REQUIRE_FALSE(std::filesystem::exists(output / "packed.stl"));
 }
-TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 writer retains primary when streaming hash scratch exceeds a later cap",
+TEST_CASE_METHOD(ResultBuilderFixture, "T011 writer retains primary when immutable stage pin exceeds a later cap",
                  "[writer][AT-14][resources]")
 {
     const auto empty_candidate = geo::make_candidate(native_context, {});
@@ -799,10 +890,59 @@ TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 writer retains primary when stream
     REQUIRE(std::holds_alternative<io::Error>(exported));
     const auto& error = std::get<io::Error>(exported);
     REQUIRE(error.code == "MEMORY_LIMIT");
-    REQUIRE(error.message == "STL hashing exceeds the configured working-memory limit.");
+    REQUIRE(error.message == "Immutable STL stage pin exceeds checked residency.");
     REQUIRE(std::filesystem::u8path(error.details.at("result_path").get<std::string>()) == output / "result.json");
     REQUIRE(std::filesystem::exists(output / "result.json"));
     REQUIRE_FALSE(std::filesystem::exists(output / "packed.stl"));
+}
+TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 writer retains primary when streaming hash scratch exceeds a later cap",
+                 "[writer][AT-14][resources]")
+{
+    const auto empty_candidate = geo::make_candidate(native_context, {});
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(empty_candidate));
+    const auto empty_checked =
+        geo::validate(native_context, std::get<std::shared_ptr<const geo::Candidate>>(empty_candidate));
+    REQUIRE(empty_checked.validated_solution);
+    auto empty_request = request;
+    empty_request.solution = empty_checked.validated_solution;
+    const auto document = io::build_result(empty_request);
+    REQUIRE(std::holds_alternative<io::ValidatedDocument>(document));
+    const auto output = root / "hash-scratch-boundary";
+    REQUIRE(std::filesystem::create_directory(output));
+    const auto make_export = [&](std::uint64_t cap) {
+        return io::export_result({
+            empty_checked.validated_solution,
+            asset,
+            {},
+            { 1, { { 0, 0, 0, 1 } } },
+            std::get<io::ValidatedDocument>(document),
+            output / "result.json",
+            output / "packed.stl",
+            {},
+            {},
+            cap
+        });
+    };
+    io::test::reset_export_residency_observation_for_test();
+    REQUIRE(std::holds_alternative<io::ExportSuccess>(make_export(512ULL << 20)));
+    auto cap = io::test::export_residency_observation_for_test().stl_base_before_hash;
+    REQUIRE(cap > 0);
+    // Admit the immutable pin and read/hex scratch, but leave no allowance for
+    // the actual provider object/digest buffers. This reaches the hash boundary.
+    REQUIRE(checked_add(cap, (64ULL << 10) + 64));
+    REQUIRE(std::filesystem::remove_all(output) > 0);
+    REQUIRE(std::filesystem::create_directory(output));
+    const auto exported = make_export(cap);
+    REQUIRE(std::holds_alternative<io::Error>(exported));
+    const auto& error = std::get<io::Error>(exported);
+    REQUIRE(error.code == "MEMORY_LIMIT");
+    REQUIRE(error.message == "STL hashing exceeds the configured working-memory limit.");
+    REQUIRE(std::filesystem::exists(output / "result.json"));
+    REQUIRE_FALSE(std::filesystem::exists(output / "packed.stl"));
+    const auto primary = io::Json::parse(std::ifstream(output / "result.json"));
+    io::ContractValidator validator;
+    REQUIRE(std::holds_alternative<io::ValidatedDocument>(validator.validate(io::ContractKind::results, primary)));
+    REQUIRE_FALSE(primary.contains("artifacts"));
 }
 TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 streaming hash accounts provider buffers against its remaining budget",
                  "[writer][AT-14][resources]")
@@ -1284,6 +1424,66 @@ TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 result builder refuses metadata se
     REQUIRE(std::holds_alternative<io::Error>(io::build_result(mismatch)));
 }
 
+TEST_CASE_METHOD(ResultBuilderFixture, "T011 checked STL retains a portable reference while the certified pin is held",
+                 "[writer][T-011][publication]")
+{
+    const auto document = io::build_result(request);
+    REQUIRE(std::holds_alternative<io::ValidatedDocument>(document));
+    const auto output = root / "pinned-reference";
+    REQUIRE(std::filesystem::create_directory(output));
+    struct ResetFault {
+        ~ResetFault() { io::test::fail_pinned_reference_query_for_test(false); }
+    } reset;
+    io::test::fail_pinned_reference_query_for_test(true);
+    const auto exported = io::export_result({
+        solution,
+        asset,
+        {},
+        { 1, { { 0, 0, 0, 1 } } },
+        std::get<io::ValidatedDocument>(document),
+        output / "result.json",
+        output / "packed.stl"
+    });
+    const auto diagnostic =
+        std::holds_alternative<io::Error>(exported) ? io::error_json(std::get<io::Error>(exported)).dump() : "success";
+    INFO(diagnostic);
+    REQUIRE(std::holds_alternative<io::ExportSuccess>(exported));
+    const auto saved = io::Json::parse(std::ifstream(output / "result.json"));
+    REQUIRE(saved.at("artifacts").at(0).at("path") == "packed.stl");
+    REQUIRE(saved.at("count") == solution->copies().size());
+    REQUIRE(saved.at("placements") == std::get<io::ValidatedDocument>(document).value().at("placements"));
+    const auto assembled = output / std::filesystem::u8path(saved.at("artifacts").at(0).at("path").get<std::string>());
+    REQUIRE(output_names(output) ==
+            (std::vector<std::wstring> { L"assets", L"packed.stl", L"packed.stl.json", L"result.json" }));
+    const auto companion = io::Json::parse(std::ifstream(output / "packed.stl.json"));
+    REQUIRE(independently_hash_file(assembled) == companion.at("assembly_sha256").get<std::string>());
+    REQUIRE(independently_hash_file(assembled) == saved.at("artifacts").at(0).at("sha256").get<std::string>());
+    const auto mesh = asset->solid()->mesh();
+    REQUIRE(std::filesystem::file_size(assembled) == 84 + 50 * mesh.triangles.size() * solution->copies().size());
+    std::ifstream input(assembled, std::ios::binary);
+    std::array<std::byte, 84> header {};
+    REQUIRE(input.read(reinterpret_cast<char*>(header.data()), header.size()));
+    std::uint32_t triangles {};
+    std::memcpy(&triangles, header.data() + 80, sizeof(triangles));
+    REQUIRE(triangles == mesh.triangles.size() * solution->copies().size());
+    for (const auto& copy : solution->copies()) {
+        REQUIRE(copy.rotation_xyzw == (std::array<double, 4> { 0, 0, 0, 1 }));
+        for (const auto& face : mesh.triangles) {
+            std::array<std::byte, 50> triangle {};
+            REQUIRE(input.read(reinterpret_cast<char*>(triangle.data()), triangle.size()));
+            for (std::size_t vertex = 0; vertex < 3; ++vertex) {
+                for (std::size_t axis = 0; axis < 3; ++axis) {
+                    float actual {};
+                    std::memcpy(&actual, triangle.data() + 12 + 4 * (vertex * 3 + axis), 4);
+                    const auto expected = mesh.vertices[face[vertex]][axis] + copy.translation_mm[axis];
+                    REQUIRE(actual == static_cast<float>(expected));
+                }
+            }
+        }
+    }
+    REQUIRE(input.peek() == std::char_traits<char>::eof());
+}
+
 TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 writer emits a zero-copy 84-byte STL", "[writer][AT-14][checked_bytes]")
 {
     const auto empty_candidate = geo::make_candidate(native_context, {});
@@ -1306,6 +1506,9 @@ TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 writer emits a zero-copy 84-byte S
         output / "result.json",
         output / "packed.stl"
     });
+    const auto export_diagnostic =
+        std::holds_alternative<io::Error>(exported) ? io::error_json(std::get<io::Error>(exported)).dump() : "success";
+    INFO(export_diagnostic);
     REQUIRE(std::holds_alternative<io::ExportSuccess>(exported));
     const auto& success = std::get<io::ExportSuccess>(exported);
     REQUIRE(success.stl_path);
@@ -1382,8 +1585,22 @@ TEST_CASE("AT-14 writer reuses identical published artifacts read-only", "[write
     const auto source_hash = asset->record().at("source").at("sha256").get<std::string>();
     const auto asset_path = output / "assets" / (source_hash + ".stl");
     const auto before = std::filesystem::last_write_time(asset_path);
+    const auto packed_path = output / "packed.stl";
+    const auto packed_before = std::filesystem::last_write_time(packed_path);
+    const auto packed_hash = independently_hash_file(packed_path);
+    struct RestoreAttributes {
+        std::filesystem::path path;
+        DWORD original {};
+        ~RestoreAttributes() { SetFileAttributesW(path.c_str(), original); }
+    } restore { packed_path, GetFileAttributesW(packed_path.c_str()) };
+    REQUIRE(restore.original != INVALID_FILE_ATTRIBUTES);
+    REQUIRE(SetFileAttributesW(packed_path.c_str(), restore.original | FILE_ATTRIBUTE_READONLY));
     REQUIRE(std::holds_alternative<io::ExportSuccess>(run()));
     REQUIRE(std::filesystem::last_write_time(asset_path) == before);
+    REQUIRE(std::filesystem::last_write_time(packed_path) == packed_before);
+    REQUIRE(independently_hash_file(packed_path) == packed_hash);
+    REQUIRE(output_names(output) ==
+            (std::vector<std::wstring> { L"assets", L"packed.stl", L"packed.stl.json", L"результат.json" }));
     REQUIRE(std::filesystem::exists(output / "packed.stl.json"));
     io::ContractValidator validator;
     // Assets are reused here, so write 1 is primary JSON and write 2 is the STL header.
@@ -1406,12 +1623,18 @@ TEST_CASE("AT-14 writer reuses identical published artifacts read-only", "[write
     REQUIRE(std::get<io::Error>(thrown_write).code == "EXPORT_FAILED");
     REQUIRE(std::get<io::Error>(thrown_write).details.at("result_path") == expected_result_path);
     const std::string sentinel = "conflicting-stl";
+    REQUIRE(SetFileAttributesW(packed_path.c_str(), restore.original));
     std::ofstream(output / "packed.stl", std::ios::binary | std::ios::trunc).write(sentinel.data(), sentinel.size());
+    REQUIRE(SetFileAttributesW(packed_path.c_str(), restore.original | FILE_ATTRIBUTE_READONLY));
+    const auto conflict_hash = independently_hash_file(packed_path);
     const auto conflict = run();
     REQUIRE(std::holds_alternative<io::Error>(conflict));
     std::ifstream conflict_input(output / "packed.stl", std::ios::binary);
     const std::string retained { std::istreambuf_iterator<char>(conflict_input), std::istreambuf_iterator<char>() };
     REQUIRE(retained == sentinel);
+    REQUIRE(independently_hash_file(packed_path) == conflict_hash);
+    REQUIRE(output_names(output) ==
+            (std::vector<std::wstring> { L"assets", L"packed.stl", L"packed.stl.json", L"результат.json" }));
     const auto result_json = io::Json::parse(std::ifstream(result_path));
     REQUIRE(std::holds_alternative<io::ValidatedDocument>(validator.validate(io::ContractKind::results, result_json)));
     REQUIRE(std::get<io::Error>(conflict).details.at("result_path").is_string());

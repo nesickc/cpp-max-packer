@@ -1,6 +1,7 @@
 #pragma once
 
 #include <spectrapack/io/contracts.hpp>
+#include <spectrapack/io/detail/json_scratch.hpp>
 
 namespace spectrapack::cli {
 struct HostMemoryLimit {};
@@ -23,6 +24,14 @@ public:
     }
     std::uint64_t remaining() const noexcept { return cap_ - used_; }
     std::uint64_t used() const noexcept { return used_; }
+    void lexer(std::uint64_t input_bytes)
+    {
+        const auto bytes = io::detail::json_lexer_scratch_bytes(input_bytes);
+        if (!bytes) {
+            throw HostMemoryLimit {};
+        }
+        charge(*bytes);
+    }
 
 private:
     std::uint64_t cap_, used_ {};

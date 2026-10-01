@@ -82,8 +82,16 @@ std::atomic_uint64_t export_stage_write_count {};
 std::atomic_uint64_t export_stage_write_exception_number {};
 std::atomic<test::ClosedStageMutation> export_closed_stage_mutation { test::ClosedStageMutation::none };
 std::atomic_bool export_closed_stage_reader_failure {};
+std::atomic_bool export_fail_pinned_reference_query {};
+thread_local bool export_reference_pin_active {};
+struct PinnedReferenceScope {
+    bool previous { export_reference_pin_active };
+    PinnedReferenceScope() { export_reference_pin_active = true; }
+    ~PinnedReferenceScope() { export_reference_pin_active = previous; }
+};
 std::atomic_uint64_t export_builder_base_before_native_inputs {};
 std::atomic_uint64_t export_post_hash_base_before_reuse_comparison {};
+std::atomic_uint64_t export_base_before_hash {};
 std::atomic_uint64_t export_companion_write_base_before_final_documents {};
 std::string export_stage_token;
 std::vector<std::string> export_stage_tokens;
@@ -1020,32 +1028,82 @@ std::optional<Error> validate_closed_stl_stage(const std::filesystem::path& path
     return std::nullopt;
 }
 
-std::optional<std::string> portable_relative_path(const std::filesystem::path& root, const std::filesystem::path& path)
+std::variant<std::string, Error> portable_relative_path(const std::filesystem::path& root,
+                                                        const std::filesystem::path& path)
 {
-    std::error_code error;
-    const auto relative = std::filesystem::relative(path, root, error);
-    if (error) {
-        return std::nullopt;
+#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+    if (export_fail_pinned_reference_query && export_reference_pin_active) {
+        auto problem = failure("EXPORT_PATH_INVALID", "STL path cannot be recorded portably.");
+        problem.details = {
+            { "path_reason",  "filesystem"        },
+            { "system_error", ERROR_ACCESS_DENIED }
+        };
+        return problem;
     }
+#endif
+    // Both paths are admitted absolute spellings, after containment and alias
+    // checks. A portable reference records that spelling, so do not reopen an
+    // absent or certified destination through weakly_canonical/relative.
+    const auto relative = path.lexically_relative(root);
     const auto text = relative.generic_u8string();
     const std::string result(reinterpret_cast<const char*>(text.data()), text.size());
-    return portable_path(result) ? std::optional<std::string> { result } : std::nullopt;
+    if (!portable_path(result)) {
+        auto problem = failure("EXPORT_PATH_INVALID", "STL path cannot be recorded portably.");
+        problem.details = {
+            { "path_reason",   "nonportable" },
+            { "relative_path", result        }
+        };
+        return problem;
+    }
+    return result;
+}
+std::variant<std::filesystem::path, Error> admitted_absolute_export_path(const std::filesystem::path& input,
+                                                                         std::uint64_t remaining_bytes)
+{
+    const auto needed = GetFullPathNameW(input.c_str(), 0, nullptr, nullptr);
+    if (!needed || needed > 32768) {
+        auto problem = failure("EXPORT_PATH_INVALID", "STL absolute path exceeds the supported Windows path.");
+        problem.details = {
+            { "system_error", needed ? ERROR_FILENAME_EXCED_RANGE : GetLastError() }
+        };
+        return problem;
+    }
+    // MSVC constructor rounding is <=15 characters. Charge the wide owner
+    // and a possible path-construction copy before either allocation.
+    const auto construction_bytes = 2ULL * (needed + 16ULL) * sizeof(wchar_t);
+    if (construction_bytes > remaining_bytes) {
+        return failure("MEMORY_LIMIT", "STL absolute-path construction exceeds checked residency.");
+    }
+    std::wstring text(needed - 1, L'\0');
+    const auto written = GetFullPathNameW(input.c_str(), needed, text.data(), nullptr);
+    if (!written || written >= needed) {
+        auto problem = failure("EXPORT_PATH_INVALID", "STL absolute path changed during guarded construction.");
+        problem.details = {
+            { "system_error", written ? ERROR_FILENAME_EXCED_RANGE : GetLastError() }
+        };
+        return problem;
+    }
+    text.resize(written);
+    return std::filesystem::path(std::move(text));
 }
 }  // namespace
 
 namespace test {
 #ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+void fail_pinned_reference_query_for_test(bool enabled) noexcept { export_fail_pinned_reference_query.store(enabled); }
 void reset_export_residency_observation_for_test() noexcept
 {
     export_builder_base_before_native_inputs.store(0, std::memory_order_relaxed);
     export_post_hash_base_before_reuse_comparison.store(0, std::memory_order_relaxed);
+    export_base_before_hash.store(0, std::memory_order_relaxed);
     export_companion_write_base_before_final_documents.store(0, std::memory_order_relaxed);
 }
 ExportResidencyObservation export_residency_observation_for_test() noexcept
 {
     return { export_builder_base_before_native_inputs.load(std::memory_order_relaxed),
              export_post_hash_base_before_reuse_comparison.load(std::memory_order_relaxed),
-             export_companion_write_base_before_final_documents.load(std::memory_order_relaxed) };
+             export_companion_write_base_before_final_documents.load(std::memory_order_relaxed),
+             export_base_before_hash.load(std::memory_order_relaxed) };
 }
 #endif
 
@@ -1250,7 +1308,7 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path, c
         if (!detail::admit_asset_json(text, budget)) {
             return failure("ASSET_MISMATCH", "Retained report JSON is malformed or too deeply nested.");
         }
-        auto decoded = validator.parse(ContractKind::assets, text);
+        auto decoded = validator.parse(ContractKind::assets, text, limits.diagnostic_limits);
         if (!std::holds_alternative<ValidatedDocument>(decoded)) {
             return contract_error(std::get<ContractFailure>(decoded));
         }
@@ -1545,10 +1603,10 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
         auto builder_limits = request.validation_limits;
         builder_limits.max_working_bytes =
             std::min(builder_limits.max_working_bytes, request.max_working_bytes - builder_validation_live_bytes);
-        const auto rebuilt =
-            detail::build_result_with_report({ request.solution, request.object_asset, request.container_asset,
-                                               request.catalog, std::move(metadata), builder_limits },
-                                             control);
+        const auto rebuilt = detail::build_result_with_report(
+            { request.solution, request.object_asset, request.container_asset, request.catalog, std::move(metadata),
+              builder_limits, request.diagnostic_limits },
+            control);
         detail::poll_operation();
         if (!std::holds_alternative<ValidatedDocument>(rebuilt.result) ||
             !exact_json_equal(std::get<ValidatedDocument>(rebuilt.result).value(), supplied)) {
@@ -1664,6 +1722,43 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
         if (!contained_location(parent, assets_directory)) {
             return failure("EXPORT_PATH_INVALID", "The asset directory escapes the result directory.");
         }
+        std::optional<std::filesystem::path> absolute_stl;
+        std::optional<std::string> artifact_reference;
+        if (request.stl_path) {
+            auto absolute =
+                admitted_absolute_export_path(*request.stl_path, request.max_working_bytes - writer_live_bytes);
+            if (const auto* problem = std::get_if<Error>(&absolute)) {
+                return *problem;
+            }
+            absolute_stl = std::get<std::filesystem::path>(std::move(absolute));
+            const auto path_bytes = absolute_stl->native().capacity() * sizeof(wchar_t);
+            if (!add_bytes(writer_live_bytes, path_bytes) || !add_bytes(persistent_writer_bytes, path_bytes) ||
+                writer_live_bytes > request.max_working_bytes) {
+                return failure("MEMORY_LIMIT", "STL absolute-path owner exceeds checked residency.");
+            }
+            // Guarded absolute spelling and lexical/UTF-8 construction scratch
+            // coexist with retained owners. Admit them before construction.
+            auto absolute_parent = admitted_absolute_export_path(parent, request.max_working_bytes - writer_live_bytes);
+            if (const auto* problem = std::get_if<Error>(&absolute_parent)) {
+                return *problem;
+            }
+            const auto& reference_root = std::get<std::filesystem::path>(absolute_parent);
+            const auto reference_scratch =
+                16ULL * (absolute_stl->native().capacity() + reference_root.native().capacity() + 64ULL);
+            if (reference_scratch > request.max_working_bytes - writer_live_bytes) {
+                return failure("MEMORY_LIMIT", "STL portable-reference construction exceeds checked residency.");
+            }
+            auto reference = portable_relative_path(reference_root, *absolute_stl);
+            if (const auto* problem = std::get_if<Error>(&reference)) {
+                return *problem;
+            }
+            artifact_reference = std::get<std::string>(std::move(reference));
+            if (!add_bytes(writer_live_bytes, artifact_reference->capacity()) ||
+                !add_bytes(persistent_writer_bytes, artifact_reference->capacity()) ||
+                writer_live_bytes > request.max_working_bytes) {
+                return failure("MEMORY_LIMIT", "STL portable reference exceeds checked residency.");
+            }
+        }
         if (!std::filesystem::exists(assets_directory, error) &&
             !std::filesystem::create_directory(assets_directory, error)) {
             return failure("EXPORT_WRITE_FAILED", "Asset publication directory could not be created.");
@@ -1766,7 +1861,7 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
             }
             ContractValidator timing_validator;
             if (!std::holds_alternative<ValidatedDocument>(
-                    timing_validator.validate(ContractKind::results, committed_result))) {
+                    timing_validator.validate(ContractKind::results, committed_result, request.diagnostic_limits))) {
                 return failure("RESULT_RUNTIME_INVALID", "Final timing metadata does not satisfy the result contract.");
             }
         }
@@ -1910,6 +2005,9 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
             return post_primary_error(
                 failure("EXPORT_CHECK_FAILED", "Closed STL stage could not be pinned immutably."));
         }
+#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+        PinnedReferenceScope pinned_reference_scope;
+#endif
         if (auto problem = validate_closed_stl_stage(stl_stage_path, request.solution, mesh, triangle_count, ranges,
                                                      &pinned_stage.stream())) {
             return post_primary_error(*problem);
@@ -1950,6 +2048,9 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
         if (quantized.validity != geometry::Validity::valid) {
             return post_primary_error(validation_failure(quantized, true, &rebuilt.validation_report));
         }
+#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+        export_base_before_hash.store(stl_writer_live_bytes, std::memory_order_relaxed);
+#endif
         const auto assembly_hash =
             sha256_file(stl_stage_path, 84 + 50 * triangle_count, request.max_working_bytes - stl_writer_live_bytes,
                         &pinned_stage.stream());
@@ -1966,10 +2067,53 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
 #ifdef SPECTRAPACK_ASSET_LOADER_TESTING
         export_post_hash_base_before_reuse_comparison.store(post_hash_live_bytes, std::memory_order_relaxed);
 #endif
-        if (!pinned_stage.publish(*request.stl_path)) {
-            return post_primary_error(failure("EXPORT_WRITE_FAILED", "Certified STL handle could not be published."));
+        std::optional<detail::PinnedStage> reused_destination;
+        if (!pinned_stage.publish(*absolute_stl)) {
+            const auto publish_error = pinned_stage.publication_error();
+            if (publish_error == ERROR_ALREADY_EXISTS || publish_error == ERROR_FILE_EXISTS ||
+                publish_error == ERROR_ACCESS_DENIED) {
+                constexpr std::uint64_t reuse_scratch_bytes = 2ULL * 64 * 1024;
+                if (reuse_scratch_bytes > request.max_working_bytes - post_hash_live_bytes) {
+                    return post_primary_error(failure(
+                        "MEMORY_LIMIT", "Existing export comparison exceeds the configured working-memory limit."));
+                }
+                reused_destination.emplace(*absolute_stl, true);
+                if (!reused_destination->valid()) {
+                    auto problem = failure("EXPORT_WRITE_FAILED", "Existing STL destination cannot be pinned.");
+                    problem.details = {
+                        { "win32_error", publish_error }
+                    };
+                    return post_primary_error(std::move(problem));
+                }
+                if (!contained_location(parent, *absolute_stl) || is_input_alias(*absolute_stl)) {
+                    return post_primary_error(
+                        failure("EXPORT_PATH_INVALID", "Existing STL destination changed its guarded path."));
+                }
+                if (!pinned_stage.same_bytes(*reused_destination, [] {
+                    detail::poll_operation();
+                })) {
+                    return post_primary_error(
+                        failure("EXPORT_WRITE_FAILED", "Existing STL destination has different bytes."));
+                }
+                if (!add_bytes(post_hash_live_bytes, detail::PinnedStage::kScratchBytes) ||
+                    post_hash_live_bytes > request.max_working_bytes) {
+                    return post_primary_error(
+                        failure("MEMORY_LIMIT", "Existing STL destination pin exceeds checked residency."));
+                }
+                // Keep both pins through JSON commit. OwnedStage cleans the
+                // unused certified stage after the two handles are released.
+            }
+            else {
+                auto problem = failure("EXPORT_WRITE_FAILED", "Certified STL handle could not be published.");
+                problem.details = {
+                    { "win32_error", publish_error }
+                };
+                return post_primary_error(std::move(problem));
+            }
         }
-        stl_stage.publication_complete();
+        else {
+            stl_stage.publication_complete();
+        }
         Json companion {
             { "schema_version",        1                                                                },
             { "units",                 "mm"                                                             },
@@ -2014,10 +2158,6 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
                                                    request.max_working_bytes - companion_write_live_bytes)) {
             return post_primary_error(*problem);
         }
-        const auto artifact_path = portable_relative_path(parent, *request.stl_path);
-        if (!artifact_path) {
-            return post_primary_error(failure("EXPORT_PATH_INVALID", "STL path cannot be recorded portably."));
-        }
         std::uint64_t final_copy_preflight_bytes = companion_write_live_bytes;
         if (!add_bytes(final_copy_preflight_bytes, supplied_payload_bytes) ||
             !add_bytes(final_copy_preflight_bytes, supplied_payload_bytes) ||
@@ -2027,7 +2167,7 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
         }
         Json final_result = persisted_result;
         final_result["artifacts"] = Json::array({
-            { { "kind", "assembled_stl" }, { "path", *artifact_path }, { "sha256", assembly_hash_value } }
+            { { "kind", "assembled_stl" }, { "path", *artifact_reference }, { "sha256", assembly_hash_value } }
         });
         std::uint64_t final_result_payload_bytes {};
         if (!json_payload_bytes(final_result, final_result_payload_bytes)) {
@@ -2041,7 +2181,7 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
                 failure("MEMORY_LIMIT", "Final result validation exceeds the configured working-memory limit."));
         }
         ContractValidator validator;
-        auto checked_final = validator.validate(ContractKind::results, final_result);
+        auto checked_final = validator.validate(ContractKind::results, final_result, request.diagnostic_limits);
         if (!std::holds_alternative<ValidatedDocument>(checked_final)) {
             return post_primary_error(failure("EXPORT_RESULT_MISMATCH", "STL artifact result is invalid."));
         }

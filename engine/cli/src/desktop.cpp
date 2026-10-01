@@ -79,6 +79,7 @@ std::optional<Json> read_json(const std::filesystem::path& path, std::uint64_t l
     }
     input.seekg(0);
     budget.repeated(static_cast<std::uint64_t>(size), 2);
+    budget.lexer(static_cast<std::uint64_t>(size));
     std::string bytes(static_cast<size_t>(size), '\0');
     if (!bytes.empty() && !input.read(bytes.data(), size)) {
         return {};
@@ -88,7 +89,7 @@ std::optional<Json> read_json(const std::filesystem::path& path, std::uint64_t l
         return {};
     }
     io::ContractValidator validator;
-    auto document = validator.parse(kind, bytes);
+    auto document = validator.parse(kind, bytes, { 16, 256 });
     if (!std::holds_alternative<io::ValidatedDocument>(document)) {
         if (kind == io::ContractKind::desktop) {
             const auto raw = Json::parse(bytes, nullptr, false);
@@ -309,7 +310,10 @@ int restore(const std::map<std::string, std::filesystem::path>& options, const A
     for (const auto* key : { "time_to_best_seconds", "peak_host_bytes", "peak_device_bytes", "termination_reason" }) {
         metadata["metrics"][key] = stored->at("metrics").at(key);
     }
-    auto rebuilt = io::build_result({ fresh.validated_solution, asset, {}, catalog, metadata, validation_limits });
+    auto rebuilt = io::build_result({
+        fresh.validated_solution, asset, {},
+          catalog, metadata, validation_limits, { 16, 256 }
+    });
     if (const auto* error = std::get_if<io::Error>(&rebuilt)) {
         return fail(error->code, error->message, 3, error->details);
     }
@@ -328,16 +332,18 @@ int restore(const std::map<std::string, std::filesystem::path>& options, const A
     if (options.contains("--stl")) {
         stl = options.at("--stl");
     }
-    auto published = io::export_result({ fresh.validated_solution,
-                                         asset,
-                                         {},
-                                         catalog,
-                                         std::move(document),
-                                         options.at("--output") / "result.json",
-                                         stl,
-                                         validation_limits,
-                                         {},
-                                         budget.remaining() });
+    io::ExportRequest export_request { fresh.validated_solution,
+                                       asset,
+                                       {},
+                                       catalog,
+                                       std::move(document),
+                                       options.at("--output") / "result.json",
+                                       stl,
+                                       validation_limits,
+                                       {},
+                                       budget.remaining() };
+    export_request.diagnostic_limits = { 16, 256 };
+    auto published = io::export_result(export_request);
     if (const auto* error = std::get_if<io::Error>(&published)) {
         return fail(error->code, error->message, 3, error->details);
     }
@@ -384,7 +390,10 @@ int run_desktop_command(const std::string& command, const std::vector<std::strin
             return fail("OUTPUT_PATH_INVALID", "Desktop output must be an existing empty private directory.");
         }
         HostAdmission budget(available);
-        auto loaded = io::load_accepted_asset(options.at("--object-report"), {}, { budget.remaining() });
+        auto loaded = io::load_accepted_asset(options.at("--object-report"),
+                                              {
+        },
+                                              { budget.remaining(), { 16, 256 } });
         if (const auto* problem = std::get_if<io::Error>(&loaded)) {
             return fail(problem->code, problem->message, 3, problem->details);
         }
@@ -421,7 +430,8 @@ std::variant<spectrapack::io::Json, spectrapack::io::Error> resolve_desktop_sett
         return *failure;
     }
     if (!asset ||
-        !std::holds_alternative<io::ValidatedDocument>(validator.validate(io::ContractKind::desktop, request)) ||
+        !std::holds_alternative<io::ValidatedDocument>(
+            validator.validate(io::ContractKind::desktop, request, { 16, 256 })) ||
         !request.contains("orientation")) {
         return io::Error { "INVALID_SETTINGS", "Desktop settings do not satisfy version 1.", Json::object(), true };
     }
@@ -486,7 +496,8 @@ std::variant<spectrapack::io::Json, spectrapack::io::Error> resolve_desktop_sett
         { "version",           1                               },
         { "scheduling_policy", solver::cpu_scheduling_policy() }
     };
-    if (!std::holds_alternative<io::ValidatedDocument>(validator.validate(io::ContractKind::settings, settings))) {
+    if (!std::holds_alternative<io::ValidatedDocument>(
+            validator.validate(io::ContractKind::settings, settings, { 16, 256 }))) {
         return io::Error { "INVALID_SETTINGS", "Resolved settings are not valid; check the quaternion and uint64 seed.",
                            Json::object(), true };
     }
