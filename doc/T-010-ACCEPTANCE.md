@@ -173,7 +173,24 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
   A further translated-window red shows the prior estimate allows 8 cells where
   actual voxelization at origin 2^50 mm uses 10. Its full log and source/binary
   identities are in `.local/t010/native/stage3-window-red-*`; ADR `85eb3bd`
-  specifies interval-based admission. The serial checkpoint remains in progress.
+  specifies interval-based admission.
+- Serial raster/admission checkpoint `43f3864` passes focused Debug and Release
+  gates: conservative fields 26 cases / 3,968 assertions, solver excluding the
+  four `[qualification]` cases 110 / 4,803, and the separate hidden Ulamok advice
+  case 1 / 237. Reusing already occupied boundary cells avoids redundant SAT
+  predicates while charging each visit and lookup. The allocation-free interval
+  window estimate covers actual voxelization for 468 solid/origin/pitch/rotation
+  combinations, including translated origins; the ranked case retains its
+  10,000-cell cap. The full log and command index, 15 source hashes, six preserved
+  executable hashes, three asset hashes and primary verification are in
+  `.local/t010/native/stage3-serial-small/`. Build logs have no compiler warnings;
+  passing solver logs retain Catch2 numerical diagnostics. Both analytic benchmark
+  scopes pass one-sample smoke checks with no warmups. These are not timing
+  qualification. The retained full-catalog Ulamok red improves from 8 to 12 of
+  48 correlations but still returns `SPECTRAL_PIPELINE_PLACED` at the unchanged
+  work cap. Suggested-pitch evidence only establishes preflight admission so far.
+  Per-Start field reuse, successful practical serial baselines and actual
+  suggested-pitch execution remain open; threading targets are not frozen.
 - Cold full-Pryanik-2 characterization is retained in
   `.local/t010/integration/cold-red.json` and `cold-green.json`. The old legacy
   search-only 0.01 s request takes 10.162734 s total; its Stop test takes 8.752341 s
