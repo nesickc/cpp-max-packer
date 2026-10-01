@@ -1,6 +1,6 @@
 # T-010 / T-011 joint acceptance ledger
 
-Updated: 2026-10-01. Delivery branch: `feature/SOL-08-cpu-runtime`.
+Updated: 2026-10-02. Delivery branch: `feature/SOL-08-cpu-runtime`.
 Prerequisite: merged T-009, `b82117a` (PR #12).
 
 This ledger records demonstrated scope. **No combined acceptance gate is complete.**
@@ -231,6 +231,34 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
   (0.257469 s total). Both new outcomes return owned interruption errors without a
   result. These establish pre-incumbent command boundaries; the fixed marker delay
   does not establish which heavy preparation phase was active.
+- Runtime input/publication checkpoint `9303a8c` passes full I/O in Debug and
+  Release (62 cases / 12,594 assertions each), memory checks (8 / 29 each), wire
+  checks (3 / 11 each), three actual CLI settings probes, and 11 real protocol
+  cases with no skips. The preceding protocol run's two skips remain recorded.
+  Public JSON parsers pre-admit lexer/error scratch; the auxiliary runtime also
+  bounds tokens before parsing, moves cached owners without copy growth, forwards
+  diagnostic limits, and restores the prior asset after releasing a failed
+  replacement. Settings admission now precedes the large raw-buffer allocation.
+  The real CLI distinguishes `MEMORY_LIMIT`, `INVALID_SETTINGS` and `SETTINGS_LOAD`
+  without publishing a result.
+  An exact-filename red exposed `FILE_RENAME_INFO` missing its wide-NUL terminator:
+  publication returned success for `packed.stl0300` instead of `packed.stl`.
+  The corrected request preserves the certified handle through commit and tests
+  exact directory contents/hash, read-only identical reuse, conflicting bytes and
+  prior JSON preservation. The old 120 KiB hash test reached an earlier 128 KiB
+  pin reservation; separate tests now exercise both the pin and actual hash
+  boundaries. Full logs, failed attempts, 25 sources and preserved executables are
+  indexed in `.local/t010/integration/checkpoints/io-rename-nul-green/manifest.json`;
+  primary verified all 239 source/artifact/snapshot/object hashes. Independent
+  review read complete final short logs; the large initial compiler-error dump
+  was not exhaustively audited. Debug retains D9025; earlier include-order and
+  test-compilation failures remain recorded. Release uses consistent native
+  `43f3864` headers/libraries; Debug I/O uses native geometry `ea8d60d`. These do not
+  qualify the current solver workspace. Full-Pryanik-2 cold deadline completes in
+  0.410 s, cold Stop in 0.079 s after its marker, and phase-triggered Stop/EOF in
+  0.019/0.014 s. Canonical case/junction references, post-rename pathname mutation,
+  the complete simultaneous 16 MiB adapter ledger, remaining lifecycle/DTO work
+  and final integrated practical/performance checks remain open.
 - Original source preservation: all ten assets match their pinned SHA-256 values
   in `.local/t010/source-preservation.json`.
 
