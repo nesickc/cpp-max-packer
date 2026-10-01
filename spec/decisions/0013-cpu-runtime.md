@@ -250,11 +250,17 @@ record capability for admitted path metadata. Audit simultaneous raw/canonical
 records, DOM copies, diagnostics, writer queue and schema-validator ownership
 against the adapter reserve before accepting the integrated memory gate.
 
-The initial cold prepare reserves 8 MiB for bounded adapter records/DOM/writer
+The initial cold prepare reserves 16 MiB for bounded adapter records/DOM/writer
 metadata. Transactional replacement additionally reserves 64 MiB for the still-live
 viewer, plus all distinct native old owners. Actual preview payload/staging receives
 separate checked admission; these reserves are not permission to allocate a full
 64 MiB preview without accounting. Start retains its 64 MiB viewer reserve.
+Use the same 16 MiB adapter allowance for each overlapping session/helper adapter;
+the host cap remains 512 MiB. The earlier 8 MiB proposal was increased after the
+simultaneous record/DOM/diagnostic audit. Reserved headroom for fixed embedded
+schema catalogs and compiled validators still needs a supported ownership bound;
+source JSON byte count alone is not that bound. Process peak measurements remain
+separate from portable payload admission.
 
 Auxiliary inspect/prepare/restore/export work may overlap retained session owners.
 Those processes cannot each claim a fresh full host allowance. Add an optional
