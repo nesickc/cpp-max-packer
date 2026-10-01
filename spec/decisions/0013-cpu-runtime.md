@@ -245,6 +245,27 @@ viewer, plus all distinct native old owners. Actual preview payload/staging rece
 separate checked admission; these reserves are not permission to allocate a full
 64 MiB preview without accounting. Start retains its 64 MiB viewer reserve.
 
+Auxiliary inspect/prepare/restore/export work may overlap retained session owners.
+Those processes cannot each claim a fresh full host allowance. Add an optional
+reducing-only `--available-host-bytes` argument to `inspect`, `desktop-prepare`
+and `desktop-restore` (including its checked-export path): integer 1 through
+512 MiB, default 512 MiB. Propagate it through loading, LOD, validation, result
+building and export. This operational allowance does not rewrite saved settings,
+geometry, thread policy or host-cap provenance.
+
+Completed session `prepare`, `run` and `release` responses, including owned
+failures, carry optional envelope `retained_native_bytes`: the checked union of
+actual persistent verified buffers, accepted solids, display handles and retained
+solution/context/catalog owners after operation ownership settles. Shared owners
+count once. Adapter/viewer reserves are excluded and charged separately. Rust
+tracks this value per child epoch and subtracts it before launching an auxiliary
+native process. Missing or unrepresentable residency is never zero; reject the
+auxiliary operation if a safe remaining allowance cannot be established. Busy,
+phase and malformed-input records may omit the field; do not inspect concurrently
+changing ownership to decorate such records. The fixed engine hash lets Rust
+require the field on completed mutating operations. Replacement failure preserves
+the prior complete state and its ownership; test this accounting transaction.
+
 ## Start clock, Stop and terminal ownership
 
 Rust captures `QueryPerformanceCounter` and its frequency during successful Start

@@ -24,7 +24,8 @@ remain unchanged. Ticket-local acceptance IDs supplement this map.
 T-010 delivers its threading gates and the included T-011 preparation/deadline
 gates in one branch/PR. Preserve both sets of acceptance IDs and attribute their
 separate performance comparisons. One integrated run may prove multiple gates;
-identify the assertions in the joint ledger instead of duplicating identical runs.
+identify the assertions in the [joint ledger](../doc/T-010-ACCEPTANCE.md) instead
+of duplicating identical runs.
 
 | Planned tickets | Added or completed evidence |
 | --- | --- |
