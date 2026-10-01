@@ -20,11 +20,11 @@ establish the corresponding runtime gate.
 | T010-A4 — aggregate resources | Unchanged 512 MiB host cap and old measured process peaks are pinned. Native import/repair admission passes below/exact-bound tests and the full Pryanik 2 profile in Debug/Release. | Integrated owner/worker/queue/stack/scratch admission, active allocation failure, measured peak versus conservative estimate. |
 | T010-A5 — Stop and races | Shared control and fresh-operation ownership contract are frozen. | Real parallel-phase Stop acknowledgement within 250 ms and safe completion within 5 s; failure/shutdown joins; no late publication. |
 | T010-A6 — measured speed | Failed practical phase profiles identify raster work; these are not a successful speed baseline. | Successful serial revision, frozen phase/end-to-end/memory targets, one warmup plus five Release samples at 1/2/4/8 threads, preparation held fixed. |
-| T010-A7 — product regression | Original full-catalog Ulamok and full36 checked-STL failures are reproduced. Native checked exports now pass for Ulamok36 and full Pryanik1 retained2; full Pryanik2 still exhausts aggregate import work. | Supported full-catalog Ulamok count >=36; both full Pryanik runs; pitch advice; invalid-original rejection; complete product journeys and independently reread exports; timed quality. |
-| T011-A1 — one budget | Native injected-clock red allows work after expiry. The controlled checkpoint now expires before bootstrap without work or a new handle. | Cold production loading/preparation, planning and validation consume one Start budget; no work begins after deadline; pre-incumbent expiry and cleanup/overrun measurements. |
+| T010-A7 — product regression | Original full-catalog Ulamok and full36 checked-STL failures are reproduced. Native checked exports pass for Ulamok36 and full Pryanik1 retained2. The first Release export-only projected-certificate check also passes full Pryanik2 retained2 within the unchanged work cap; final checkpoint checks remain pending. | Supported full-catalog Ulamok count >=36; both full Pryanik runs; pitch advice; invalid-original rejection; complete product journeys and independently reread exports; timed quality. |
+| T011-A1 — one budget | Native injected-clock red allows work after expiry. The controlled checkpoint now expires before bootstrap without work or a new handle. Real cold-Pryanik preparation expires without a result and retains runtime/cleanup/overrun metadata. | One-budget coverage through planning and validation; no work begins after deadline; final integrated cleanup/overrun measurements. |
 | T011-A2 — real reuse | Exact old preparation and fixed-work Start records are pinned. The first native session process check reuses an immutable cube token and preview after source/report mutation. | Practical replay/LOD work and timing evidence; New/replacement/units/frame/repair/epoch invalidation; fresh job derivatives for changed constraints/pitch/catalog; bounded replacement ownership. |
 | T011-A3 — tamper resistance | Native authority/pinned-input contract is frozen. | Independent source/PLY/repair/settings/catalog/pose mutations; moved archive restore; failed Open preserves complete state. |
-| T011-A4 — Stop phases | Session availability red and shared cancellation APIs are retained. | Actual cold-preparation cancellation red and green; real loading/preparation/fields/FFT/validation/publication Stop; receipt <=250 ms and safe completion <=5 s; UI stopping/result behavior. |
+| T011-A4 — Stop phases | Session availability red and shared cancellation APIs are retained. Real cold-Pryanik and phase-qualified preparation Stop/EOF checks pass at the retained integration checkpoint. | Real loading/fields/FFT/validation/publication Stop; receipt <=250 ms and safe completion <=5 s; UI stopping/result behavior and final integrated repetition. |
 | T011-A5 — lifecycle races | Initial native process checks pass shutdown, Stop followed by a fresh run, exact duplicate replay and conflicting request identity. | Repeated/stale Stop, completion race, marker/transport failure, child failure, active EOF/shutdown, backpressure and late completion using built native code. |
 | T011-A6 — startup measurements | Four old profiles each have one warmup plus five successful preparation and Start samples; numerical targets and peaks are frozen. | Equivalent new cold/warm samples at thread 1, identical fixed work and ordered valid poses, measured peak/cleanup bounds, complete response time and regressions. |
 | T011-A7 — compatibility | Optional runtime schemas, shared fixtures and generated types pass their checks. | Legacy and new Save/move/Open, original timing semantics, pending/result association, thread policy, independent JSON/STL export and repaired-geometry invariance. |
@@ -104,6 +104,42 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
   precedes sending. Two focused tests pass for same-session reuse and stalled-input
   reclamation; one ignored test is child-process test infrastructure. These checks
   precede the next integration checkpoint and do not qualify all lifecycle gates.
+- The first projected-export Release check passes 28 analytic cases / 1,763
+  assertions and two practical cases / 35 assertions. Full Pryanik2's actual
+  quantized copies consume 602,051,815 and 602,138,044 import units: 1,204,189,859
+  combined, below the unchanged 1,300,000,000 cap. Its first-copy self-intersection
+  phase falls from 944,182,452 to 536,225,009 units, including failed certificate
+  attempts and legacy fallback work. All four ordered Pryanik1/Pryanik2 poses
+  match the preceding checkpoint. Ordinary import/weld/replay retains the legacy
+  predicate policy because repair recipe bytes include its counters. Proof, work
+  table and logs are in `.local/t010/native/stage2-projected-audit.md`,
+  `stage2-projected-analytic-release-green.log`, `stage2-projected-practical-release.log`
+  and `primary-pryanik-pose-comparison.json`. Final Debug/Release practical gates,
+  source checkpoint and integrated export journeys remain pending.
+- The formatted integration engine is retained in
+  `.local/t010/integration/checkpoints/admission-green/`, SHA-256
+  `97a5d55b8e3d560951102162cdeb14a6def791c133d11280c847aa4a90fe58e2`.
+  Its manifest binds source hashes and identifies the subsequent fixture-only
+  stdin-close correction. Release contracts pass 347 assertions / 42 cases;
+  six real process tests pass; Rust library tests pass 25 with two ignored
+  child-process helper fixtures. Full logs are `contracts-release.log`,
+  `runtime-admission-green-1.log` and `cargo-library-admission-green.log` under
+  `.local/t010/integration/`. These include retained authority after source/report/
+  PLY mutation, reuse without duplicate footprint charging, native clock-range
+  rejection, no-incumbent timing and cold/phase-qualified preparation interruption.
+  The 0.35 s cold-preparation budget records 0.378307 s native completion and
+  0.028307 s overrun; Stop completes 0.027065 s after its marker. Separate
+  phase-qualified preparation Stop/EOF complete in 0.028412/0.040922 s.
+  The first process log includes an unclosed-stdin fixture warning; the clean
+  corrected rerun and remaining malformed-record/lifecycle checks are pending.
+- The fixed three-validator allocation probe measures 6,468,848 peak C++ payload
+  bytes on Release, within the adapter reserve's 7 MiB catalog portion. The
+  adapter reserve is 16 MiB within the unchanged aggregate host cap; retained
+  assets, display, viewer and heavy operation owners are charged separately.
+  `.local/t010/integration/adapter-memory-audit.md` records the scope and limits.
+  Debug catalog measurement, the complete simultaneous variable-buffer capacity
+  ledger and whole-process peaks remain open. This is not a process-RSS bound or
+  completed integrated memory gate.
 - Cold full-Pryanik-2 characterization is retained in
   `.local/t010/integration/cold-red.json` and `cold-green.json`. The old legacy
   search-only 0.01 s request takes 10.162734 s total; its Stop test takes 8.752341 s
