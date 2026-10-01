@@ -120,22 +120,28 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
   `stage2-projected-pose-check.json` records the ordered comparisons. The observed
   diagnostic red is retained. Integrated export journeys and successful serial
   spectral fields remain pending; this is not a whole-Start speed result.
-- The formatted integration engine is retained in
-  `.local/t010/integration/checkpoints/admission-green/`, SHA-256
-  `97a5d55b8e3d560951102162cdeb14a6def791c133d11280c847aa4a90fe58e2`.
-  Its manifest binds source hashes and identifies the subsequent fixture-only
-  stdin-close correction. Release contracts pass 347 assertions / 42 cases;
-  six real process tests pass; Rust library tests pass 25 with two ignored
-  child-process helper fixtures. Full logs are `contracts-release.log`,
-  `runtime-admission-green-1.log` and `cargo-library-admission-green.log` under
-  `.local/t010/integration/`. These include retained authority after source/report/
-  PLY mutation, reuse without duplicate footprint charging, native clock-range
-  rejection, no-incumbent timing and cold/phase-qualified preparation interruption.
-  The 0.35 s cold-preparation budget records 0.378307 s native completion and
-  0.028307 s overrun; Stop completes 0.027065 s after its marker. Separate
-  phase-qualified preparation Stop/EOF complete in 0.028412/0.040922 s.
-  The first process log includes an unclosed-stdin fixture warning; the clean
-  corrected rerun and remaining malformed-record/lifecycle checks are pending.
+- Runtime integration checkpoint `be81da1` has a formatted Release engine in
+  `.local/t010/integration/checkpoints/adapter-checkpoint-green/`, SHA-256
+  `3aed0dc7cec25ba542f622e4a78806cce7d1e13a05ac253f08c5c849a0b24ace`.
+  Its manifest binds all 34 owned source files and complete log paths. Release
+  contracts pass 347 assertions / 42 cases; Debug passes 349 / 43, including its
+  additional CRT allocation case. Eight real process tests and three presentation
+  tests pass; Rust library tests pass 25 with two ignored child-process helper
+  fixtures. Logs under `.local/t010/integration/` include
+  `runtime-adapter-checkpoint-green.log`, `contracts-{debug,release}.log`,
+  `ui-workflow-strengthened-green.log` and `cargo-library-admission-green.log`.
+  Cases cover retained authority after source/report/PLY mutation, reuse without
+  duplicate footprint charging, native clock-range rejection, no-incumbent timing,
+  malformed shape/identity recovery and cold/phase-qualified preparation interruption.
+  The 0.35 s cold-preparation budget records 0.377150 s native completion and
+  0.027150 s overrun; Stop completes 0.036865 s after its marker. Separate
+  phase-qualified preparation Stop/EOF complete in 0.008694/0.054285 s.
+  The final process run treats ResourceWarning as an error and is clean; the
+  earlier unclosed-stdin fixture warning remains preserved with its original log.
+  The full-size wire-capacity red measured 1,510,974 bytes. Count-before-allocation
+  serialization and capacity-based queue admission pass seven assertions / two
+  cases, preserving a full 1 MiB legal record plus delimiter. Further lifecycle,
+  actual I/O, parser/cached-copy memory and practical performance gates remain open.
 - The fixed three-validator allocation probe measures 6,468,848 peak C++ payload
   bytes on Release, within the adapter reserve's 7 MiB catalog portion. The
   adapter reserve is 16 MiB within the unchanged aggregate host cap; retained
@@ -147,6 +153,11 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
   peak bytes. The complete simultaneous variable-buffer capacity ledger, bounded
   runtime diagnostics from nested I/O and whole-process peaks remain open. This
   is not a process-RSS bound or completed integrated memory gate.
+- Shared field-admission declaration `9eba3cd` compiles in the following native
+  Release build. Its optional value remains empty until actual-layout admission
+  is implemented. Serial raster, ranked-orientation and full-catalog reproducers
+  still fail as intended in `stage3-{raster,ranked,ulamok}-red.log`; the existing
+  10,000-cell cap and Ulamok's 48-correlation assertion remain unchanged.
 - Cold full-Pryanik-2 characterization is retained in
   `.local/t010/integration/cold-red.json` and `cold-green.json`. The old legacy
   search-only 0.01 s request takes 10.162734 s total; its Stop test takes 8.752341 s

@@ -250,6 +250,19 @@ record capability for admitted path metadata. Audit simultaneous raw/canonical
 records, DOM copies, diagnostics, writer queue and schema-validator ownership
 against the adapter reserve before accepting the integrated memory gate.
 
+Propagate the diagnostic policy explicitly through I/O: append
+`ContractDiagnosticLimits diagnostic_limits{}` to `AssetLoadLimits`,
+`ResultRequest`, `ExportRequest` and `InspectRequest`, preserving existing aggregate
+call forms and public defaults (32 issues, unlimited diagnostic string bytes).
+The retained session, its private `SolveRuntime` and bounded auxiliary CLI paths
+pass `{16,256}` through object/container loading, result building and export.
+This is an operation policy, not a saved setting or provenance change. Apply it
+when rejection diagnostics are retained; do not truncate authoritative inspection
+reports or alter repair recipe bytes, validity or counters. Recipe parsing still
+requires independent lexer scratch admission. Bound both lexer token buffers,
+capacity growth and error formatting before allocation; a SAX callback after a
+large token has been built does not provide that bound.
+
 The initial cold prepare reserves 16 MiB for bounded adapter records/DOM/writer
 metadata. Transactional replacement additionally reserves 64 MiB for the still-live
 viewer, plus all distinct native old owners. Actual preview payload/staging receives
