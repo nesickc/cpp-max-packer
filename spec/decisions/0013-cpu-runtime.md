@@ -263,6 +263,23 @@ requires independent lexer scratch admission. Bound both lexer token buffers,
 capacity growth and error formatting before allocation; a SAX callback after a
 large token has been built does not provide that bound.
 
+The auxiliary `desktop-session` admission format additionally limits each numeric
+lexeme to 128 ASCII characters. Shipped desktop number encodings fit this bound;
+longer spellings receive `INVALID_RUNTIME_RECORD`. Ordinary public settings,
+project, report and recipe JSON retains its existing numeric syntax. This is a
+new auxiliary resource bound within the unreleased runtime protocol, not a change
+to persisted number values or authoritative geometry.
+
+Before invoking the auxiliary lexer, a nonallocating admission pass may collapse
+runs of JSON whitespace outside strings to one space, preserving token separation,
+and enforce the existing 64 KiB aggregate decoded-string allowance and the numeric
+lexeme bound. Preserve every byte inside strings. Reserve admitted normalized
+storage before writing it; growth overlap belongs in the memory ledger. The pinned
+JSON parser remains responsible for full syntax validation. Invalid input must
+not become valid through normalization. Check escaped/surrogate string boundaries,
+numeric-length boundaries, token separation and the large-whitespace malformed
+input that otherwise expands the lexer's error text.
+
 The initial cold prepare reserves 16 MiB for bounded adapter records/DOM/writer
 metadata. Transactional replacement additionally reserves 64 MiB for the still-live
 viewer, plus all distinct native old owners. Actual preview payload/staging receives
