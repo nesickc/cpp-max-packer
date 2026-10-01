@@ -4,6 +4,7 @@
 #include <fstream>
 
 #include "../../pack_geometry/tests/validation_fixtures.hpp"
+#include "spectrapack/geometry/display_lod.hpp"
 #include "spectrapack/geometry/export_validation.hpp"
 #include "spectrapack/geometry/rigid_transform.hpp"
 #include "spectrapack/solver/spectral.hpp"
@@ -92,6 +93,35 @@ TEST_CASE("T011 native injected Start deadline forbids baseline work", "[solver]
     CHECK(result.termination_reason == sol::TerminationReason::budget_exhausted);
     CHECK(result.stats.candidate_evaluations == 0);
     CHECK_FALSE(result.best);
+}
+
+TEST_CASE("T011 controlled geometry cannot authorize expired preparation", "[solver][T011]")
+{
+    const auto native_context = context();
+    const auto bytes = quantized_copy(*native_context->object(), {
+                                                                     "source", { 0, 0, 0 },
+                                                                      { 0, 0, 0, 1 }
+    });
+    const auto draft = geo::inspect_stl(bytes, { geo::AssetRole::object, geo::Units::mm });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::AssetDraft>>(draft));
+    const auto candidate = geo::make_candidate(native_context, {});
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(candidate));
+    const runtime::OperationControl control { {}, runtime::Clock::now() - std::chrono::seconds(1) };
+
+    const auto inspected = geo::inspect_stl(bytes, { geo::AssetRole::object, geo::Units::mm }, control);
+    REQUIRE(std::holds_alternative<geo::ImportFailure>(inspected));
+    CHECK(std::get<geo::ImportFailure>(inspected).code == "DEADLINE_EXCEEDED");
+    const auto repaired = geo::propose_weld(std::get<std::shared_ptr<const geo::AssetDraft>>(draft), { .01 }, control);
+    REQUIRE(std::holds_alternative<geo::ImportFailure>(repaired));
+    CHECK(std::get<geo::ImportFailure>(repaired).code == "DEADLINE_EXCEEDED");
+    const auto lod = geo::make_display_lod(native_context->object(), {}, {}, control);
+    REQUIRE(std::holds_alternative<geo::RepresentationFailure>(lod));
+    CHECK(std::get<geo::RepresentationFailure>(lod).code == "DEADLINE_EXCEEDED");
+    const auto checked =
+        geo::validate(native_context, std::get<std::shared_ptr<const geo::Candidate>>(candidate), {}, control);
+    CHECK(checked.report.validity == geo::Validity::indeterminate);
+    CHECK(checked.report.code == "DEADLINE_EXCEEDED");
+    CHECK_FALSE(checked.validated_solution);
 }
 
 TEST_CASE("T010 full36 independently quantized Ulamok export fits unchanged caps", "[solver][T010][qualification]")

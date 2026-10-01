@@ -634,6 +634,10 @@ bool structural_zero(
 }  // namespace
 
 bool WorkBudget::consume(std::uint64_t units) noexcept {
+    if (controlled_ && (poll_calls_++ & 255U) == 0 && control_.poll() != runtime::StopCause::none) {
+        exhausted_ = true;
+        return false;
+    }
   if (used_ > limit_ || units > limit_ - used_) { exhausted_ = true; return false; }
   used_ += units;
   return true;

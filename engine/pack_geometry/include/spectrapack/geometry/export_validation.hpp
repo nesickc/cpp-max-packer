@@ -23,6 +23,7 @@ struct ExportValidationLimits {
 // Validates the independently quantized, baked-world copy streams. It never
 // produces a replacement ValidatedSolution: it only authorizes STL publication.
 [[nodiscard]] ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSolution>,
-                                                         const ExportCopyReader&, const ExportValidationLimits& = {});
+                                                         const ExportCopyReader&, const ExportValidationLimits& = {},
+                                                         const runtime::OperationControl& = {});
 
 }  // namespace spectrapack::geometry

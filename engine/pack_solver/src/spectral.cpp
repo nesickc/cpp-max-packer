@@ -233,10 +233,11 @@ std::optional<std::uint64_t> axis_bytes(const std::array<std::vector<double>, 3>
 
 Boundary boundary(const RunControl& control) noexcept
 {
-    if (control.stop.stop_requested()) {
+    const auto cause = control.poll();
+    if (cause == runtime::StopCause::user_stopped) {
         return Boundary::stopped;
     }
-    if (control.deadline && std::chrono::steady_clock::now() >= *control.deadline) {
+    if (cause == runtime::StopCause::deadline) {
         return Boundary::deadline;
     }
     return Boundary::none;
@@ -943,7 +944,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
                 return false;
             }
-            const auto checked = geometry::validate(context, candidate, validation_limits(*validation_extra));
+            const auto checked = geometry::validate(context, candidate, validation_limits(*validation_extra), control);
             const bool validation_limit_exceeded =
                 checked.report.kernel_work >
                     remaining(limits.spectral.max_validation_kernel_work, spectral_validation_kernel_work) ||
@@ -1413,7 +1414,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                     outcome.run.retained_solution = outcome.run.best ? outcome.run.best->solution : latest;
                     return outcome;
                 }
-                auto empty_checked = geometry::validate(context, candidate, validation_limits(*empty_extra));
+                auto empty_checked = geometry::validate(context, candidate, validation_limits(*empty_extra), control);
                 const bool empty_validation_limit_exceeded =
                     empty_checked.report.kernel_work >
                         remaining(limits.spectral.max_validation_kernel_work, spectral_validation_kernel_work) ||
@@ -1533,6 +1534,11 @@ SpectralOutcome run_cpu_spectral(std::shared_ptr<const geometry::ValidationConte
     if (initial && initial->context() == context) {
         allocation_failure.run.retained_solution = initial;
     }
+    if (limits.cpu_thread_count == 0 || limits.cpu_thread_count > cpu_supported_thread_count()) {
+        allocation_failure.run.termination_reason = TerminationReason::error;
+        allocation_failure.run.diagnostic_code = "CPU_THREAD_COUNT_UNSUPPORTED";
+        return allocation_failure;
+    }
     if (!context) {
         allocation_failure.run.termination_reason = TerminationReason::error;
         allocation_failure.run.diagnostic_code = "SPECTRAL_CATALOG_INVALID";
@@ -1571,6 +1577,15 @@ SpectralOutcome run_cpu_spectral(std::shared_ptr<const geometry::ValidationConte
                                  const SpectralLimits& limits, const RunControl& control, SnapshotSink sink,
                                  std::shared_ptr<const geometry::ValidatedSolution> initial)
 {
+    if (limits.cpu_thread_count == 0 || limits.cpu_thread_count > cpu_supported_thread_count()) {
+        SpectralOutcome out;
+        if (initial && initial->context() == context) {
+            out.run.retained_solution = std::move(initial);
+        }
+        out.run.termination_reason = TerminationReason::error;
+        out.run.diagnostic_code = "CPU_THREAD_COUNT_UNSUPPORTED";
+        return out;
+    }
     const auto validity = context ? resolved_catalog_validity(*context, catalog, limits.spectral.max_orientations)
                                   : CatalogValidity::invalid;
     if (validity != CatalogValidity::valid) {

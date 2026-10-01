@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "spectrapack/geometry/representation_types.hpp"
+#include "spectrapack/runtime/operation_control.hpp"
 
 namespace spectrapack::geometry {
 
@@ -130,9 +131,11 @@ class AssetDraft {
   struct Storage;
   std::shared_ptr<const Storage> storage_;
   explicit AssetDraft(std::shared_ptr<const Storage> storage) noexcept;
-  friend ImportOutcome<AssetDraft> inspect_stl(std::span<const std::byte>, const ImportOptions&);
+  friend ImportOutcome<AssetDraft> inspect_stl(std::span<const std::byte>, const ImportOptions&,
+                                               const runtime::OperationControl&);
   friend class detail::ImportAccess;
-  friend ImportOutcome<RepairProposal> propose_weld(std::shared_ptr<const AssetDraft>, const WeldOptions&);
+  friend ImportOutcome<RepairProposal> propose_weld(std::shared_ptr<const AssetDraft>, const WeldOptions&,
+                                                    const runtime::OperationControl&);
   friend ImportOutcome<AcceptedSolid> accept_asset(std::shared_ptr<const AssetDraft>);
   friend class AcceptedSolid;
 };
@@ -150,7 +153,8 @@ class RepairProposal {
   struct Storage;
   std::shared_ptr<const Storage> storage_;
   explicit RepairProposal(std::shared_ptr<const Storage> storage) noexcept;
-  friend ImportOutcome<RepairProposal> propose_weld(std::shared_ptr<const AssetDraft>, const WeldOptions&);
+  friend ImportOutcome<RepairProposal> propose_weld(std::shared_ptr<const AssetDraft>, const WeldOptions&,
+                                                    const runtime::OperationControl&);
 };
 class AcceptedSolid {
  public:
@@ -178,8 +182,10 @@ class AcceptedSolid {
   friend ImportOutcome<AcceptedSolid> accept_repair(std::shared_ptr<const RepairProposal>);
 };
 
-[[nodiscard]] ImportOutcome<AssetDraft> inspect_stl(std::span<const std::byte>, const ImportOptions&);
-[[nodiscard]] ImportOutcome<RepairProposal> propose_weld(std::shared_ptr<const AssetDraft>, const WeldOptions&);
+[[nodiscard]] ImportOutcome<AssetDraft> inspect_stl(std::span<const std::byte>, const ImportOptions&,
+                                                    const runtime::OperationControl& = {});
+[[nodiscard]] ImportOutcome<RepairProposal> propose_weld(std::shared_ptr<const AssetDraft>, const WeldOptions&,
+                                                         const runtime::OperationControl& = {});
 [[nodiscard]] ImportOutcome<AcceptedSolid> accept_asset(std::shared_ptr<const AssetDraft>);
 [[nodiscard]] ImportOutcome<AcceptedSolid> accept_repair(std::shared_ptr<const RepairProposal>);
 

@@ -15,7 +15,7 @@ struct ImportAttemptStats {
 class ImportAccess {
 public:
     [[nodiscard]] static ImportOutcome<AssetDraft> inspect(std::span<const std::byte>, const ImportOptions&, bool,
-                                                           ImportAttemptStats*);
+                                                           ImportAttemptStats*, const runtime::OperationControl& = {});
     [[nodiscard]] static bool baked_world_coordinates_exact(const AssetDraft&) noexcept;
     [[nodiscard]] static std::optional<std::uint64_t> draft_payload_bytes(const AssetDraft&) noexcept;
 };
@@ -50,7 +50,8 @@ struct ExportBudget {
     std::uint64_t import_candidate_pairs_used {};
     std::uint64_t pair_tests_used {};
 
-    ExportBudget(std::uint64_t max_kernel_work, std::uint64_t max_working_bytes) noexcept;
+    ExportBudget(std::uint64_t max_kernel_work, std::uint64_t max_working_bytes,
+                 const runtime::OperationControl& control = {}) noexcept;
     [[nodiscard]] std::optional<MemoryLease> lease_bytes(std::uint64_t bytes) noexcept;
     [[nodiscard]] MemoryLease adopt_bytes(std::uint64_t bytes) noexcept;
     [[nodiscard]] bool consume_import_predicates(std::uint64_t units, std::uint64_t maximum) noexcept;
@@ -73,7 +74,7 @@ using BakedPlacementOutcome = std::variant<ResidentPlacedSolid, ClassifiedFailur
 // Private export path: binary32 decoded coordinates remain world coordinates
 // with a zero anchor. Public import frame behavior is unchanged.
 ImportOutcome<AssetDraft> inspect_baked_world_draft(std::span<const std::byte>, const ImportLimits&,
-                                                    ImportAttemptStats&);
+                                                    ImportAttemptStats&, const runtime::OperationControl& = {});
 [[nodiscard]] std::optional<std::uint64_t> baked_import_scratch_bound(std::size_t source_bytes) noexcept;
 [[nodiscard]] BakedWorldOutcome inspect_baked_world_stl(std::span<const std::byte>, const ImportLimits&, ExportBudget&);
 [[nodiscard]] BakedPlacementOutcome prepare_baked_world(std::shared_ptr<const AcceptedSolid>, ExportBudget&);

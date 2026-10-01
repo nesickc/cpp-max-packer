@@ -135,10 +135,10 @@ class ValidatedSolution {
   ValidationReport report_;
   ValidatedSolution(std::shared_ptr<const ValidationContext>, std::shared_ptr<const Candidate>,
                     ValidationReport) noexcept;
-  friend ValidationOutcome validate(std::shared_ptr<const ValidationContext>,
-                                    std::shared_ptr<const Candidate>, const ValidationLimits&);
-  friend ValidationOutcome revalidate(std::shared_ptr<const ValidatedSolution>,
-                                      const ValidationLimits&);
+  friend ValidationOutcome validate(std::shared_ptr<const ValidationContext>, std::shared_ptr<const Candidate>,
+                                    const ValidationLimits&, const runtime::OperationControl&);
+  friend ValidationOutcome revalidate(std::shared_ptr<const ValidatedSolution>, const ValidationLimits&,
+                                      const runtime::OperationControl&);
 };
 struct ValidationOutcome {
   ValidationReport report;
@@ -152,11 +152,12 @@ struct ValidationOutcome {
     Constraints constraints);
 [[nodiscard]] ValidationInputOutcome<Candidate> make_candidate(
     std::shared_ptr<const ValidationContext> context, std::vector<CopyPose> copies);
-[[nodiscard]] ValidationOutcome validate(
-    std::shared_ptr<const ValidationContext> expected_context,
-    std::shared_ptr<const Candidate> candidate, const ValidationLimits& limits = {});
-[[nodiscard]] ValidationOutcome revalidate(
-    std::shared_ptr<const ValidatedSolution> solution,
-    const ValidationLimits& limits = {});
+[[nodiscard]] ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_context,
+                                         std::shared_ptr<const Candidate> candidate,
+                                         const ValidationLimits& limits = {},
+                                         const runtime::OperationControl& control = {});
+[[nodiscard]] ValidationOutcome revalidate(std::shared_ptr<const ValidatedSolution> solution,
+                                           const ValidationLimits& limits = {},
+                                           const runtime::OperationControl& control = {});
 
 }  // namespace spectrapack::geometry

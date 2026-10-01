@@ -24,10 +24,16 @@ enum class FilterPath : std::uint8_t {
 
 class WorkBudget {
  public:
-  explicit WorkBudget(std::uint64_t limit) noexcept : limit_(limit) {}
+     explicit WorkBudget(std::uint64_t limit, const runtime::OperationControl& control = {}) noexcept :
+         limit_(limit),
+         control_(control),
+         controlled_(control.stop.stop_possible() || control.deadline.has_value())
+     {
+     }
   [[nodiscard]] bool consume(std::uint64_t units) noexcept;
   [[nodiscard]] std::uint64_t used() const noexcept { return used_; }
   [[nodiscard]] bool exhausted() const noexcept { return exhausted_; }
+  [[nodiscard]] const runtime::OperationControl& control() const noexcept { return control_; }
   void record_orientation(bool orient3, FilterPath path) noexcept;
   [[nodiscard]] std::uint64_t orient2_calls() const noexcept { return orient2_calls_; }
   [[nodiscard]] std::uint64_t orient3_calls() const noexcept { return orient3_calls_; }
@@ -42,6 +48,9 @@ class WorkBudget {
   std::uint64_t limit_{};
   std::uint64_t used_{};
   bool exhausted_{};
+  runtime::OperationControl control_;
+  bool controlled_ {};
+  std::uint32_t poll_calls_ {};
   std::uint64_t orient2_calls_{};
   std::uint64_t orient3_calls_{};
   std::uint64_t interval_hits_{};

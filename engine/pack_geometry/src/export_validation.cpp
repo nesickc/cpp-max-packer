@@ -47,8 +47,9 @@ void MemoryLease::reset() noexcept
     bytes_ = 0;
 }
 
-ExportBudget::ExportBudget(std::uint64_t max_kernel_work, std::uint64_t max_working_bytes) noexcept :
-    kernel(max_kernel_work, max_working_bytes)
+ExportBudget::ExportBudget(std::uint64_t max_kernel_work, std::uint64_t max_working_bytes,
+                           const runtime::OperationControl& control) noexcept :
+    kernel(max_kernel_work, max_working_bytes, control)
 {
 }
 
@@ -142,7 +143,7 @@ BakedWorldOutcome inspect_baked_world_stl(std::span<const std::byte> bytes, cons
     ImportAttemptStats attempt_stats;
     ImportOutcome<AssetDraft> inspected;
     try {
-        inspected = inspect_baked_world_draft(bytes, attempt_limits, attempt_stats);
+        inspected = inspect_baked_world_draft(bytes, attempt_limits, attempt_stats, budget.kernel.control());
     }
     catch (const std::bad_alloc&) {
         return unresolved("EXPORT_ALLOCATION", "The staged STL import allocation failed.");
@@ -157,6 +158,9 @@ BakedWorldOutcome inspect_baked_world_stl(std::span<const std::byte> bytes, cons
         return unresolved("EXPORT_IMPORT_PAIR_LIMIT", "Cumulative import candidate-pair work was exhausted.");
     }
     if (const auto* failure = std::get_if<ImportFailure>(&inspected)) {
+        if (failure->code == "OPERATION_CANCELLED" || failure->code == "DEADLINE_EXCEEDED") {
+            return unresolved(failure->code, failure->message);
+        }
         if (failure->reason == "PREDICATE_WORK") {
             return unresolved("EXPORT_IMPORT_WORK_LIMIT", failure->message);
         }
@@ -285,6 +289,11 @@ ValidationReport report(Validity validity, std::string code, std::string message
     result.aabb_pair_tests = budget.pair_tests_used;
     result.kernel_work = budget.kernel.work_used();
     result.working_bytes_peak = std::max(peak_floor, budget.kernel.bytes_peak());
+    if (const auto cause = budget.kernel.control().poll(); cause != runtime::StopCause::none) {
+        result.validity = Validity::indeterminate;
+        result.code = cause == runtime::StopCause::user_stopped ? "OPERATION_CANCELLED" : "DEADLINE_EXCEEDED";
+        result.message = "Native export validation was interrupted.";
+    }
     return result;
 }
 
@@ -350,6 +359,12 @@ LoadOutcome load_copy(std::size_t index, const ExportCopyReader& reader, const E
 {
     std::optional<detail::MemoryLease> reader_lease;
     ExportCopyRead read;
+    if (const auto cause = budget.kernel.control().poll(); cause != runtime::StopCause::none) {
+        return ClassifiedFailure { Validity::indeterminate,
+                                   cause == runtime::StopCause::user_stopped ? "OPERATION_CANCELLED"
+                                                                             : "DEADLINE_EXCEEDED",
+                                   "Native export validation was interrupted." };
+    }
     try {
         read = reader(index);
     }
@@ -382,10 +397,16 @@ LoadOutcome load_copy(std::size_t index, const ExportCopyReader& reader, const E
 }  // namespace
 
 ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSolution> solution,
-                                           const ExportCopyReader& reader, const ExportValidationLimits& limits)
+                                           const ExportCopyReader& reader, const ExportValidationLimits& limits,
+                                           const runtime::OperationControl& control)
 {
     namespace kernel = detail::validation_kernel;
-    ExportBudget budget(limits.validation.max_kernel_work, limits.max_working_bytes);
+    control.phase(runtime::Phase::validating);
+    ExportBudget budget(limits.validation.max_kernel_work, limits.max_working_bytes, control);
+    if (control.poll() != runtime::StopCause::none) {
+        return report(Validity::indeterminate, "EXPORT_INTERRUPTED", "Native export validation was interrupted.",
+                      budget);
+    }
     if (!solution || !reader) {
         return report(Validity::indeterminate, "EXPORT_INPUT", "A validated solution and copy reader are required.",
                       budget);
@@ -408,7 +429,7 @@ ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSoluti
     fresh_limits.max_working_bytes = std::min(fresh_limits.max_working_bytes, limits.max_working_bytes - source_bytes);
     ValidationReport fresh_report;
     try {
-        auto fresh = revalidate(solution, fresh_limits);
+        auto fresh = revalidate(solution, fresh_limits, control);
         fresh_report = std::move(fresh.report);
     }
     catch (const std::bad_alloc&) {

@@ -644,14 +644,24 @@ std::optional<std::uint64_t> placed_prepared_owned_bytes(const PlacedSolid& soli
     return solid.prepared ? prepared_owned_bytes(*solid.prepared) : std::nullopt;
 }
 
-Budget::Budget(std::uint64_t max_work, std::uint64_t max_working_bytes) noexcept :
+Budget::Budget(std::uint64_t max_work, std::uint64_t max_working_bytes,
+               const runtime::OperationControl& control) noexcept :
     max_work_(max_work),
-    max_working_bytes_(max_working_bytes)
+    max_working_bytes_(max_working_bytes),
+    control_(control),
+    controlled_(control.stop.stop_possible() || control.deadline.has_value())
 {
 }
 
 bool Budget::consume_work(std::uint64_t units) noexcept
 {
+    if (controlled_ && ((poll_calls_++ & 255U) == 0U)) {
+        interruption_ = control_.poll();
+    }
+    if (interruption_ != runtime::StopCause::none) {
+        exhausted_ = true;
+        return false;
+    }
     if (work_used_ > max_work_ || units > max_work_ - work_used_) {
         exhausted_ = true;
         work_exhausted_ = true;
@@ -662,6 +672,13 @@ bool Budget::consume_work(std::uint64_t units) noexcept
 }
 
 bool Budget::reserve_bytes(std::uint64_t bytes) noexcept {
+    if (controlled_) {
+        interruption_ = control_.poll();
+    }
+    if (interruption_ != runtime::StopCause::none) {
+        exhausted_ = true;
+        return false;
+    }
   if (bytes_live_ > max_working_bytes_ || bytes > max_working_bytes_ - bytes_live_) {
     exhausted_=true; memory_exhausted_=true;
     return false;
@@ -685,6 +702,8 @@ bool Budget::work_exhausted() const noexcept { return work_exhausted_; }
 bool Budget::memory_exhausted() const noexcept { return memory_exhausted_; }
 bool Budget::arithmetic_capacity_exceeded() const noexcept { return arithmetic_capacity_exceeded_; }
 void Budget::note_arithmetic_capacity() noexcept { arithmetic_capacity_exceeded_=true; }
+runtime::StopCause Budget::interruption() const noexcept { return interruption_; }
+const runtime::OperationControl& Budget::control() const noexcept { return control_; }
 
 PrepareResult prepare(std::shared_ptr<const AcceptedSolid> solid, Budget& budget) {
   if (!solid) return {{},{"KERNEL_SOLID_REQUIRED","prepare"}};
@@ -1180,6 +1199,12 @@ std::optional<ExactOrder> separated_interval_order(
 }
 
 const char* exact_failure_code(const Budget& budget) noexcept {
+    if (budget.interruption() == runtime::StopCause::user_stopped) {
+        return "OPERATION_CANCELLED";
+    }
+    if (budget.interruption() == runtime::StopCause::deadline) {
+        return "DEADLINE_EXCEEDED";
+    }
   if (budget.memory_exhausted()) return "KERNEL_MEMORY_LIMIT";
   if (budget.work_exhausted()) return "KERNEL_WORK_LIMIT";
   if (budget.arithmetic_capacity_exceeded())

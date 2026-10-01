@@ -1,7 +1,5 @@
 #include "solid_analysis.hpp"
 
-#include "exact_predicates.hpp"
-
 #include <fcl/geometry/bvh/BVH_model.h>
 #include <fcl/math/bv/AABB.h>
 
@@ -17,6 +15,9 @@
 #include <stack>
 #include <utility>
 #include <vector>
+
+#include "exact_predicates.hpp"
+#include "operation_checks.hpp"
 
 namespace spectrapack::geometry::detail {
 namespace {
@@ -146,59 +147,74 @@ std::size_t shared_vertices(
   return count;
 }
 
-bool build_bvh(MeshView mesh, fcl::BVHModel<fcl::AABBd>& model) {
-  if (mesh.triangles.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
-    return false;
-  }
-  if (model.beginModel(static_cast<int>(mesh.triangles.size()),
-                       static_cast<int>(mesh.triangles.size() * 3)) != fcl::BVH_OK) {
-    return false;
-  }
-  for (const auto& triangle : mesh.triangles) {
-    const auto point = [&mesh](std::uint32_t id) {
-      const auto& value = mesh.vertices[id];
-      return fcl::Vector3d(value[0], value[1], value[2]);
-    };
-    if (model.addTriangle(point(triangle[0]), point(triangle[1]), point(triangle[2])) != fcl::BVH_OK) {
-      return false;
+bool build_bvh(MeshView mesh, fcl::BVHModel<fcl::AABBd>& model, const runtime::OperationControl& control)
+{
+    operation_checkpoint(control);
+    if (mesh.triangles.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        return false;
     }
-  }
-  return model.endModel() == fcl::BVH_OK;
+    if (model.beginModel(static_cast<int>(mesh.triangles.size()), static_cast<int>(mesh.triangles.size() * 3)) !=
+        fcl::BVH_OK) {
+        return false;
+    }
+    for (const auto& triangle : mesh.triangles) {
+        operation_checkpoint(control);
+        const auto point = [&mesh](std::uint32_t id) {
+            const auto& value = mesh.vertices[id];
+            return fcl::Vector3d(value[0], value[1], value[2]);
+        };
+        if (model.addTriangle(point(triangle[0]), point(triangle[1]), point(triangle[2])) != fcl::BVH_OK) {
+            return false;
+        }
+    }
+    const auto complete = model.endModel() == fcl::BVH_OK;
+    operation_checkpoint(control);
+    return complete;
 }
 
-template<class Callback>
-bool visit_overlapping_leaf_pairs(
-    const fcl::BVHModel<fcl::AABBd>& model, Callback&& callback) {
-  if (model.getNumBVs() == 0) return true;
-  std::vector<std::pair<int, int>> pending{{0, 0}};
-  while (!pending.empty()) {
-    const auto [left_id, right_id] = pending.back();
-    pending.pop_back();
-    const auto& left = model.getBV(left_id);
-    const auto& right = model.getBV(right_id);
-    if (!left.bv.overlap(right.bv)) continue;
+template <class Callback>
+bool visit_overlapping_leaf_pairs(const fcl::BVHModel<fcl::AABBd>& model, Callback&& callback,
+                                  const runtime::OperationControl& control)
+{
+    if (model.getNumBVs() == 0)
+        return true;
+    std::vector<std::pair<int, int>> pending {
+        { 0, 0 }
+    };
+    while (!pending.empty()) {
+        operation_checkpoint(control);
+        const auto [left_id, right_id] = pending.back();
+        pending.pop_back();
+        const auto& left = model.getBV(left_id);
+        const auto& right = model.getBV(right_id);
+        if (!left.bv.overlap(right.bv))
+            continue;
 
-    if (left.isLeaf() && right.isLeaf()) {
-      const auto left_primitive = static_cast<std::uint32_t>(left.primitiveId());
-      const auto right_primitive = static_cast<std::uint32_t>(right.primitiveId());
-      if (left_primitive == right_primitive) continue;
-      const auto [first, second] = std::minmax(left_primitive, right_primitive);
-      if (!callback(first, second)) return false;
-      continue;
+        if (left.isLeaf() && right.isLeaf()) {
+            const auto left_primitive = static_cast<std::uint32_t>(left.primitiveId());
+            const auto right_primitive = static_cast<std::uint32_t>(right.primitiveId());
+            if (left_primitive == right_primitive)
+                continue;
+            const auto [first, second] = std::minmax(left_primitive, right_primitive);
+            if (!callback(first, second))
+                return false;
+            continue;
+        }
+        if (left_id == right_id) {
+            pending.emplace_back(left.leftChild(), left.leftChild());
+            pending.emplace_back(left.leftChild(), left.rightChild());
+            pending.emplace_back(left.rightChild(), left.rightChild());
+        }
+        else if (left.isLeaf()) {
+            pending.emplace_back(left_id, right.leftChild());
+            pending.emplace_back(left_id, right.rightChild());
+        }
+        else {
+            pending.emplace_back(left.leftChild(), right_id);
+            pending.emplace_back(left.rightChild(), right_id);
+        }
     }
-    if (left_id == right_id) {
-      pending.emplace_back(left.leftChild(), left.leftChild());
-      pending.emplace_back(left.leftChild(), left.rightChild());
-      pending.emplace_back(left.rightChild(), left.rightChild());
-    } else if (left.isLeaf()) {
-      pending.emplace_back(left_id, right.leftChild());
-      pending.emplace_back(left_id, right.rightChild());
-    } else {
-      pending.emplace_back(left.leftChild(), right_id);
-      pending.emplace_back(left.rightChild(), right_id);
-    }
-  }
-  return true;
+    return true;
 }
 
 }  // namespace
@@ -206,6 +222,8 @@ bool visit_overlapping_leaf_pairs(
 SolidAnalysis analyze_solid(
     MeshView mesh, const ImportLimits& limits, exact::WorkBudget& predicate_budget) {
   SolidAnalysis result;
+  const auto& control = predicate_budget.control();
+  operation_checkpoint(control);
   auto& report = result.report;
   const auto finish = [&]() {
     report.predicate_work = predicate_budget.used();
@@ -221,6 +239,9 @@ SolidAnalysis analyze_solid(
   bool first_bound = true;
   Bounds referenced_bounds{};
   for (std::uint32_t face = 0; face != mesh.triangles.size(); ++face) {
+      if ((face & 255U) == 0) {
+          operation_checkpoint(control);
+      }
     const auto& triangle = mesh.triangles[face];
     for (const auto vertex : triangle) {
       if (vertex >= mesh.vertices.size()) {
@@ -243,11 +264,11 @@ SolidAnalysis analyze_solid(
 
   std::vector<std::vector<FaceAdjacency>> adjacency(mesh.triangles.size());
   for (const auto& [edge, uses] : edges) {
-    if (uses.size() == 1) {
-      ++report.boundary_edges;
-      add_issue(report, limits, "BOUNDARY_EDGE", "A solid edge has only one incident face.",
-                uses.front().face);
-    } else if (uses.size() != 2) {
+      operation_checkpoint(control);
+      if (uses.size() == 1) {
+          ++report.boundary_edges;
+          add_issue(report, limits, "BOUNDARY_EDGE", "A solid edge has only one incident face.", uses.front().face);
+      } else if (uses.size() != 2) {
       ++report.nonmanifold_edges;
       add_issue(report, limits, "NONMANIFOLD_EDGE", "A solid edge does not have two incident faces.",
                 uses.front().face);
@@ -260,19 +281,24 @@ SolidAnalysis analyze_solid(
   }
 
   for (std::uint32_t vertex = 0; vertex != incident_faces.size(); ++vertex) {
+      if ((vertex & 255U) == 0) {
+          operation_checkpoint(control);
+      }
     const auto& incident = incident_faces[vertex];
     if (incident.empty()) continue;
     std::set<std::uint32_t> reached;
     std::vector<std::uint32_t> pending{incident.front()};
     while (!pending.empty()) {
-      const auto face = pending.back();
-      pending.pop_back();
-      if (!reached.insert(face).second) continue;
-      for (const auto neighbor : adjacency[face]) {
-        const auto& triangle = mesh.triangles[neighbor.face];
-        if (triangle[0] == vertex || triangle[1] == vertex || triangle[2] == vertex) {
-          pending.push_back(neighbor.face);
-        }
+        operation_checkpoint(control);
+        const auto face = pending.back();
+        pending.pop_back();
+        if (!reached.insert(face).second)
+            continue;
+        for (const auto neighbor : adjacency[face]) {
+            const auto& triangle = mesh.triangles[neighbor.face];
+            if (triangle[0] == vertex || triangle[1] == vertex || triangle[2] == vertex) {
+                pending.push_back(neighbor.face);
+            }
       }
     }
     if (reached.size() != incident.size()) {
@@ -287,6 +313,9 @@ SolidAnalysis analyze_solid(
   std::vector<ShellWork> shells;
   bool orientable = true;
   for (std::uint32_t seed = 0; seed != mesh.triangles.size(); ++seed) {
+      if ((seed & 255U) == 0) {
+          operation_checkpoint(control);
+      }
     if (flip[seed] != -1) continue;
     ShellWork shell;
     std::queue<std::uint32_t> pending;
@@ -294,12 +323,14 @@ SolidAnalysis analyze_solid(
     pending.push(seed);
     bool first = true;
     while (!pending.empty()) {
-      const auto face = pending.front();
-      pending.pop();
-      shell.faces.push_back(face);
-      if (valid_indices) {
-        for (const auto vertex : mesh.triangles[face]) extend(shell.bounds, mesh.vertices[vertex], first);
-      }
+        operation_checkpoint(control);
+        const auto face = pending.front();
+        pending.pop();
+        shell.faces.push_back(face);
+        if (valid_indices) {
+            for (const auto vertex : mesh.triangles[face])
+                extend(shell.bounds, mesh.vertices[vertex], first);
+        }
       for (const auto neighbor : adjacency[face]) {
         const int expected = flip[face] ^ static_cast<int>(neighbor.different_flip);
         if (flip[neighbor.face] == -1) {
@@ -327,39 +358,38 @@ SolidAnalysis analyze_solid(
   }
 
   fcl::BVHModel<fcl::AABBd> model;
-  if (!build_bvh(mesh, model)) {
-    report.intersection_check = CheckState::indeterminate;
-    report.validity = Validity::indeterminate;
-    add_issue(report, limits, "BVH_UNAVAILABLE", "The triangle broadphase could not be constructed.");
-    return finish();
+  if (!build_bvh(mesh, model, control)) {
+      report.intersection_check = CheckState::indeterminate;
+      report.validity = Validity::indeterminate;
+      add_issue(report, limits, "BVH_UNAVAILABLE", "The triangle broadphase could not be constructed.");
+      return finish();
   }
 
   bool capped = false;
   bool uncertain = false;
   visit_overlapping_leaf_pairs(model, [&](std::uint32_t first, std::uint32_t second) {
-    if (report.candidate_pair_tests >= limits.max_candidate_pairs) {
-      capped = true;
-      return false;
-    }
-    ++report.candidate_pair_tests;
-    std::array<int, 3> shared_first{};
-    std::array<int, 3> shared_second{};
-    const auto shared_count = shared_vertices(
-        mesh.triangles[first], mesh.triangles[second], shared_first, shared_second);
-    const auto relation = exact::triangle_relation(
-        triangle_points(mesh, first), triangle_points(mesh, second),
-        shared_first, shared_second, shared_count, predicate_budget);
-    if (relation == exact::TriangleRelation::uncertain) {
-      uncertain = true;
-      return false;
-    }
-    if (relation == exact::TriangleRelation::forbidden) {
-      ++report.self_intersection_pairs;
-      add_issue(report, limits, "SELF_INTERSECTION",
-                "Two triangle interiors intersect or distinct shells touch.", first, second);
-    }
-    return true;
-  });
+      if (report.candidate_pair_tests >= limits.max_candidate_pairs) {
+          capped = true;
+          return false;
+      }
+      ++report.candidate_pair_tests;
+      std::array<int, 3> shared_first {};
+      std::array<int, 3> shared_second {};
+      const auto shared_count =
+          shared_vertices(mesh.triangles[first], mesh.triangles[second], shared_first, shared_second);
+      const auto relation = exact::triangle_relation(triangle_points(mesh, first), triangle_points(mesh, second),
+                                                     shared_first, shared_second, shared_count, predicate_budget);
+      if (relation == exact::TriangleRelation::uncertain) {
+          uncertain = true;
+          return false;
+      }
+      if (relation == exact::TriangleRelation::forbidden) {
+          ++report.self_intersection_pairs;
+          add_issue(report, limits, "SELF_INTERSECTION", "Two triangle interiors intersect or distinct shells touch.",
+                    first, second);
+      }
+      return true;
+  }, control);
   report.predicate_work = predicate_budget.used();
   if (capped || uncertain || predicate_budget.exhausted()) {
     report.intersection_check = CheckState::indeterminate;
@@ -381,20 +411,19 @@ SolidAnalysis analyze_solid(
   }
 
   for (auto& shell : shells) {
-    const auto volume = exact::signed_volume6(mesh, shell.faces, result.flip_faces, predicate_budget);
-    shell.volume_sign = volume.sign;
-    shell.six_volume = volume.six_volume;
-    if (volume.sign == exact::Sign::uncertain || !volume.six_volume) {
-      report.predicate_work = predicate_budget.used();
-      report.containment_check = CheckState::indeterminate;
-      report.validity = Validity::indeterminate;
-      add_issue(report, limits,
-                predicate_budget.exhausted() ? "PREDICATE_WORK" : "VOLUME_UNREPRESENTABLE",
-                predicate_budget.exhausted()
-                    ? "Solid volume checking exhausted its exact predicate-work limit."
-                    : "Exact shell volume cannot be represented for acceptance.");
-      return finish();
-    }
+      operation_checkpoint(control);
+      const auto volume = exact::signed_volume6(mesh, shell.faces, result.flip_faces, predicate_budget);
+      shell.volume_sign = volume.sign;
+      shell.six_volume = volume.six_volume;
+      if (volume.sign == exact::Sign::uncertain || !volume.six_volume) {
+          report.predicate_work = predicate_budget.used();
+          report.containment_check = CheckState::indeterminate;
+          report.validity = Validity::indeterminate;
+          add_issue(report, limits, predicate_budget.exhausted() ? "PREDICATE_WORK" : "VOLUME_UNREPRESENTABLE",
+                    predicate_budget.exhausted() ? "Solid volume checking exhausted its exact predicate-work limit."
+                                                 : "Exact shell volume cannot be represented for acceptance.");
+          return finish();
+      }
     if (volume.sign == exact::Sign::zero) {
       report.containment_check = CheckState::complete;
       report.validity = Validity::invalid;
@@ -405,50 +434,51 @@ SolidAnalysis analyze_solid(
 
   std::vector<std::optional<std::uint32_t>> parent(shells.size());
   for (std::uint32_t child = 0; child != shells.size(); ++child) {
-    const auto sample_face = mesh.triangles[shells[child].faces.front()];
-    const Vec3 sample = mesh.vertices[sample_face[0]];
-    std::optional<std::uint32_t> nearest;
-    double nearest_volume = std::numeric_limits<double>::infinity();
-    for (std::uint32_t candidate = 0; candidate != shells.size(); ++candidate) {
-      if (candidate == child || !strictly_inside_bounds(sample, shells[candidate].bounds)) continue;
-      const auto inside = point_inside_shell(
-          sample, shells[candidate], mesh, referenced_bounds, predicate_budget);
-      if (!inside) {
-        report.predicate_work = predicate_budget.used();
-        report.containment_check = CheckState::indeterminate;
-        report.validity = Validity::indeterminate;
-        add_issue(report, limits,
-                  predicate_budget.exhausted() ? "PREDICATE_WORK" : "CONTAINMENT_UNCERTAIN",
-                  predicate_budget.exhausted()
-                      ? "Shell containment exhausted its exact predicate-work limit."
-                      : "No deterministic containment ray avoided boundary degeneracy.");
-        return finish();
-      }
-      if (*inside) {
-        const double volume = std::abs(*shells[candidate].six_volume);
-        if (volume < nearest_volume) {
-          nearest_volume = volume;
-          nearest = candidate;
-        }
-      }
+      operation_checkpoint(control);
+      const auto sample_face = mesh.triangles[shells[child].faces.front()];
+      const Vec3 sample = mesh.vertices[sample_face[0]];
+      std::optional<std::uint32_t> nearest;
+      double nearest_volume = std::numeric_limits<double>::infinity();
+      for (std::uint32_t candidate = 0; candidate != shells.size(); ++candidate) {
+          operation_checkpoint(control);
+          if (candidate == child || !strictly_inside_bounds(sample, shells[candidate].bounds))
+              continue;
+          const auto inside = point_inside_shell(sample, shells[candidate], mesh, referenced_bounds, predicate_budget);
+          if (!inside) {
+              report.predicate_work = predicate_budget.used();
+              report.containment_check = CheckState::indeterminate;
+              report.validity = Validity::indeterminate;
+              add_issue(report, limits, predicate_budget.exhausted() ? "PREDICATE_WORK" : "CONTAINMENT_UNCERTAIN",
+                        predicate_budget.exhausted() ? "Shell containment exhausted its exact predicate-work limit."
+                                                     : "No deterministic containment ray avoided boundary degeneracy.");
+              return finish();
+          }
+          if (*inside) {
+              const double volume = std::abs(*shells[candidate].six_volume);
+              if (volume < nearest_volume) {
+                  nearest_volume = volume;
+                  nearest = candidate;
+              }
+          }
     }
     parent[child] = nearest;
   }
 
   std::vector<std::uint32_t> depth(shells.size());
   for (std::uint32_t shell = 0; shell != shells.size(); ++shell) {
-    std::set<std::uint32_t> seen;
-    auto current = parent[shell];
-    while (current) {
-      if (!seen.insert(*current).second) {
-        report.containment_check = CheckState::indeterminate;
-        report.validity = Validity::indeterminate;
-        add_issue(report, limits, "CONTAINMENT_CYCLE", "Shell containment did not form an acyclic tree.");
-        return finish();
+      operation_checkpoint(control);
+      std::set<std::uint32_t> seen;
+      auto current = parent[shell];
+      while (current) {
+          if (!seen.insert(*current).second) {
+              report.containment_check = CheckState::indeterminate;
+              report.validity = Validity::indeterminate;
+              add_issue(report, limits, "CONTAINMENT_CYCLE", "Shell containment did not form an acyclic tree.");
+              return finish();
+          }
+          ++depth[shell];
+          current = parent[*current];
       }
-      ++depth[shell];
-      current = parent[*current];
-    }
   }
 
   std::vector<std::uint32_t> material_faces;
