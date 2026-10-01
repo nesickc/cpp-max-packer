@@ -169,6 +169,30 @@ Allow one replacement bundle during transactional Open/import only if both fit;
 otherwise fail while preserving old state. Do not retain an unbounded asset LRU.
 Serialization/export keeps its existing independent native checks and pinned bytes.
 
+Preparation admission must precede reconstruction and preview allocation. Append
+`ImportLimits::max_working_bytes` with the compatibility default `UINT64_MAX`.
+Expose `ImportAdmission { working_bytes_upper_bound, triangle_upper_bound }` and
+`ImportAdmissionOutcome = variant<ImportAdmission, ImportFailure>` through
+`estimate_import_admission(span<const byte>, const ImportLimits& = {}, const
+runtime::OperationControl& = {})`. The query scans actual pinned bytes, not report
+counts. Its bound excludes the caller-owned source byte buffer and includes the
+decoded/retained draft, parsing and deduplication storage, topology/BVH scratch,
+growth overlaps and report storage. `inspect_stl` enforces the same checked bound
+before parsing mesh allocations; rejection uses `MEMORY_LIMIT` with reason
+`IMPORT_WORKING_BYTES`. Overflow rejects. Existing callers retain their old
+default allowance; the retained adapter explicitly supplies the remaining cap.
+
+The adapter subtracts existing bundle/result owners, pinned incoming artifacts and
+its declared reserve before import. Repair replay receives the remaining allowance
+and includes distinct retained original/candidate owners. Display generation uses
+its existing `RepresentationLimits::reserved_bytes`; preview serialization checks
+its computed byte requirement and growth before allocation. A failed replacement
+preserves the old token and complete state. The native bound requires a documented
+capacity/lifetime audit and below-bound tests. Its initial coefficient is not yet
+accepted: 4,096 bytes per triangle alone exceeds 512 MiB for the required 139,212
+triangle Pryanik 2. A tighter justified bound must preserve that practical profile
+and admitted transactional replacement; raising the host cap is not permitted.
+
 ## Start clock, Stop and terminal ownership
 
 Rust captures `QueryPerformanceCounter` and its frequency during successful Start
@@ -351,6 +375,11 @@ change to old result timing or settings is permitted.
   measured after publication and after final UI receipt, respectively. Present the
   operation completion total as the live total; label saved result timing with its
   boundary. Do not rewrite native result bytes to disguise this distinction.
+  The I/O adapter may receive a bounded timing finalizer that refreshes only the
+  optional runtime metadata after independent validation and asset staging,
+  immediately before the primary result commit. It cannot change placements,
+  physical constraints, termination cause or validated authority. Its temporary
+  metadata copy is included in the unchanged host-memory admission.
   `deadline_overrun=max(0,total-budget)` at the declared boundary;
   fixed-work-only runs use zero and record absence of a time deadline in settings.
 
