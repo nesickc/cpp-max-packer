@@ -503,6 +503,19 @@ estimate for that copy and thread count; show prepared residency and the host ca
 separately. It is not an estimate of an unknown final Start copy count. Every later
 growth still requires admission including all simultaneously live owners.
 
+Derive these recorded bounds from enforced admission for the actual layout and
+current orientation. Correlation admission may use the existing CPU estimator
+plus the deduplicated live owners and bounded query/ranking/worker reserves.
+Do not substitute a speculative maximum across every catalog orientation and
+full-environment footprint for this actual-generation calculation. Include earlier
+geometry, voxelization and transactional staging admissions in the maximum; their
+scratch may already be released when correlation begins. Each recorded candidate
+bound must be conservative and enforced before its relevant growth, with the same
+effective allowance and associated copy/thread/policy basis. A measured allocation
+peak alone is not a pre-allocation upper bound. This refines observational metadata
+without changing the requirement to admit every allocation or claiming a whole-Start
+bound.
+
 The wire representation is the closed, versioned
 `results.schema.json#/definitions/cpu_field_admission` object with required
 `version:1` and the five native fields above. Byte/copy values are existing safe
