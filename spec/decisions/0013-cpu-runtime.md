@@ -94,6 +94,14 @@ Add controlled physical-query/display-LOD overloads wherever those calls perform
 long work. Keep old call forms through defaults or forwarding wrappers; fix friend
 declarations together. Do not add a solver dependency to geometry.
 
+Apply the same final default control to the attempt-taking `make_blocked_field`,
+`BlockedField::add` and `BlockedField::remove` forms. Poll bounded preparation
+scans and immediately before committing a mutation. Interrupted mutation calls
+preserve their input field, independently of the solver's outer transaction;
+polling must not expose partially updated reference counts. Retain existing call
+forms through defaults/wrappers. These native signatures require rebuilding
+consumers but change no persisted or wire schema.
+
 The integration-owned I/O signature is
 `AssetLoadOutcome load_accepted_asset(const filesystem::path&, const
 runtime::OperationControl& control = {}, const AssetLoadLimits& limits = {},
