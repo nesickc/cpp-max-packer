@@ -516,6 +516,17 @@ peak alone is not a pre-allocation upper bound. This refines observational metad
 without changing the requirement to admit every allocation or claiming a whole-Start
 bound.
 
+Append native `RepresentationAttemptStats::admitted_bytes_upper_bound` as a
+`uint64_t`, with zero meaning no complete admitted bound. Record only successful
+pre-allocation checks: the kernel budget's planned live-byte maxima and the PMR
+resource's checked prospective growth before calling its upstream allocator.
+Combine complete input and caller ownership with those values through the attempt
+scope; reject overflow and preserve deduplication. A refused request cannot raise
+this value. A successfully admitted allocation that subsequently fails may retain
+its admitted bound. Existing `working_bytes_peak` remains separate accounting
+evidence; legacy import/validation work counters and the public field DTO do not
+change. This additive native stats member requires normal consumer rebuilds.
+
 The wire representation is the closed, versioned
 `results.schema.json#/definitions/cpu_field_admission` object with required
 `version:1` and the five native fields above. Byte/copy values are existing safe
