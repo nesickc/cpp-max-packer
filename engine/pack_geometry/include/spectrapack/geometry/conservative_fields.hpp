@@ -118,6 +118,10 @@ private:
 class BlockedField {
 public:
     ~BlockedField();
+    // Shares the immutable mask only; independently owns counts and footprints.
+    // The caller reserve includes source wrappers and other live owners.
+    [[nodiscard]] std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> clone(
+        const RepresentationLimits&, RepresentationAttemptStats&, const runtime::OperationControl& = {}) const;
     [[nodiscard]] std::optional<RepresentationFailure> add(std::string copy_id,
                                                            std::shared_ptr<const CellField> placed_blocker);
     [[nodiscard]] std::optional<RepresentationFailure> add(std::string_view copy_id,

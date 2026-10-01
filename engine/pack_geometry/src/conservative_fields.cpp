@@ -1080,6 +1080,11 @@ struct BlockedField::Storage {
     struct FootprintRecord {
         std::pmr::string id;
         Footprint footprint;
+        explicit FootprintRecord(std::pmr::memory_resource* resource) :
+            id(std::size_t {}, '\0', resource),
+            footprint(std::size_t {}, resource)
+        {
+        }
     };
     using Footprints = std::pmr::list<FootprintRecord>;
     std::shared_ptr<const CellField> mask;
@@ -1092,7 +1097,7 @@ struct BlockedField::Storage {
         mask(std::move(value)),
         limits(admission),
         resource(owned_ceiling),
-        counts(&resource),
+        counts(std::size_t {}, &resource),
         footprints(&resource)
     {
     }
@@ -1245,6 +1250,104 @@ std::optional<std::uint64_t> owned_ceiling(std::uint64_t input_bytes, std::uint6
 
 BlockedField::BlockedField(std::unique_ptr<Storage> storage) noexcept : storage_(std::move(storage)) {}
 BlockedField::~BlockedField() = default;
+std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> BlockedField::clone(
+    const RepresentationLimits& requested, RepresentationAttemptStats& attempt,
+    const runtime::OperationControl& control) const
+{
+    const auto limits = operation_limits(storage_->limits, requested);
+    kernel::Budget budget(limits.max_kernel_work, limits.max_working_bytes, control);
+    std::uint64_t cell_visits {};
+    AttemptScope attempt_scope(attempt, limits, budget, cell_visits);
+    const auto interruption = [&]() -> std::optional<RepresentationFailure> {
+        auto cause = budget.interruption();
+        if (cause == runtime::StopCause::none) {
+            cause = control.poll();
+        }
+        if (cause == runtime::StopCause::none) {
+            return {};
+        }
+        return fail(cause == runtime::StopCause::user_stopped ? "OPERATION_CANCELLED" : "DEADLINE_EXCEEDED",
+                    "blocked-field clone was interrupted before publication");
+    };
+    const auto input = representation_residency();
+    if (!input || !attempt_scope.set_input(*input)) {
+        return fail("FIELD_MEMORY_LIMIT", "committed blocked-field residency is unrepresentable");
+    }
+    if (auto failure = interruption()) {
+        return *failure;
+    }
+    std::uint64_t fixed = limits.reserved_bytes;
+    if (storage_->counts.size() > limits.max_cells || !checked_add(fixed, attempt.input_resident_bytes) ||
+        !checked_add(fixed, sizeof(Storage) + sizeof(BlockedField)) || fixed > limits.max_working_bytes ||
+        !budget.reserve_bytes(fixed)) {
+        return fail("FIELD_MEMORY_LIMIT", "committed and staged blocked fields exceed their byte allowance");
+    }
+    const auto visit = [&]() -> std::optional<RepresentationFailure> {
+        if (auto failure = charge_visit(budget, limits.max_cell_visits, cell_visits, "blocked-field clone")) {
+            if (auto stopped = interruption()) {
+                return stopped;
+            }
+            return failure;
+        }
+        return {};
+    };
+    try {
+        // PMR checks every requested count/index/string/list allocation before
+        // operator new, including overlap with the complete committed owner.
+        auto staged = std::make_unique<Storage>(storage_->mask, limits, limits.max_working_bytes - fixed);
+        ResourceOperation operation(
+            staged->resource, limits.max_working_bytes - fixed, attempt_scope,
+            attempt.input_resident_bytes + sizeof(Storage) + sizeof(BlockedField) + staged->resource.current());
+        staged->counts.reserve(storage_->counts.capacity());
+        for (const auto count : storage_->counts) {
+            if (auto failure = visit()) {
+                return *failure;
+            }
+            staged->counts.push_back(count);
+        }
+        for (const auto& record : storage_->footprints) {
+            if (!budget.consume_work(1)) {
+                if (auto failure = interruption()) {
+                    return *failure;
+                }
+                return fail("FIELD_KERNEL_WORK_LIMIT", "blocked-field clone exhausted record-copy work");
+            }
+            Storage::Footprint indices(std::size_t {}, &staged->resource);
+            indices.reserve(record.footprint.capacity());
+            for (const auto index : record.footprint) {
+                if (auto failure = visit()) {
+                    return *failure;
+                }
+                indices.push_back(index);
+            }
+            std::pmr::string id(std::size_t {}, '\0', &staged->resource);
+            id.reserve(record.id.capacity());
+            for (const auto byte : record.id) {
+                if (!budget.consume_work(1)) {
+                    if (auto failure = interruption()) {
+                        return *failure;
+                    }
+                    return fail("FIELD_KERNEL_WORK_LIMIT", "blocked-field clone exhausted identifier-copy work");
+                }
+                id.push_back(byte);
+            }
+            // MSVC Debug allocator-only constructors and ordinary moves can
+            // allocate proxies inside noexcept. Count constructors propagate
+            // denial; same-resource buffer swaps then allocate nothing.
+            staged->footprints.emplace_back(&staged->resource);
+            auto& copied = staged->footprints.back();
+            copied.id.swap(id);
+            copied.footprint.swap(indices);
+        }
+        if (auto failure = interruption()) {
+            return *failure;
+        }
+        return std::unique_ptr<BlockedField>(new BlockedField(std::move(staged)));
+    }
+    catch (const std::bad_alloc&) {
+        return fail("FIELD_ALLOCATION_FAILURE", "bounded blocked-field clone allocation failed");
+    }
+}
 const GridWindow& BlockedField::window() const noexcept { return storage_->mask->window(); }
 
 RepresentationOutcome<VoxelGeometry> prepare_voxel_geometry(std::shared_ptr<const AcceptedSolid> source,
@@ -1389,7 +1492,7 @@ std::optional<RepresentationFailure> BlockedField::add(std::string_view id, std:
     }
     ResourceOperation operation(storage_->resource, *ceiling, attempt_scope, inputs.bytes);
     try {
-        BlockedField::Storage::Footprint footprint { &storage_->resource };
+        BlockedField::Storage::Footprint footprint(std::size_t {}, &storage_->resource);
         footprint.reserve(static_cast<std::size_t>(occupied));
         for (std::size_t index = 0; index < blocker->cells().size(); ++index) {
             if (auto error = charge_visit(budget, limits.max_cell_visits, cell_visits, "copy footprint construction")) {
@@ -1401,7 +1504,10 @@ std::optional<RepresentationFailure> BlockedField::add(std::string_view id, std:
         }
         std::pmr::string key { id, &storage_->resource };
         (void)budget.consume_work(static_cast<std::uint64_t>(id.size()));
-        storage_->footprints.push_back(BlockedField::Storage::FootprintRecord { std::move(key), std::move(footprint) });
+        storage_->footprints.emplace_back(&storage_->resource);
+        auto& inserted = storage_->footprints.back();
+        inserted.id.swap(key);
+        inserted.footprint.swap(footprint);
         (void)budget.consume_work(1);
         for (const auto index : storage_->footprints.back().footprint) {
             (void)budget.consume_work(1);
