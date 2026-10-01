@@ -395,6 +395,27 @@ leave all committed fields untouched. Cache hit counters cannot replace real wor
 counts: charge actual construction, updates, lookup/iteration and recomputation.
 No arrays survive across Starts in this first bounded workspace design.
 
+The concrete transaction seam is an additive const native
+`BlockedField::clone(limits, attempt, control = {})`, returning
+`variant<unique_ptr<BlockedField>, RepresentationFailure>`. It shares only the
+immutable container mask and copies the reference counts, compressed per-copy
+index footprints and IDs into independently admitted PMR storage. Admit source
+and staging ownership simultaneously, including growth overlap, before allocation;
+charge actual count/index/ID copy and lookup work. Poll long copies in bounded
+chunks. Allocation failure, work exhaustion or cancellation leaves the source
+unchanged. The initial empty workspace needs no redundant clone, and unchanged
+layouts must not clone on each orientation or page. After changed-copy operations
+succeed and a final control check passes, commit the blocked field, exact pose
+identities and layout revision together, invalidating dependent arrays. Geometry
+and placement authority remain unchanged; normal native consumers rebuild.
+
+Keep at most two orientation entries in a deterministic byte-admitted LRU and one
+current correlation pair. Eviction cannot leave unaccounted aliases. Expanding
+the fixed residency ledger from 24 to 32 tokens requires an explicit simultaneous
+owner count, with overflow still rejected; aggregate PMR footprints do not become
+one token per copy. Test overlapping copies, removal/replacement, actual work,
+late allocation/Stop rollback and below/exact memory admission through this seam.
+
 Full Pryanik can remain over the work cap even after orientation reuse; diagnose
 actual raster/classification counters before declaring the serial gate fixed.
 The approved bounded raster candidate is an early existing-boundary test: once a
