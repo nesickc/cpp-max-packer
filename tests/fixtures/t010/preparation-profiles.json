@@ -12,7 +12,7 @@
     "includes": "native accepted-asset replay, display LOD, resolved settings and preparation publication",
     "excludes": "initial inspect, solver search, project save/restore and export",
     "state_label": "repeated preparation with operating-system file cache; no retained native cache in baseline",
-    "status": "baseline captured; numerical targets pending complete Start/memory measurement before optimization"
+    "status": "targets frozen before retained-preparation optimization"
   },
   "fixed_work_start_comparison": {
     "thread_count": 1,
@@ -30,9 +30,24 @@
       "source_definition": "T-009 binary STL cuboid [-1,-1.5,-0.5] to [1,1.5,0.5] mm",
       "request": {
         "desktop_version": 1,
-        "box_dimensions_mm": [22, 18, 12],
-        "clearance_mm": {"pair": 0.125, "wall": 0.25},
-        "orientation": {"mode": "fixed", "quaternion_xyzw": [0, 0, 0, 1]},
+        "box_dimensions_mm": [
+          22,
+          18,
+          12
+        ],
+        "clearance_mm": {
+          "pair": 0.125,
+          "wall": 0.25
+        },
+        "orientation": {
+          "mode": "fixed",
+          "quaternion_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
         "pitch_mm": 1,
         "budget_seconds": 10,
         "seed": "0"
@@ -44,9 +59,18 @@
       "source_sha256": "39bcc1c3a5849176fc83473ce191ec5106854ea68836aed412c7c93b11b5bb7e",
       "request": {
         "desktop_version": 1,
-        "box_dimensions_mm": [400, 350, 285],
-        "clearance_mm": {"pair": 0.1, "wall": 1},
-        "orientation": {"mode": "cube"},
+        "box_dimensions_mm": [
+          400,
+          350,
+          285
+        ],
+        "clearance_mm": {
+          "pair": 0.1,
+          "wall": 1
+        },
+        "orientation": {
+          "mode": "cube"
+        },
         "pitch_mm": 16,
         "budget_seconds": 60,
         "seed": "0"
@@ -58,9 +82,24 @@
       "source_sha256": "01f934646c4e3c112e6aeadb55a9a85d1d8882ba22246461c766808b2414be7b",
       "request": {
         "desktop_version": 1,
-        "box_dimensions_mm": [100, 100, 50],
-        "clearance_mm": {"pair": 0.1, "wall": 1},
-        "orientation": {"mode": "fixed", "quaternion_xyzw": [0, 0, 0, 1]},
+        "box_dimensions_mm": [
+          100,
+          100,
+          50
+        ],
+        "clearance_mm": {
+          "pair": 0.1,
+          "wall": 1
+        },
+        "orientation": {
+          "mode": "fixed",
+          "quaternion_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
         "pitch_mm": 4,
         "budget_seconds": 30,
         "seed": "0"
@@ -72,13 +111,76 @@
       "source_sha256": "6e69e7606566b608155d193c3db9baa920fff3507907f88ce12243887cfd62ac",
       "request": {
         "desktop_version": 1,
-        "box_dimensions_mm": [100, 100, 50],
-        "clearance_mm": {"pair": 0.1, "wall": 1},
-        "orientation": {"mode": "fixed", "quaternion_xyzw": [0, 0, 0, 1]},
+        "box_dimensions_mm": [
+          100,
+          100,
+          50
+        ],
+        "clearance_mm": {
+          "pair": 0.1,
+          "wall": 1
+        },
+        "orientation": {
+          "mode": "fixed",
+          "quaternion_xyzw": [
+            0,
+            0,
+            0,
+            1
+          ]
+        },
         "pitch_mm": 4,
         "budget_seconds": 30,
         "seed": "0"
       }
     }
-  ]
+  ],
+  "frozen_targets": {
+    "date": "2026-10-01",
+    "thread_count": 1,
+    "preparation_reduction_fraction": 0.5,
+    "fixed_work_start_reduction_fraction": 0.4,
+    "maximum_peak_increase_bytes": 67108864,
+    "effective_host_cap_bytes": 536870912,
+    "stop_receipt_max_ms": 250,
+    "ordinary_safe_stop_max_seconds": 5,
+    "profiles": [
+      {
+        "id": "analytic-medium",
+        "old_preparation_median_seconds": 0.05489589995704591,
+        "warm_preparation_target_seconds": 0.027447949978522956,
+        "old_fixed_work_start_median_seconds": 0.14600019995123148,
+        "warm_fixed_work_start_target_seconds": 0.08760011997073888,
+        "old_peak_working_set_bytes": 8609792,
+        "maximum_peak_working_set_bytes": 75718656
+      },
+      {
+        "id": "ulamok",
+        "old_preparation_median_seconds": 0.21466709999367595,
+        "warm_preparation_target_seconds": 0.10733354999683797,
+        "old_fixed_work_start_median_seconds": 0.4644771000603214,
+        "warm_fixed_work_start_target_seconds": 0.27868626003619285,
+        "old_peak_working_set_bytes": 8822784,
+        "maximum_peak_working_set_bytes": 75931648
+      },
+      {
+        "id": "pryanik-1",
+        "old_preparation_median_seconds": 5.778678099974059,
+        "warm_preparation_target_seconds": 2.8893390499870293,
+        "old_fixed_work_start_median_seconds": 12.100027099950239,
+        "warm_fixed_work_start_target_seconds": 7.260016259970143,
+        "old_peak_working_set_bytes": 81268736,
+        "maximum_peak_working_set_bytes": 148377600
+      },
+      {
+        "id": "pryanik-2",
+        "old_preparation_median_seconds": 9.241546200006269,
+        "warm_preparation_target_seconds": 4.6207731000031345,
+        "old_fixed_work_start_median_seconds": 19.466977800009772,
+        "warm_fixed_work_start_target_seconds": 11.680186680005862,
+        "old_peak_working_set_bytes": 128602112,
+        "maximum_peak_working_set_bytes": 195710976
+      }
+    ]
+  }
 }
