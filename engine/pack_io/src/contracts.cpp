@@ -28,13 +28,15 @@ std::string name(ContractKind kind) {
     case ContractKind::benchmark_summary: return "benchmark_summary";
     case ContractKind::desktop:
         return "desktop";
+    case ContractKind::desktop_runtime:
+        return "desktop_runtime";
     }
   throw std::logic_error("unknown contract kind");
 }
 
 std::string id_for(const std::string& key) {
   return "https://spectrapack.invalid/schemas/v1/" +
-      (key == "benchmark_summary" ? "benchmark-summary" : key) + ".schema.json";
+      (key == "benchmark_summary" ? "benchmark-summary" : key == "desktop_runtime" ? "desktop-runtime" : key) + ".schema.json";
 }
 
 class Issues final : public nlohmann::json_schema::error_handler {

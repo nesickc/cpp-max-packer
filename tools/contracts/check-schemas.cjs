@@ -36,3 +36,14 @@ for (const item of desktopFixtures) {
 }
 if (failed) process.exit(1);
 console.log(`${desktopFixtures.length} desktop definition fixtures passed`);
+
+const runtimeFixtures = JSON.parse(fs.readFileSync(path.join(root, 'tests/contracts/runtime-fixtures.json'), 'utf8'));
+const runtimeValidate = ajv.getSchema('https://spectrapack.invalid/schemas/v1/desktop-runtime.schema.json');
+for (const item of runtimeFixtures) {
+  if (runtimeValidate(item.value) !== item.valid) {
+    console.error(`${item.name}: runtime expected ${item.valid}: ${ajv.errorsText(runtimeValidate.errors)}`);
+    failed++;
+  }
+}
+if (failed) process.exit(1);
+console.log(`${runtimeFixtures.length} retained runtime fixtures passed`);

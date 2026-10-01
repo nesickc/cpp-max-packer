@@ -382,6 +382,12 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
             }
           },
           "additionalProperties": false
+        },
+        "budget_scope": {
+          "enum": [
+            "search_only",
+            "total_start"
+          ]
         }
       },
       "additionalProperties": false
@@ -436,6 +442,11 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
             "cpu",
             "vulkan"
           ]
+        },
+        "thread_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
         }
       },
       "additionalProperties": false
@@ -563,6 +574,24 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
               "type": "integer",
               "minimum": 1,
               "maximum": 9007199254740991
+            },
+            "cpu_runtime": {
+              "type": "object",
+              "required": [
+                "version",
+                "scheduling_policy"
+              ],
+              "properties": {
+                "version": {
+                  "const": 1
+                },
+                "scheduling_policy": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 128
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
@@ -958,30 +987,59 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
   "definitions": {
     "failure": {
       "type": "object",
-      "required": ["phase", "cause_code"],
+      "required": [
+        "phase",
+        "cause_code"
+      ],
       "properties": {
-        "phase": {"type": "string", "minLength": 1},
-        "cause_code": {"type": "string", "minLength": 1},
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cause_code": {
+          "type": "string",
+          "minLength": 1
+        },
         "resource": {
           "type": "object",
-          "required": ["name", "required", "limit"],
+          "required": [
+            "name",
+            "required",
+            "limit"
+          ],
           "properties": {
-            "name": {"type": "string", "minLength": 1},
-            "required": {"$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"},
-            "limit": {"$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"}
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"
+            },
+            "limit": {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"
+            }
           },
           "additionalProperties": false
         },
-        "suggested_pitch_mm": {"type": "number", "exclusiveMinimum": 0}
+        "suggested_pitch_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
       },
       "additionalProperties": false
     },
     "diagnostics": {
       "type": "object",
-      "required": ["diagnostic_code"],
+      "required": [
+        "diagnostic_code"
+      ],
       "properties": {
-        "diagnostic_code": {"type": "string"},
-        "failure": {"$ref": "#/definitions/failure"}
+        "diagnostic_code": {
+          "type": "string"
+        },
+        "failure": {
+          "$ref": "#/definitions/failure"
+        }
       },
       "additionalProperties": false
     },
@@ -1027,7 +1085,9 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "resolved_settings"
       ],
       "properties": {
-        "diagnostics": {"$ref": "#/definitions/diagnostics"},
+        "diagnostics": {
+          "$ref": "#/definitions/diagnostics"
+        },
         "segment_id": {
           "type": "string",
           "minLength": 1
@@ -1081,6 +1141,9 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         },
         "resolved_settings": {
           "$ref": "https://spectrapack.invalid/schemas/v1/settings.schema.json#/definitions/resolved"
+        },
+        "runtime": {
+          "$ref": "#/definitions/runtime"
         }
       },
       "additionalProperties": false
@@ -1149,6 +1212,109 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         },
         "driver": {
           "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "version",
+        "budget_scope",
+        "measurement_boundary",
+        "total_elapsed_seconds",
+        "native_elapsed_seconds",
+        "preparation_seconds",
+        "search_seconds",
+        "validation_seconds",
+        "publication_seconds",
+        "cleanup_seconds",
+        "deadline_overrun_seconds",
+        "preparation_reused",
+        "no_nonempty_incumbent",
+        "phases"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "budget_scope": {
+          "enum": [
+            "search_only",
+            "total_start"
+          ]
+        },
+        "measurement_boundary": {
+          "const": "before_result_commit"
+        },
+        "total_elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "native_elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "preparation_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "search_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "validation_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "publication_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cleanup_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "deadline_overrun_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "preparation_reused": {
+          "type": "boolean"
+        },
+        "no_nonempty_incumbent": {
+          "type": "boolean"
+        },
+        "phases": {
+          "type": "array",
+          "maxItems": 9,
+          "items": {
+            "type": "object",
+            "required": [
+              "phase",
+              "elapsed_seconds"
+            ],
+            "properties": {
+              "phase": {
+                "enum": [
+                  "loading",
+                  "preparing",
+                  "voxelizing",
+                  "planning_fft",
+                  "placing",
+                  "improving",
+                  "validating",
+                  "saving",
+                  "cleanup"
+                ]
+              },
+              "elapsed_seconds": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false
@@ -1301,7 +1467,9 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "elapsed_seconds"
       ],
       "properties": {
-        "diagnostics": {"$ref": "#/definitions/diagnostics"},
+        "diagnostics": {
+          "$ref": "#/definitions/diagnostics"
+        },
         "resolved_settings": {
           "$ref": "https://spectrapack.invalid/schemas/v1/settings.schema.json#/definitions/resolved"
         },
@@ -1335,6 +1503,9 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "elapsed_seconds": {
           "type": "number",
           "minimum": 0
+        },
+        "runtime": {
+          "$ref": "#/definitions/runtime"
         }
       },
       "additionalProperties": false
@@ -2114,6 +2285,17 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         },
         "seed": {
           "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"
+        },
+        "thread_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "budget_scope": {
+          "enum": [
+            "search_only",
+            "total_start"
+          ]
         }
       },
       "additionalProperties": false
@@ -2260,7 +2442,13 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
             "validating",
             "saving",
             "finished",
-            "failed"
+            "failed",
+            "loading",
+            "voxelizing",
+            "planning_fft",
+            "placing",
+            "improving",
+            "cleanup"
           ]
         },
         "started_at": {
@@ -2298,6 +2486,17 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
               "type": "null"
             }
           ]
+        },
+        "sequence": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/counter"
+        },
+        "completion_elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "native_completion_elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
         }
       },
       "additionalProperties": false
@@ -2376,6 +2575,47 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
               "type": "null"
             }
           ]
+        },
+        "cpu_runtime": {
+          "type": "object",
+          "required": [
+            "version",
+            "supported_min",
+            "supported_max",
+            "default_thread_count"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "supported_min": {
+              "const": 1
+            },
+            "supported_max": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            },
+            "default_thread_count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            },
+            "requested_thread_count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            },
+            "resolved_thread_count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            },
+            "working_set_estimate_bytes": {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/counter"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -2632,6 +2872,364 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
     },
     {
       "$ref": "#/definitions/ProjectManifest"
+    }
+  ]
+}
+)schema"},
+    {"desktop_runtime", R"schema({
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://spectrapack.invalid/schemas/v1/desktop-runtime.schema.json",
+  "$comment": "ADR0013 auxiliary retained native session; one command in flight, bounded NDJSON and semantic identity/QPC checks required.",
+  "definitions": {
+    "prepare": {
+      "type": "object",
+      "required": [
+        "runtime_version",
+        "request_id",
+        "operation_id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "runtime_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "method": {
+          "const": "prepare"
+        },
+        "params": {
+          "type": "object",
+          "required": [
+            "object_report",
+            "output_directory"
+          ],
+          "properties": {
+            "object_report": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32768
+            },
+            "output_directory": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32768
+            },
+            "stop_file": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32768
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "run": {
+      "type": "object",
+      "required": [
+        "runtime_version",
+        "request_id",
+        "operation_id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "runtime_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "method": {
+          "const": "run"
+        },
+        "params": {
+          "type": "object",
+          "required": [
+            "asset_token",
+            "settings",
+            "result_path",
+            "stop_file",
+            "start_qpc_ticks",
+            "qpc_frequency_hz"
+          ],
+          "properties": {
+            "asset_token": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "settings": {
+              "oneOf": [
+                {
+                  "$ref": "https://spectrapack.invalid/schemas/v1/desktop.schema.json#/definitions/Settings"
+                },
+                {
+                  "$ref": "https://spectrapack.invalid/schemas/v1/settings.schema.json#/definitions/resolved"
+                }
+              ]
+            },
+            "result_path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32768
+            },
+            "stl_path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32768
+            },
+            "stop_file": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32768
+            },
+            "start_qpc_ticks": {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"
+            },
+            "qpc_frequency_hz": {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "release": {
+      "type": "object",
+      "required": [
+        "runtime_version",
+        "request_id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "runtime_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "method": {
+          "const": "release"
+        },
+        "params": {
+          "type": "object",
+          "required": [
+            "asset_token"
+          ],
+          "properties": {
+            "asset_token": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "shutdown": {
+      "type": "object",
+      "required": [
+        "runtime_version",
+        "request_id",
+        "method",
+        "params"
+      ],
+      "properties": {
+        "runtime_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "method": {
+          "const": "shutdown"
+        },
+        "params": {
+          "type": "object",
+          "required": [],
+          "properties": {},
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "response": {
+      "type": "object",
+      "required": [
+        "runtime_version",
+        "request_id",
+        "kind",
+        "ok"
+      ],
+      "properties": {
+        "runtime_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "kind": {
+          "const": "response"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "type": "object"
+        },
+        "error": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/error"
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "ok": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "result"
+            ],
+            "not": {
+              "required": [
+                "error"
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "error"
+            ],
+            "not": {
+              "required": [
+                "result"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "phase": {
+      "type": "object",
+      "required": [
+        "runtime_version",
+        "request_id",
+        "operation_id",
+        "kind",
+        "sequence",
+        "phase",
+        "native_elapsed_seconds"
+      ],
+      "properties": {
+        "runtime_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "kind": {
+          "const": "phase"
+        },
+        "sequence": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/counter"
+        },
+        "phase": {
+          "enum": [
+            "loading",
+            "preparing",
+            "voxelizing",
+            "planning_fft",
+            "placing",
+            "improving",
+            "validating",
+            "saving",
+            "cleanup"
+          ]
+        },
+        "native_elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/definitions/prepare"
+    },
+    {
+      "$ref": "#/definitions/run"
+    },
+    {
+      "$ref": "#/definitions/release"
+    },
+    {
+      "$ref": "#/definitions/shutdown"
+    },
+    {
+      "$ref": "#/definitions/response"
+    },
+    {
+      "$ref": "#/definitions/phase"
     }
   ]
 }

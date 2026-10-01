@@ -1,0 +1,317 @@
+[
+  {
+    "name": "native deterministic run",
+    "valid": true,
+    "value": {
+      "runtime_version": 1,
+      "request_id": "run-1",
+      "operation_id": "operation-1",
+      "method": "run",
+      "params": {
+        "asset_token": "asset-1",
+        "settings": {
+          "settings_version": 1,
+          "object_asset": {
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "container": {
+            "kind": "box",
+            "dimensions_mm": [
+              10,
+              10,
+              10
+            ]
+          },
+          "clearance_mm": {
+            "pair": 0,
+            "wall": 0
+          },
+          "orientation": {
+            "mode": "fixed",
+            "quaternion_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ]
+          },
+          "search": {
+            "preset": "synthetic-v1",
+            "seed": "0",
+            "deterministic": true,
+            "work_budget": {
+              "max_candidate_evaluations": 1,
+              "max_search_passes": 1
+            }
+          },
+          "resolution": {
+            "mode": "manual",
+            "pitch_mm": 1
+          },
+          "compute": {
+            "backend": "cpu"
+          },
+          "resolved": {
+            "pitch_mm": 1,
+            "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "orientation_catalog_version": 1,
+            "backend": "cpu",
+            "thread_count": 1
+          }
+        },
+        "result_path": "result.json",
+        "stop_file": "stop.marker",
+        "start_qpc_ticks": "0",
+        "qpc_frequency_hz": "10000000"
+      }
+    }
+  },
+  {
+    "name": "native prepare",
+    "valid": true,
+    "value": {
+      "runtime_version": 1,
+      "request_id": "prepare-1",
+      "operation_id": "operation-1",
+      "method": "prepare",
+      "params": {
+        "object_report": "object.report.json",
+        "output_directory": "preview"
+      }
+    }
+  },
+  {
+    "name": "native phase",
+    "valid": true,
+    "value": {
+      "runtime_version": 1,
+      "request_id": "run-1",
+      "operation_id": "operation-1",
+      "kind": "phase",
+      "sequence": 1,
+      "phase": "voxelizing",
+      "native_elapsed_seconds": 0.1
+    }
+  },
+  {
+    "name": "missing operation identity",
+    "valid": false,
+    "value": {
+      "runtime_version": 1,
+      "request_id": "run-1",
+      "method": "run",
+      "params": {
+        "asset_token": "asset-1",
+        "settings": {
+          "settings_version": 1,
+          "object_asset": {
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "container": {
+            "kind": "box",
+            "dimensions_mm": [
+              10,
+              10,
+              10
+            ]
+          },
+          "clearance_mm": {
+            "pair": 0,
+            "wall": 0
+          },
+          "orientation": {
+            "mode": "fixed",
+            "quaternion_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ]
+          },
+          "search": {
+            "preset": "synthetic-v1",
+            "seed": "0",
+            "deterministic": true,
+            "work_budget": {
+              "max_candidate_evaluations": 1,
+              "max_search_passes": 1
+            }
+          },
+          "resolution": {
+            "mode": "manual",
+            "pitch_mm": 1
+          },
+          "compute": {
+            "backend": "cpu"
+          },
+          "resolved": {
+            "pitch_mm": 1,
+            "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "orientation_catalog_version": 1,
+            "backend": "cpu",
+            "thread_count": 1
+          }
+        },
+        "result_path": "result.json",
+        "stop_file": "stop.marker",
+        "start_qpc_ticks": "0",
+        "qpc_frequency_hz": "10000000"
+      }
+    }
+  },
+  {
+    "name": "unknown runtime version",
+    "valid": false,
+    "value": {
+      "runtime_version": 2,
+      "request_id": "run-1",
+      "operation_id": "operation-1",
+      "method": "run",
+      "params": {
+        "asset_token": "asset-1",
+        "settings": {
+          "settings_version": 1,
+          "object_asset": {
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "container": {
+            "kind": "box",
+            "dimensions_mm": [
+              10,
+              10,
+              10
+            ]
+          },
+          "clearance_mm": {
+            "pair": 0,
+            "wall": 0
+          },
+          "orientation": {
+            "mode": "fixed",
+            "quaternion_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ]
+          },
+          "search": {
+            "preset": "synthetic-v1",
+            "seed": "0",
+            "deterministic": true,
+            "work_budget": {
+              "max_candidate_evaluations": 1,
+              "max_search_passes": 1
+            }
+          },
+          "resolution": {
+            "mode": "manual",
+            "pitch_mm": 1
+          },
+          "compute": {
+            "backend": "cpu"
+          },
+          "resolved": {
+            "pitch_mm": 1,
+            "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "orientation_catalog_version": 1,
+            "backend": "cpu",
+            "thread_count": 1
+          }
+        },
+        "result_path": "result.json",
+        "stop_file": "stop.marker",
+        "start_qpc_ticks": "0",
+        "qpc_frequency_hz": "10000000"
+      }
+    }
+  },
+  {
+    "name": "QPC must be decimal uint64 string",
+    "valid": false,
+    "value": {
+      "runtime_version": 1,
+      "request_id": "run-1",
+      "operation_id": "operation-1",
+      "method": "run",
+      "params": {
+        "asset_token": "asset-1",
+        "settings": {
+          "settings_version": 1,
+          "object_asset": {
+            "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "container": {
+            "kind": "box",
+            "dimensions_mm": [
+              10,
+              10,
+              10
+            ]
+          },
+          "clearance_mm": {
+            "pair": 0,
+            "wall": 0
+          },
+          "orientation": {
+            "mode": "fixed",
+            "quaternion_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ]
+          },
+          "search": {
+            "preset": "synthetic-v1",
+            "seed": "0",
+            "deterministic": true,
+            "work_budget": {
+              "max_candidate_evaluations": 1,
+              "max_search_passes": 1
+            }
+          },
+          "resolution": {
+            "mode": "manual",
+            "pitch_mm": 1
+          },
+          "compute": {
+            "backend": "cpu"
+          },
+          "resolved": {
+            "pitch_mm": 1,
+            "orientation_catalog_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "orientation_catalog_version": 1,
+            "backend": "cpu",
+            "thread_count": 1
+          }
+        },
+        "result_path": "result.json",
+        "stop_file": "stop.marker",
+        "start_qpc_ticks": 12,
+        "qpc_frequency_hz": "10000000"
+      }
+    }
+  },
+  {
+    "name": "mixed terminal fields",
+    "valid": false,
+    "value": {
+      "runtime_version": 1,
+      "request_id": "run-1",
+      "kind": "response",
+      "ok": true,
+      "result": {},
+      "error": {
+        "code": "BAD",
+        "message": "bad",
+        "details": {},
+        "recoverable": true
+      }
+    }
+  }
+]

@@ -195,9 +195,11 @@ export interface Search {
     max_candidate_evaluations: number;
     max_search_passes: number;
   };
+  budget_scope?: "search_only" | "total_start";
 }
 export interface Compute {
   backend: "auto" | "cpu" | "vulkan";
+  thread_count?: number;
 }
 export interface Resolved {
   settings_version: 1;
@@ -214,6 +216,10 @@ export interface Resolved {
     orientation_catalog_version: number;
     backend: "cpu" | "vulkan";
     thread_count: number;
+    cpu_runtime?: {
+      version: 1;
+      scheduling_policy: string;
+    };
   };
 }
 export interface ContentRef {
@@ -490,6 +496,7 @@ export interface HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson {
     run_segments: [Segment, ...Segment[]];
     backend_transitions: Transition[];
     elapsed_seconds: number;
+    runtime?: Runtime;
   };
   count: C;
   placements: Placement[];
@@ -697,6 +704,10 @@ export interface Resolved {
     orientation_catalog_version: number;
     backend: "cpu" | "vulkan";
     thread_count: number;
+    cpu_runtime?: {
+      version: 1;
+      scheduling_policy: string;
+    };
   };
 }
 export interface Box {
@@ -720,9 +731,11 @@ export interface Search {
     max_candidate_evaluations: number;
     max_search_passes: number;
   };
+  budget_scope?: "search_only" | "total_start";
 }
 export interface Compute {
   backend: "auto" | "cpu" | "vulkan";
+  thread_count?: number;
 }
 /**
  * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
@@ -750,6 +763,634 @@ export interface Segment {
     state: string;
   };
   resolved_settings: Resolved;
+  runtime?: Runtime;
+}
+/**
+ * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+ * via the `definition` "runtime".
+ */
+export interface Runtime {
+  version: 1;
+  budget_scope: "search_only" | "total_start";
+  measurement_boundary: "before_result_commit";
+  total_elapsed_seconds: number;
+  native_elapsed_seconds: number;
+  preparation_seconds: number;
+  search_seconds: number;
+  validation_seconds: number;
+  publication_seconds: number;
+  cleanup_seconds: number;
+  deadline_overrun_seconds: number;
+  preparation_reused: boolean;
+  no_nonempty_incumbent: boolean;
+  /**
+   * @maxItems 9
+   */
+  phases:
+    | []
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ]
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ]
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ]
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ]
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ]
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ]
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ]
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ]
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ];
 }
 /**
  * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
@@ -928,6 +1569,10 @@ export interface Resolved {
     orientation_catalog_version: number;
     backend: "cpu" | "vulkan";
     thread_count: number;
+    cpu_runtime?: {
+      version: 1;
+      scheduling_policy: string;
+    };
   };
 }
 export interface ContentRef {
@@ -959,9 +1604,11 @@ export interface Search {
     max_candidate_evaluations: number;
     max_search_passes: number;
   };
+  budget_scope?: "search_only" | "total_start";
 }
 export interface Compute {
   backend: "auto" | "cpu" | "vulkan";
+  thread_count?: number;
 }
 /**
  * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1BenchmarkSummarySchemaJson`'s JSON-Schema
@@ -1083,6 +1730,8 @@ export interface Settings {
   pitch_mm: number;
   budget_seconds: number;
   seed: string;
+  thread_count?: number;
+  budget_scope?: "search_only" | "total_start";
 }
 export interface Clearance {
   pair: number;
@@ -1101,6 +1750,19 @@ export interface State {
   result: ResultSnapshot | null;
   operation: Operation | null;
   last_error: Error | null;
+  cpu_runtime?: {
+    version: 1;
+    supported_min: 1;
+    supported_max: number;
+    default_thread_count: number;
+    requested_thread_count?: number;
+    resolved_thread_count?: number;
+    /**
+     * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+     * via the `definition` "c".
+     */
+    working_set_estimate_bytes?: number;
+  };
 }
 export interface ImportedObject {
   id: string;
@@ -1449,6 +2111,7 @@ export interface HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson {
     run_segments: [Segment, ...Segment[]];
     backend_transitions: Transition[];
     elapsed_seconds: number;
+    runtime?: Runtime;
   };
   /**
    * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
@@ -1578,6 +2241,10 @@ export interface Resolved {
     orientation_catalog_version: number;
     backend: "cpu" | "vulkan";
     thread_count: number;
+    cpu_runtime?: {
+      version: 1;
+      scheduling_policy: string;
+    };
   };
 }
 export interface Box {
@@ -1601,9 +2268,11 @@ export interface Search {
     max_candidate_evaluations: number;
     max_search_passes: number;
   };
+  budget_scope?: "search_only" | "total_start";
 }
 export interface Compute {
   backend: "auto" | "cpu" | "vulkan";
+  thread_count?: number;
 }
 /**
  * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
@@ -1639,6 +2308,634 @@ export interface Segment {
     state: string;
   };
   resolved_settings: Resolved;
+  runtime?: Runtime;
+}
+/**
+ * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+ * via the `definition` "runtime".
+ */
+export interface Runtime {
+  version: 1;
+  budget_scope: "search_only" | "total_start";
+  measurement_boundary: "before_result_commit";
+  total_elapsed_seconds: number;
+  native_elapsed_seconds: number;
+  preparation_seconds: number;
+  search_seconds: number;
+  validation_seconds: number;
+  publication_seconds: number;
+  cleanup_seconds: number;
+  deadline_overrun_seconds: number;
+  preparation_reused: boolean;
+  no_nonempty_incumbent: boolean;
+  /**
+   * @maxItems 9
+   */
+  phases:
+    | []
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ]
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ]
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ]
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ]
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ]
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ]
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ]
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ]
+    | [
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        },
+        {
+          phase:
+            | "loading"
+            | "preparing"
+            | "voxelizing"
+            | "planning_fft"
+            | "placing"
+            | "improving"
+            | "validating"
+            | "saving"
+            | "cleanup";
+          elapsed_seconds: number;
+        }
+      ];
 }
 /**
  * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
@@ -1666,11 +2963,31 @@ export interface Placement {
 export interface Operation {
   id: string;
   kind: "import" | "solve" | "open" | "save" | "export";
-  phase: "preparing" | "running" | "stopping" | "validating" | "saving" | "finished" | "failed";
+  phase:
+    | "preparing"
+    | "running"
+    | "stopping"
+    | "validating"
+    | "saving"
+    | "finished"
+    | "failed"
+    | "loading"
+    | "voxelizing"
+    | "planning_fft"
+    | "placing"
+    | "improving"
+    | "cleanup";
   started_at: string;
   finished_at: string | null;
   result_id: string | null;
   detail: string | null;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "c".
+   */
+  sequence?: number;
+  completion_elapsed_seconds?: number;
+  native_completion_elapsed_seconds?: number;
 }
 export interface Error {
   code: string;
@@ -1727,5 +3044,198 @@ export interface StopRequest {
   operation_id: string;
 }
 export type SaveRequest = StartRequest;
+
+}
+
+export namespace DesktopRuntime {
+export type HttpsSpectrapackInvalidSchemasV1DesktopRuntimeSchemaJson =
+  Prepare | Run | Release | Shutdown | Response | Phase;
+/**
+ * @minItems 4
+ * @maxItems 4
+ */
+export type Q = [number, number, number, number];
+export type Response = {
+  runtime_version: 1;
+  request_id: string;
+  operation_id?: string;
+  kind: "response";
+  ok: boolean;
+  result?: {
+    [k: string]: unknown;
+  };
+  error?: Error;
+};
+
+export interface Prepare {
+  runtime_version: 1;
+  request_id: string;
+  operation_id: string;
+  method: "prepare";
+  params: {
+    object_report: string;
+    output_directory: string;
+    stop_file?: string;
+  };
+}
+export interface Run {
+  runtime_version: 1;
+  request_id: string;
+  operation_id: string;
+  method: "run";
+  params: {
+    asset_token: string;
+    settings: Settings | Resolved;
+    result_path: string;
+    stl_path?: string;
+    stop_file: string;
+    start_qpc_ticks: string;
+    qpc_frequency_hz: string;
+  };
+}
+export interface Settings {
+  desktop_version: 1;
+  /**
+   * @minItems 3
+   * @maxItems 3
+   */
+  box_dimensions_mm: [number, number, number];
+  clearance_mm: Clearance;
+  orientation:
+    | {
+        mode: "fixed";
+        quaternion_xyzw: Q;
+      }
+    | {
+        mode: "cube";
+      };
+  pitch_mm: number;
+  budget_seconds: number;
+  seed: string;
+  thread_count?: number;
+  budget_scope?: "search_only" | "total_start";
+}
+export interface Clearance {
+  pair: number;
+  wall: number;
+}
+export interface Resolved {
+  settings_version: 1;
+  object_asset: ContentRef;
+  container: Box | StlRef;
+  clearance_mm: Clearance;
+  orientation:
+    | {
+        mode: "fixed";
+        quaternion_xyzw: Q;
+      }
+    | {
+        mode: "upright" | "cube";
+      }
+    | {
+        mode: "free";
+        catalog_size: number;
+      }
+    | {
+        mode: "custom";
+        /**
+         * @minItems 1
+         */
+        quaternions_xyzw: [Q, ...Q[]];
+      };
+  search: Search;
+  resolution:
+    | {
+        mode: "auto";
+        longest_object_axis_cells: number;
+      }
+    | {
+        mode: "manual";
+        pitch_mm: number;
+      };
+  compute: Compute;
+  resolved: {
+    pitch_mm: number;
+    orientation_catalog_sha256: string;
+    orientation_catalog_version: number;
+    backend: "cpu" | "vulkan";
+    thread_count: number;
+    cpu_runtime?: {
+      version: 1;
+      scheduling_policy: string;
+    };
+  };
+}
+export interface ContentRef {
+  source_sha256: string;
+  accepted_solid_sha256: string;
+}
+export interface Box {
+  kind: "box";
+  /**
+   * @minItems 3
+   * @maxItems 3
+   */
+  dimensions_mm: [number, number, number];
+}
+export interface StlRef {
+  kind: "stl_volume";
+  asset: ContentRef;
+}
+export interface Search {
+  preset: string;
+  seed: string;
+  deterministic: boolean;
+  budget_seconds?: number;
+  work_budget?: {
+    max_candidate_evaluations: number;
+    max_search_passes: number;
+  };
+  budget_scope?: "search_only" | "total_start";
+}
+export interface Compute {
+  backend: "auto" | "cpu" | "vulkan";
+  thread_count?: number;
+}
+export interface Release {
+  runtime_version: 1;
+  request_id: string;
+  method: "release";
+  params: {
+    asset_token: string;
+  };
+}
+export interface Shutdown {
+  runtime_version: 1;
+  request_id: string;
+  method: "shutdown";
+  params: {};
+}
+export interface Error {
+  code: string;
+  message: string;
+  details: {
+    [k: string]: unknown;
+  };
+  recoverable: boolean;
+}
+export interface Phase {
+  runtime_version: 1;
+  request_id: string;
+  operation_id: string;
+  kind: "phase";
+  sequence: number;
+  phase:
+    | "loading"
+    | "preparing"
+    | "voxelizing"
+    | "planning_fft"
+    | "placing"
+    | "improving"
+    | "validating"
+    | "saving"
+    | "cleanup";
+  native_elapsed_seconds: number;
+}
 
 }
