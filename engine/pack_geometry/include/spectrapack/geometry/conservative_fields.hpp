@@ -34,6 +34,9 @@ enum class FieldPurpose { object_kernel, placed_pair_blocker, container_blocker 
 // Conservative native prepare/place scratch and field-owner metadata bound.
 // Excludes accepted input, grid arrays, per-copy footprints/IDs and caller reserve.
 [[nodiscard]] std::optional<std::uint64_t> estimate_field_geometry_bytes(const AcceptedSolid&) noexcept;
+// Allocation-free enclosure of the actual object field window at this lattice.
+// Uses the field transform/trim arithmetic; unsupported inputs fail closed.
+[[nodiscard]] std::optional<GridWindow> estimate_object_window(const AcceptedSolid&, GridLattice, Quaternion) noexcept;
 // Necessary raster work only when every retained triangle's candidate-cell range
 // is unclipped. The caller must establish that condition; this is not total work.
 [[nodiscard]] std::optional<std::uint64_t> estimate_unclipped_raster_work(const AcceptedSolid&, std::uint64_t copies,

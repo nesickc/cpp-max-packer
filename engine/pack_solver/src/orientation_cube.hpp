@@ -7,7 +7,7 @@
 #include "spectrapack/geometry/validation.hpp"
 
 namespace spectrapack::solver::detail {
-inline std::vector<geometry::Quaternion> cube_seed_quaternions(std::size_t reserved = 24)
+inline std::array<geometry::Quaternion, 24> cube_seed_array() noexcept
 {
     using Matrix = std::array<int, 9>;
     std::array<Matrix, 24> matrices {};
@@ -33,8 +33,8 @@ inline std::vector<geometry::Quaternion> cube_seed_quaternions(std::size_t reser
         }
     } while (std::next_permutation(permutation.begin(), permutation.end()));
     std::sort(matrices.begin(), matrices.end());
-    std::vector<geometry::Quaternion> result;
-    result.reserve(reserved);
+    std::array<geometry::Quaternion, 24> result {};
+    std::size_t index {};
     for (const auto& m : matrices) {
         const int trace = m[0] + m[4] + m[8];
         std::array<int, 4> n {};
@@ -75,6 +75,16 @@ inline std::vector<geometry::Quaternion> cube_seed_quaternions(std::size_t reser
                 component = 0;
             }
         }
+        result[index++] = q;
+    }
+    return result;
+}
+inline std::vector<geometry::Quaternion> cube_seed_quaternions(std::size_t reserved = 24)
+{
+    const auto entries = cube_seed_array();
+    std::vector<geometry::Quaternion> result;
+    result.reserve(reserved);
+    for (const auto& q : entries) {
         result.push_back(q);
     }
     return result;

@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <string_view>
 
+#include "../../engine/pack_geometry/src/field_kernel.hpp"
 #include "../../engine/pack_geometry/src/field_profile.hpp"
 #include "../../engine/pack_geometry/tests/validation_fixtures.hpp"
 #include "../../engine/pack_solver/src/pipeline_profile.hpp"
@@ -119,6 +120,7 @@ int main(int argc, char** argv)
     try {
         std::string profile_name = "analytic";
         int samples = 5, warmups = 1;
+        std::string scope = "field";
         for (int index = 1; index < argc; index += 2) {
             if (index + 1 == argc) {
                 throw std::runtime_error("option requires a value");
@@ -133,12 +135,18 @@ int main(int argc, char** argv)
             else if (option == "--warmups") {
                 warmups = std::stoi(argv[index + 1]);
             }
+            else if (option == "--scope") {
+                scope = argv[index + 1];
+            }
             else {
                 throw std::runtime_error("unknown option");
             }
         }
         if (samples < 1 || samples > 100 || warmups < 0 || warmups > 10) {
             throw std::runtime_error("invalid sample count");
+        }
+        if (scope != "field" && scope != "prepared-start") {
+            throw std::runtime_error("scope must be field or prepared-start");
         }
         if (profile_name != "analytic" && profile_name != "ulamok" && profile_name != "pryanik1" &&
             profile_name != "pryanik2") {
@@ -185,6 +193,9 @@ int main(int argc, char** argv)
         };
         sol::SpectralLimits limits;
         limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
+        if (scope == "prepared-start") {
+            limits.baseline = baseline_limits;
+        }
         limits.spectral.max_candidate_evaluations = limits.spectral.max_search_passes = 1;
         limits.max_refinement_evaluations = 0;
         bool passed = true;
@@ -196,8 +207,10 @@ int main(int argc, char** argv)
             geo::detail::field_profile_sink = &field_sample;
             geo::detail::field_profile_context = &profile;
             const auto start = Clock::now();
-            const auto run = sol::run_cpu_spectral(context, lattice, limits, {}, {}, baseline.best->solution);
-            const double fixed_ms = elapsed(start);
+            const auto run = sol::run_cpu_spectral(
+                context, lattice, limits, {}, {},
+                scope == "field" ? baseline.best->solution : std::shared_ptr<const geo::ValidatedSolution> {});
+            const double solver_ms = elapsed(start);
             sol::detail::pipeline_profile_sink = nullptr;
             geo::detail::field_profile_sink = nullptr;
             if (!run.run.best) {
@@ -206,6 +219,7 @@ int main(int argc, char** argv)
             const auto validation_start = Clock::now();
             const auto checked = geo::revalidate(run.run.best->solution);
             const double revalidation_ms = elapsed(validation_start);
+            const double fixed_ms = scope == "prepared-start" ? elapsed(start) : solver_ms;
             std::uint64_t process_peak {};
 #ifdef _WIN32
             PROCESS_MEMORY_COUNTERS process_counters {};
@@ -214,15 +228,17 @@ int main(int argc, char** argv)
                 process_peak = process_counters.PeakWorkingSetSize;
             }
 #endif
-            const bool complete = run.run.termination_reason != sol::TerminationReason::resource_limit &&
-                                  run.run.termination_reason != sol::TerminationReason::error &&
-                                  checked.validated_solution;
+            const bool complete = (run.run.termination_reason == sol::TerminationReason::budget_exhausted ||
+                                   run.run.termination_reason == sol::TerminationReason::search_stalled) &&
+                                  run.run.diagnostic_code != "PHYSICAL_DEADLINE" &&
+                                  run.spectral_stats.correlations >= (ulamok ? 48 : 2) && checked.validated_solution;
             passed &= complete;
             records.push_back({
                 { "ordinal",                                 ordinal                                      },
                 { "warmup",                                  ordinal < 0                                  },
                 { "complete",                                complete                                     },
                 { "fixed_work_ms",                           fixed_ms                                     },
+                { "native_solver_ms",                        solver_ms                                    },
                 { "independent_revalidation_ms",             revalidation_ms                              },
                 { "independent_validity",                    static_cast<int>(checked.report.validity)    },
                 { "termination",                             static_cast<int>(run.run.termination_reason) },
@@ -233,21 +249,31 @@ int main(int argc, char** argv)
                 { "best_found",                              bench::snapshot_json(run.run.best)           }
             });
         }
+        const char* included_phases =
+            scope == "field" ? "spectral-search" : "initial-baseline,spectral-search,final-independent-validation";
+        const char* excluded_phases = scope == "field"
+                                          ? "accepted-preparation,initial-baseline,independent-revalidation"
+                                          : "accepted-preparation";
         std::cout << bench::Json {
-            { "ticket",                     "T-010"                                       },
-            { "profile",                    profile_name                                  },
-            { "source",                     source                                        },
-            { "triangles",                  object->mesh().triangles.size()               },
-            { "cpu_thread_count",           1                                             },
-            { "preparation_state",          "accepted-input-and-retained-baseline-fixed"  },
-            { "cold_native_preparation_ms", preparation_ms                                },
-            { "initial_baseline_ms",        baseline_ms                                   },
-            { "initial_baseline",           bench::snapshot_json(baseline.best)           },
-            { "pitch_mm",                   lattice.pitch_mm                              },
-            { "box_mm",                     { box.width_mm, box.depth_mm, box.height_mm } },
-            { "warmups",                    warmups                                       },
-            { "serial_samples",             samples                                       },
-            { "samples",                    records                                       }
+            { "ticket",                     "T-010"                                                   },
+            { "profile",                    profile_name                                              },
+            { "source",                     source                                                    },
+            { "triangles",                  object->mesh().triangles.size()                           },
+            { "cpu_thread_count",           1                                                         },
+            { "scope",                      scope                                                     },
+            { "field_work_revision",        geo::detail::validation_kernel::kRasterWorkRevision       },
+            { "preparation_state",
+             scope == "field" ? "accepted-input-and-retained-baseline-fixed" : "accepted-input-fixed" },
+            { "included_phases",            included_phases                                           },
+            { "excluded_phases",            excluded_phases                                           },
+            { "cold_native_preparation_ms", preparation_ms                                            },
+            { "initial_baseline_ms",        baseline_ms                                               },
+            { "initial_baseline",           bench::snapshot_json(baseline.best)                       },
+            { "pitch_mm",                   lattice.pitch_mm                                          },
+            { "box_mm",                     { box.width_mm, box.depth_mm, box.height_mm }             },
+            { "warmups",                    warmups                                                   },
+            { "serial_samples",             samples                                                   },
+            { "samples",                    records                                                   }
         }.dump(2) << '\n';
         return passed ? 0 : 1;
     }

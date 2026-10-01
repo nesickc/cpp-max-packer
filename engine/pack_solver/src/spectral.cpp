@@ -434,7 +434,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
     std::optional<RunFailureDetails> admission_failure;
     try {
         const auto& admission_limits = limits;
-        if (auto failure = detail::spectral_admission(context, lattice, admission_limits, initial)) {
+        if (auto failure = detail::spectral_admission(context, lattice, admission_limits, initial, &catalog)) {
             admission_failure = std::move(failure);
         }
     }
@@ -473,7 +473,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
 
     try {
         if (!admission_failure) {
-            admission_failure = detail::spectral_admission(context, lattice, limits, retained);
+            admission_failure = detail::spectral_admission(context, lattice, limits, retained, &catalog);
         }
     }
     catch (const std::bad_alloc&) {
@@ -499,7 +499,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 if (!std::isfinite(suggestion.pitch_mm)) {
                     break;
                 }
-                if (!detail::spectral_admission(context, suggestion, limits, retained)) {
+                if (!detail::spectral_admission(context, suggestion, limits, retained, &catalog)) {
                     admission_failure->suggested_pitch_mm = suggestion.pitch_mm;
                     break;
                 }

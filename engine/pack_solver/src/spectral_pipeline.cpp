@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "field_proximity.hpp"
+#include "orientation_cube.hpp"
 #include "pipeline_profile.hpp"
 #include "spectrapack/solver/orientations.hpp"
 #include "storage_accounting.hpp"
@@ -454,7 +455,8 @@ void record_field_failure(SpectralPipelineResult& result, std::string_view phase
 
 std::optional<RunFailureDetails> spectral_admission(const std::shared_ptr<const geometry::ValidationContext>& context,
                                                     geometry::GridLattice lattice, const SpectralLimits& limits,
-                                                    const std::shared_ptr<const geometry::ValidatedSolution>& retained)
+                                                    const std::shared_ptr<const geometry::ValidatedSolution>& retained,
+                                                    const OrientationCatalog* actual_catalog)
 {
     const auto reject = [](std::string_view code, std::string_view name, std::uint64_t required, std::uint64_t limit) {
         return RunFailureDetails {
@@ -491,17 +493,80 @@ std::optional<RunFailureDetails> spectral_admission(const std::shared_ptr<const 
     if (!proximity_shape_supported(environment->shape)) {
         return reject_unknown("SPECTRAL_PROXIMITY_RANGE");
     }
-    const auto object = context->object()->bounds_mm();
-    double radius2 {};
-    for (std::size_t axis = 0; axis != 3; ++axis) {
-        radius2 += std::pow(std::max(std::abs(object.min[axis]), std::abs(object.max[axis])), 2);
-    }
     geometry::CellShape kernel {};
-    const double extent = std::ceil(2 * std::sqrt(radius2) / lattice.pitch_mm) + 3;
-    if (!std::isfinite(extent) || extent >= UINT32_MAX) {
+    const auto include_orientation = [&](geometry::Quaternion q, bool normalize) {
+        if (normalize) {
+            // Match make_orientation_catalog for callers without an already
+            // resolved catalog. Execution passes its exact admitted entries.
+            const auto norm = std::hypot(std::hypot(q[0], q[1]), std::hypot(q[2], q[3]));
+            if (!std::isfinite(norm) || norm <= 0) {
+                return false;
+            }
+            for (auto& value : q) {
+                value /= norm;
+            }
+            bool negate = q[3] < 0;
+            if (q[3] == 0) {
+                for (std::size_t component = 0; component != 3; ++component) {
+                    if (q[component] != 0) {
+                        negate = q[component] < 0;
+                        break;
+                    }
+                }
+            }
+            for (auto& value : q) {
+                if (negate) {
+                    value = -value;
+                }
+                if (value == 0) {
+                    value = 0;
+                }
+            }
+        }
+        const auto estimated = geometry::estimate_object_window(*context->object(), lattice, q);
+        if (!estimated) {
+            return false;
+        }
+        for (std::size_t axis = 0; axis != 3; ++axis) {
+            kernel[axis] = std::max(kernel[axis], estimated->shape[axis]);
+        }
+        return true;
+    };
+    bool complete = true;
+    if (actual_catalog) {
+        complete = !actual_catalog->quaternions.empty();
+        for (const auto& q : actual_catalog->quaternions) {
+            complete = include_orientation(q, false) && complete;
+        }
+    }
+    else {
+        const auto& policy = context->constraints().orientations;
+        if (policy.mode == geometry::OrientationMode::cube) {
+            // Each actual quaternion is bounded at every translated axis; an
+            // origin-independent maximum source width is not an enclosure.
+            for (const auto& q : cube_seed_array()) {
+                complete = include_orientation(q, false) && complete;
+            }
+        }
+        else if (policy.mode == geometry::OrientationMode::fixed) {
+            complete = policy.catalog_xyzw.size() <= 1 &&
+                       include_orientation(policy.catalog_xyzw.empty() ? geometry::Quaternion { 0, 0, 0, 1 }
+                                                                       : policy.catalog_xyzw.front(),
+                                           true);
+        }
+        else if (policy.mode == geometry::OrientationMode::catalog) {
+            complete = !policy.catalog_xyzw.empty();
+            for (const auto& q : policy.catalog_xyzw) {
+                complete = include_orientation(q, true) && complete;
+            }
+        }
+        else {
+            complete = false;
+        }
+    }
+    if (!complete) {
         return reject_unknown("FIELD_INDEX_OVERFLOW");
     }
-    kernel.fill(static_cast<std::uint32_t>(extent));
     const auto kernel_cells = cells(kernel);
     if (!kernel_cells) {
         return reject_unknown("FIELD_CELL_LIMIT");

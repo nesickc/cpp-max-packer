@@ -21,6 +21,7 @@
 #include "../../pack_geometry/tests/validation_fixtures.hpp"
 #include "../src/allocation_fault.hpp"
 #include "../src/baseline_internal.hpp"
+#include "../src/orientation_cube.hpp"
 #include "../src/spectral_pipeline.hpp"
 #include "spectrapack/geometry/validation.hpp"
 #include "spectrapack/solver/orientations.hpp"
@@ -1008,6 +1009,56 @@ TEST_CASE(
             outcome.spectral_stats.pages_examined, outcome.spectral_stats.discrete_rechecks);
     REQUIRE(outcome.run.best->solution->copies().size() == 1);
     CHECK(outcome.run.best->solution->copies().front().rotation_xyzw == z90);
+}
+
+TEST_CASE("T010 exact cardinal admission survives adjacent pitch boundaries", "[solver][T010][admission]")
+{
+    const geo::Quaternion identity { 0, 0, 0, 1 };
+    const geo::Quaternion z90 { 0, 0, std::numbers::sqrt2_v<double> / 2, std::numbers::sqrt2_v<double> / 2 };
+    const auto context = cuboid_context({ -1, -.5, -.5 }, { 1, .5, .5 }, { 1.5, 2.5, 1.5 }, { identity, z90 });
+    solver::SpectralLimits limits;
+    limits.baseline.max_candidate_evaluations = 0;
+    limits.baseline.max_search_passes = 0;
+    limits.spectral.max_candidate_evaluations = 1;
+    limits.spectral.max_search_passes = 1;
+    limits.spectral.max_copies = 1;
+    limits.max_refinement_evaluations = 0;
+    limits.per_representation.max_cells = 10'000;
+    limits.per_correlation.max_padded_cells = 100'000;
+    for (const auto pitch : { std::nextafter(.125, 0.0), std::nextafter(.125, 1.0) }) {
+        const auto outcome = solver::run_cpu_spectral(context,
+                                                      {
+                                                          { 0, 0, 0 },
+                                                          pitch
+        },
+                                                      limits, {});
+        CAPTURE(pitch, outcome.run.diagnostic_code);
+        REQUIRE(outcome.run.best);
+        CHECK(outcome.run.best->solution->copies().size() == 1);
+        CHECK(outcome.run.best->solution->copies().front().rotation_xyzw == z90);
+    }
+}
+
+TEST_CASE("T010 object window admission allocates no mesh or catalog", "[solver][T010][admission]")
+{
+    const auto source = geo::test_support::accepted(geo::test_support::cuboid({ -.25, -.5, -.75 }, { .25, .5, .75 }),
+                                                    geo::AssetRole::object);
+    bool complete = true;
+    {
+        AllocationFailureReset reset;
+        enable_persistent_allocation_failure();
+        for (const auto& rotation : solver::detail::cube_seed_array()) {
+            complete = geo::estimate_object_window(*source,
+                                                   {
+                                                       { 0x1p50, -0x1p49, 0x1p48 },
+                                                       .125
+            },
+                                                   rotation)
+                           .has_value() &&
+                       complete;
+        }
+    }
+    CHECK(complete);
 }
 
 TEST_CASE(

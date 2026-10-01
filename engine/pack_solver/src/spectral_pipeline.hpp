@@ -59,7 +59,7 @@ using BinaryObservationSink = void (*)(const BinaryObservation&) noexcept;
 
 [[nodiscard]] std::optional<RunFailureDetails> spectral_admission(
     const std::shared_ptr<const geometry::ValidationContext>&, geometry::GridLattice, const SpectralLimits&,
-    const std::shared_ptr<const geometry::ValidatedSolution>& = {});
+    const std::shared_ptr<const geometry::ValidatedSolution>& = {}, const OrientationCatalog* actual_catalog = nullptr);
 
 // Fixed-size, allocation-free union of the public ownership snapshots.  The
 // tokens borrow their owners, which the pipeline keeps alive through a call.

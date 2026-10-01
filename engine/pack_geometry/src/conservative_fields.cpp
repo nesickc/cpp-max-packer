@@ -481,6 +481,39 @@ bool same_lattice(const GridLattice& first,
 
 }  // namespace
 
+std::optional<GridWindow> estimate_object_window(const AcceptedSolid& source, GridLattice lattice,
+                                                 Quaternion rotation) noexcept
+{
+    if (!valid_lattice(lattice) || !canonical_unit_quaternion(rotation) ||
+        !kernel::field_floating_environment_supported()) {
+        return {};
+    }
+    const auto bounds = kernel::transformed_source_box(source.bounds_mm(), lattice.origin_mm, rotation);
+    if (!bounds) {
+        return {};
+    }
+    GridWindow result { lattice, {}, {} };
+    std::uint64_t cells = 1;
+    for (int axis = 0; axis != 3; ++axis) {
+        const auto first = trim_index(bounds->min[axis], lattice.origin_mm[axis], lattice.pitch_mm, true);
+        const auto last = trim_index(bounds->max[axis], lattice.origin_mm[axis], lattice.pitch_mm, false);
+        if (!first || !last || *last < *first || static_cast<std::uint64_t>(*last - *first) + 1 > UINT32_MAX) {
+            return {};
+        }
+        result.first[axis] = *first;
+        result.shape[axis] = static_cast<std::uint32_t>(*last - *first + 1);
+        // Match window_cells' exact-index and aggregate shape overflow rules;
+        // configured cell/byte caps are applied by the caller's admission.
+        if (*first < -kLargestExactGridIndex ||
+            *first > kLargestExactGridIndex - static_cast<std::int64_t>(result.shape[axis]) ||
+            cells > UINT64_MAX / result.shape[axis]) {
+            return {};
+        }
+        cells *= result.shape[axis];
+    }
+    return result;
+}
+
 bool append_block(RepresentationResidency&, RepresentationResidentBlock) noexcept;
 bool append_residency(RepresentationResidency&, const RepresentationResidency&) noexcept;
 

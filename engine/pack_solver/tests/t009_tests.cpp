@@ -259,7 +259,7 @@ TEST_CASE("T009 Ulamok analytical witness and real baseline retain 36", "[solver
                        << " pairs=" << baseline.stats.validation_aabb_pair_tests);
     REQUIRE(baseline.best);
     REQUIRE(baseline.best->solution->copies().size() >= 36);
-    REQUIRE(geo::estimate_unclipped_raster_work(*object, 36, 24) == 3'246'096'384ULL);
+    REQUIRE(geo::estimate_unclipped_raster_work(*object, 36, 24) == 200'392'704ULL);
 
     sol::SpectralLimits spectral_limits;
     spectral_limits.baseline.max_candidate_evaluations = 0;
@@ -275,7 +275,16 @@ TEST_CASE("T009 Ulamok analytical witness and real baseline retain 36", "[solver
                                                    spectral_limits, {}, {}, baseline.best->solution);
     REQUIRE(unsupported.run.termination_reason == sol::TerminationReason::resource_limit);
     REQUIRE(unsupported.run.failure_details);
-    CHECK_FALSE(unsupported.run.failure_details->suggested_pitch_mm);
+    // The boundary shortcut invalidates the old per-visit SAT floor. A coarser
+    // admitted shape is now meaningful advice; manual h=1 still fails unchanged.
+    REQUIRE(unsupported.run.failure_details->suggested_pitch_mm);
+    CHECK(*unsupported.run.failure_details->suggested_pitch_mm > 1);
+    CHECK_FALSE(sol::detail::spectral_admission(native_context,
+                                                {
+                                                    { 0, 0, 0 },
+                                                    *unsupported.run.failure_details->suggested_pitch_mm
+    },
+                                                spectral_limits, baseline.best->solution));
     CHECK(unsupported.spectral_stats.representation_cell_visits == 0);
     const auto retained = unsupported.run.best ? unsupported.run.best->solution : unsupported.run.retained_solution;
     REQUIRE(retained);

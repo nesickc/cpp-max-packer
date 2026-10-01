@@ -41,7 +41,8 @@ add_executable(spectrapack_display_lod_tests tests/display_lod_tests.cpp)
 target_link_libraries(spectrapack_display_lod_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
 catch_discover_tests(spectrapack_display_lod_tests)
 
-add_executable(spectrapack_conservative_fields_tests tests/conservative_fields_tests.cpp)
+add_executable(spectrapack_conservative_fields_tests
+  tests/conservative_fields_tests.cpp tests/raster_reuse_tests.cpp tests/object_window_tests.cpp)
 target_link_libraries(spectrapack_conservative_fields_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
 catch_discover_tests(spectrapack_conservative_fields_tests)
 
