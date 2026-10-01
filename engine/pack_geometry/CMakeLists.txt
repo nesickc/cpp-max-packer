@@ -16,7 +16,8 @@ set_source_files_properties(src/display_lod.cpp PROPERTIES
 target_link_libraries(pack_geometry PRIVATE
   spectrapack_dependency_import_geometry spectrapack_dependency_display_geometry)
 
-add_executable(spectrapack_import_tests tests/import_tests.cpp)
+add_executable(spectrapack_import_tests tests/import_tests.cpp tests/import_admission_tests.cpp)
+target_compile_definitions(spectrapack_import_tests PRIVATE SPECTRAPACK_TEST_ROOT="${PROJECT_SOURCE_DIR}")
 target_link_libraries(spectrapack_import_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
 include(Catch)
 catch_discover_tests(spectrapack_import_tests)

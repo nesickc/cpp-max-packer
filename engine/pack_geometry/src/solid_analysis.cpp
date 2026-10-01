@@ -40,6 +40,9 @@ struct ShellWork {
   exact::Sign volume_sign{exact::Sign::uncertain};
   std::optional<double> six_volume;
 };
+static_assert(sizeof(EdgeUse) <= 8 && sizeof(FaceAdjacency) <= 8 && sizeof(ShellWork) <= 112);
+static_assert(sizeof(fcl::BVNode<fcl::AABBd>) <= 64);
+static_assert(sizeof(fcl::Vector3d) <= 24 && sizeof(fcl::Triangle) <= 24);
 
 using Edge = std::pair<std::uint32_t, std::uint32_t>;
 

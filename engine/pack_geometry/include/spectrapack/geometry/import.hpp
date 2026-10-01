@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <span>
@@ -43,6 +44,7 @@ struct ImportLimits {
   std::uint64_t max_candidate_pairs{50'000'000};
   std::uint64_t max_predicate_work{1'300'000'000};
   std::uint32_t max_diagnostic_examples{64};
+  std::uint64_t max_working_bytes { std::numeric_limits<std::uint64_t>::max() };
 };
 struct ImportOptions {
   AssetRole role;
@@ -57,6 +59,7 @@ struct ImportOptions {
 struct WeldOptions {
   double tolerance_mm{};
   std::uint64_t max_candidate_pairs{10'000'000};
+  std::uint64_t max_working_bytes { std::numeric_limits<std::uint64_t>::max() };
 };
 struct ImportFailure {
   std::string code;
@@ -64,6 +67,18 @@ struct ImportFailure {
   std::string message;
   std::optional<std::uint64_t> byte_offset;
 };
+struct ImportAdmission {
+    std::uint64_t working_bytes_upper_bound {};
+    std::uint64_t triangle_upper_bound {};
+};
+using ImportAdmissionOutcome = std::variant<ImportAdmission, ImportFailure>;
+// Native retained draft and scratch; caller-owned pinned source bytes are excluded.
+[[nodiscard]] ImportAdmissionOutcome estimate_import_admission(std::span<const std::byte>, const ImportLimits& = {},
+                                                               const runtime::OperationControl& = {});
+// Includes the original draft payload once and the new candidate/scratch;
+// caller-owned pinned artifacts and other accepted-solid owners are excluded.
+[[nodiscard]] ImportAdmissionOutcome estimate_weld_admission(const AssetDraft&, const WeldOptions& = {},
+                                                             const runtime::OperationControl& = {});
 struct ImportIssue {
   std::string reason;
   std::string message;
@@ -134,6 +149,8 @@ class AssetDraft {
   friend ImportOutcome<AssetDraft> inspect_stl(std::span<const std::byte>, const ImportOptions&,
                                                const runtime::OperationControl&);
   friend class detail::ImportAccess;
+  friend ImportAdmissionOutcome estimate_weld_admission(const AssetDraft&, const WeldOptions&,
+                                                        const runtime::OperationControl&);
   friend ImportOutcome<RepairProposal> propose_weld(std::shared_ptr<const AssetDraft>, const WeldOptions&,
                                                     const runtime::OperationControl&);
   friend ImportOutcome<AcceptedSolid> accept_asset(std::shared_ptr<const AssetDraft>);
