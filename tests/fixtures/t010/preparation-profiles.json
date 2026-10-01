@@ -1,0 +1,75 @@
+{
+  "ticket": "T-010",
+  "acceptance": "T011-A6",
+  "profile_version": 1,
+  "baseline_revision": "b82117a",
+  "baseline_engine_sha256": "a593d750f7a4fd09e324bdb70b8feccc33c47799e001ee171614888a65332b8d",
+  "measurement": {
+    "command": "desktop-prepare",
+    "warmups": 1,
+    "timed_samples": 5,
+    "execution": "serial fresh processes and output directories; same verified source/report per profile",
+    "includes": "native accepted-asset replay, display LOD, resolved settings and preparation publication",
+    "excludes": "initial inspect, solver search, project save/restore and export",
+    "state_label": "repeated preparation with operating-system file cache; no retained native cache in baseline",
+    "status": "baseline capture; numerical targets pending measurement before optimization"
+  },
+  "profiles": [
+    {
+      "id": "analytic-medium",
+      "source_sha256": "28c64b8ae746b564c0db29480e758dff0f4fc56ff9746bf405fcafc5af124466",
+      "source_definition": "T-009 binary STL cuboid [-1,-1.5,-0.5] to [1,1.5,0.5] mm",
+      "request": {
+        "desktop_version": 1,
+        "box_dimensions_mm": [22, 18, 12],
+        "clearance_mm": {"pair": 0.125, "wall": 0.25},
+        "orientation": {"mode": "fixed", "quaternion_xyzw": [0, 0, 0, 1]},
+        "pitch_mm": 1,
+        "budget_seconds": 10,
+        "seed": "0"
+      }
+    },
+    {
+      "id": "ulamok",
+      "source_path": "rc/items/ulamok_2kg_simplified.stl",
+      "source_sha256": "39bcc1c3a5849176fc83473ce191ec5106854ea68836aed412c7c93b11b5bb7e",
+      "request": {
+        "desktop_version": 1,
+        "box_dimensions_mm": [400, 350, 285],
+        "clearance_mm": {"pair": 0.1, "wall": 1},
+        "orientation": {"mode": "cube"},
+        "pitch_mm": 16,
+        "budget_seconds": 60,
+        "seed": "0"
+      }
+    },
+    {
+      "id": "pryanik-1",
+      "source_path": "rc/items/pryanik_1.STL",
+      "source_sha256": "01f934646c4e3c112e6aeadb55a9a85d1d8882ba22246461c766808b2414be7b",
+      "request": {
+        "desktop_version": 1,
+        "box_dimensions_mm": [100, 100, 50],
+        "clearance_mm": {"pair": 0.1, "wall": 1},
+        "orientation": {"mode": "fixed", "quaternion_xyzw": [0, 0, 0, 1]},
+        "pitch_mm": 4,
+        "budget_seconds": 30,
+        "seed": "0"
+      }
+    },
+    {
+      "id": "pryanik-2",
+      "source_path": "rc/items/pryanik_2.STL",
+      "source_sha256": "6e69e7606566b608155d193c3db9baa920fff3507907f88ce12243887cfd62ac",
+      "request": {
+        "desktop_version": 1,
+        "box_dimensions_mm": [100, 100, 50],
+        "clearance_mm": {"pair": 0.1, "wall": 1},
+        "orientation": {"mode": "fixed", "quaternion_xyzw": [0, 0, 0, 1]},
+        "pitch_mm": 4,
+        "budget_seconds": 30,
+        "seed": "0"
+      }
+    }
+  ]
+}
