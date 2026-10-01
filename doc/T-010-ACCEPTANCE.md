@@ -17,7 +17,7 @@ establish the corresponding runtime gate.
 | T010-A1 — configuration | Old CLI rejects two threads; native red tests show unsupported counts execute work. The controlled serial checkpoint now rejects unsupported 0/2 requests without work. | Real selected parallel kernel; actual supported/resolved counts; specific rejection outside range; desktop pending/result association. |
 | T010-A2 — numerical correctness | Existing oracle suite is available. | Affected direct field/correlation/proximity oracles at 1/2/4 threads, asymmetric/rotated/offset/halo/uncertain cases, independent validation of every compared result. |
 | T010-A3 — reproducibility | Old one-candidate Start baseline repeats identical count, work and ordered poses. | New fixed-work repetitions for each supported measurement count, with seed, policy, counters and failed samples retained. |
-| T010-A4 — aggregate resources | Unchanged 512 MiB host cap and old measured process peaks are pinned. | Worker/queue/stack/scratch admission, cap immediately below admission, active allocation failure, measured peak versus conservative estimate. |
+| T010-A4 — aggregate resources | Unchanged 512 MiB host cap and old measured process peaks are pinned. Native import/repair admission passes below/exact-bound tests and the full Pryanik 2 profile in Debug/Release. | Integrated owner/worker/queue/stack/scratch admission, active allocation failure, measured peak versus conservative estimate. |
 | T010-A5 — Stop and races | Shared control and fresh-operation ownership contract are frozen. | Real parallel-phase Stop acknowledgement within 250 ms and safe completion within 5 s; failure/shutdown joins; no late publication. |
 | T010-A6 — measured speed | Failed practical phase profiles identify raster work; these are not a successful speed baseline. | Successful serial revision, frozen phase/end-to-end/memory targets, one warmup plus five Release samples at 1/2/4/8 threads, preparation held fixed. |
 | T010-A7 — product regression | Original full-catalog Ulamok and full36 checked-STL failures are reproduced. | Supported full-catalog Ulamok count >=36; both full Pryanik runs; pitch advice; invalid-original rejection; complete product journeys and independently reread exports; timed quality. |
@@ -62,6 +62,16 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
   Its intermediate 22/23 run exposed an empty bootstrap publication after expiry;
   that failure and its repair remain retained. Fields/FFT cancellation, whole
   process lifecycle and ordinary practical safe-stop measurements are still open.
+- Native memory checkpoint `4550bec`: Debug and Release each pass 184 assertions /
+  22 cases in `.local/t010/native/stage2-admission-debug-green.log` and
+  `stage2-admission-release-final-green.log`. Zero/below/exact allowances exercise
+  real import and weld paths; full Pryanik 2 retains its frozen pre-change vertex,
+  triangle, volume, work and nested-cavity report. The audited native bound is
+  249,598,976 bytes, with caller-owned buffers and reserves separately charged.
+  Parser temporaries are released before analysis rather than counted as live
+  throughout both phases. Complete red/green details and the six-file manifest are
+  in `.local/t010/native/stage2-admission-handoff.md`. This does not establish
+  integrated session/export or worker admission, nor measured process peak memory.
 - Combined Release engine builds in `.local/t010/integration/engine-build-1.log`.
   Initial retained-session process checks pass 2/2 in
   `.local/t010/integration/session-green-1.log`. They exercise a real cube token,

@@ -96,7 +96,8 @@ declarations together. Do not add a solver dependency to geometry.
 
 The integration-owned I/O signature is
 `AssetLoadOutcome load_accepted_asset(const filesystem::path&, const
-runtime::OperationControl& control = {}, const AssetLoadLimits& limits = {})`,
+runtime::OperationControl& control = {}, const AssetLoadLimits& limits = {},
+shared_ptr<const VerifiedAsset> reuse_candidate = {})`,
 where `AssetLoadLimits::max_working_bytes` defaults to 512 MiB. Existing call
 forms remain source compatible; the loader now rejects excess aggregate import
 memory before allocation with an owned `MEMORY_LIMIT` cause. This bounded-loader
@@ -160,6 +161,24 @@ accepted handle from cached JSON assertions. The key includes source and accepte
 hashes, role, units/scale/frame, repair recipe hashes/version, native build and
 preparation version. Display policy is an additional preview key only.
 
+An optional native `reuse_candidate` is a performance hint for repeated prepare.
+Its fast path requires the same normalized lexical/canonical report and artifact
+paths, current file identities matching the candidate's pins, and exact actual
+bytes for the report, source, accepted PLY and every repair artifact. Compare in
+bounded controlled chunks; never accept a report's asserted hash as proof of the
+current file contents. Require the same native build/preparation and display
+policy. On an exact match return the same immutable `VerifiedAsset` owner and
+share its existing display handle under a fresh session token. A changed identity,
+path or byte is a cache miss into full verification; owned I/O, interruption and
+memory errors propagate. No reuse hint is supplied for untrusted archive Open,
+which still replays geometry and independently revalidates placements.
+
+The session charges shared verified/solid/display owners once by native identity,
+including both current and transactional previous bundles. Token metadata,
+preview publication and comparison scratch remain separately charged. The loader's
+remaining allowance excludes candidate residency already charged by its caller;
+it covers any new reconstruction on a miss. No additional asset LRU is introduced.
+
 Repeated Start references the pinned native token and bytes. It must not silently
 reload a mutable path under the same token. New/replacement import, changed units,
 repair or engine epoch releases/replaces the bundle after active work joins.
@@ -198,12 +217,20 @@ and includes distinct retained original/candidate owners. Display generation use
 its existing `RepresentationLimits::reserved_bytes`; preview serialization checks
 its computed byte requirement and growth before allocation. A failed replacement
 preserves the old token and complete state. The native bound requires a documented
-capacity/lifetime audit and below-bound tests. Its initial coefficient is not yet
-accepted: 4,096 bytes per triangle alone exceeds 512 MiB for the required 139,212
-triangle Pryanik 2. A tighter justified bound must preserve that practical profile
-and admitted transactional replacement; raising the host cap is not permitted.
+capacity/lifetime audit and below-bound tests. The locked parser releases its
+decoded/deduplicated temporary payload before solid analysis. Admission takes the
+maximum of the parser and analyzer phases: 1,664 bytes per triangle plus five
+times ASCII source bytes for parsing, or 1,792 bytes per triangle for analysis,
+including Debug nested-vector proxies. Both add 64 KiB and 1,024 bytes per allowed
+diagnostic example. The table and width guards live in `import_admission.hpp`.
+Full Pryanik 2 requires 249,598,976 native payload bytes. Caller pins, allocator
+overhead, library stacks and measured process RSS remain separate accounting;
+raising the 512 MiB host cap is not permitted. Changes to allocation policy or
+these lifetime boundaries require updating the audit and boundary tests.
 
 Append `WeldOptions::max_working_bytes` with compatibility default `UINT64_MAX`.
+Expose `estimate_weld_admission(const AssetDraft&, const WeldOptions& = {},
+const runtime::OperationControl& = {})` returning `ImportAdmissionOutcome`.
 Weld admission derives its bound from the actual retained vertex/triangle spans,
 includes the original draft payload once plus proposal scratch/candidate storage,
 and excludes caller-owned pinned artifacts. Enforce the minimum of the original
@@ -341,6 +368,17 @@ the estimate remain separate evidence. Workers receive pre-admitted finite work
 allowances; unused work is reconciled at ordered barriers. Their combined allowance
 cannot exceed the existing aggregate cap. Allocation failure cancels/joins siblings,
 discards the partial generation and retains the last valid solution.
+
+Expose an optional `SpectralOutcome::field_admission` with
+`CpuFieldAdmissionEstimate { working_bytes_upper_bound, footprint_copy_count,
+effective_host_cap_bytes, cpu_thread_count, scheduling_policy }`. Populate it
+only after successful admission for an actual retained layout; ignore speculative
+empty-layout preflight. Across field generations retain the maximum admitted byte
+estimate with its associated copy/thread/policy basis. Result/terminal adapters
+copy the policy string and preserve that basis. Label this as the field-phase
+estimate for that copy and thread count; show prepared residency and the host cap
+separately. It is not an estimate of an unknown final Start copy count. Every later
+growth still requires admission including all simultaneously live owners.
 
 ## Checked STL reduction
 
