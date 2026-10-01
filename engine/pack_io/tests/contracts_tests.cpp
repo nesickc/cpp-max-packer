@@ -17,8 +17,64 @@
 
 #include "result_export_test_seam.hpp"
 
+TEST_CASE("T011 auxiliary diagnostics retain bounded UTF-8 and cannot suppress rejection", "[contracts][T-011]")
+{
+    namespace io = spectrapack::io;
+    io::ContractValidator validator;
+    io::Json invalid = {
+        { "runtime_version", 1                  },
+        { "request_id",      "diagnostic-bound" },
+        { "method",          "shutdown"         },
+        { "params",          io::Json::object() }
+    };
+    for (int i = 0; i < 20; ++i) {
+        invalid["unknown-\xf0\x9f\x99\x82-" + std::to_string(i)] = nullptr;
+    }
+    const auto parsed = validator.parse(io::ContractKind::desktop_runtime, invalid.dump(), { 2, 10 });
+    REQUIRE(std::holds_alternative<io::ContractFailure>(parsed));
+    const auto& failure = std::get<io::ContractFailure>(parsed);
+    REQUIRE(failure.issues.size() <= 2);
+    for (const auto& issue : failure.issues) {
+        CHECK(issue.path.size() <= 10);
+        CHECK(issue.message.size() <= 10);
+        // Dump performs strict UTF-8 validation and detects a split code point.
+        CHECK_NOTHROW(io::Json({
+                                   { "path",    issue.path    },
+                                   { "message", issue.message }
+        })
+                          .dump());
+    }
+    const auto zero = validator.validate(io::ContractKind::desktop_runtime, invalid, { 0, 0 });
+    REQUIRE(std::holds_alternative<io::ContractFailure>(zero));
+    REQUIRE_FALSE(std::get<io::ContractFailure>(zero).issues.empty());
+    CHECK(std::get<io::ContractFailure>(zero).issues.front().path.empty());
+    CHECK(std::get<io::ContractFailure>(zero).issues.front().message.empty());
+}
+
 #ifdef _WIN32
 #include <windows.h>
+#ifdef _DEBUG
+#include <crtdbg.h>
+#endif
+#endif
+
+#if defined(_WIN32) && defined(_DEBUG)
+TEST_CASE("T011 tracks two compiled contract catalog owners inside adapter headroom", "[contracts][T-011]")
+{
+    _CrtMemState before {}, after {};
+    _CrtMemCheckpoint(&before);
+    std::array<std::unique_ptr<spectrapack::io::ContractValidator>, 2> validators;
+    for (auto& validator : validators) {
+        validator = std::make_unique<spectrapack::io::ContractValidator>();
+    }
+    _CrtMemCheckpoint(&after);
+    const auto baseline = before.lSizes[_NORMAL_BLOCK] + before.lSizes[_CLIENT_BLOCK];
+    const auto retained = after.lSizes[_NORMAL_BLOCK] + after.lSizes[_CLIENT_BLOCK];
+    REQUIRE(retained >= baseline);
+    const auto tracked = retained - baseline;
+    INFO("two compiled catalog/validator owners, Debug CRT retained payload bytes=" << tracked);
+    CHECK(tracked <= 7ULL << 20);
+}
 #endif
 
 namespace {

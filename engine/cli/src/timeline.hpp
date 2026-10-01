@@ -31,7 +31,9 @@ public:
         self.phase_ = phase;
         self.upstream_.phase(phase);
     }
-    io::Json record(const std::string& scope, double budget, bool reused, bool empty) const
+    void deadline(std::optional<runtime::Clock::time_point> value) noexcept { deadline_ = value; }
+    io::Json record(const std::string& scope, double budget, bool reused, bool empty,
+                    const char* boundary = "before_result_commit") const
     {
         const auto now = upstream_.now();
         auto seconds = seconds_;
@@ -48,7 +50,7 @@ public:
         return {
             { "version", 1 },
             { "budget_scope", scope },
-            { "measurement_boundary", "before_result_commit" },
+            { "measurement_boundary", boundary },
             { "total_elapsed_seconds", total },
             { "native_elapsed_seconds", native },
             { "preparation_seconds", seconds[0] + seconds[1] },
@@ -56,7 +58,10 @@ public:
             { "validation_seconds", seconds[6] },
             { "publication_seconds", seconds[7] },
             { "cleanup_seconds", seconds[8] },
-            { "deadline_overrun_seconds", budget > 0 ? std::max(0.0, total - budget) : 0.0 },
+            { "deadline_overrun_seconds", deadline_
+                                              ? std::max(0.0, std::chrono::duration<double>(now - *deadline_).count())
+                                          : scope == "total_start" && budget > 0 ? std::max(0.0, total - budget)
+                                                                                 : 0.0 },
             { "preparation_reused", reused },
             { "no_nonempty_incumbent", empty },
             { "phases", std::move(phases) }
@@ -69,5 +74,6 @@ private:
     runtime::OperationControl upstream_;
     runtime::Phase phase_ { runtime::Phase::loading };
     std::array<double, 9> seconds_ {};
+    std::optional<runtime::Clock::time_point> deadline_;
 };
 }  // namespace spectrapack::cli

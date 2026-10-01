@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <spectrapack/io/contracts.hpp>
 #include <string>
 #include <variant>
 
@@ -15,12 +16,14 @@ struct InspectRequest {
   std::optional<double> scale_mm;
   std::optional<double> weld_tolerance_mm;
   std::optional<std::string> accept_repair;
+  std::uint64_t max_working_bytes { 512ULL << 20 };
 };
 
 struct InspectFailure {
   std::string code;
   std::string message;
   int exit_code;
+  Json details { Json::object() };
 };
 
 struct InspectSuccess {

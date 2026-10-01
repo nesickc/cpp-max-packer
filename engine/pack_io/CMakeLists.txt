@@ -20,6 +20,9 @@ if(BUILD_TESTING)
 endif()
 
 if(BUILD_TESTING)
+  add_executable(spectrapack_contract_allocation_probe tests/contract_allocation_probe.cpp)
+  target_link_libraries(spectrapack_contract_allocation_probe PRIVATE pack_io)
+  add_test(NAME T011.contract_catalog_allocations COMMAND spectrapack_contract_allocation_probe)
   add_executable(spectrapack_contract_tests
     tests/contracts_tests.cpp
   )

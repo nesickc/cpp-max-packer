@@ -2,6 +2,7 @@
 #include <spectrapack/io/contracts.hpp>
 #include <spectrapack/io/inspection.hpp>
 
+#include "asset_admission.hpp"
 #include "repair_replay.hpp"
 
 #ifdef _WIN32
@@ -58,7 +59,11 @@ InspectFailure import_failure(const ImportFailure& source) {
   if (source.code == "NOT_IMPLEMENTED") {
     return failure("METHOD_UNSUPPORTED", source.message, 3);
   }
-  return failure(source.code, source.message, source.code == "MEMORY_LIMIT" ? 3 : 2);
+  auto result = failure(source.code, source.message, source.code == "MEMORY_LIMIT" ? 3 : 2);
+  result.details = {
+      { "reason", source.reason }
+  };
+  return result;
 }
 
 std::string validity_name(Validity value) {
@@ -123,6 +128,9 @@ std::variant<Bytes, InspectFailure> read_source_bounded(
   std::ifstream input(path, std::ios::binary);
   if (!input) {
     return failure("INVALID_STL", "The STL source cannot be opened.");
+  }
+  if (detail::asset_budget) {
+      detail::asset_budget->charge(size);
   }
   Bytes bytes(static_cast<std::size_t>(size));
   if (!bytes.empty() &&
@@ -208,7 +216,23 @@ Bytes serialize_ply(MeshView mesh) {
             "end_header\n";
 
   const auto text = header.str();
+  std::uint64_t capacity = text.size();
+  const auto add = [&](std::size_t count, std::uint64_t width) {
+      if (count > UINT64_MAX / width || count * width > UINT64_MAX - capacity) {
+          throw detail::AssetMemoryLimit {};
+      }
+      capacity += count * width;
+  };
+  add(mesh.vertices.size(), 24);
+  add(mesh.triangles.size(), 13);
+  if (capacity > SIZE_MAX) {
+      throw detail::AssetMemoryLimit {};
+  }
+  if (detail::asset_budget) {
+      detail::asset_budget->charge(capacity);
+  }
   Bytes bytes = bytes_from_string(text);
+  bytes.reserve(static_cast<std::size_t>(capacity));
   const auto append = [&bytes](const auto& value) {
     const auto* first = reinterpret_cast<const std::byte*>(&value);
     bytes.insert(bytes.end(), first, first + sizeof(value));
@@ -224,6 +248,26 @@ Bytes serialize_ply(MeshView mesh) {
 }
 
 Json diagnostics_json(const ImportReport& report) {
+    if (detail::asset_budget) {
+        // Eight KiB per bounded diagnostic record covers its DOM, validation copy,
+        // and encoded report/recipe copies; admission precedes DOM construction.
+        const auto charge_records = [&](std::size_t count) {
+            if (count > UINT64_MAX / 8192) {
+                throw detail::AssetMemoryLimit {};
+            }
+            detail::asset_budget->charge(count * 8192);
+        };
+        detail::asset_budget->charge(65536);
+        charge_records(report.shells.size());
+        charge_records(report.issues.size());
+        for (const auto& issue : report.issues) {
+            if (issue.reason.size() > UINT64_MAX / 6 || issue.message.size() > UINT64_MAX / 6) {
+                throw detail::AssetMemoryLimit {};
+            }
+            detail::asset_budget->charge(6 * issue.reason.size());
+            detail::asset_budget->charge(6 * issue.message.size());
+        }
+    }
   Json shells = Json::array();
   for (const auto& shell : report.shells) {
     Json value = {
@@ -352,6 +396,9 @@ std::variant<Bytes, InspectFailure> read_existing_artifact(
   std::ifstream input(path, std::ios::binary);
   if (!input) {
     return failure("INTERNAL_ERROR", "A content-addressed artifact cannot be verified.", 4);
+  }
+  if (detail::asset_budget) {
+      detail::asset_budget->charge(expected_size);
   }
   Bytes bytes(expected_size);
   if (!bytes.empty() &&
@@ -541,23 +588,60 @@ Json repair_recipe(const std::shared_ptr<const RepairProposal>& proposal, const 
 }
 }  // namespace
 
-std::variant<detail::ReplayedRepair, Error> detail::replay_repair(std::shared_ptr<const geometry::AssetDraft> draft,
-                                                                  const Json& report,
-                                                                  std::span<const std::byte> retained,
-                                                                  std::uint64_t source_size,
-                                                                  const runtime::OperationControl& control)
+std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
+    std::shared_ptr<const geometry::AssetDraft> draft, const Json& report, std::span<const std::byte> retained,
+    std::uint64_t source_size, const runtime::OperationControl& control, std::uint64_t max_working_bytes)
 {
     const auto bad = [] {
         return Error { "ASSET_MISMATCH", "Retained repair recipe does not replay exactly.", Json::object(), true };
     };
     try {
+        const auto original_remaining = detail::asset_budget ? detail::asset_budget->remaining() : UINT64_MAX;
+        const auto recipe_text = std::string_view(reinterpret_cast<const char*>(retained.data()), retained.size());
+        if (detail::asset_budget && !detail::admit_asset_json(recipe_text, *detail::asset_budget)) {
+            return bad();
+        }
         const auto recipe =
             Json::parse(std::string_view(reinterpret_cast<const char*>(retained.data()), retained.size()));
         const auto tolerance = recipe.at("options").at("weld_tolerance_mm").get<double>();
         if (!std::isfinite(tolerance) || tolerance <= 0 || report.at("repair_record").at("accepted_by_user") != true) {
             return bad();
         }
-        auto proposed = geometry::propose_weld(draft, { tolerance }, control);
+        const auto mesh = draft->mesh();
+        if (mesh.vertices.size() > UINT64_MAX / 24 || mesh.triangles.size() > UINT64_MAX / 13) {
+            return Error { "MEMORY_LIMIT", "Repair serialization is not representable.", Json::object(), true };
+        }
+        const auto vertices = 24 * mesh.vertices.size(), triangles = 13 * mesh.triangles.size();
+        if (vertices > UINT64_MAX - 512 || triangles > UINT64_MAX - 512 - vertices) {
+            return Error { "MEMORY_LIMIT", "Repair serialization is not representable.", Json::object(), true };
+        }
+        const auto one = 512 + vertices + triangles;
+        if (one > UINT64_MAX / 4) {
+            return Error { "MEMORY_LIMIT", "Repair serialization is not representable.", Json::object(), true };
+        }
+        const auto serialized = 4 * one;
+        if (detail::asset_budget) {
+            detail::asset_budget->charge(serialized);
+        }
+        const auto consumed =
+            detail::asset_budget ? original_remaining - detail::asset_budget->remaining() : serialized;
+        if (consumed > max_working_bytes) {
+            return Error { "MEMORY_LIMIT", "Repair scratch exceeds the remaining allowance.", Json::object(), true };
+        }
+        geometry::WeldOptions options { tolerance, 10'000'000, max_working_bytes - consumed };
+        const auto admission = geometry::estimate_weld_admission(*draft, options, control);
+        if (const auto* failure = std::get_if<geometry::ImportFailure>(&admission)) {
+            return Error { failure->code, failure->message, { { "reason", failure->reason } }, true };
+        }
+        const auto native_bound = std::get<geometry::ImportAdmission>(admission).working_bytes_upper_bound;
+        if (detail::asset_budget) {
+            detail::asset_budget->charge(native_bound);
+        }
+        auto proposed = geometry::propose_weld(draft, options, control);
+        if (const auto* failure = std::get_if<geometry::ImportFailure>(&proposed);
+            failure && failure->code == "MEMORY_LIMIT") {
+            return Error { failure->code, failure->message, { { "reason", failure->reason } }, true };
+        }
         if (!std::holds_alternative<std::shared_ptr<const RepairProposal>>(proposed)) {
             return bad();
         }
@@ -581,9 +665,16 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(std::shared_pt
             return bad();
         }
         detail::ReplayedRepair result { std::get<std::shared_ptr<const AcceptedSolid>>(accepted), {} };
+        result.native_bound = native_bound;
         result.artifacts.emplace(before_hash + ".ply", std::move(before));
         result.artifacts.emplace(after_hash + ".ply", std::move(after));
         return result;
+    }
+    catch (const detail::AssetMemoryLimit&) {
+        return Error { "MEMORY_LIMIT", "Repair replay exceeds its remaining host allowance.", Json::object(), true };
+    }
+    catch (const detail::Interrupted& interrupted) {
+        return detail::interrupted_error(interrupted);
     }
     catch (const std::bad_alloc&) {
         return Error { "MEMORY_LIMIT", "Repair replay exhausted memory.", Json::object(), true };
@@ -594,216 +685,270 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(std::shared_pt
 }
 
 std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectRequest& request) {
-  if (request.stl_path.empty() || request.report_path.empty()) {
-    return failure("INVALID_REQUEST", "Source and report paths are required.");
-  }
-  if (auto distinct = require_distinct_output(
-          request.report_path, request.stl_path, request.report_path)) {
-    return *distinct;
-  }
+    try {
+        detail::AssetBudget budget(request.max_working_bytes);
+        // Path/artifact bookkeeping, hashing, bounded report scalar metadata, and
+        // the public CLI envelope remain live throughout native inspection.
+        budget.charge(15ULL << 20);
+        detail::AssetBudgetScope budget_scope(budget);
+        if (request.stl_path.empty() || request.report_path.empty()) {
+            return failure("INVALID_REQUEST", "Source and report paths are required.");
+        }
+        if (auto distinct = require_distinct_output(request.report_path, request.stl_path, request.report_path)) {
+            return *distinct;
+        }
 
-  Units units;
-  if (request.units == "mm") units = Units::mm;
-  else if (request.units == "inch") units = Units::inch;
-  else if (request.units == "custom") units = Units::custom;
-  else return failure("INVALID_REQUEST", "Units must be mm, inch, or custom.");
+        Units units;
+        if (request.units == "mm") {
+            units = Units::mm;
+        }
+        else if (request.units == "inch") {
+            units = Units::inch;
+        }
+        else if (request.units == "custom") {
+            units = Units::custom;
+        }
+        else {
+            return failure("INVALID_REQUEST", "Units must be mm, inch, or custom.");
+        }
 
-  if ((units == Units::custom) != request.scale_mm.has_value()) {
-    return failure("INVALID_REQUEST", "Custom units require --scale-mm and other units reject it.");
-  }
-  if (request.scale_mm && (!std::isfinite(*request.scale_mm) || *request.scale_mm <= 0.0)) {
-    return failure("INVALID_REQUEST", "Custom scale must be finite and positive.");
-  }
-  if (request.weld_tolerance_mm &&
-      (!std::isfinite(*request.weld_tolerance_mm) || *request.weld_tolerance_mm <= 0.0)) {
-    return failure("INVALID_REQUEST", "Weld tolerance must be finite and positive.");
-  }
-  if (request.accept_repair && !request.weld_tolerance_mm) {
-    return failure("INVALID_REQUEST", "Repair acceptance requires the original weld tolerance.");
-  }
+        if ((units == Units::custom) != request.scale_mm.has_value()) {
+            return failure("INVALID_REQUEST", "Custom units require --scale-mm and other units reject it.");
+        }
+        if (request.scale_mm && (!std::isfinite(*request.scale_mm) || *request.scale_mm <= 0.0)) {
+            return failure("INVALID_REQUEST", "Custom scale must be finite and positive.");
+        }
+        if (request.weld_tolerance_mm &&
+            (!std::isfinite(*request.weld_tolerance_mm) || *request.weld_tolerance_mm <= 0.0)) {
+            return failure("INVALID_REQUEST", "Weld tolerance must be finite and positive.");
+        }
+        if (request.accept_repair && !request.weld_tolerance_mm) {
+            return failure("INVALID_REQUEST", "Repair acceptance requires the original weld tolerance.");
+        }
 
-  AssetRole role;
-  if (request.role == "object") role = AssetRole::object;
-  else if (request.role == "container") role = AssetRole::container;
-  else return failure("INVALID_REQUEST", "Role must be object or container.");
+        AssetRole role;
+        if (request.role == "object") {
+            role = AssetRole::object;
+        }
+        else if (request.role == "container") {
+            role = AssetRole::container;
+        }
+        else {
+            return failure("INVALID_REQUEST", "Role must be object or container.");
+        }
 
-  const ImportLimits limits;
-  auto source_result = read_source_bounded(request.stl_path, limits.max_source_bytes);
-  if (std::holds_alternative<InspectFailure>(source_result)) {
-    return std::get<InspectFailure>(std::move(source_result));
-  }
-  Bytes source_bytes = std::get<Bytes>(std::move(source_result));
-  auto source_hash_result = sha256(source_bytes);
-  if (std::holds_alternative<InspectFailure>(source_hash_result)) {
-    return std::get<InspectFailure>(std::move(source_hash_result));
-  }
-  const std::string source_hash = std::get<std::string>(std::move(source_hash_result));
+        ImportLimits limits;
+        auto source_result = read_source_bounded(request.stl_path, limits.max_source_bytes);
+        if (std::holds_alternative<InspectFailure>(source_result)) {
+            return std::get<InspectFailure>(std::move(source_result));
+        }
+        Bytes source_bytes = std::get<Bytes>(std::move(source_result));
+        auto source_hash_result = sha256(source_bytes);
+        if (std::holds_alternative<InspectFailure>(source_hash_result)) {
+            return std::get<InspectFailure>(std::move(source_hash_result));
+        }
+        const std::string source_hash = std::get<std::string>(std::move(source_hash_result));
 
-  auto draft_result = geometry::inspect_stl(
-      source_bytes, geometry::ImportOptions(role, units, request.scale_mm.value_or(1.0), limits));
-  if (std::holds_alternative<ImportFailure>(draft_result)) {
-    return import_failure(std::get<ImportFailure>(draft_result));
-  }
-  const auto draft = std::get<std::shared_ptr<const AssetDraft>>(std::move(draft_result));
+        limits.max_working_bytes = budget.remaining();
+        const auto admission = geometry::estimate_import_admission(source_bytes, limits);
+        if (const auto* problem = std::get_if<ImportFailure>(&admission)) {
+            return import_failure(*problem);
+        }
+        const auto native_bound = std::get<geometry::ImportAdmission>(admission).working_bytes_upper_bound;
+        budget.charge(native_bound);
 
-  const auto report_directory = request.report_path.has_parent_path()
-      ? request.report_path.parent_path() : std::filesystem::path(".");
-  const auto assets_directory = report_directory / "assets";
-  const auto source_artifact = assets_directory / (source_hash + ".stl");
+        auto draft_result = geometry::inspect_stl(
+            source_bytes, geometry::ImportOptions(role, units, request.scale_mm.value_or(1.0), limits));
+        if (std::holds_alternative<ImportFailure>(draft_result)) {
+            return import_failure(std::get<ImportFailure>(draft_result));
+        }
+        const auto draft = std::get<std::shared_ptr<const AssetDraft>>(std::move(draft_result));
 
-  Bytes draft_mesh_bytes = serialize_ply(draft->mesh());
-  auto draft_hash_result = sha256(draft_mesh_bytes);
-  if (std::holds_alternative<InspectFailure>(draft_hash_result)) {
-    return std::get<InspectFailure>(std::move(draft_hash_result));
-  }
-  const std::string draft_hash = std::get<std::string>(std::move(draft_hash_result));
-  const auto draft_artifact = assets_directory / (draft_hash + ".ply");
+        const auto report_directory =
+            request.report_path.has_parent_path() ? request.report_path.parent_path() : std::filesystem::path(".");
+        const auto assets_directory = report_directory / "assets";
+        const auto source_artifact = assets_directory / (source_hash + ".stl");
 
-  std::vector<Artifact> artifacts;
-  artifacts.push_back({source_artifact, source_bytes});
-  artifacts.push_back({draft_artifact, draft_mesh_bytes});
+        Bytes draft_mesh_bytes = serialize_ply(draft->mesh());
+        auto draft_hash_result = sha256(draft_mesh_bytes);
+        if (std::holds_alternative<InspectFailure>(draft_hash_result)) {
+            return std::get<InspectFailure>(std::move(draft_hash_result));
+        }
+        const std::string draft_hash = std::get<std::string>(std::move(draft_hash_result));
+        const auto draft_artifact = assets_directory / (draft_hash + ".ply");
 
-  std::optional<std::string> proposal_token;
-  std::optional<std::filesystem::path> proposal_path;
-  Json proposal_reference;
-  std::shared_ptr<const RepairProposal> proposal;
-  std::shared_ptr<const AcceptedSolid> accepted;
+        std::vector<Artifact> artifacts;
+        budget.charge(source_bytes.size());
+        budget.charge(draft_mesh_bytes.size());
+        artifacts.push_back({ source_artifact, source_bytes });
+        artifacts.push_back({ draft_artifact, draft_mesh_bytes });
 
-  if (request.weld_tolerance_mm) {
-    auto proposal_result = geometry::propose_weld(
-        draft, geometry::WeldOptions{*request.weld_tolerance_mm});
-    if (std::holds_alternative<ImportFailure>(proposal_result)) {
-      return import_failure(std::get<ImportFailure>(proposal_result));
+        std::optional<std::string> proposal_token;
+        std::optional<std::filesystem::path> proposal_path;
+        Json proposal_reference;
+        std::shared_ptr<const RepairProposal> proposal;
+        std::shared_ptr<const AcceptedSolid> accepted;
+
+        if (request.weld_tolerance_mm) {
+            // Weld's conservative bound includes the retained original draft once.
+            // Replace the inspection phase bound before admitting repair scratch.
+            budget.release(native_bound);
+            geometry::WeldOptions weld_options { *request.weld_tolerance_mm, 10'000'000, budget.remaining() };
+            const auto weld_admission = geometry::estimate_weld_admission(*draft, weld_options);
+            if (const auto* problem = std::get_if<ImportFailure>(&weld_admission)) {
+                return import_failure(*problem);
+            }
+            budget.charge(std::get<geometry::ImportAdmission>(weld_admission).working_bytes_upper_bound);
+            auto proposal_result = geometry::propose_weld(draft, weld_options);
+            if (std::holds_alternative<ImportFailure>(proposal_result)) {
+                return import_failure(std::get<ImportFailure>(proposal_result));
+            }
+            proposal = std::get<std::shared_ptr<const RepairProposal>>(std::move(proposal_result));
+            const auto candidate = proposal->candidate();
+            if (!candidate) {
+                return failure("INTERNAL_ERROR", "The repair proposal has no candidate draft.", 4);
+            }
+
+            Bytes candidate_bytes = serialize_ply(candidate->mesh());
+            auto candidate_hash_result = sha256(candidate_bytes);
+            if (std::holds_alternative<InspectFailure>(candidate_hash_result)) {
+                return std::get<InspectFailure>(std::move(candidate_hash_result));
+            }
+            const std::string candidate_hash = std::get<std::string>(std::move(candidate_hash_result));
+            const auto candidate_path = assets_directory / (candidate_hash + ".ply");
+
+            const Json proposal_record =
+                repair_recipe(proposal, source_hash, source_bytes.size(), request.role, request.units,
+                              *request.weld_tolerance_mm, draft_hash, candidate_hash);
+            Bytes proposal_bytes = bytes_from_string(proposal_record.dump());
+            auto token_result = sha256(proposal_bytes);
+            if (std::holds_alternative<InspectFailure>(token_result)) {
+                return std::get<InspectFailure>(std::move(token_result));
+            }
+            proposal_token = std::get<std::string>(std::move(token_result));
+            proposal_path = assets_directory / (*proposal_token + ".repair.json");
+
+            proposal_reference = {
+                { "sha256",              *proposal_token                                                            },
+                { "path",                portable_path(std::filesystem::path("assets") / proposal_path->filename()) },
+                { "before",
+                 { { "path", portable_path(std::filesystem::path("assets") / draft_artifact.filename()) },
+                    { "sha256", draft_hash } }                                                                      },
+                { "after",
+                 { { "path", portable_path(std::filesystem::path("assets") / candidate_path.filename()) },
+                    { "sha256", candidate_hash } }                                                                  },
+                { "tolerance_mm",        *request.weld_tolerance_mm                                                 },
+                { "max_displacement_mm", proposal->max_displacement_mm()                                            },
+                { "candidate_status",    validity_name(candidate->report().validity)                                }
+            };
+
+            if (request.accept_repair && *request.accept_repair != *proposal_token) {
+                return failure("ASSET_MISMATCH", "Repair acceptance token does not match this source and options.");
+            }
+            if (request.accept_repair) {
+                auto accepted_result = geometry::accept_repair(proposal);
+                if (std::holds_alternative<ImportFailure>(accepted_result)) {
+                    return import_failure(std::get<ImportFailure>(accepted_result));
+                }
+                accepted = std::get<std::shared_ptr<const AcceptedSolid>>(std::move(accepted_result));
+            }
+
+            artifacts.push_back({ candidate_path, std::move(candidate_bytes) });
+            artifacts.push_back({ *proposal_path, std::move(proposal_bytes) });
+        }
+        else if (draft->report().validity == Validity::valid) {
+            auto accepted_result = geometry::accept_asset(draft);
+            if (std::holds_alternative<ImportFailure>(accepted_result)) {
+                return import_failure(std::get<ImportFailure>(accepted_result));
+            }
+            accepted = std::get<std::shared_ptr<const AcceptedSolid>>(std::move(accepted_result));
+        }
+
+        Json report;
+        std::string state;
+        std::string status;
+        if (accepted) {
+            Bytes accepted_bytes = serialize_ply(accepted->mesh());
+            auto accepted_hash_result = sha256(accepted_bytes);
+            if (std::holds_alternative<InspectFailure>(accepted_hash_result)) {
+                return std::get<InspectFailure>(std::move(accepted_hash_result));
+            }
+            const std::string accepted_hash = std::get<std::string>(std::move(accepted_hash_result));
+            const auto accepted_path = assets_directory / (accepted_hash + ".ply");
+            artifacts.push_back({ accepted_path, std::move(accepted_bytes) });
+
+            report = make_report_base(request, source_hash, source_artifact, accepted->frame(), accepted->report(),
+                                      "accepted");
+            report["accepted_solid"] = solid_reference(accepted_path, accepted_hash, accepted->mesh());
+            if (request.accept_repair) {
+                report["repair_record"] = {
+                    { "path",             portable_path(std::filesystem::path("assets") / proposal_path->filename()) },
+                    { "sha256",           *proposal_token                                                            },
+                    { "accepted_by_user", true                                                                       }
+                };
+            }
+            else {
+                report["repair_record"] = nullptr;
+            }
+            state = "accepted";
+            status = validity_name(accepted->report().validity);
+        }
+        else {
+            report =
+                make_report_base(request, source_hash, source_artifact, draft->frame(), draft->report(), "inspected");
+            report["preview"] = {
+                { "path",   portable_path(std::filesystem::path("assets") / draft_artifact.filename()) },
+                { "sha256", draft_hash                                                                 }
+            };
+            if (proposal_token) {
+                report["repair_proposal"] = proposal_reference;
+            }
+            state = "inspected";
+            status = validity_name(draft->report().validity);
+        }
+
+        ContractValidator validator;
+        if (!std::holds_alternative<ValidatedDocument>(validator.validate(ContractKind::assets, report))) {
+            return failure("INTERNAL_ERROR", "Inspection report failed contract validation.", 4);
+        }
+
+        std::error_code error;
+        std::filesystem::create_directories(assets_directory, error);
+        if (error) {
+            return failure("INTERNAL_ERROR", "The artifact directory cannot be created.", 4);
+        }
+
+        for (const auto& artifact : artifacts) {
+            if (auto distinct = require_distinct_output(artifact.path, request.stl_path, request.report_path)) {
+                return *distinct;
+            }
+        }
+        for (const auto& artifact : artifacts) {
+            const auto published = publish_artifact(artifact);
+            if (published.exit_code != 0) {
+                return published;
+            }
+        }
+
+        const Bytes report_bytes = bytes_from_string(report.dump());
+        if (auto distinct = require_distinct_output(request.report_path, request.stl_path, request.report_path)) {
+            return *distinct;
+        }
+        const auto published = publish_report(request.report_path, report_bytes);
+        if (published.exit_code != 0) {
+            return published;
+        }
+
+        return InspectSuccess { request.report_path, std::move(state), std::move(status),
+                                accepted ? std::nullopt : proposal_token };
     }
-    proposal = std::get<std::shared_ptr<const RepairProposal>>(std::move(proposal_result));
-    const auto candidate = proposal->candidate();
-    if (!candidate) {
-      return failure("INTERNAL_ERROR", "The repair proposal has no candidate draft.", 4);
+    catch (const detail::AssetMemoryLimit&) {
+        return failure("MEMORY_LIMIT",
+                       "Inspection inputs, artifacts and native scratch exceed the remaining host allowance.", 3);
     }
-
-    Bytes candidate_bytes = serialize_ply(candidate->mesh());
-    auto candidate_hash_result = sha256(candidate_bytes);
-    if (std::holds_alternative<InspectFailure>(candidate_hash_result)) {
-      return std::get<InspectFailure>(std::move(candidate_hash_result));
+    catch (const std::bad_alloc&) {
+        return failure("MEMORY_LIMIT", "Inspection exhausted its bounded memory allocation.", 3);
     }
-    const std::string candidate_hash = std::get<std::string>(std::move(candidate_hash_result));
-    const auto candidate_path = assets_directory / (candidate_hash + ".ply");
-
-    const Json proposal_record = repair_recipe(proposal, source_hash, source_bytes.size(), request.role, request.units,
-                                               *request.weld_tolerance_mm, draft_hash, candidate_hash);
-    Bytes proposal_bytes = bytes_from_string(proposal_record.dump());
-    auto token_result = sha256(proposal_bytes);
-    if (std::holds_alternative<InspectFailure>(token_result)) {
-      return std::get<InspectFailure>(std::move(token_result));
-    }
-    proposal_token = std::get<std::string>(std::move(token_result));
-    proposal_path = assets_directory / (*proposal_token + ".repair.json");
-
-    proposal_reference = {
-        {"sha256", *proposal_token},
-        {"path", portable_path(std::filesystem::path("assets") / proposal_path->filename())},
-        {"before", {
-            {"path", portable_path(std::filesystem::path("assets") / draft_artifact.filename())},
-            {"sha256", draft_hash}}},
-        {"after", {
-            {"path", portable_path(std::filesystem::path("assets") / candidate_path.filename())},
-            {"sha256", candidate_hash}}},
-        {"tolerance_mm", *request.weld_tolerance_mm},
-        {"max_displacement_mm", proposal->max_displacement_mm()},
-        {"candidate_status", validity_name(candidate->report().validity)}};
-
-    if (request.accept_repair && *request.accept_repair != *proposal_token) {
-      return failure("ASSET_MISMATCH", "Repair acceptance token does not match this source and options.");
-    }
-    if (request.accept_repair) {
-      auto accepted_result = geometry::accept_repair(proposal);
-      if (std::holds_alternative<ImportFailure>(accepted_result)) {
-        return import_failure(std::get<ImportFailure>(accepted_result));
-      }
-      accepted = std::get<std::shared_ptr<const AcceptedSolid>>(std::move(accepted_result));
-    }
-
-    artifacts.push_back({candidate_path, std::move(candidate_bytes)});
-    artifacts.push_back({*proposal_path, std::move(proposal_bytes)});
-  } else if (draft->report().validity == Validity::valid) {
-    auto accepted_result = geometry::accept_asset(draft);
-    if (std::holds_alternative<ImportFailure>(accepted_result)) {
-      return import_failure(std::get<ImportFailure>(accepted_result));
-    }
-    accepted = std::get<std::shared_ptr<const AcceptedSolid>>(std::move(accepted_result));
-  }
-
-  Json report;
-  std::string state;
-  std::string status;
-  if (accepted) {
-    Bytes accepted_bytes = serialize_ply(accepted->mesh());
-    auto accepted_hash_result = sha256(accepted_bytes);
-    if (std::holds_alternative<InspectFailure>(accepted_hash_result)) {
-      return std::get<InspectFailure>(std::move(accepted_hash_result));
-    }
-    const std::string accepted_hash = std::get<std::string>(std::move(accepted_hash_result));
-    const auto accepted_path = assets_directory / (accepted_hash + ".ply");
-    artifacts.push_back({accepted_path, std::move(accepted_bytes)});
-
-    report = make_report_base(
-        request, source_hash, source_artifact, accepted->frame(), accepted->report(), "accepted");
-    report["accepted_solid"] = solid_reference(accepted_path, accepted_hash, accepted->mesh());
-    if (request.accept_repair) {
-      report["repair_record"] = {
-          {"path", portable_path(std::filesystem::path("assets") / proposal_path->filename())},
-          {"sha256", *proposal_token},
-          {"accepted_by_user", true}};
-    } else {
-      report["repair_record"] = nullptr;
-    }
-    state = "accepted";
-    status = validity_name(accepted->report().validity);
-  } else {
-    report = make_report_base(
-        request, source_hash, source_artifact, draft->frame(), draft->report(), "inspected");
-    report["preview"] = {
-        {"path", portable_path(std::filesystem::path("assets") / draft_artifact.filename())},
-        {"sha256", draft_hash}};
-    if (proposal_token) report["repair_proposal"] = proposal_reference;
-    state = "inspected";
-    status = validity_name(draft->report().validity);
-  }
-
-  ContractValidator validator;
-  if (!std::holds_alternative<ValidatedDocument>(
-          validator.validate(ContractKind::assets, report))) {
-    return failure("INTERNAL_ERROR", "Inspection report failed contract validation.", 4);
-  }
-
-  std::error_code error;
-  std::filesystem::create_directories(assets_directory, error);
-  if (error) return failure("INTERNAL_ERROR", "The artifact directory cannot be created.", 4);
-
-  for (const auto& artifact : artifacts) {
-    if (auto distinct = require_distinct_output(
-            artifact.path, request.stl_path, request.report_path)) {
-      return *distinct;
-    }
-  }
-  for (const auto& artifact : artifacts) {
-    const auto published = publish_artifact(artifact);
-    if (published.exit_code != 0) return published;
-  }
-
-  const Bytes report_bytes = bytes_from_string(report.dump());
-  if (auto distinct = require_distinct_output(
-          request.report_path, request.stl_path, request.report_path)) {
-    return *distinct;
-  }
-  const auto published = publish_report(request.report_path, report_bytes);
-  if (published.exit_code != 0) return published;
-
-  return InspectSuccess{
-      request.report_path,
-      std::move(state),
-      std::move(status),
-      accepted ? std::nullopt : proposal_token};
 }
 
 }  // namespace spectrapack::io

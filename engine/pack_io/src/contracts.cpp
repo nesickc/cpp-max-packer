@@ -41,11 +41,47 @@ std::string id_for(const std::string& key) {
 
 class Issues final : public nlohmann::json_schema::error_handler {
  public:
-  void error(const Json::json_pointer& pointer, const Json&, const std::string& message) override {
-    if (items.size() < kMaxIssues) items.push_back({ValidationStage::schema, pointer.to_string(), "SCHEMA_INVALID", message});
-  }
+     explicit Issues(const ContractDiagnosticLimits& limits) : limits_(limits) {}
+     void error(const Json::json_pointer& pointer, const Json&, const std::string& message) override
+     {
+         if (items.size() < std::clamp<std::size_t>(limits_.max_issues, 1, kMaxIssues)) {
+             items.push_back(
+                 { ValidationStage::schema, bounded(pointer.to_string()), "SCHEMA_INVALID", bounded(message) });
+         }
+     }
   std::vector<ValidationIssue> items;
+
+  private:
+  std::string bounded(std::string_view text) const
+  {
+      auto size = std::min(text.size(), limits_.max_string_bytes);
+      while (size && size < text.size() && (static_cast<unsigned char>(text[size]) & 0xc0) == 0x80) {
+          --size;
+      }
+      return std::string(text.substr(0, size));
+  }
+  ContractDiagnosticLimits limits_;
 };
+
+ContractFailure bound_failure(ContractFailure failure, const ContractDiagnosticLimits& limits)
+{
+    if (failure.issues.size() > std::clamp<std::size_t>(limits.max_issues, 1, kMaxIssues)) {
+        failure.issues.resize(std::clamp<std::size_t>(limits.max_issues, 1, kMaxIssues));
+    }
+    const auto truncate = [&](std::string& text) {
+        auto size = std::min(text.size(), limits.max_string_bytes);
+        while (size && size < text.size() && (static_cast<unsigned char>(text[size]) & 0xc0) == 0x80) {
+            --size;
+        }
+        std::string bounded(text.data(), size);
+        text.swap(bounded);
+    };
+    for (auto& issue : failure.issues) {
+        truncate(issue.path);
+        truncate(issue.message);
+    }
+    return failure;
+}
 
 ContractFailure parse_failure(ContractKind kind, std::string code, std::string message) {
   return ContractFailure{kind, {{ValidationStage::parse, "", std::move(code), std::move(message)}}};
@@ -843,64 +879,96 @@ ContractValidator::~ContractValidator() = default;
 ContractValidator::ContractValidator(ContractValidator&&) noexcept = default;
 ContractValidator& ContractValidator::operator=(ContractValidator&&) noexcept = default;
 
-DecodeOutcome ContractValidator::parse(ContractKind kind, std::string_view utf8) {
-  if (contains_nul(utf8)) return parse_failure(kind, "RAW_NUL", "Raw NUL bytes are not permitted.");
-  if (utf8.size() >= 3 && static_cast<unsigned char>(utf8[0]) == 0xef &&
-      static_cast<unsigned char>(utf8[1]) == 0xbb && static_cast<unsigned char>(utf8[2]) == 0xbf)
-    return parse_failure(kind, "BOM_FORBIDDEN", "UTF-8 BOM is not permitted.");
-  try {
-    std::vector<std::set<std::string>> object_keys;
-    Json::parser_callback_t callback = [&object_keys](int depth, Json::parse_event_t event, Json& parsed) {
-      if ((event == Json::parse_event_t::object_start || event == Json::parse_event_t::array_start) && depth >= 64) {
-        throw ParseFailure{ParseProblem::nesting_too_deep};
-      }
-      if (event == Json::parse_event_t::object_start) {
-        object_keys.emplace_back();
-      } else if (event == Json::parse_event_t::object_end) {
-        object_keys.pop_back();
-      } else if (event == Json::parse_event_t::key && !object_keys.back().insert(parsed.get<std::string>()).second) {
-        throw ParseFailure{ParseProblem::duplicate_key};
-      }
-      return true;
+DecodeOutcome ContractValidator::parse(ContractKind kind, std::string_view utf8, const ContractDiagnosticLimits& limits)
+{
+    const auto failed = [&](std::string code, std::string message) -> DecodeOutcome {
+        return bound_failure(parse_failure(kind, std::move(code), std::move(message)), limits);
     };
-    Json parsed = Json::parse(utf8.begin(), utf8.end(), callback, true, false);
-    return validate(kind, parsed);
-  }
-  catch (const ParseFailure& failure) {
-    return failure.problem == ParseProblem::duplicate_key
-        ? parse_failure(kind, "DUPLICATE_KEY", "Object keys must be unique.")
-        : parse_failure(kind, "NESTING_TOO_DEEP", "JSON nesting must not exceed 64.");
-  }
-  catch (const nlohmann::json::parse_error& error) {
-    const std::string message = error.what();
-    if (message.find("UTF-8") != std::string::npos || message.find("utf-8") != std::string::npos)
-      return parse_failure(kind, "INVALID_UTF8", "Input must be well-formed UTF-8.");
-    return parse_failure(kind, "INVALID_JSON", "Input is not valid JSON.");
-  }
-  catch (const nlohmann::json::out_of_range&) {
-    return parse_failure(kind, "INVALID_JSON", "Numeric value is outside the supported JSON range.");
-  }
+    if (contains_nul(utf8)) {
+        return failed("RAW_NUL", "Raw NUL bytes are not permitted.");
+    }
+    if (utf8.size() >= 3 && static_cast<unsigned char>(utf8[0]) == 0xef &&
+        static_cast<unsigned char>(utf8[1]) == 0xbb && static_cast<unsigned char>(utf8[2]) == 0xbf) {
+        return failed("BOM_FORBIDDEN", "UTF-8 BOM is not permitted.");
+    }
+    try {
+        std::vector<std::set<std::string>> object_keys;
+        Json::parser_callback_t callback = [&object_keys](int depth, Json::parse_event_t event, Json& parsed) {
+            if ((event == Json::parse_event_t::object_start || event == Json::parse_event_t::array_start) &&
+                depth >= 64) {
+                throw ParseFailure { ParseProblem::nesting_too_deep };
+            }
+            if (event == Json::parse_event_t::object_start) {
+                object_keys.emplace_back();
+            }
+            else if (event == Json::parse_event_t::object_end) {
+                object_keys.pop_back();
+            }
+            else if (event == Json::parse_event_t::key &&
+                     !object_keys.back().insert(parsed.get<std::string>()).second) {
+                throw ParseFailure { ParseProblem::duplicate_key };
+            }
+            return true;
+        };
+        Json parsed = Json::parse(utf8.begin(), utf8.end(), callback, true, false);
+        return validate(kind, parsed, limits);
+    }
+    catch (const ParseFailure& failure) {
+        return failure.problem == ParseProblem::duplicate_key
+                   ? failed("DUPLICATE_KEY", "Object keys must be unique.")
+                   : failed("NESTING_TOO_DEEP", "JSON nesting must not exceed 64.");
+    }
+    catch (const nlohmann::json::parse_error& error) {
+        const std::string message = error.what();
+        if (message.find("UTF-8") != std::string::npos || message.find("utf-8") != std::string::npos) {
+            return failed("INVALID_UTF8", "Input must be well-formed UTF-8.");
+        }
+        return failed("INVALID_JSON", "Input is not valid JSON.");
+    }
+    catch (const nlohmann::json::out_of_range&) {
+        return failed("INVALID_JSON", "Numeric value is outside the supported JSON range.");
+    }
 }
-DecodeOutcome ContractValidator::validate(ContractKind kind, const Json& value) {
-  if (has_invalid_utf8(value))
-    return ContractFailure{kind, {{ValidationStage::semantic, "", "INVALID_UTF8", "JSON strings must be well-formed UTF-8."}}};
-  if (has_identity_nul(kind, value))
-    return ContractFailure{kind, {{ValidationStage::semantic, "", "IDENTITY_NUL", "Identity strings must not contain NUL."}}};
-  if (!finite_json(value))
-    return ContractFailure{kind, {{ValidationStage::semantic, "", "NONFINITE_NUMBER", "JSON numbers must be finite."}}};
-  const char* version_key = kind == ContractKind::settings ? "settings_version" :
-      kind == ContractKind::protocol ? "protocol_version" : "schema_version";
-  if (value.is_object() && value.contains(version_key) && value.at(version_key).is_number_integer() &&
-      value.at(version_key) != 1) {
-    return ContractFailure{kind, {{ValidationStage::schema, "/" + std::string(version_key),
-        "SCHEMA_UNSUPPORTED", "Document version is unsupported."}}};
-  }
-  Issues handler;
-  impl_->validators.at(id_for(name(kind))).validate(value, handler);
-  if (!handler.items.empty()) return ContractFailure{kind, std::move(handler.items)};
-  auto semantic = semantics(kind, value);
-  if (!semantic.empty()) return ContractFailure{kind, std::move(semantic)};
-  return ValidatedDocument(kind, value);
+DecodeOutcome ContractValidator::validate(ContractKind kind, const Json& value, const ContractDiagnosticLimits& limits)
+{
+    if (has_invalid_utf8(value)) {
+        return bound_failure(ContractFailure { kind,
+                                               { { ValidationStage::semantic, "", "INVALID_UTF8",
+                                                   "JSON strings must be well-formed UTF-8." } } },
+                             limits);
+    }
+    if (has_identity_nul(kind, value)) {
+        return bound_failure(
+            ContractFailure {
+                kind, { { ValidationStage::semantic, "", "IDENTITY_NUL", "Identity strings must not contain NUL." } } },
+            limits);
+    }
+    if (!finite_json(value)) {
+        return bound_failure(
+            ContractFailure {
+                kind, { { ValidationStage::semantic, "", "NONFINITE_NUMBER", "JSON numbers must be finite." } } },
+            limits);
+    }
+    const char* version_key = kind == ContractKind::settings   ? "settings_version"
+                              : kind == ContractKind::protocol ? "protocol_version"
+                                                               : "schema_version";
+    if (value.is_object() && value.contains(version_key) && value.at(version_key).is_number_integer() &&
+        value.at(version_key) != 1) {
+        return bound_failure(ContractFailure { kind,
+                                               { { ValidationStage::schema, "/" + std::string(version_key),
+                                                   "SCHEMA_UNSUPPORTED", "Document version is unsupported." } } },
+                             limits);
+    }
+    Issues handler(limits);
+    impl_->validators.at(id_for(name(kind))).validate(value, handler);
+    if (!handler.items.empty()) {
+        return ContractFailure { kind, std::move(handler.items) };
+    }
+    auto semantic = semantics(kind, value);
+    if (!semantic.empty()) {
+        return bound_failure(ContractFailure { kind, std::move(semantic) }, limits);
+    }
+    return ValidatedDocument(kind, value);
 }
 
 Json error_json(const Error& error) { return Json{{"code", error.code}, {"message", error.message}, {"details", error.details.is_object() ? error.details : Json::object()}, {"recoverable", error.recoverable}}; }

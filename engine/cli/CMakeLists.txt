@@ -10,6 +10,11 @@ target_compile_definitions(spectrapack-engine PRIVATE
 install(TARGETS spectrapack-engine RUNTIME DESTINATION bin COMPONENT engine)
 
 if(BUILD_TESTING)
+  add_executable(spectrapack_runtime_wire_tests tests/runtime_wire_tests.cpp)
+  target_include_directories(spectrapack_runtime_wire_tests PRIVATE src)
+  target_link_libraries(spectrapack_runtime_wire_tests PRIVATE pack_io Catch2::Catch2WithMain)
+  include(Catch)
+  catch_discover_tests(spectrapack_runtime_wire_tests)
   add_executable(spectrapack_cli_memory_check
     tests/solve_memory_test_main.cpp
     src/solve.cpp)

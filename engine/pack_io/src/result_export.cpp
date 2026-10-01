@@ -2,6 +2,7 @@
 #include <spectrapack/geometry/rigid_transform.hpp>
 #include <spectrapack/io/result_export.hpp>
 
+#include "asset_admission.hpp"
 #include "operation_guard.hpp"
 #include "repair_replay.hpp"
 #include "result_builder_accounting.hpp"
@@ -179,6 +180,9 @@ std::variant<Bytes, Error> read_bytes(const std::filesystem::path& path, std::ui
         std::ifstream input(path, std::ios::binary);
         if (!input) {
             return failure("ASSET_MISMATCH", "A retained provenance artifact cannot be opened.");
+        }
+        if (detail::asset_budget) {
+            detail::asset_budget->charge(size);
         }
         Bytes bytes(static_cast<std::size_t>(size));
         for (std::size_t offset = 0; offset < bytes.size();) {
@@ -371,6 +375,7 @@ std::variant<std::string, Error> sha256_file(const std::filesystem::path& path, 
     return failure("INTERNAL_ERROR", "SHA-256 is unavailable on this platform.");
 #endif
 }
+bool add_repeated_bytes(std::uint64_t&, std::uint64_t, std::size_t) noexcept;
 Bytes serialize_ply(geometry::MeshView mesh)
 {
     std::ostringstream header;
@@ -378,7 +383,16 @@ Bytes serialize_ply(geometry::MeshView mesh)
            << "\nproperty double x\nproperty double y\nproperty double z\nelement face " << mesh.triangles.size()
            << "\nproperty list uchar uint vertex_indices\nend_header\n";
     const auto text = header.str();
-    Bytes bytes(text.size());
+    std::uint64_t size = text.size();
+    if (!add_repeated_bytes(size, mesh.vertices.size(), 24) || !add_repeated_bytes(size, mesh.triangles.size(), 13)) {
+        throw detail::AssetMemoryLimit {};
+    }
+    if (detail::asset_budget) {
+        detail::asset_budget->charge(size);
+    }
+    Bytes bytes;
+    bytes.reserve(static_cast<std::size_t>(size));
+    bytes.resize(text.size());
     if (!text.empty()) {
         std::memcpy(bytes.data(), text.data(), text.size());
     }
@@ -1166,10 +1180,60 @@ std::optional<std::uint64_t> VerifiedAsset::resident_buffer_bytes() const noexce
     }
     return total;
 }
-AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path, const runtime::OperationControl& control)
+AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path, const runtime::OperationControl& control,
+                                     const AssetLoadLimits& limits,
+                                     std::shared_ptr<const VerifiedAsset> reuse_candidate)
 {
     const detail::OperationGuard operation(control);
     try {
+        detail::AssetBudget budget(limits.max_working_bytes);
+        const detail::AssetBudgetScope budget_scope(budget);
+#ifdef _WIN32
+        if (reuse_candidate) {
+            const auto& stored = *reuse_candidate->storage_;
+            const auto exact = [&](const std::filesystem::path& lexical, const std::filesystem::path& resolved,
+                                   const FileIdentity& identity, const Bytes& expected) {
+                detail::poll_operation();
+                std::error_code problem;
+                if (std::filesystem::is_symlink(lexical, problem) || problem || !same_identity(lexical, identity) ||
+                    !same_lexical_location(std::filesystem::weakly_canonical(lexical, problem), resolved) || problem) {
+                    return false;
+                }
+                if (std::filesystem::file_size(lexical, problem) != expected.size() || problem) {
+                    return false;
+                }
+                std::ifstream input(lexical, std::ios::binary);
+                if (!input) {
+                    return false;
+                }
+                std::array<char, 64 * 1024> chunk;
+                for (std::size_t offset = 0; offset < expected.size();) {
+                    detail::poll_operation();
+                    const auto count = std::min(chunk.size(), expected.size() - offset);
+                    if (!input.read(chunk.data(), static_cast<std::streamsize>(count)) ||
+                        std::memcmp(chunk.data(), expected.data() + offset, count) != 0) {
+                        return false;
+                    }
+                    offset += count;
+                }
+                char extra {};
+                return !input.read(&extra, 1) && input.eof() && same_identity(lexical, identity);
+            };
+            bool matched =
+                same_lexical_location(report_path, stored.report_lexical) &&
+                exact(stored.report_lexical, stored.report_path, stored.report_identity, stored.report_bytes) &&
+                exact(stored.source_lexical, stored.source_path, stored.source_identity, stored.source_bytes) &&
+                exact(stored.ply_lexical, stored.ply_path, stored.ply_identity, stored.ply_bytes);
+            for (const auto& artifact : stored.repair_artifacts) {
+                if (matched) {
+                    matched = exact(artifact.lexical, artifact.path, artifact.identity, artifact.bytes);
+                }
+            }
+            if (matched) {
+                return reuse_candidate;
+            }
+        }
+#endif
         detail::poll_operation();
         control.phase(runtime::Phase::loading);
         std::error_code error;
@@ -1183,6 +1247,9 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path, c
         auto report_bytes = std::get<Bytes>(std::move(report_bytes_result));
         ContractValidator validator;
         const std::string_view text(reinterpret_cast<const char*>(report_bytes.data()), report_bytes.size());
+        if (!detail::admit_asset_json(text, budget)) {
+            return failure("ASSET_MISMATCH", "Retained report JSON is malformed or too deeply nested.");
+        }
         auto decoded = validator.parse(ContractKind::assets, text);
         if (!std::holds_alternative<ValidatedDocument>(decoded)) {
             return contract_error(std::get<ContractFailure>(decoded));
@@ -1225,12 +1292,24 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path, c
                                                   : geometry::Units::custom;
         const auto scale = record.at("source").at("unit_scale_mm").get<double>();
         control.phase(runtime::Phase::preparing);
-        auto inspected = geometry::inspect_stl(source_bytes, { role, units, scale }, control);
+        geometry::ImportLimits import_limits;
+        import_limits.max_working_bytes = budget.remaining();
+        const auto admission = geometry::estimate_import_admission(source_bytes, import_limits, control);
+        if (const auto* problem = std::get_if<geometry::ImportFailure>(&admission)) {
+            return Error { problem->code, problem->message, { { "reason", problem->reason } }, true };
+        }
+        auto native_bound = std::get<geometry::ImportAdmission>(admission).working_bytes_upper_bound;
+        auto inspected = geometry::inspect_stl(source_bytes, { role, units, scale, import_limits }, control);
         detail::poll_operation();
+        if (const auto* problem = std::get_if<geometry::ImportFailure>(&inspected);
+            problem && problem->code == "MEMORY_LIMIT") {
+            return Error { problem->code, problem->message, { { "reason", problem->reason } }, true };
+        }
         if (std::holds_alternative<geometry::ImportFailure>(inspected)) {
             return failure("ASSET_MISMATCH", "The retained source STL no longer reconstructs a valid inspection.");
         }
-        const auto draft = std::get<std::shared_ptr<const geometry::AssetDraft>>(std::move(inspected));
+        auto draft = std::get<std::shared_ptr<const geometry::AssetDraft>>(std::move(inspected));
+        budget.charge(native_bound);
         geometry::ImportOutcome<geometry::AcceptedSolid> accepted;
         std::vector<RetainedRepairArtifact> repair_artifacts;
         if (record.at("repair_record").is_null()) {
@@ -1255,12 +1334,16 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path, c
             if (std::get<std::string>(digest) != token || reference.at("path") != "assets/" + token + ".repair.json") {
                 return failure("ASSET_MISMATCH", "Retained repair token or content-addressed path does not match.");
             }
-            auto replay = detail::replay_repair(draft, record, bytes, source_bytes.size(), control);
+            // Weld admission includes the original draft, so replace its import
+            // phase allowance instead of charging the same native owner twice.
+            budget.release(native_bound);
+            auto replay = detail::replay_repair(draft, record, bytes, source_bytes.size(), control, budget.remaining());
             detail::poll_operation();
             if (const auto* problem = std::get_if<Error>(&replay)) {
                 return *problem;
             }
             auto restored = std::get<detail::ReplayedRepair>(std::move(replay));
+            native_bound = restored.native_bound;
             accepted = restored.solid;
             restored.artifacts.emplace(token + ".repair.json", std::move(bytes));
             const auto accepted_name = record.at("accepted_solid").at("sha256").get<std::string>() + ".ply";
@@ -1297,6 +1380,13 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path, c
             return failure("ASSET_MISMATCH", "The retained source STL no longer reconstructs an accepted solid.");
         }
         auto solid = std::get<std::shared_ptr<const geometry::AcceptedSolid>>(std::move(accepted));
+        draft.reset();
+        const auto resident = solid->resident_buffer_bytes();
+        if (!resident) {
+            return failure("MEMORY_LIMIT", "Accepted-solid residency is not representable.");
+        }
+        budget.release(native_bound);
+        budget.charge(*resident);
         if (solid->role() != role || !same_frame(record, solid->frame(), source_bytes.size()) ||
             record.at("accepted_solid").at("vertex_count").get<std::uint64_t>() != solid->mesh().vertices.size() ||
             record.at("accepted_solid").at("triangle_count").get<std::uint64_t>() != solid->mesh().triangles.size()) {
@@ -1349,6 +1439,9 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path, c
 #endif
             record_payload_bytes, std::move(repair_artifacts) });
         return std::shared_ptr<const VerifiedAsset>(new VerifiedAsset(std::move(storage)));
+    }
+    catch (const detail::AssetMemoryLimit&) {
+        return failure("MEMORY_LIMIT", "Accepted-asset loading exceeds its admitted working-memory allowance.");
     }
     catch (const detail::Interrupted& interruption) {
         return detail::interrupted_error(interruption);
@@ -1649,8 +1742,22 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
         Json committed_result;
         if (request.runtime_before_commit) {
             control.phase(runtime::Phase::saving);
+            // The trusted clock finalizer has at most the nine phase records.
+            // Admit the complete document copy and both bounded runtime copies
+            // before copying the already-live result DOM.
+            constexpr std::uint64_t runtime_cap = 64ULL << 10;
+            auto committed_live_bytes = writer_live_bytes;
+            if (!add_bytes(committed_live_bytes, supplied_payload_bytes) ||
+                !add_bytes(committed_live_bytes, 2 * runtime_cap) || committed_live_bytes > request.max_working_bytes) {
+                return failure("MEMORY_LIMIT", "Commit timing cannot retain a second result document.");
+            }
+            auto runtime_record = request.runtime_before_commit(request.runtime_context);
+            std::uint64_t runtime_record_bytes {};
+            if (!json_payload_bytes(runtime_record, runtime_record_bytes) || runtime_record_bytes > runtime_cap) {
+                return failure("MEMORY_LIMIT", "Commit timing exceeds its bounded finalizer allowance.");
+            }
             committed_result = supplied;
-            committed_result["search"]["runtime"] = request.runtime_before_commit(request.runtime_context);
+            committed_result["search"]["runtime"] = std::move(runtime_record);
             committed_result["search"]["run_segments"].back()["runtime"] = committed_result["search"]["runtime"];
             std::uint64_t runtime_payload_bytes {};
             if (!json_payload_bytes(committed_result, runtime_payload_bytes) ||

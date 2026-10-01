@@ -18,6 +18,9 @@ struct ExportSuccess;
 using ExportOutcome = std::variant<ExportSuccess, Error>;
 
 class VerifiedAsset;
+struct AssetLoadLimits {
+    std::uint64_t max_working_bytes { 512ULL << 20 };
+};
 using AssetLoadOutcome = std::variant<std::shared_ptr<const VerifiedAsset>, Error>;
 
 class VerifiedAsset {
@@ -27,14 +30,17 @@ public:
     [[nodiscard]] std::optional<std::uint64_t> resident_buffer_bytes() const noexcept;
 
 private:
-    friend AssetLoadOutcome load_accepted_asset(const std::filesystem::path&, const runtime::OperationControl&);
+    friend AssetLoadOutcome load_accepted_asset(const std::filesystem::path&, const runtime::OperationControl&,
+                                                const AssetLoadLimits&, std::shared_ptr<const VerifiedAsset>);
     friend ExportOutcome export_result(const ExportRequest&, const runtime::OperationControl&);
     struct Storage;
     std::shared_ptr<const Storage> storage_;
     explicit VerifiedAsset(std::shared_ptr<const Storage>) noexcept;
 };
 [[nodiscard]] AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path,
-                                                   const runtime::OperationControl& control = {});
+                                                   const runtime::OperationControl& control = {},
+                                                   const AssetLoadLimits& limits = {},
+                                                   std::shared_ptr<const VerifiedAsset> reuse_candidate = {});
 
 enum class ResultCatalogBinding { normalized_policy, resolved_policy };
 struct ResultCatalog {

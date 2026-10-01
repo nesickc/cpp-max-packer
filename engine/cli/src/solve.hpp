@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <ostream>
+#include <span>
 #include <spectrapack/io/result_export.hpp>
 #include <string>
 #include <vector>
@@ -20,7 +21,8 @@ struct SolveRuntime {
     std::ostream* output {};
     std::shared_ptr<const geometry::ValidatedSolution>* last_validated {};
 };
-std::optional<std::uint64_t> retained_solution_bytes(const geometry::ValidatedSolution&);
+std::optional<std::uint64_t> retained_solution_bytes(
+    const geometry::ValidatedSolution&, std::span<const geometry::AcceptedSolid* const> already_charged = {});
 }  // namespace spectrapack::cli
 
 int run_solve_command(const std::vector<std::string>& arguments, std::string engine_version, std::string engine_commit);

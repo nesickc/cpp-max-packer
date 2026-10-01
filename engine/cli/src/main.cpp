@@ -49,18 +49,18 @@ void usage(std::ostream& stream) {
               "[--stl <path>]\n";
 }
 
-int machine_error(std::string_view code, std::string_view message, int exit_code) {
-  const auto value = spectrapack::io::Json{
-      {"protocol_version", 1},
-      {"request_id", nullptr},
-      {"ok", false},
-      {"error", {
-          {"code", code},
-          {"message", message},
-          {"details", spectrapack::io::Json::object()},
-          {"recoverable", true}}}};
-  std::cout << value.dump() << '\n' << std::flush;
-  return std::cout ? exit_code : 4;
+int machine_error(std::string_view code, std::string_view message, int exit_code,
+                  spectrapack::io::Json details = spectrapack::io::Json::object())
+{
+    const auto value = spectrapack::io::Json {
+        { "protocol_version", 1                                                                                   },
+        { "request_id",       nullptr                                                                             },
+        { "ok",               false                                                                               },
+        { "error",
+         { { "code", code }, { "message", message }, { "details", std::move(details) }, { "recoverable", true } } }
+    };
+    std::cout << value.dump() << '\n' << std::flush;
+    return std::cout ? exit_code : 4;
 }
 
 int emergency_error(const char* record, int exit_code) noexcept {
@@ -128,6 +128,7 @@ struct SeenOptions {
   bool scale{};
   bool weld{};
   bool accept{};
+  bool available {};
 };
 
 template<class Character>
@@ -162,11 +163,10 @@ int run_engine(int argc, Character** argv) {
       SeenOptions seen;
       for (int index = 2; index < argc; ++index) {
         const View flag(argv[index]);
-        const bool known =
-            equals_ascii(flag, "--stl") || equals_ascii(flag, "--units") ||
-            equals_ascii(flag, "--report") || equals_ascii(flag, "--role") ||
-            equals_ascii(flag, "--scale-mm") || equals_ascii(flag, "--weld-tolerance-mm") ||
-            equals_ascii(flag, "--accept-repair");
+        const bool known = equals_ascii(flag, "--stl") || equals_ascii(flag, "--units") ||
+                           equals_ascii(flag, "--report") || equals_ascii(flag, "--role") ||
+                           equals_ascii(flag, "--scale-mm") || equals_ascii(flag, "--weld-tolerance-mm") ||
+                           equals_ascii(flag, "--accept-repair") || equals_ascii(flag, "--available-host-bytes");
         if (!known || index + 1 >= argc) {
           return machine_error("INVALID_REQUEST", "Inspection options are invalid.", 2);
         }
@@ -208,10 +208,28 @@ int run_engine(int argc, Character** argv) {
                   "INVALID_REQUEST", "--weld-tolerance-mm must be a complete finite number.", 2);
             }
             seen.weld = true;
-          } else {
-            if (seen.accept) return machine_error("INVALID_REQUEST", "Duplicate inspection option.", 2);
-            request.accept_repair = *converted;
-            seen.accept = true;
+          }
+          else if (equals_ascii(flag, "--available-host-bytes")) {
+              if (seen.available) {
+                  return machine_error("INVALID_REQUEST", "Duplicate inspection option.", 2);
+              }
+              std::uint64_t available {};
+              const auto [end, cause] =
+                  std::from_chars(converted->data(), converted->data() + converted->size(), available);
+              if (cause != std::errc {} || end != converted->data() + converted->size() || available == 0 ||
+                  available > (512ULL << 20)) {
+                  return machine_error("INVALID_REQUEST", "--available-host-bytes must be an integer in [1,536870912].",
+                                       2);
+              }
+              request.max_working_bytes = available;
+              seen.available = true;
+          }
+          else {
+              if (seen.accept) {
+                  return machine_error("INVALID_REQUEST", "Duplicate inspection option.", 2);
+              }
+              request.accept_repair = *converted;
+              seen.accept = true;
           }
         }
       }
@@ -223,7 +241,7 @@ int run_engine(int argc, Character** argv) {
       const auto outcome = spectrapack::io::inspect_stl_file(request);
       if (std::holds_alternative<spectrapack::io::InspectFailure>(outcome)) {
         const auto& error = std::get<spectrapack::io::InspectFailure>(outcome);
-        return machine_error(error.code, error.message, error.exit_code);
+        return machine_error(error.code, error.message, error.exit_code, error.details);
       }
       const auto& result = std::get<spectrapack::io::InspectSuccess>(outcome);
       spectrapack::io::Json response = {

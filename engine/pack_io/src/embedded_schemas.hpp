@@ -3123,6 +3123,11 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         },
         "error": {
           "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/error"
+        },
+        "retained_native_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 536870912
         }
       },
       "additionalProperties": false,

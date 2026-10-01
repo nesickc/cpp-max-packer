@@ -36,6 +36,20 @@ namespace io = spectrapack::io;
 namespace solver = spectrapack::solver;
 using io::Json;
 thread_local const spectrapack::cli::SolveRuntime* current_runtime {};
+struct FailureTiming {
+    spectrapack::cli::Timeline& timeline;
+    std::string scope { "search_only" };
+    double budget {};
+    bool empty { true };
+    int (*cleanup)(void*) {};
+    void* cleanup_context {};
+};
+thread_local FailureTiming* failure_timing {};
+struct FailureTimingGuard {
+    FailureTiming* old;
+    explicit FailureTimingGuard(FailureTiming& value) : old(failure_timing) { failure_timing = &value; }
+    ~FailureTimingGuard() { failure_timing = old; }
+};
 std::ostream& output() { return current_runtime && current_runtime->output ? *current_runtime->output : std::cout; }
 struct RuntimeGuard {
     const spectrapack::cli::SolveRuntime* old;
@@ -53,6 +67,24 @@ std::atomic_uint64_t result_export_max_working_bytes_for_test {};
 
 int fail(std::string code, std::string message, int exit_code, Json details = Json::object())
 {
+    if (failure_timing) {
+        auto& timing = *failure_timing;
+        spectrapack::cli::Timeline::phase_sink(&timing.timeline, spectrapack::runtime::Phase::cleanup);
+        if (timing.cleanup && timing.cleanup(timing.cleanup_context)) {
+            details["stop_monitor_failed"] = true;
+            if (code == "OPERATION_CANCELLED") {
+                code = "STOP_MONITOR_FAILED";
+                message = "Operation-scoped Stop transport failed.";
+            }
+        }
+        auto measured =
+            timing.timeline.record(timing.scope, timing.budget, current_runtime && current_runtime->preparation_reused,
+                                   timing.empty, "before_terminal_response");
+        details["completion_elapsed_seconds"] = measured["total_elapsed_seconds"];
+        details["native_completion_elapsed_seconds"] = measured["native_elapsed_seconds"];
+        details["no_nonempty_incumbent"] = timing.empty;
+        details["runtime"] = std::move(measured);
+    }
     output() << Json{{"protocol_version", 1}, {"request_id", nullptr}, {"ok", false},
                     {"error", {{"code", std::move(code)}, {"message", std::move(message)},
                                {"details", std::move(details)}, {"recoverable", true}}}}
@@ -314,8 +346,12 @@ std::optional<std::chrono::steady_clock::time_point> deadline_from_seconds(doubl
     using Clock = std::chrono::steady_clock;
     using Duration = Clock::duration;
     using Rep = Duration::rep;
-    const auto ticks = static_cast<long double>(seconds) * static_cast<long double>(Duration::period::den) /
-                       static_cast<long double>(Duration::period::num);
+    const auto lower = [](long double value) {
+        return std::nextafter(value, -std::numeric_limits<long double>::infinity());
+    };
+    const auto ticks =
+        lower(lower(static_cast<long double>(seconds) * static_cast<long double>(Duration::period::den)) /
+              static_cast<long double>(Duration::period::num));
     if (!std::isfinite(seconds) || seconds <= 0 || !std::isfinite(ticks) || ticks <= 0 ||
         ticks >= static_cast<long double>(std::numeric_limits<Rep>::max())) {
         return {};
@@ -434,14 +470,21 @@ std::optional<uint64_t> command_resident_bytes(const std::vector<std::string>& a
     return total;
 }
 
-std::optional<uint64_t> solution_resident_bytes(const geo::ValidatedSolution& solution)
+std::optional<uint64_t> solution_resident_bytes(const geo::ValidatedSolution& solution,
+                                                std::span<const geo::AcceptedSolid* const> already_charged = {})
 {
     uint64_t total {};
+    const auto own = solution.resident_buffer_bytes();
+    const auto context_own = solution.context() ? solution.context()->resident_buffer_bytes() : std::nullopt;
+    if (!own || !context_own || !add_bytes(total, *own) || !add_bytes(total, *context_own)) {
+        return {};
+    }
     std::array<const geo::AcceptedSolid*, 2> charged_solids {};
     size_t charged_count {};
     const auto charge_solid = [&](const std::shared_ptr<const geo::AcceptedSolid>& solid) {
-        if (!solid || std::find(charged_solids.begin(), charged_solids.begin() + charged_count, solid.get()) !=
-                          charged_solids.begin() + charged_count) {
+        if (!solid || std::find(already_charged.begin(), already_charged.end(), solid.get()) != already_charged.end() ||
+            std::find(charged_solids.begin(), charged_solids.begin() + charged_count, solid.get()) !=
+                charged_solids.begin() + charged_count) {
             return true;
         }
         const auto bytes = solid->resident_buffer_bytes();
@@ -457,18 +500,6 @@ std::optional<uint64_t> solution_resident_bytes(const geo::ValidatedSolution& so
     }
     if (const auto* container = std::get_if<std::shared_ptr<const geo::AcceptedSolid>>(&context->container());
         container && !charge_solid(*container)) {
-        return {};
-    }
-    if (!add_repeated_bytes(total, solution.copies().capacity(), sizeof(geo::CopyPose))) {
-        return {};
-    }
-    for (const auto& copy : solution.copies()) {
-        if (!add_bytes(total, copy.copy_id.capacity() + 1)) {
-            return {};
-        }
-    }
-    if (!add_repeated_bytes(total, context->constraints().orientations.catalog_xyzw.capacity(),
-                            sizeof(geo::Quaternion))) {
         return {};
     }
     return total;
@@ -617,6 +648,8 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
     });
     spectrapack::cli::Timeline timeline(registered_start, run_runtime.elapsed_before_native_seconds,
                                         run_runtime.control);
+    FailureTiming timing { timeline };
+    const FailureTimingGuard timing_guard(timing);
     auto control = run_runtime.control;
     control.stop = console_controls.token();
     control.phase_sink = spectrapack::cli::Timeline::phase_sink;
@@ -682,6 +715,10 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
         return fail("INVALID_REQUEST", "Stop marker aliases an input or output.", 2);
     }
     StopFileWatcher stop_watcher(stop_file, console_controls.source());
+    timing.cleanup = [](void* raw) {
+        return static_cast<StopFileWatcher*>(raw)->finish();
+    };
+    timing.cleanup_context = &stop_watcher;
     control.phase(spectrapack::runtime::Phase::loading);
     Json settings;
     {
@@ -713,12 +750,15 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
     }
     const auto budget_scope = settings["search"].value("budget_scope", "search_only");
     const auto deterministic = settings["search"]["deterministic"].get<bool>();
+    timing.scope = budget_scope;
+    timing.budget = deterministic ? 0 : settings["search"]["budget_seconds"].get<double>();
     if (!deterministic && budget_scope == "total_start" && !control.deadline) {
         control.deadline = deadline_from_seconds(settings["search"]["budget_seconds"].get<double>(), registered_start);
         if (!control.deadline) {
             return fail("INVALID_SETTINGS", "Start deadline is not representable.", 2);
         }
     }
+    timeline.deadline(control.deadline);
     if (const auto cause = control.poll(); cause != spectrapack::runtime::StopCause::none) {
         return fail(
             cause == spectrapack::runtime::StopCause::user_stopped ? "OPERATION_CANCELLED" : "DEADLINE_EXCEEDED",
@@ -727,8 +767,15 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
                 { "no_nonempty_incumbent", true }
         });
     }
-    const io::AssetLoadOutcome loaded_object = run_runtime.object ? io::AssetLoadOutcome(run_runtime.object)
-                                                                  : io::load_accepted_asset(*object_report, control);
+    constexpr std::uint64_t host_cap = 512ULL << 20;
+    std::uint64_t loading_reserve = run_runtime.retained_reserve_bytes;
+    if (!add_bytes(loading_reserve, 16ULL << 20) || !json_payload_bytes(settings, loading_reserve) ||
+        loading_reserve >= host_cap) {
+        return fail("MEMORY_LIMIT", "Loading inputs exceed remaining host allowance.", 3);
+    }
+    const io::AssetLoadOutcome loaded_object =
+        run_runtime.object ? io::AssetLoadOutcome(run_runtime.object)
+                           : io::load_accepted_asset(*object_report, control, { host_cap - loading_reserve });
     if (!std::holds_alternative<std::shared_ptr<const io::VerifiedAsset>>(loaded_object)) {
         const auto& error = std::get<io::Error>(loaded_object);
         return fail(error.code, error.message, 3, error.details);
@@ -750,7 +797,12 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
         if (!container_report) {
             return fail("ASSET_MISMATCH", "STL container settings require a report.", 2);
         }
-        const auto loaded = io::load_accepted_asset(*container_report, control);
+        const auto pins = object->resident_buffer_bytes(), solid = object->solid()->resident_buffer_bytes();
+        if (!pins || !solid || !add_bytes(loading_reserve, *pins) || !add_bytes(loading_reserve, *solid) ||
+            loading_reserve >= host_cap) {
+            return fail("MEMORY_LIMIT", "Container loading exceeds remaining host allowance.", 3);
+        }
+        const auto loaded = io::load_accepted_asset(*container_report, control, { host_cap - loading_reserve });
         if (!std::holds_alternative<std::shared_ptr<const io::VerifiedAsset>>(loaded)) {
             const auto& error = std::get<io::Error>(loaded);
             return fail(error.code, error.message, 3, error.details);
@@ -867,6 +919,7 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
         initial = checked.validated_solution;
     }
     control.deadline = deadline;
+    timeline.deadline(deadline);
     control.phase(spectrapack::runtime::Phase::placing);
     auto outcome = solver::run_cpu_spectral(std::get<std::shared_ptr<const geo::ValidationContext>>(context_value),
                                             {
@@ -919,11 +972,12 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
          termination_reason == solver::TerminationReason::budget_exhausted)) {
         output() << Json{{"ok",true},{"termination_reason",reason(termination_reason)},
                          {"no_nonempty_incumbent",true},{"preparation_reused",run_runtime.preparation_reused},
-                         {"runtime",timeline.record(budget_scope,deterministic?0:search["budget_seconds"].get<double>(),run_runtime.preparation_reused,true)}}.dump() << '\n' << std::flush;
+                         {"runtime",timeline.record(budget_scope,deterministic?0:search["budget_seconds"].get<double>(),run_runtime.preparation_reused,true,"before_terminal_response")}}.dump() << '\n' << std::flush;
         return output() ? 0 : 4;
     }
     const auto run_stats = outcome.run.stats;
     const auto retained_solution = outcome.run.retained_solution;
+    timing.empty = retained_solution->copies().empty();
     if (run_runtime.last_validated && !retained_solution->copies().empty()) {
         *run_runtime.last_validated = retained_solution;
     }
@@ -1098,7 +1152,8 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     const spectrapack::cli::SolveRuntime runtime;
     return run_solve_prepared(arguments, std::move(engine_version), std::move(engine_commit), runtime);
 }
-std::optional<std::uint64_t> spectrapack::cli::retained_solution_bytes(const geometry::ValidatedSolution& solution)
+std::optional<std::uint64_t> spectrapack::cli::retained_solution_bytes(
+    const geometry::ValidatedSolution& solution, std::span<const geometry::AcceptedSolid* const> already_charged)
 {
-    return solution_resident_bytes(solution);
+    return solution_resident_bytes(solution, already_charged);
 }

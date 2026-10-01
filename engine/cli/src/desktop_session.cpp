@@ -2,14 +2,18 @@
 #include <spectrapack/solver/spectral.hpp>
 
 #include "desktop.hpp"
+#include "runtime_record_bound.hpp"
+#include "runtime_wire.hpp"
 #include "solve.hpp"
 #include "timeline.hpp"
 
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <bcrypt.h>
+// clang-format off
 #include <windows.h>
+#include <bcrypt.h>
+// clang-format on
 
 #include <atomic>
 #include <bit>
@@ -19,6 +23,7 @@
 #include <deque>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <sstream>
 #include <thread>
@@ -77,12 +82,25 @@ std::variant<ClockEnvelope, io::Error> clock_envelope(const Json& params, const 
     ClockEnvelope envelope { steady_before, static_cast<double>(earlier), {} };
     const auto& search = settings.at("search");
     if (!search.at("deterministic").get<bool>() && search.value("budget_scope", "search_only") == "total_start") {
-        const auto remaining = static_cast<long double>(search.at("budget_seconds").get<double>()) - earlier;
         using Duration = runtime::Clock::duration;
-        const auto ticks = remaining * static_cast<long double>(Duration::period::den) / Duration::period::num;
-        if (!std::isfinite(ticks) || ticks > static_cast<long double>(Duration::max().count())) {
+        const auto lower = [](long double value) {
+            return std::nextafter(value, -std::numeric_limits<long double>::infinity());
+        };
+        const auto upper = [](long double value) {
+            return std::nextafter(value, std::numeric_limits<long double>::infinity());
+        };
+        const auto budget_ticks =
+            lower(lower(static_cast<long double>(search.at("budget_seconds").get<double>()) * Duration::period::den) /
+                  Duration::period::num);
+        // MSVC long double is double: converting INT64_MAX rounds up to 2^63.
+        // Equality must be rejected before a conversion to the signed rep.
+        if (!std::isfinite(budget_ticks) || budget_ticks >= static_cast<long double>(Duration::max().count())) {
             return error("INVALID_CLOCK_ANCHOR", "QPC deadline arithmetic is not representable.");
         }
+        const auto spent_ticks = upper(upper(upper(static_cast<long double>(elapsed_ticks)) * Duration::period::den) /
+                                       lower(static_cast<long double>(*frequency))) /
+                                 Duration::period::num;
+        const auto ticks = lower(budget_ticks - upper(spent_ticks));
         if (ticks <= 0) {
             envelope.deadline = steady_before;
         }
@@ -119,7 +137,7 @@ struct PreparedAsset {
     std::uint64_t bytes {};
 };
 struct Session {
-    std::mutex wire_mutex, state_mutex;
+    std::mutex wire_mutex, state_mutex, serialization_mutex;
     std::condition_variable wire_ready;
     std::deque<std::string> wire_records;
     std::uint64_t wire_bytes {};
@@ -127,6 +145,7 @@ struct Session {
     std::atomic<runtime::Clock::duration::rep> write_started {};
     std::jthread writer, wire_watchdog;
     HANDLE input_thread {};
+    HANDLE write_thread {};
     struct PhasePacket {
         std::array<char, 129> request {}, operation {};
         std::uint64_t sequence {};
@@ -166,30 +185,41 @@ struct Session {
                         if (pending_phase) {
                             const auto phase = *pending_phase;
                             pending_phase.reset();
-                            bytes = Json {
-                                { "runtime_version",        1                            },
-                                { "request_id",             phase.request.data()         },
-                                { "operation_id",           phase.operation.data()       },
-                                { "kind",                   "phase"                      },
-                                { "sequence",               phase.sequence               },
-                                { "phase",                  cli::phase_name(phase.phase) },
-                                { "native_elapsed_seconds", phase.seconds                }
-                            }.dump();
+                            bytes = cli::encode_runtime_record(
+                                Json {
+                                    { "runtime_version",        1                            },
+                                    { "request_id",             phase.request.data()         },
+                                    { "operation_id",           phase.operation.data()       },
+                                    { "kind",                   "phase"                      },
+                                    { "sequence",               phase.sequence               },
+                                    { "phase",                  cli::phase_name(phase.phase) },
+                                    { "native_elapsed_seconds", phase.seconds                }
+                            },
+                                true, 1024);
                         }
                         else if (!wire_records.empty()) {
                             bytes = std::move(wire_records.front());
-                            wire_bytes -= bytes.size();
+                            wire_bytes -= bytes.capacity();
                             wire_records.pop_front();
                         }
                         else if (wire_closing) {
                             return;
                         }
                     }
-                    bytes += '\n';
+                    if (bytes.empty()) {
+                        continue;
+                    }
                     for (std::size_t offset = 0; offset < bytes.size();) {
+                        if (wire_failed) {
+                            return;
+                        }
                         const auto count = static_cast<DWORD>(std::min<std::size_t>(64 * 1024, bytes.size() - offset));
                         DWORD wrote {};
                         write_started.store(runtime::Clock::now().time_since_epoch().count());
+                        if (wire_failed) {
+                            write_started.store(0);
+                            return;
+                        }
                         const auto ok =
                             WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), bytes.data() + offset, count, &wrote, nullptr);
                         write_started.store(0);
@@ -207,16 +237,25 @@ struct Session {
                 wire_ready.notify_all();
             }
         });
+        if (!DuplicateHandle(GetCurrentProcess(), writer.native_handle(), GetCurrentProcess(), &write_thread, 0, FALSE,
+                             DUPLICATE_SAME_ACCESS)) {
+            wire_failed = true;
+            wire_ready.notify_all();
+            throw std::runtime_error("Native output watch unavailable.");
+        }
         wire_watchdog = std::jthread([this](std::stop_token done) {
             while (!done.stop_requested()) {
                 const auto began = write_started.load();
                 if (began && runtime::Clock::now() - runtime::Clock::time_point(runtime::Clock::duration(began)) >
                                  std::chrono::milliseconds(250)) {
                     wire_failed = true;
-                    CancelSynchronousIo(writer.native_handle());
+                    CancelSynchronousIo(write_thread);
                     wire_ready.notify_all();
                 }
                 if (wire_failed) {
+                    // Cancellation can race the boundary before WriteFile.
+                    // Keep watching and retry until cleanup joins the writer.
+                    CancelSynchronousIo(write_thread);
                     if (input_thread) {
                         CancelSynchronousIo(input_thread);
                     }
@@ -224,7 +263,6 @@ struct Session {
                     if (active_stop) {
                         active_stop->request_stop();
                     }
-                    return;
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(20));
             }
@@ -241,6 +279,10 @@ struct Session {
         if (wire_watchdog.joinable()) {
             wire_watchdog.join();
         }
+        if (write_thread) {
+            CloseHandle(write_thread);
+            write_thread = nullptr;
+        }
         if (input_thread) {
             CloseHandle(input_thread);
             input_thread = nullptr;
@@ -249,18 +291,22 @@ struct Session {
 
     void send(const Json& value)
     {
-        const auto bytes = value.dump();
-        if (bytes.size() > kRecordLimit) {
-            throw std::runtime_error("Runtime response exceeds NDJSON limit.");
+        // Main-thread rejection and worker completion can race. Retain only
+        // one terminal serialization allocation outside the bounded queue.
+        std::lock_guard serialization_lock(serialization_mutex);
+        if (wire_failed) {
+            return;
         }
+        auto bytes = cli::encode_runtime_record(value);
         std::lock_guard lock(wire_mutex);
-        if (wire_failed || wire_records.size() >= 4 || wire_bytes + bytes.size() > 2 * kRecordLimit) {
+        if (wire_failed || wire_records.size() >= 4 ||
+            bytes.capacity() > cli::runtime_wire_capacity_limit - wire_bytes) {
             wire_failed = true;
             wire_ready.notify_all();
             return;
         }
-        wire_bytes += bytes.size();
-        wire_records.push_back(bytes);
+        wire_bytes += bytes.capacity();
+        wire_records.push_back(std::move(bytes));
         wire_ready.notify_one();
     }
     void phase(const PhasePacket& packet) noexcept
@@ -320,6 +366,61 @@ struct PhaseContext {
         context.session.phase(packet);
     }
 };
+std::optional<std::uint64_t> retained_other_bytes(const Session& session, const PreparedAsset* active = nullptr,
+                                                  bool adapter = true)
+{
+    std::uint64_t total = adapter ? 16ULL << 20 : 0;
+    if (adapter && (session.asset || session.previous_asset || session.retained_solution)) {
+        total += 64ULL << 20;
+    }
+    std::array<const io::VerifiedAsset*, 2> bundles {};
+    std::array<const geo::AcceptedSolid*, 3> solids {};
+    std::array<const geo::DisplayLod*, 2> displays {};
+    std::size_t bundle_count {}, solid_count {}, display_count {};
+    if (active) {
+        bundles[bundle_count++] = active->verified.get();
+        solids[solid_count++] = active->verified->solid().get();
+    }
+    const auto charge = [&](std::optional<std::uint64_t> bytes) {
+        if (!bytes || *bytes > kHostCap - total) {
+            return false;
+        }
+        total += *bytes;
+        return true;
+    };
+    const auto add = [&](const PreparedAsset& asset) {
+        if (std::find(bundles.begin(), bundles.begin() + bundle_count, asset.verified.get()) ==
+            bundles.begin() + bundle_count) {
+            if (!charge(asset.verified->resident_buffer_bytes())) {
+                return false;
+            }
+            bundles[bundle_count++] = asset.verified.get();
+        }
+        if (std::find(solids.begin(), solids.begin() + solid_count, asset.verified->solid().get()) ==
+            solids.begin() + solid_count) {
+            if (!charge(asset.verified->solid()->resident_buffer_bytes())) {
+                return false;
+            }
+            solids[solid_count++] = asset.verified->solid().get();
+        }
+        if (std::find(displays.begin(), displays.begin() + display_count, asset.display.get()) ==
+            displays.begin() + display_count) {
+            if (!charge(asset.display->resident_buffer_bytes())) {
+                return false;
+            }
+            displays[display_count++] = asset.display.get();
+        }
+        return true;
+    };
+    if ((session.asset && !add(*session.asset)) || (session.previous_asset && !add(*session.previous_asset))) {
+        return {};
+    }
+    if (session.retained_solution &&
+        !charge(cli::retained_solution_bytes(*session.retained_solution, { solids.data(), solid_count }))) {
+        return {};
+    }
+    return total;
+}
 class MarkerWatcher {
 public:
     MarkerWatcher(std::optional<std::filesystem::path> path, std::shared_ptr<std::stop_source> source)
@@ -376,20 +477,51 @@ private:
     std::jthread thread_;
 };
 std::variant<Json, io::Error> create_preview(PreparedAsset& prepared, const std::filesystem::path& output,
-                                             const runtime::OperationControl& control)
+                                             const runtime::OperationControl& control, std::uint64_t other_reserve,
+                                             bool already_charged)
 {
     control.phase(runtime::Phase::preparing);
-    const auto made = geo::make_display_lod(prepared.verified->solid(), {}, {}, control);
-    if (const auto* failure = std::get_if<geo::RepresentationFailure>(&made)) {
-        return error(std::string(failure->code), failure->message);
+    const auto pins = prepared.verified->resident_buffer_bytes();
+    if (!pins || (!already_charged && *pins > kHostCap - other_reserve)) {
+        return error("MEMORY_LIMIT", "Pinned preview inputs exceed remaining host allowance.");
     }
-    prepared.display = std::get<std::shared_ptr<const geo::DisplayLod>>(made);
+    geo::RepresentationLimits display_limits;
+    display_limits.reserved_bytes = other_reserve + *pins;
+    if (!prepared.display) {
+        const auto made = geo::make_display_lod(prepared.verified->solid(), {}, display_limits, control);
+        if (const auto* failure = std::get_if<geo::RepresentationFailure>(&made)) {
+            return error(std::string(failure->code), failure->message);
+        }
+        prepared.display = std::get<std::shared_ptr<const geo::DisplayLod>>(made);
+    }
     const auto mesh = prepared.display->mesh();
     std::ostringstream header;
     header << "ply\nformat binary_little_endian 1.0\nelement vertex " << mesh.vertices.size()
            << "\nproperty double x\nproperty double y\nproperty double z\nelement face " << mesh.triangles.size()
            << "\nproperty list uchar uint vertex_indices\nend_header\n";
     auto bytes = header.str();
+    const auto source_bytes = prepared.verified->solid()->resident_buffer_bytes();
+    const auto display_resident = prepared.display->resident_buffer_bytes();
+    if (!source_bytes || !display_resident ||
+        (!already_charged && (*source_bytes > kHostCap - display_limits.reserved_bytes ||
+                              *display_resident > kHostCap - display_limits.reserved_bytes - *source_bytes))) {
+        return error("MEMORY_LIMIT", "Preview owners exceed remaining host allowance.");
+    }
+    const auto live =
+        already_charged ? other_reserve : display_limits.reserved_bytes + *source_bytes + *display_resident;
+    std::uint64_t serialized = bytes.size();
+    if (mesh.vertices.size() > (UINT64_MAX - serialized) / 24) {
+        return error("MEMORY_LIMIT", "Preview vertex storage is not representable.");
+    }
+    serialized += 24 * mesh.vertices.size();
+    if (mesh.triangles.size() > (UINT64_MAX - serialized) / 13) {
+        return error("MEMORY_LIMIT", "Preview face storage is not representable.");
+    }
+    serialized += 13 * mesh.triangles.size();
+    if (serialized > (64ULL << 20) || serialized > kHostCap - live) {
+        return error("MEMORY_LIMIT", "Preview serialization exceeds remaining host allowance.");
+    }
+    bytes.reserve(static_cast<std::size_t>(serialized));
     const auto poll = [&control] {
         const auto cause = control.poll();
         if (cause != runtime::StopCause::none) {
@@ -457,15 +589,28 @@ std::variant<Json, io::Error> create_preview(PreparedAsset& prepared, const std:
         { "warnings",     Json::array()                     }
     };
 }
+bool valid_identity(const Json& value) noexcept
+{
+    if (!value.is_string()) {
+        return false;
+    }
+    const auto& text = value.get_ref<const std::string&>();
+    return !text.empty() && text.size() <= 128 && std::all_of(text.begin(), text.end(), [](unsigned char character) {
+        return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+               (character >= '0' && character <= '9') || character == '_' || character == '-';
+    });
+}
 Json response(const Json& request, bool ok, Json value)
 {
     Json out {
-        { "runtime_version", 1                        },
-        { "request_id",      request.at("request_id") },
-        { "kind",            "response"               },
-        { "ok",              ok                       }
+        { "runtime_version", 1                                               },
+        { "request_id",      request.contains("request_id") && valid_identity(request.at("request_id"))
+                            ? request.at("request_id")
+                            : Json("invalid-request") },
+        { "kind",            "response"                                      },
+        { "ok",              ok                                              }
     };
-    if (request.contains("operation_id")) {
+    if (request.contains("operation_id") && valid_identity(request.at("operation_id"))) {
         out["operation_id"] = request.at("operation_id");
     }
     out[ok ? "result" : "error"] = std::move(value);
@@ -485,9 +630,32 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
         marker = std::filesystem::u8path(params.at("stop_file").get<std::string>());
     }
     MarkerWatcher watcher(marker, source);
+    struct PreparationRollback {
+        Session& session;
+        bool staged {}, committed {};
+        ~PreparationRollback()
+        {
+            if (staged && !committed) {
+                session.asset.reset();
+                session.asset = std::move(session.previous_asset);
+                session.previous_asset.reset();
+            }
+        }
+    } preparation { session };
     try {
         Json result;
         if (method == "prepare") {
+            if (session.previous_asset) {
+                return response(request, false,
+                                io::error_json(error("ASSET_BUSY",
+                                                     "Release the prior prepared token before another replacement.")));
+            }
+            const auto reserve = retained_other_bytes(session);
+            if (!reserve) {
+                return response(request, false,
+                                io::error_json(error("MEMORY_LIMIT", "Retained owners exceed preparation allowance.")));
+            }
+            const auto other_reserve = *reserve;
             const auto output = std::filesystem::u8path(params.at("output_directory").get<std::string>());
             std::error_code cause;
             if (!std::filesystem::is_directory(output, cause) || cause || !std::filesystem::is_empty(output, cause) ||
@@ -497,24 +665,29 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
                                                      "Preparation requires an empty private output directory.")));
             }
             const auto report = std::filesystem::u8path(params.at("object_report").get<std::string>());
-            const auto loaded = io::load_accepted_asset(report, control);
+            const auto loaded = io::load_accepted_asset(report, control, { kHostCap - other_reserve },
+                                                        session.asset ? session.asset->verified : Asset {});
             if (const auto* failure = std::get_if<io::Error>(&loaded)) {
                 return response(request, false, io::error_json(*failure));
             }
             PreparedAsset prepared { token(), std::get<Asset>(loaded), {}, Json(), report };
+            const auto reused = session.asset && prepared.verified == session.asset->verified;
+            if (reused) {
+                prepared.display = session.asset->display;
+            }
             if (prepared.verified->solid()->role() != geo::AssetRole::object) {
                 return response(
                     request, false,
                     io::error_json(error("ASSET_MISMATCH", "Only accepted object authority can be prepared.")));
             }
-            auto preview = create_preview(prepared, output, control);
+            auto preview = create_preview(prepared, output, control, other_reserve, reused);
             if (const auto* failure = std::get_if<io::Error>(&preview)) {
                 return response(request, false, io::error_json(*failure));
             }
-            if ((session.asset && session.asset->bytes > kHostCap - prepared.bytes) ||
-                (session.previous_asset &&
-                 session.previous_asset->bytes >
-                     kHostCap - prepared.bytes - (session.asset ? session.asset->bytes : 0))) {
+            if (!reused && ((session.asset && session.asset->bytes > kHostCap - prepared.bytes) ||
+                            (session.previous_asset &&
+                             session.previous_asset->bytes >
+                                 kHostCap - prepared.bytes - (session.asset ? session.asset->bytes : 0)))) {
                 return response(request, false,
                                 io::error_json(error("MEMORY_LIMIT",
                                                      "Transactional asset replacement exceeds unchanged host cap.")));
@@ -528,11 +701,13 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
             result = prepared.preview_response;
             result["asset_token"] = prepared.token;
             result["preparation_version"] = 1;
+            result["preparation_reused"] = reused;
             result["engine_version"] = session.engine_version;
             result["supported_thread_count_min"] = 1;
             result["supported_thread_count_max"] = solver::cpu_supported_thread_count();
             result["working_set_estimate_bytes"] = prepared.bytes;
             session.previous_asset = std::move(session.asset);
+            preparation.staged = true;
             session.asset = std::move(prepared);
         }
         else if (method == "run") {
@@ -554,12 +729,16 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
                 }
                 settings = std::get<Json>(std::move(resolved));
             }
-            io::ContractValidator validator;
-            if (!std::holds_alternative<io::ValidatedDocument>(
-                    validator.validate(io::ContractKind::settings, settings))) {
-                return response(
-                    request, false,
-                    io::error_json(error("INVALID_SETTINGS", "Run requires validated resolved native settings.")));
+            {
+                // Retain no compiled catalog across nested solve/IO calls.
+                // Together with the command-loop owner, at most two overlap.
+                io::ContractValidator validator;
+                if (!std::holds_alternative<io::ValidatedDocument>(
+                        validator.validate(io::ContractKind::settings, settings))) {
+                    return response(
+                        request, false,
+                        io::error_json(error("INVALID_SETTINGS", "Run requires validated resolved native settings.")));
+                }
             }
             const auto envelope = clock_envelope(params, settings);
             if (const auto* failure = std::get_if<io::Error>(&envelope)) {
@@ -595,19 +774,12 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
             runtime_run.operation_id = request.at("operation_id").get<std::string>();
             runtime_run.output = &terminal;
             runtime_run.last_validated = &session.retained_solution;
-            const auto extra = prepared->display->resident_buffer_bytes();
-            runtime_run.retained_reserve_bytes =
-                extra.value_or(kHostCap) + (session.asset && prepared != &*session.asset ? session.asset->bytes : 0) +
-                (session.previous_asset && prepared != &*session.previous_asset ? session.previous_asset->bytes : 0) +
-                (64ULL << 20);
-            if (session.retained_solution) {
-                const auto bytes = cli::retained_solution_bytes(*session.retained_solution);
-                if (!bytes || *bytes > kHostCap || runtime_run.retained_reserve_bytes > kHostCap - *bytes) {
-                    return response(request, false,
-                                    io::error_json(error("MEMORY_LIMIT", "Retained result exceeds Start admission.")));
-                }
-                runtime_run.retained_reserve_bytes += *bytes;
+            const auto reserve = retained_other_bytes(session, prepared);
+            if (!reserve) {
+                return response(request, false,
+                                io::error_json(error("MEMORY_LIMIT", "Retained owners exceed Start admission.")));
             }
+            runtime_run.retained_reserve_bytes = *reserve;
             const auto exit = run_solve_prepared(arguments, session.engine_version, session.engine_commit, runtime_run);
             const auto native = Json::parse(terminal.str());
             if (!native.value("ok", false)) {
@@ -618,10 +790,18 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
                         { "no_nonempty_incumbent", true                                                                },
                         { "preparation_reused",    true                                                                }
                     };
+                    if (native.at("error").at("details").contains("runtime")) {
+                        result["runtime"] = native.at("error").at("details").at("runtime");
+                    }
                 }
                 else {
                     auto failure = native.at("error");
                     failure["details"]["preparation_reused"] = true;
+                    failure["details"]["completion_elapsed_seconds"] =
+                        clock.earlier_seconds +
+                        std::chrono::duration<double>(runtime::Clock::now() - clock.native_start).count();
+                    failure["details"]["native_completion_elapsed_seconds"] =
+                        std::chrono::duration<double>(runtime::Clock::now() - clock.native_start).count();
                     return response(request, false, std::move(failure));
                 }
             }
@@ -644,7 +824,9 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
         if (session.wire_failed) {
             return response(request, false, io::error_json(error("ENGINE_TRANSPORT", "Phase publication failed.")));
         }
-        return response(request, true, std::move(result));
+        auto reply = response(request, true, std::move(result));
+        preparation.committed = true;
+        return reply;
     }
     catch (runtime::StopCause cause) {
         return response(request, false,
@@ -694,6 +876,7 @@ int run_desktop_session(std::string engine_version, std::string engine_commit)
         session.start_writer();
         io::ContractValidator validator;
         std::string line;
+        line.reserve(static_cast<std::size_t>(kRecordLimit));
         while (true) {
             line.clear();
             bool overflow = false;
@@ -714,7 +897,18 @@ int run_desktop_session(std::string engine_version, std::string engine_commit)
                 session.wire_failed = true;
                 break;
             }
-            auto parsed = validator.parse(io::ContractKind::desktop_runtime, line);
+            std::string bounded_identity;
+            if (!cli::runtime_record_fits(line, bounded_identity)) {
+                session.send(response(
+                    Json {
+                        { "request_id", bounded_identity.empty() ? "invalid-request" : bounded_identity }
+                },
+                    false,
+                    io::error_json(error("INVALID_RUNTIME_RECORD",
+                                         "Runtime record exceeds the structural bound or is malformed."))));
+                continue;
+            }
+            auto parsed = validator.parse(io::ContractKind::desktop_runtime, line, { 16, 256 });
             if (!std::holds_alternative<io::ValidatedDocument>(parsed)) {
                 auto value = Json::parse(line, nullptr, false);
                 if (!value.is_object() || !value.contains("request_id") || !value["request_id"].is_string()) {
@@ -726,7 +920,7 @@ int run_desktop_session(std::string engine_version, std::string engine_commit)
                 if (value.contains("params") && value["params"].is_object() && value["params"].contains("settings")) {
                     const auto& settings = value["params"]["settings"];
                     const auto requested = settings.contains("desktop_version") ? settings.value("thread_count", Json())
-                                           : settings.contains("compute")
+                                           : settings.contains("compute") && settings["compute"].is_object()
                                                ? settings["compute"].value("thread_count", Json())
                                                : Json();
                     if (requested.is_number_integer() &&
@@ -748,7 +942,7 @@ int run_desktop_session(std::string engine_version, std::string engine_commit)
                 continue;
             }
             const auto request_id = request.at("request_id").get<std::string>();
-            const auto canonical = request.dump();
+            const auto canonical = cli::encode_runtime_record(request, false, 512 * 1024);
             std::unique_lock lock(session.state_mutex);
             if (request.at("method") == "shutdown" && session.active) {
                 if (session.active_stop) {
@@ -808,10 +1002,13 @@ int run_desktop_session(std::string engine_version, std::string engine_commit)
                      session.retained_solution->context()->object() != session.previous_asset->verified->solid())) {
                     session.retained_solution.reset();
                 }
-                const auto reply = response(
+                auto reply = response(
                     request, released,
                     released ? Json::object()
                              : io::error_json(error("ASSET_TOKEN_EXPIRED", "No native asset has that token.")));
+                if (const auto bytes = retained_other_bytes(session, nullptr, false)) {
+                    reply["retained_native_bytes"] = *bytes;
+                }
                 session.last_request_id = request_id;
                 session.last_canonical = canonical;
                 session.last_response = reply;
@@ -824,8 +1021,11 @@ int run_desktop_session(std::string engine_version, std::string engine_commit)
             const auto source = session.active_stop;
             worker = std::jthread([&session, request, canonical, request_id, source] {
                 try {
-                    const auto reply = operate(session, request, source);
+                    auto reply = operate(session, request, source);
                     std::lock_guard lock(session.state_mutex);
+                    if (const auto bytes = retained_other_bytes(session, nullptr, false)) {
+                        reply["retained_native_bytes"] = *bytes;
+                    }
                     session.last_request_id = request_id;
                     session.last_canonical = canonical;
                     session.last_response = reply;
