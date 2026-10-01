@@ -19,6 +19,11 @@ The registry retains source bytes, accepted meshes, repair records and their sep
 
 ## Public boundaries
 
+[ADR 0013](../spec/decisions/0013-cpu-runtime.md) specifies T-010's dependency-free
+operation control, per-run field workspace and bounded retained native desktop
+session. Its shared interfaces are agreed; parallel-kernel selection and acceptance
+remain measurement gates. This does not implement the deferred public job service.
+
 These are contract sketches, not committed ABI signatures:
 
 ```text

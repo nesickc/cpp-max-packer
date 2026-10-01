@@ -12,7 +12,16 @@
     "includes": "native accepted-asset replay, display LOD, resolved settings and preparation publication",
     "excludes": "initial inspect, solver search, project save/restore and export",
     "state_label": "repeated preparation with operating-system file cache; no retained native cache in baseline",
-    "status": "baseline capture; numerical targets pending measurement before optimization"
+    "status": "baseline captured; numerical targets pending complete Start/memory measurement before optimization"
+  },
+  "fixed_work_start_comparison": {
+    "thread_count": 1,
+    "max_candidate_evaluations": 1,
+    "max_search_passes": 1,
+    "baseline_path": "desktop-prepare then solve using its resolved settings with the explicit deterministic work budget",
+    "new_path": "retained native session with the same settings and explicit deterministic work budget",
+    "assertions": "one native-valid copy, identical ordered poses and work at each repetition; exact source/accepted identities",
+    "scope": "repeated preparation and one-candidate Start overhead; independent of full practical spectral and threading gates"
   },
   "profiles": [
     {
