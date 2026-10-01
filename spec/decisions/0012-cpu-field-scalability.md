@@ -170,7 +170,8 @@ mesh bytes stayed unchanged. Native restore correctly rejects the derived-field
 mismatch. Analytic integer-coordinate round trips did not expose it.
 
 Preserve native binary64 values using the existing pinned `serde_json`
-round-trip parsing feature, subject to the focused parser/restore reproducer.
+round-trip parsing feature. The focused parser reproducer and the full 36-copy
+Save/move/Open/JSON regression pass after failing before this change.
 Keep exact native result bindings and authoritative validation unchanged. This
 adds no dependency or project-format version. New saves must preserve the native
 numbers; existing archives are still validated as stored, without guessing or
