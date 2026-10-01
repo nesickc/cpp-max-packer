@@ -457,6 +457,42 @@ during validation, or provide an equivalently verified immutable stage. Reopenin
 a mutable path and trusting earlier bounds is insufficient. Mutation/fallback tests
 must remain; original validation and per-copy aggregate caps are unchanged.
 
+### Bounded quantized self-intersection certificate
+
+The `19736a5` practical checkpoint passes Ulamok36 and full Pryanik1 retained2
+exports, but Pryanik2 spends 944,182,452 predicate units on first-copy
+self-intersection and exhausts the aggregate cap on its second actual copy.
+Introduce a private operation-local `projected_separation_v1` policy only for
+baked-world export imports, routed from the existing `baked_world` flag through
+solid analysis to the common exact predicate implementation. Ordinary source
+import, weld/repair replay and placement validation retain the legacy policy and
+counters. Retained repair recipes embed these diagnostics and require exact byte
+replay; a global predicate change would break their compatibility. No recipe
+migration, global switch or thread-local policy is introduced.
+
+The proposed certificate chooses one coordinate projection using a single
+approximate triangle normal (largest absolute component, ties X/Y/Z). This selects
+an attempted proof only. Nonfinite selection falls back. An exact nonzero
+projected triangle orientation certifies a usable projection; zero or uncertainty
+cannot authorize a shortcut. Try at most the three cyclic triangle edges; for one
+shared vertex consider its incident edges, and for two consider their shared edge.
+Every nonshared second-triangle vertex must be strictly opposite the first
+triangle's interior half-plane. This proves disjointness, or intersection confined
+to the actual permitted shared feature. Shared indices must be in range/distinct
+with exact represented-coordinate correspondence, including signed-zero equality.
+Degenerate projections, extra zero signs and unsuccessful separation use the
+unchanged classifier. Exhausted work or Stop returns uncertainty/interruption.
+
+Charge the selection, index/equality/sign checks and every attempted exact
+orientation, including unsuccessful attempts; preserve candidate-pair accounting.
+The certificate uses constant stack scratch and no retained geometry cache.
+Its net savings are not yet qualified. Require analytic/adversarial cases,
+permutation and exact-reference comparisons, budget/Stop/FP-environment checks,
+and the existing two-copy Pryanik2 export green with identical bytes/poses/caps.
+Measure hit rates, failed-attempt overhead and total actual work. Keep historical
+reports and baseline logs unchanged; this private export policy has its own
+method/build provenance and cannot be used to relabel source-import evidence.
+
 ## Wire compatibility and timing fields
 
 Keep outer existing schema versions and old fields' meanings. Add explicitly
