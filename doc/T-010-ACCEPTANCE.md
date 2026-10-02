@@ -41,6 +41,19 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 
 ## Retained evidence and qualification
 
+- Desktop lifecycle tests now observe sequenced native work instead of waiting
+  for the obsolete `running` phase. Against the held `adapter-overlap/r01` Release
+  engine, the existing Rust suite passes 25 library and 11 integration tests;
+  five subprocess-helper/practical cases remain explicitly ignored. Stop receipt
+  is 0.6873 ms and completion 145.1605 ms, retaining 133 native-valid copies.
+  Child death preserves a previous 64-copy result and identical preview bytes
+  through failed Start; shutdown confirms the real child is active before owner
+  termination and exits within 5 s. The change is test-only, with unchanged caps.
+  `.local/t011/desktop-lifecycle/README.md` retains exact commands, logs, sources
+  and executed test PEs; primary verified 20 current-input/saved-binary hashes.
+  The original two failed tests never reached their Stop/shutdown actions and
+  remain recorded. This does not qualify every native phase, Debug cleanup, final
+  practical journeys or ticket acceptance.
 - Compact computational-failure/workspace checkpoint: the indexed affected native
   gates pass 277 cases / 23,638 assertions in Debug and 275 / 23,577 in Release.
   Final ordinary solver specifically passes 130 / 5,854 and 128 / 5,801; it excludes

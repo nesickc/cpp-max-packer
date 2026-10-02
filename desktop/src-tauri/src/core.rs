@@ -1340,14 +1340,39 @@ mod tests {
     fn child_death_allows_new_and_verified_reimport_without_releasing_foreign_epoch() {
         let (_root, core) = fixture();
         import_fixture(&core);
+        // T011-A5 / SOL-06: characterize recovery with a complete nonempty result.
+        core.start(settings()).unwrap();
+        let previous = complete(&core);
+        assert!(previous.last_error.is_none(), "{previous:?}");
+        let document = &previous.result.as_ref().unwrap()["document"];
+        assert_eq!(document["validation"]["status"], "valid");
+        let count = document["count"].as_u64().unwrap();
+        assert!(count > 0);
+        assert_eq!(
+            document["placements"].as_array().unwrap().len() as u64,
+            count
+        );
+        let preview_id = previous.result.as_ref().unwrap()["preview"]["preview_id"]
+            .as_str()
+            .unwrap();
+        let preview_bytes = core.read_preview(preview_id).unwrap();
         core.native
             .lock()
             .unwrap()
             .as_mut()
             .unwrap()
             .kill_for_test();
+        core.start(settings()).unwrap();
+        let failed = complete(&core);
+        assert_eq!(failed.last_error.as_ref().unwrap().code, "ENGINE_SESSION_LOST");
+        assert_eq!(failed.object, previous.object);
+        assert_eq!(failed.result, previous.result);
+        assert_eq!(core.read_preview(preview_id).unwrap(), preview_bytes);
+        eprintln!("native child death: prior_valid_count={count}, result_and_preview_retained=true");
         core.new_project().unwrap();
         assert!(core.state().object.is_none());
+        assert!(core.state().result.is_none());
+        assert!(core.read_preview(preview_id).is_err());
         import_fixture(&core);
         let old_epoch = core
             .inner

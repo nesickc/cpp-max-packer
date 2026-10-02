@@ -88,6 +88,41 @@ fn import(core: &Core, source: &std::path::Path) {
     );
 }
 
+fn wait_native_work(core: &Core, operation_id: &str) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let state = core.state();
+        assert!(state.last_error.is_none(), "{state:?}");
+        let operation = state.operation.as_ref().unwrap();
+        assert_eq!(operation.id, operation_id);
+        assert!(
+            operation.finished_at.is_none(),
+            "solve finished before native work was observed"
+        );
+        assert!(operation.native_completion_elapsed_seconds.is_none());
+        if ["placing", "validating"].contains(&operation.phase.as_str())
+            && operation.sequence.is_some_and(|seq| seq > 0)
+        {
+            eprintln!("active native phase: {}, sequence={:?}", operation.phase, operation.sequence);
+            return;
+        }
+        assert!(Instant::now() < deadline, "native work phase not observed");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn assert_active_solve(core: &Core, operation_id: &str) {
+    let state = core.state();
+    assert!(state.last_error.is_none(), "{state:?}");
+    let operation = state.operation.as_ref().unwrap();
+    assert_eq!(operation.id, operation_id);
+    assert!(operation.native_completion_elapsed_seconds.is_none());
+    assert!(
+        operation.finished_at.is_none(),
+        "solve finished before lifecycle action"
+    );
+}
+
 #[test]
 fn real_native_import_is_asynchronous_and_scoped() {
     let (_root, core, source) = fixture();
@@ -139,28 +174,44 @@ fn stop_receipt_is_prompt_and_retains_real_native_valid_solution() {
     long["box_dimensions_mm"] = json!([400, 400, 400]);
     long["pitch_mm"] = 1.into();
     let receipt = core.start(long).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
-    loop {
-        let state = core.state();
-        assert!(state.last_error.is_none(), "{state:?}");
-        if state.operation.as_ref().unwrap().phase == "running" {
-            break;
-        }
-        assert!(Instant::now() < deadline);
-        std::thread::sleep(Duration::from_millis(250));
-    }
+    // T011-A4/A5, SOL-06: native baseline work emits placing/validating.
+    wait_native_work(&core, &receipt.operation_id);
     std::thread::sleep(Duration::from_millis(500));
+    assert_active_solve(&core, &receipt.operation_id);
     let started = Instant::now();
     let response = core.stop(&receipt.operation_id).unwrap();
-    assert!(started.elapsed() < Duration::from_millis(250));
+    let receipt_elapsed = started.elapsed();
+    assert!(receipt_elapsed < Duration::from_millis(250));
     assert!(response.accepted);
     assert_eq!(core.state().operation.as_ref().unwrap().phase, "stopping");
     assert!(core.stop(&receipt.operation_id).is_ok());
     assert!(core.stop("stale").is_err());
-    let state = wait(&core);
+    let deadline = started + Duration::from_secs(5);
+    let state = loop {
+        let state = core.state();
+        if state.operation.as_ref().unwrap().finished_at.is_some() {
+            break state;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "safe Stop must complete within 5 seconds"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert!(started.elapsed() <= Duration::from_secs(5));
     assert!(state.last_error.is_none(), "{state:?}");
     let result = state.result.unwrap();
     assert_eq!(result["document"]["validation"]["status"], "valid");
+    let count = result["document"]["count"].as_u64().unwrap();
+    assert!(
+        count > 0,
+        "Stop must retain a nonempty native-valid incumbent"
+    );
+    assert_eq!(
+        result["document"]["placements"].as_array().unwrap().len() as u64,
+        count
+    );
+    eprintln!("native Stop: receipt={receipt_elapsed:?}, completion={:?}, valid_count={count}", started.elapsed());
     assert_eq!(
         result["document"]["metrics"]["termination_reason"],
         "user_stopped"
@@ -464,23 +515,16 @@ fn application_shutdown_child_helper() {
     let mut long = settings(120.0);
     long["box_dimensions_mm"] = json!([400, 400, 400]);
     long["pitch_mm"] = 1.into();
-    core.start(long).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(30);
+    let receipt = core.start(long).unwrap();
+    wait_native_work(&core, &receipt.operation_id);
+    std::thread::sleep(Duration::from_millis(500));
+    assert_active_solve(&core, &receipt.operation_id);
+    let pid = native_child_of(std::process::id()).expect("active real native child required");
+    println!("ACTIVE_NATIVE_PID={pid}");
+    use std::io::Write;
+    std::io::stdout().flush().unwrap();
     loop {
-        assert!(core.state().last_error.is_none(), "{:?}", core.state());
-        if core.state().operation.as_ref().unwrap().phase == "running" {
-            if let Some(pid) = native_child_of(std::process::id()) {
-                std::thread::sleep(Duration::from_millis(500));
-                println!("ACTIVE_NATIVE_PID={pid}");
-                use std::io::Write;
-                std::io::stdout().flush().unwrap();
-                loop {
-                    std::thread::park();
-                }
-            }
-        }
-        assert!(Instant::now() < deadline);
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::park();
     }
 }
 
@@ -489,7 +533,7 @@ fn application_shutdown_child_helper() {
 fn application_shutdown_kills_active_native_child() {
     use std::io::BufRead;
     use windows_sys::Win32::{
-        Foundation::{CloseHandle, WAIT_OBJECT_0},
+        Foundation::{CloseHandle, WAIT_OBJECT_0, WAIT_TIMEOUT},
         System::Threading::*,
     };
     let mut app = std::process::Command::new(std::env::current_exe().unwrap())
@@ -516,6 +560,7 @@ fn application_shutdown_kills_active_native_child() {
     let process =
         unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, false.into(), pid) };
     assert!(!process.is_null());
+    let was_active = unsafe { WaitForSingleObject(process, 0) } == WAIT_TIMEOUT;
     app.kill().unwrap();
     app.wait().unwrap();
     let closed = unsafe { WaitForSingleObject(process, 5000) } == WAIT_OBJECT_0;
@@ -527,8 +572,10 @@ fn application_shutdown_kills_active_native_child() {
         }
         CloseHandle(process);
     }
+    assert!(was_active, "native child must still be active immediately before owner exit");
     assert!(
         closed,
         "closing the desktop owner must terminate its active native child"
     );
+    eprintln!("native shutdown: child_pid={pid}, exited_within_5s={closed}");
 }
