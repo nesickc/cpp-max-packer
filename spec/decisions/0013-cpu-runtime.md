@@ -129,6 +129,20 @@ resource, arithmetic and allocation checks still apply.
 
 ## Retained preparation and desktop adapter
 
+The 2026-10-02 simplification shares a private typed solve entrypoint between the
+auxiliary CLI and retained session. A request consumes validated settings, native
+verified authority or scoped report paths, output paths and engine identity;
+the outcome returns structured success metadata or an I/O error plus the CLI exit
+code. CLI parsing/file admission remains in its adapter. The session passes its
+validated in-memory request directly: no `session.settings.json`, synthetic argv,
+captured terminal stream or JSON-text reparse. This private C++ change does not
+change wire schemas, authoritative validation, result paths or budget semantics.
+Runtime borrows the existing operation control and an idempotent finish-monitor
+callback/context so transport failure remains distinguishable from user Stop
+before result publication. Charge live adapter/request owners; remove only the
+obsolete serialization/file-roundtrip ownership allowances. No new lifecycle
+framework or child owner is introduced by this refactor.
+
 Add one auxiliary `desktop-session` child owned by Rust for the lifetime of the
 open desktop session. It handles commands sequentially and retains native state
 between Starts. Keep the existing public prepare/solve/restore commands working.
@@ -579,25 +593,13 @@ cannot exceed the existing aggregate cap. Allocation failure cancels/joins sibli
 discards the partial generation and retains the last valid solution.
 
 Failure reporting must remain safe when allocation also fails during diagnostic
-construction or transfer. Preserve the public diagnostic DTO fields, layout and
-aggregate initialization. Use throwing empty-string construction and protected
-copies for string-owning optional diagnostics on the pinned MSVC implementation;
-its implicit `noexcept` string/vector moves may allocate Debug iterator proxies.
-Do not rely on optional named-return elision for correctness. Private baseline and
-spectral outcome finalizers construct guaranteed-prvalue results and contain a
-failed diagnostic copy with a resource-limit result retaining the same validated
-handles and counters, without allocating replacement diagnostics. A private field
-helper may propagate `bad_alloc` if even its recovery metadata cannot be built;
-the public coordinator must contain it and retain its latest valid incumbent.
-
-Admit the fixed recovery/transfer metadata before its first allocation, including
-early failure paths, temporary diagnostic owners, copied payloads and Debug
-proxies. Reusing a previously charged scratch allowance is valid only when those
-scratch owners no longer coexist. Verify transient allocation ordinals, persistent
-failure reached inside the field kernel, explicit non-elided transfers and the
-below/exact admission boundary. Fault-injection flags and hooks must be restored
-before test-framework reporting. This clarifies the existing resource-failure
-contract; it changes no wire schema, accepted geometry or placement authority.
+construction or transfer. [ADR 0015](0015-computational-failures.md) supersedes the
+earlier owning-diagnostic copies/prvalue-finalizer mechanism and native DTO layout
+constraint with static computational descriptors, explicit native compatibility
+migration and narrow vector-transfer safety. Preserve actual causes, completed
+counters and the latest validated handles; admit simultaneous metadata before
+dynamic work and verify transient/persistent failure and non-elided transfers.
+Wire schemas, accepted geometry and placement authority remain unchanged.
 
 Expose an optional `SpectralOutcome::field_admission` with
 `CpuFieldAdmissionEstimate { working_bytes_upper_bound, footprint_copy_count,
