@@ -41,4 +41,8 @@ performance measurements remain serial and preserve attributable baselines.
 
 For each feature: identify requirements and observable cases; add/observe failing tests before behavior changes; implement and refactor; run affected correctness and performance checks; obtain the configured code review; push incremental commits; open the ready pull/merge request and return its link; report the final branch/head, checks and remaining limitations. Preserve real failing evidence and clearly distinguish reference-tool tests from production acceptance.
 
+Use the [scope checkpoints and process review](PROCESS_REVIEW.md) within that flow.
+After opening the ready PR, run one advisory `process_reviewer` and present its
+recommendations for human approval; it reviews orchestration, not product code.
+
 The initial performance foundation measures bounded test-reference workloads. Default timings are informational; explicit regression comparisons require compatible host/build/workload metadata. Production FFT/solver, GPU, responsiveness and release benchmark gates are added alongside the relevant features, following spec §§9–10.

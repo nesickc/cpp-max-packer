@@ -1,6 +1,6 @@
 # Agent setup and verification
 
-Updated 2026-09-30 with the user-approved model allocation. This is the current policy; the [original setup template](codex-local-agent-setup-guide.md) and runtime records below describe earlier configurations where they conflict.
+Updated 2026-10-02 with the user-approved process review workflow; existing model allocations are retained. This is the current policy; the [original setup template](codex-local-agent-setup-guide.md) and runtime records below describe earlier configurations where they conflict.
 
 ## Allocation
 
@@ -10,6 +10,7 @@ Updated 2026-09-30 with the user-approved model allocation. This is the current 
 | `implementation_worker` | `gpt-6.1-sol` / `high` | Default product implementation and substantive fixes |
 | `expert_worker` | `gpt-6.1-sol` / `xhigh` | Known difficult features or bounded numerical/C++/Vulkan diagnosis |
 | `code_reviewer` | `gpt-6.1-sol` / `xhigh` | Routine independent code/test and contract review |
+| `process_reviewer` | `gpt-6.1-sol` / `high` | Advisory after-PR orchestration review; at most three recommendations for human approval |
 | `architect` | `gpt-6-astra` / `xhigh` | Selective architecture, shared contracts, and critical validity decisions |
 | `critical_reviewer` | `gpt-6-astra` / `xhigh` | Selective high-risk review or uncertainty unresolved by Sol |
 | `light_worker` | `gpt-6-luna` / `low` | Low-risk edits, fixture metadata, focused tests, documentation |
@@ -22,7 +23,8 @@ Extra High is **`xhigh`**, not Ultra. Astra workers are limited to `architect` a
 ## Files and scope
 
 - [AGENTS.md](../AGENTS.md): routing, allocation, TDD, and shared invariants.
-- [.codex/config.toml](../.codex/config.toml) and [.codex/agents/](../.codex/agents/): primary/default settings and seven roles, each with model **and** effort.
+- [.codex/config.toml](../.codex/config.toml) and [.codex/agents/](../.codex/agents/): primary/default settings and eight roles, each with model **and** effort.
+- [PROCESS_REVIEW.md](PROCESS_REVIEW.md): scope checkpoints within existing reviews and one advisory process retrospective after PR creation; no automatic application of recommendations.
 - [.agents/skills/](../.agents/skills/): four focused project skills; acceptance now includes test-first work and `rc/` policy.
 - [ARCHITECTURE.md](ARCHITECTURE.md), [ADR 0001](../spec/decisions/0001-initial-architecture.md): boundaries and baseline decisions from the Astra architect.
 - [TEST_PLAN.md](../tests/TEST_PLAN.md), [fixture checks](../tests/README.md), and [manifest](../tests/fixtures/rc-manifest.json): AT-01–AT-17 coverage plan and executable fixture-tool groundwork.
@@ -32,6 +34,13 @@ All changes are repository-local. Spec §11.3 now records TDD and confirmed fixt
 The first-tranche creation manifest is `.local/agent-setup/install-20260908-194541.json`. The original additions backed up changed existing role/skill files under `.local/agent-additions/backups/20260908-211000/`; existence flags and hashes are in `.local/agent-additions/install.json`. The previous setup report is `.local/agent-additions/AGENT_SETUP.previous.md`. These are historical backups, not snapshots of this allocation change. Preserve subsequent edits when undoing individual settings; do not reset the repository.
 
 ## Current verification and dispatch
+
+On 2026-10-02, all nine project TOML files parsed; all eight role allocations,
+the unchanged primary/default settings and two-worker cap, and 57 local links
+passed validation. A bounded Luna configuration/documentation check found no
+actionable inconsistency. Evidence: `.local/process-review-setup/validation.json`.
+The current chat does not expose the new named `process_reviewer`; its runtime
+dispatch remains unverified. Use the documented explicit fallback if needed.
 
 On 2026-09-30, Python `tomllib` parsed all eight project TOML files. Assertions verified all seven role names/model/effort pairs, matching allocation tables in `AGENTS.md` and this document, leaf instructions, the Astra Ultra primary, Sol High default, and worker cap of two. `git diff --check` passed. This was configuration/documentation validation; no product tests or new model benchmark runs were needed.
 
