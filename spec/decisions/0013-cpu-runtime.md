@@ -4,6 +4,11 @@ Date: 2026-10-01. Status: core design accepted by the coordinating primary;
 parallel-kernel selection and numerical targets remain explicit measurement gates.
 This document specifies work, not implemented or qualified behavior.
 
+Delivery ordering is superseded by [ADR 0014](0014-runtime-delivery-split.md):
+T-011 serial foundations first, then T-010 threading after its user merge.
+Existing mechanisms are under complexity review; this record is not a requirement
+to retain an unnecessarily complicated implementation.
+
 Requirements: SOL-02, SOL-05–SOL-08, GEO-04/GEO-06, UI-03, DATA-01–DATA-03;
 T010-A1–A7, T011-A1–A7 and the retained T009-A2/A3/A6 obligations.
 
@@ -808,4 +813,4 @@ Open bounded gates: phase breakdown and lane/tile freeze; successful serial prac
 baseline; numerical speed/reuse/memory targets owned by primary; full-Pryanik remaining
 raster/material cost; per-copy full36 import cost after separation; worst qualified
 noninterruptible phase/cleanup duration. None is permission to omit an acceptance
-case, invent a result, raise limits or claim the combined delivery complete.
+case, invent a result, raise limits or claim either delivery complete.

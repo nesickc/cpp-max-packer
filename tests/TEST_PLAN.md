@@ -21,17 +21,17 @@ For each slice, name its requirement and AT case, add a failing observable test,
 The planned [delivery milestones](../doc/MILESTONES.md) and individual tickets
 route remaining coverage without claiming execution. Canonical M0–M6 and AT IDs
 remain unchanged. Ticket-local acceptance IDs supplement this map.
-T-010 delivers its threading gates and the included T-011 preparation/deadline
-gates in one branch/PR. Preserve both sets of acceptance IDs and attribute their
-separate performance comparisons. One integrated run may prove multiple gates;
-identify the assertions in the [joint ledger](../doc/T-010-ACCEPTANCE.md) instead
+T-011 delivers serial runtime/preparation/deadline gates and the carried T-009
+practical obligations before T-010's threading branch/PR. Preserve all acceptance
+IDs and separate performance comparisons under ADR 0014. One integrated run may
+prove multiple gates; identify assertions in the [evidence ledger](../doc/T-010-ACCEPTANCE.md) instead
 of duplicating identical runs.
 
 | Planned tickets | Added or completed evidence |
 | --- | --- |
 | [T-009](../doc/T-009.md) | Pin/materialize the analytical Ulamok 36-copy witness, independently validate it, then find/retain at least 36 in a supported actual packing/export run. Reproduce the reported 1 mm workload/resource path with specific native diagnostics; validate efficient proximity against a direct oracle and qualify both full Pryanik desktop journeys. |
-| [T-010](../doc/T-010.md), including T-011 | SOL-08: 1/2/4 and supported higher thread counts; CPU correlation oracles, same-thread fixed-work reproducibility, independent valid results, total worker memory, faults/Stop and actual phase/end-to-end speedup. Also requires every gate in the included T-011 sheet below. |
-| [T-011 work package](../doc/T-011.md), delivered within T-010 | Prepared-asset reuse with tamper invalidation, cold/warm measurements, Start-origin deadline and overrun reporting; Stop receipt and safe completion measured separately through heavy phases. |
+| [T-011](../doc/T-011.md), delivered first | Prepared-asset reuse with tamper invalidation, cold/warm measurements, Start-origin deadline and overrun reporting; Stop through heavy phases; carried T009-A2/A3/A6 serial practical success and exports. |
+| [T-010](../doc/T-010.md), after T-011 merge | SOL-08: 1/2/4 and supported higher thread counts; CPU correlation oracles, same-thread fixed-work reproducibility, independent valid results, total worker memory, faults/Stop and actual phase/end-to-end speedup. Regress the merged serial runtime. |
 | [T-012](../doc/T-012.md)–[T-013](../doc/T-013.md) | Original simplified Pryanik stays invalid; explicitly accepted reconstructed derivative passes native validation, project move/reopen and packing/export. STL-container desktop cases cover cavities, separate units and forbidden-material enclosure. |
 | [T-014](../doc/T-014.md)–[T-016](../doc/T-016.md) | AT-08 orientation/refinement and exact AT-11 reinsertion; baseline/spectral incumbent retention; presets and explicit resource-aware settings with no silent manual-pitch change. |
 | [T-017](../doc/T-017.md)–[T-018](../doc/T-018.md) | Required pack/validate/service surface, replay, stale events, Continue, interrupted checkpoints and valid recovery; real process/desktop gates. |

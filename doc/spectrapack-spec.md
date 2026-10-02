@@ -557,11 +557,12 @@ Suggested first implementation tasks, each linked to requirements:
 8. `T-008`: first box-to-viewer-to-export desktop journey — UI-01–UI-03, DATA-02.
 
 The post-T-008 delivery sequence is specified in [MILESTONES.md](MILESTONES.md):
-T-009 CPU scalability/practical packing, T-010 CPU runtime (including the T-011
-preparation/deadline work package) and T-012 explicit library-backed repair come
-first as three delivery tickets. Native and product-integration workers can work
-in parallel after shared interfaces are frozen; T-011 retains its acceptance IDs
-but has no separate branch or merge. T-013–T-023
+T-009 CPU scalability/practical packing, T-011 serial runtime/preparation/deadlines,
+T-010 measured CPU threading and T-012 explicit library-backed repair come first
+as separate delivery tickets under [ADR 0014](../spec/decisions/0014-runtime-delivery-split.md).
+Native and product-integration workers can work in parallel within a ticket after
+shared interfaces are frozen; dependent branches wait for prerequisite user merges.
+All acceptance IDs remain. T-013–T-023
 cover STL containers, orientations/count search, presets, jobs/recovery, Vulkan,
 deferred live viewing, benchmarks and offline release. Each delivery has its own
 ticket, requirements, dependencies and acceptance checks. These tasks close remaining

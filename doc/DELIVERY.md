@@ -16,16 +16,17 @@ The spec's `T-001`–`T-008` are initial implementation tasks; `AT-01`–`AT-17`
 | [T-007 CPU spectral placement and transform export](T-007.md) | `feature/AT-12-cpu-spectral-placement` | Merged through PR #8 at `1014b39`; local qualification is recorded in the ticket |
 | [T-008 desktop workflow](T-008.md) | `feature/AT-15-desktop-workflow` | Merged through PR #10 at `a05fa2c`; bounded first-journey evidence and remaining full-v1 gates are recorded in the ticket |
 | [T-009 CPU field scalability](T-009.md) | `feature/SOL-05-cpu-field-scalability` | Merged through PR #12 at `b82117a`; bounded local gates and three retained-result desktop journeys pass. Reviewed scope revision carries successful practical spectral/STL support into T-010 without raising caps |
-| [T-010 CPU runtime, including T-011](T-010.md) | `feature/SOL-08-cpu-runtime` | Started from merged `b82117a`; ADR 0013 and preparation/Start targets frozen; implementation in progress. All T010-A1–A7 and T011-A1–A7 gates remain required |
+| [T-011 serial runtime foundations](T-011.md) | Existing `feature/SOL-08-cpu-runtime` | Started from merged `b82117a`; audit/simplify and stabilize existing work. Requires T011-A1–A7, carried T009-A2/A3/A6 and a successful serial baseline |
+| [T-010 measured CPU threading](T-010.md) | Proposed `feature/SOL-08-cpu-threading` | Wait for the T-011 user merge; one selected parallel kernel and all T010-A1–A7 gates |
 
 [Delivery milestones](MILESTONES.md) define T-009–T-023 and their merged
 prerequisites. Each delivery ticket has a planned feature branch, requirements
-and observable acceptance. T-010 is the current implementation; later dependent
+and observable acceptance. T-011 is the current delivery; later dependent
 branches wait for the preceding user merge.
-The first four specifications form three deliveries: T-009 CPU scalability and
-the Ulamok regression; T-010 CPU runtime including T-011 preparation/deadlines;
-then T-012 library repair. T-011 retains every acceptance ID as an included work
-package with no separate branch/PR. Two workers share each delivery branch under
+The user-approved [ADR 0014](../spec/decisions/0014-runtime-delivery-split.md) splits
+the former combined ticket: **T-009 → T-011 foundations → T-010 threading → T-012**.
+Every acceptance ID and performance target remains. Keep existing branch/history
+for T-011; create the T-010 branch only after its user merge. Two workers share each delivery branch under
 the [native/integration ownership rules](MILESTONES.md#parallel-agent-execution).
 Explicit library repair and practical
 geometry workflows follow. Live result rendering is low priority after CPU,
@@ -35,7 +36,7 @@ repair and core packing/usability work; Vulkan follows measured CPU parallelism.
 compatibility boundaries. The planning change is merged; dependent feature
 branches still wait for prerequisite merges.
 Freeze shared interfaces before concurrent implementation. Reuse one integrated
-gate run/review across included work packages when it proves each acceptance;
+gate evidence when it proves each acceptance at the applicable revision;
 performance measurements remain serial and preserve attributable baselines.
 
 For each feature: identify requirements and observable cases; add/observe failing tests before behavior changes; implement and refactor; run affected correctness and performance checks; obtain the configured code review; push incremental commits; open the ready pull/merge request and return its link; report the final branch/head, checks and remaining limitations. Preserve real failing evidence and clearly distinguish reference-tool tests from production acceptance.

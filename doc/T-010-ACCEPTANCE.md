@@ -1,14 +1,20 @@
-# T-010 / T-011 joint acceptance ledger
+# T-010 / T-011 cross-ticket evidence ledger
 
-Updated: 2026-10-02. Delivery branch: `feature/SOL-08-cpu-runtime`.
+Updated: 2026-10-02. Current T-011 branch: `feature/SOL-08-cpu-runtime`.
 Prerequisite: merged T-009, `b82117a` (PR #12).
 
-This ledger records demonstrated scope. **No combined acceptance gate is complete.**
+This ledger records demonstrated scope. **No ticket acceptance gate is complete.**
 The final integrated source revision and executable hashes remain pending.
 [T-010](T-010.md), [T-011](T-011.md) and [ADR 0013](../spec/decisions/0013-cpu-runtime.md)
 define the acceptance criteria and compatibility contract. A schema check, a
 successful build, or a retained valid result after a resource failure does not
 establish the corresponding runtime gate.
+
+[ADR 0014](../spec/decisions/0014-runtime-delivery-split.md) separates delivery:
+T-011 first owns T011-A1–A7 and the carried T009-A2/A3/A6 practical obligations;
+T-010 then owns T010-A1–A7 after the T-011 user merge. Keep historical evidence
+and frozen targets here; changing the delivery order closes no gate. T010-A7
+later regresses the successful practical workflows delivered by T-011.
 
 ## Gate evidence
 
@@ -29,8 +35,8 @@ establish the corresponding runtime gate.
 | T011-A6 — startup measurements | Four old profiles each have one warmup plus five successful preparation and Start samples; numerical targets and peaks are frozen. | Equivalent new cold/warm samples at thread 1, identical fixed work and ordered valid poses, measured peak/cleanup bounds, complete response time and regressions. |
 | T011-A7 — compatibility | Optional runtime schemas, shared fixtures and generated types pass their checks. | Legacy and new Save/move/Open, original timing semantics, pending/result association, thread policy, independent JSON/STL export and repaired-geometry invariance. |
 
-The original T009-A2/A3/A6 obligations are covered by T010-A7 and T011-A7 only
-when their concrete full-catalog, pitch-advice and checked-export assertions pass.
+The original T009-A2/A3/A6 obligations must pass in T-011, and remain T010-A7
+regressions with their concrete full-catalog, pitch-advice and checked-export assertions.
 A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 
 ## Retained evidence and qualification

@@ -1,11 +1,11 @@
 # Delivery milestones after T-008
 
-Status: updated 2026-10-01. T-008 merged through PR #10 at `a05fa2c`;
+Status: updated 2026-10-02. T-008 merged through PR #10 at `a05fa2c`;
 T-009 merged through PR #12 at `b82117a` under its recorded scope revision.
-T-010 is in progress; its ticket distinguishes baseline evidence from acceptance.
+T-011 foundations are in progress; T-010 threading waits for that user merge.
 Later tickets below remain specifications without implementation claims.
-The first four specification IDs form three delivery tickets: T-009, T-010
-(including the T-011 work package), then T-012. No acceptance IDs are retired.
+The first four specification IDs are delivered T-009, T-011, T-010, then T-012
+under [ADR 0014](../spec/decisions/0014-runtime-delivery-split.md). No acceptance IDs are retired.
 The user prioritizes CPU speed/multithreading, practical packing and explicit
 repair. Live result rendering is lower priority; GPU work follows CPU improvement.
 
@@ -20,7 +20,7 @@ evidence, including what has not been reproduced.
 
 | Phase | Tickets | Observable exit | Product gates advanced |
 | --- | --- | --- | --- |
-| A — Reliable, faster CPU packing | T-009, T-010 (includes T-011) | Native Ulamok baseline at least 36; supported practical desktop runs; efficient fields and useful measured multithreading; reused preparation; a Start-origin deadline and qualified Stop | M1/M2/M3 gaps; AT-05/AT-10, CPU AT-12, AT-15/AT-16 subsets; SOL-08 |
+| A — Reliable, faster CPU packing | T-009 → T-011 → T-010 | Native Ulamok baseline at least 36; supported practical desktop runs; efficient fields and useful measured multithreading; reused preparation; a Start-origin deadline and qualified Stop | M1/M2/M3 gaps; AT-05/AT-10, CPU AT-12, AT-15/AT-16 subsets; SOL-08 |
 | B — Practical geometry workflows | T-012–T-013 | Explicit accepted repair of the simplified Pryanik survives project/export; box and STL interior-volume desktop journeys preserve dimensions/cavities | M1/M3; AT-03/AT-04/AT-07/AT-14/AT-15 subsets |
 | C — Better packing and usable resolution | T-014–T-016 | Required orientation modes, refinement and two-copy L rearrangement; preserved incumbents; presets resolve to supported explicit memory/pitch/thread settings | M4 and M3 controls; AT-08/AT-11, AT-05/AT-16 subsets |
 | D — Durable jobs | T-017–T-018 | CLI/UI share real jobs; duplicate Start is harmless; Continue preserves the incumbent; interruption recovers the last complete checkpoint | M3; AT-13/AT-14, CPU portions of AT-16 |
@@ -39,8 +39,8 @@ branch name in a ticket is proposed, not created. No agent merges a PR.
 | Ticket | Specification | Required merged prerequisites |
 | --- | --- | --- |
 | T-009 | [CPU scalability and practical packing](T-009.md) | T-008 |
-| T-010 | [CPU runtime: multithreading, preparation and deadlines](T-010.md) | T-009 |
-| T-011 (included) | [Preparation/deadline acceptance sheet within T-010](T-011.md); no separate branch/PR | Delivered with T-010; shares its T-009 prerequisite |
+| T-011 | [Serial runtime foundations, preparation and deadlines](T-011.md) | T-009; carries its remaining practical gates |
+| T-010 | [Measured CPU multithreading](T-010.md) | T-011 |
 | T-012 | [Explicit library-backed STL repair](T-012.md) | T-010 |
 | T-013 | [STL-container desktop workflow](T-013.md) | T-010, T-012 |
 | T-014 | [Orientation catalogs and refinement](T-014.md) | T-010 |
@@ -52,7 +52,7 @@ branch name in a ticket is proposed, not created. No agent merges a PR.
 | T-020 | [Auto fallback and Radeon qualification](T-020.md) | T-018, T-019 |
 | T-021 | [Deferred live viewer and inspection](T-021.md) | T-013, T-017, T-018 |
 | T-022 | [Benchmark and regression qualification](T-022.md) | T-015, T-016, T-020, T-021 |
-| T-023 | [Offline distribution and v1 release](T-023.md) | All delivery tickets T-009–T-022; T-011 is included in T-010 |
+| T-023 | [Offline distribution and v1 release](T-023.md) | All delivery tickets T-009–T-022, including separate T-011 and T-010 merges |
 
 Technical discovery and document review can proceed independently. If a ticket's
 implementation would require an unplanned module redesign, define a bounded
@@ -62,17 +62,18 @@ original unmet gate; splitting work cannot turn missing behavior into completion
 ## Parallel agent execution
 
 Use one primary and at most two leaf workers for a delivery ticket. The first
-wave remains three user-reviewed merges: **T-009 → T-010 (T-011 included) → T-012**.
+wave uses separate user-reviewed merges: **T-009 → T-011 → T-010 → T-012**.
 The native and product-integration lanes below are worker assignments on the
 same ticket branch, not independent tickets or stacked branches.
 
 | Delivery | Native lane | Product-integration lane | Required serial points |
 | --- | --- | --- | --- |
 | T-009 | Ulamok baseline/independent witnesses, efficient proximity/fields and native resource/oracle checks | Nested diagnostics, CLI/desktop resource feedback and practical journey fixtures/tests | Freeze profiles/error contract first; characterize before optimizing; integrate and qualify the serial baseline before T-010 |
-| T-010 including T-011 | Measured parallel kernel, bounded workers/scratch, prepared-asset APIs and native cancellation | Shared adapters, reuse lifetime, Start deadline/Stop transport, settings/provenance and desktop/project/export integration | Freeze one runtime/compatibility contract; publish required interfaces; then parallelize implementations; qualify together |
+| T-011 | Serial practical prerequisites, prepared-asset APIs and native cancellation | Reuse lifetime, Start deadline/Stop transport, settings/provenance and project/export integration | Audit complexity; simplify/stabilize existing implementation; qualify serial runtime before threading |
+| T-010 | One measured parallel kernel and bounded worker scratch | Actual thread controls/provenance and affected desktop regressions | Wait for T-011 merge; freeze measured targets and selected lane before implementation |
 | T-012 | Actual-library evaluation, bounded reconstruction, native validity/metrics and resources | Accepted-repair schemas/replay, explicit preview/acceptance, archive and export journeys | Prove a useful candidate and freeze its recipe/authority contract before dependent product integration; then parallelize the adapter and workflow |
 
-For T-009 and T-010 the native owner has `engine/pack_compute/`,
+For T-009, T-011 and T-010 the native owner has `engine/pack_compute/`,
 `engine/pack_solver/`, required `engine/pack_geometry/` internals and their tests.
 The integration owner has `engine/cli/`, `engine/pack_io/`, `desktop/`, schemas,
 generated types and protocol/journey tests. T-012 narrows the native lane to
