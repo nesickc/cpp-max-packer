@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
-#include <list>
 #include <limits>
+#include <list>
 #include <memory_resource>
 #include <new>
 #include <utility>
@@ -12,6 +12,7 @@
 
 #include "field_kernel.hpp"
 #include "field_profile.hpp"
+#include "placed_field_test_support.hpp"
 
 namespace spectrapack::geometry {
 namespace kernel = detail::validation_kernel;
@@ -41,6 +42,22 @@ struct CellField::Storage {
   double clearance_mm{};
   std::uint64_t resident_bytes{};
   RepresentationResidency residency;
+
+  Storage(GridWindow window_in, FieldPurpose purpose_in, RepresentationStats stats_in,
+          std::shared_ptr<const VoxelGeometry> geometry_in, std::shared_ptr<const kernel::PlacedSolid> placed_in,
+          Container container_in, const CopyPose& pose_in, double clearance_in, std::uint64_t resident_in) :
+      window(window_in),
+      purpose(purpose_in),
+      stats(stats_in),
+      cells(0),
+      geometry(std::move(geometry_in)),
+      placed(std::move(placed_in)),
+      container(std::move(container_in)),
+      pose(pose_in),
+      clearance_mm(clearance_in),
+      resident_bytes(resident_in)
+  {
+  }
 };
 
 namespace {
@@ -212,17 +229,30 @@ class CellVisitCapture {
   std::uint64_t& output_;
 };
 
-std::optional<RepresentationFailure> reserve_array(kernel::Budget& budget,
-                                                   std::uint64_t count,
-                                                   std::uint64_t width,
-                                                   std::string method) {
-  std::uint64_t bytes{};
-  if (!checked_bytes(bytes, count, width))
-    return fail("FIELD_MEMORY_LIMIT", method + " byte count overflowed");
-  if (!budget.reserve_bytes(bytes))
-    return fail("FIELD_MEMORY_LIMIT",
-                method + " exceeds the working byte limit");
-  return std::nullopt;
+std::optional<RepresentationFailure> reserve_array(kernel::Budget& budget, std::uint64_t count, std::uint64_t width,
+                                                   std::string_view method)
+{
+    std::uint64_t bytes {};
+    if (!checked_bytes(bytes, count, width)) {
+        return RepresentationFailure { "FIELD_MEMORY_LIMIT", "array byte count overflowed", method };
+    }
+    if (!budget.reserve_bytes(bytes)) {
+        return RepresentationFailure { "FIELD_MEMORY_LIMIT", "array exceeds the working byte limit", method };
+    }
+    return std::nullopt;
+}
+
+bool initialize_cells(std::vector<std::uint8_t>& cells, std::size_t count, kernel::Budget& budget)
+{
+    cells.reserve(count);
+    while (cells.size() != count) {
+        const auto chunk = std::min<std::size_t>(1024, count - cells.size());
+        if (!budget.consume_work(chunk)) {
+            return false;
+        }
+        cells.resize(cells.size() + chunk, 0);
+    }
+    return true;
 }
 
 std::optional<RepresentationFailure> fill_components(
@@ -237,12 +267,18 @@ std::optional<RepresentationFailure> fill_components(
         "FIELD_MEMORY_LIMIT",
         "component labels and flood queue exceed the working byte limit");
   try {
-    std::vector<std::uint8_t> seen(count);
+      std::vector<std::uint8_t> seen(0);
+      if (!initialize_cells(seen, count, budget)) {
+          return fail("FIELD_KERNEL_WORK_LIMIT", "component initialization exhausted its global budget");
+      }
     std::vector<std::size_t> queue;
     queue.reserve(count);
     for (std::uint32_t z = 0; z < raw.window.shape[2]; ++z)
       for (std::uint32_t y = 0; y < raw.window.shape[1]; ++y)
         for (std::uint32_t x = 0; x < raw.window.shape[0]; ++x) {
+            if (!budget.consume_work(1)) {
+                return fail("FIELD_KERNEL_WORK_LIMIT", "component scan exhausted its global budget");
+            }
           const auto start = flat(raw.window.shape, x, y, z);
           if (raw.cells[start] == 2 || seen[start]) continue;
           const auto component_begin = queue.size();
@@ -309,11 +345,12 @@ std::optional<RepresentationFailure> fill_components(
           const bool occupied = decision != kernel::Decision::no;
           if (decision == kernel::Decision::indeterminate)
             raw.uncertain_cells += queue.size() - component_begin;
-          for (std::size_t at = component_begin; at < queue.size(); ++at)
-            raw.cells[queue[at]] = decision == kernel::Decision::indeterminate
-                                       ? 3
-                                   : occupied ? 1
-                                              : 0;
+          for (std::size_t at = component_begin; at < queue.size(); ++at) {
+              if (!budget.consume_work(1)) {
+                  return fail("FIELD_KERNEL_WORK_LIMIT", "component writes exhausted their global budget");
+              }
+              raw.cells[queue[at]] = decision == kernel::Decision::indeterminate ? 3 : occupied ? 1 : 0;
+          }
         }
     budget.release_bytes(scratch);
     return std::nullopt;
@@ -324,9 +361,9 @@ std::optional<RepresentationFailure> fill_components(
   }
 }
 
-std::variant<RawField, RepresentationFailure> make_raw(std::shared_ptr<const kernel::PreparedSolid> prepared,
-                                                       GridWindow window, Vec3 translation, Quaternion rotation,
-                                                       kernel::Budget& budget, const RepresentationLimits& limits,
+std::variant<RawField, RepresentationFailure> make_raw(std::shared_ptr<const kernel::PlacedSolid> placed,
+                                                       GridWindow window, kernel::Budget& budget,
+                                                       const RepresentationLimits& limits,
                                                        std::uint64_t& attempt_cell_visits)
 {
     RepresentationFailure error;
@@ -334,15 +371,14 @@ std::variant<RawField, RepresentationFailure> make_raw(std::shared_ptr<const ker
     if (!count) {
         return error;
     }
-    auto placed = kernel::place(std::move(prepared), translation, rotation, budget);
-    if (!placed) {
-        return kernel_failure(placed.failure);
-    }
     if (auto admission = reserve_array(budget, *count, sizeof(std::uint8_t), "field cells")) {
         return *admission;
     }
     try {
-        RawField raw { window, std::vector<std::uint8_t>(static_cast<std::size_t>(*count)), std::move(placed.solid) };
+        RawField raw { window, std::vector<std::uint8_t>(0), std::move(placed) };
+        if (!initialize_cells(raw.cells, static_cast<std::size_t>(*count), budget)) {
+            return fail("FIELD_KERNEL_WORK_LIMIT", "field initialization exhausted its global budget");
+        }
         CellVisitCapture capture(raw, attempt_cell_visits);
         if (auto failure = kernel::rasterize_boundary(*raw.placed, window, raw.cells, budget, raw.cell_visits,
                                                       limits.max_cell_visits)) {
@@ -412,10 +448,16 @@ std::variant<std::vector<std::uint8_t>, RepresentationFailure> dilate_and_crop(
           reserve_array(budget, *count, sizeof(std::uint8_t), "cropped output"))
     return *admission;
   try {
-    std::vector<std::uint8_t> output(static_cast<std::size_t>(*count));
+      std::vector<std::uint8_t> output(0);
+      if (!initialize_cells(output, static_cast<std::size_t>(*count), budget)) {
+          return fail("FIELD_KERNEL_WORK_LIMIT", "output initialization exhausted its global budget");
+      }
     for (std::uint32_t z = 0; z < raw.window.shape[2]; ++z)
       for (std::uint32_t y = 0; y < raw.window.shape[1]; ++y)
         for (std::uint32_t x = 0; x < raw.window.shape[0]; ++x) {
+            if (!budget.consume_work(1)) {
+                return fail("FIELD_KERNEL_WORK_LIMIT", "clearance scan exhausted its global budget");
+            }
           const auto value = raw.cells[flat(raw.window.shape, x, y, z)];
           const bool seed = invert_material ? value != 1 : value != 0;
           if (!seed) continue;
@@ -488,6 +530,95 @@ bool same_lattice(const GridLattice& first,
 
 }  // namespace
 
+std::variant<detail::PlacedRawWindowPlan, RepresentationFailure> detail::plan_placed_raw_window(
+    const kernel::PlacedSolid& placed, const GridWindow& whole, kernel::Budget& budget)
+{
+    const PlacedRawWindowPlan fallback { PlacedRawDomain::full_window, whole };
+    const auto work_failure = [] {
+        return fail("FIELD_KERNEL_WORK_LIMIT", "placed support planning exhausted work");
+    };
+    if (!budget.consume_work(1)) {
+        return work_failure();
+    }
+    const auto plan = [&]() -> std::variant<PlacedRawWindowPlan, RepresentationFailure> {
+        const auto bounds = kernel::conservative_bounds(placed);
+        if (!bounds.finite) {
+            return fallback;
+        }
+        CellIndex whole_last {}, candidate_last {};
+        GridWindow candidate = whole;
+        bool empty = false;
+        for (int axis = 0; axis != 3; ++axis) {
+            if (!budget.consume_work(12)) {
+                return work_failure();
+            }
+            if (!whole.shape[axis] || whole.first[axis] < -kLargestExactGridIndex ||
+                whole.first[axis] > kLargestExactGridIndex - static_cast<std::int64_t>(whole.shape[axis])) {
+                return fallback;
+            }
+            whole_last[axis] = whole.first[axis] + whole.shape[axis] - 1;
+            const auto first =
+                trim_index(bounds.bounds_mm.min[axis], whole.lattice.origin_mm[axis], whole.lattice.pitch_mm, true);
+            const auto last =
+                trim_index(bounds.bounds_mm.max[axis], whole.lattice.origin_mm[axis], whole.lattice.pitch_mm, false);
+            if (!first || !last || *first > *last) {
+                return fallback;
+            }
+            candidate.first[axis] = std::max(whole.first[axis], *first);
+            candidate_last[axis] = std::min(whole_last[axis], *last);
+            empty |= candidate.first[axis] > candidate_last[axis];
+        }
+        if (!budget.consume_work(36)) {
+            return work_failure();
+        }
+        const auto first_cell = kernel::outward_grid_cell(whole, whole.first);
+        const auto last_cell = kernel::outward_grid_cell(whole, whole_last);
+        if (!first_cell || !last_cell) {
+            return fallback;
+        }
+        if (empty) {
+            for (int axis = 0; axis != 3; ++axis) {
+                if (!budget.consume_work(1)) {
+                    return work_failure();
+                }
+                if (last_cell->max[axis] < bounds.bounds_mm.min[axis] ||
+                    first_cell->min[axis] > bounds.bounds_mm.max[axis]) {
+                    return PlacedRawWindowPlan { PlacedRawDomain::certified_empty, whole };
+                }
+            }
+            return fallback;
+        }
+        for (int axis = 0; axis != 3; ++axis) {
+            candidate.shape[axis] = static_cast<std::uint32_t>(candidate_last[axis] - candidate.first[axis] + 1);
+            // Nearest omitted closed cells must be strictly separated. Monotone outward
+            // arithmetic with positive pitch extends each certificate across its slab.
+            for (const bool lower : { true, false }) {
+                if (lower ? candidate.first[axis] == whole.first[axis] : candidate_last[axis] == whole_last[axis]) {
+                    continue;
+                }
+                if (!budget.consume_work(18)) {
+                    return work_failure();
+                }
+                CellIndex index = whole.first;
+                index[axis] = lower ? candidate.first[axis] - 1 : candidate_last[axis] + 1;
+                const auto cell = kernel::outward_grid_cell(whole, index);
+                if (!cell || !(lower ? cell->max[axis] < bounds.bounds_mm.min[axis]
+                                     : cell->min[axis] > bounds.bounds_mm.max[axis])) {
+                    return fallback;
+                }
+            }
+        }
+        return PlacedRawWindowPlan { candidate.first == whole.first && candidate.shape == whole.shape
+                                         ? PlacedRawDomain::full_window
+                                         : PlacedRawDomain::cropped_window,
+                                     candidate };
+    }();
+    if (!budget.consume_work(1)) {
+        return work_failure();
+    }
+    return plan;
+}
+
 std::optional<GridWindow> estimate_object_window(const AcceptedSolid& source, GridLattice lattice,
                                                  Quaternion rotation) noexcept
 {
@@ -532,21 +663,28 @@ struct FieldBuilder {
     }
     static std::uint64_t resident(const VoxelGeometry& geometry) noexcept { return geometry.storage_->resident_bytes; }
     static std::uint64_t resident(const CellField& field) noexcept { return field.storage_->resident_bytes; }
-    static RepresentationOutcome<CellField> finish(RawField raw, FieldPurpose purpose,
+    static RepresentationOutcome<CellField> finish(RawField&& raw, FieldPurpose purpose,
                                                    std::shared_ptr<const VoxelGeometry> geometry, Container container,
-                                                   CopyPose pose, double clearance, kernel::Budget& budget,
+                                                   const CopyPose& pose, double clearance, kernel::Budget& budget,
                                                    std::uint64_t caller_reserved)
     {
         if (!budget.reserve_bytes(sizeof(CellField::Storage))) {
             return fail("FIELD_MEMORY_LIMIT", "field metadata exceeds the working byte limit");
         }
         RepresentationStats stats {};
+        if (!budget.consume_work(pose.copy_id.size() + 1)) {
+            return fail("FIELD_KERNEL_WORK_LIMIT", "field identifier publication exhausted its global budget");
+        }
         stats.kernel_work = budget.work_used();
         stats.cell_visits = raw.cell_visits;
         stats.uncertain_cells = raw.uncertain_cells;
         for (const auto cell : raw.cells) {
+            if (!budget.consume_work(1)) {
+                return fail("FIELD_KERNEL_WORK_LIMIT", "field publication scan exhausted its global budget");
+            }
             stats.occupied_cells += cell != 0;
         }
+        stats.kernel_work = budget.work_used();
         const auto resident = budget.bytes_live() >= caller_reserved ? budget.bytes_live() - caller_reserved : 0;
         stats.working_bytes_peak = std::max(budget.bytes_peak(), resident);
         std::uint64_t owned = sizeof(CellField::Storage);
@@ -577,17 +715,10 @@ struct FieldBuilder {
             }
         }
         try {
-            auto storage = std::make_shared<CellField::Storage>(CellField::Storage { raw.window,
-                                                                                     purpose,
-                                                                                     stats,
-                                                                                     std::move(raw.cells),
-                                                                                     std::move(geometry),
-                                                                                     std::move(raw.placed),
-                                                                                     std::move(container),
-                                                                                     std::move(pose),
-                                                                                     clearance,
-                                                                                     resident,
-                                                                                     {} });
+            auto storage = std::make_shared<CellField::Storage>(raw.window, purpose, stats, std::move(geometry),
+                                                                std::move(raw.placed), std::move(container), pose,
+                                                                clearance, resident);
+            storage->cells.swap(raw.cells);
             if (!append_block(residency, { RepresentationResidentKind::cell_field_owned, storage.get(), owned })) {
                 return fail("FIELD_MEMORY_LIMIT", "field residency exceeds its block bound");
             }
@@ -839,8 +970,10 @@ RepresentationOutcome<CellField> voxelize_object(std::shared_ptr<const VoxelGeom
             return *admission;
         }
         try {
-            RawField raw { window, std::vector<std::uint8_t>(static_cast<std::size_t>(*count)),
-                           std::move(placed.solid) };
+            RawField raw { window, std::vector<std::uint8_t>(0), std::move(placed.solid) };
+            if (!initialize_cells(raw.cells, static_cast<std::size_t>(*count), budget)) {
+                return fail("FIELD_KERNEL_WORK_LIMIT", "object initialization exhausted its global budget");
+            }
             CellVisitCapture capture(raw, cell_visits);
             if (auto failure = kernel::rasterize_boundary(*raw.placed, window, raw.cells, budget, raw.cell_visits,
                                                           limits.max_cell_visits)) {
@@ -852,7 +985,12 @@ RepresentationOutcome<CellField> voxelize_object(std::shared_ptr<const VoxelGeom
                 return *failure;
             }
             cell_visits = raw.cell_visits;
-            kernel::normalize_public_object_cells(raw.cells);
+            for (auto& cell : raw.cells) {
+                if (!budget.consume_work(1)) {
+                    return fail("FIELD_KERNEL_WORK_LIMIT", "object normalization exhausted its global budget");
+                }
+                cell = cell == 0 ? 0 : 1;
+            }
             return detail::FieldBuilder::finish(std::move(raw), FieldPurpose::object_kernel, std::move(geometry), {},
                                                 {}, 0, budget, limits.reserved_bytes);
         }
@@ -872,6 +1010,15 @@ RepresentationOutcome<CellField> voxelize_placed(std::shared_ptr<const VoxelGeom
                                                  const RepresentationLimits& limits,
                                                  RepresentationAttemptStats& attempt,
                                                  const runtime::OperationControl& control)
+{
+    return detail::voxelize_placed_with_policy(std::move(geometry), requested, pose, clearance, limits, attempt,
+                                               control, detail::PlacedFieldPolicy::certified_support);
+}
+
+RepresentationOutcome<CellField> detail::voxelize_placed_with_policy(
+    std::shared_ptr<const VoxelGeometry> geometry, GridWindow requested, const CopyPose& pose, double clearance,
+    const RepresentationLimits& limits, RepresentationAttemptStats& attempt, const runtime::OperationControl& control,
+    PlacedFieldPolicy policy)
 {
     if (auto failure = interruption_failure(control)) {
         attempt = {};
@@ -911,8 +1058,40 @@ RepresentationOutcome<CellField> voxelize_placed(std::shared_ptr<const VoxelGeom
             !budget.reserve_bytes(*pose_string_bytes)) {
             return fail("FIELD_MEMORY_LIMIT", "resident prepared geometry and copy id exceed the working byte limit");
         }
-        auto raw = make_raw(detail::FieldBuilder::prepared(*geometry), *work_window, pose.translation_mm,
-                            pose.rotation_xyzw, budget, limits, cell_visits);
+        auto placed =
+            kernel::place(detail::FieldBuilder::prepared(*geometry), pose.translation_mm, pose.rotation_xyzw, budget);
+        if (!placed) {
+            return kernel_failure(placed.failure);
+        }
+        PlacedRawWindowPlan plan { PlacedRawDomain::full_window, *work_window };
+        if (policy == PlacedFieldPolicy::certified_support) {
+            if (!budget.reserve_bytes(sizeof(plan))) {
+                return fail("FIELD_MEMORY_LIMIT", "placed support metadata exceeds the working byte limit");
+            }
+            const auto planned = plan_placed_raw_window(*placed.solid, *work_window, budget);
+            if (const auto* failure = std::get_if<RepresentationFailure>(&planned)) {
+                return *failure;
+            }
+            plan = std::get<PlacedRawWindowPlan>(planned);
+        }
+        if (plan.kind == PlacedRawDomain::certified_empty) {
+            const auto count = window_cells(requested, limits, error);
+            if (auto failure = reserve_array(budget, *count, sizeof(std::uint8_t), "empty output")) {
+                return *failure;
+            }
+            try {
+                RawField empty { requested, std::vector<std::uint8_t>(0), std::move(placed.solid) };
+                if (!initialize_cells(empty.cells, static_cast<std::size_t>(*count), budget)) {
+                    return fail("FIELD_KERNEL_WORK_LIMIT", "empty output initialization exhausted work");
+                }
+                return FieldBuilder::finish(std::move(empty), FieldPurpose::placed_pair_blocker, std::move(geometry),
+                                            {}, pose, clearance, budget, limits.reserved_bytes);
+            }
+            catch (const std::bad_alloc&) {
+                return fail("FIELD_ALLOCATION_FAILURE", "empty placed field allocation failed");
+            }
+        }
+        auto raw = make_raw(std::move(placed.solid), plan.window, budget, limits, cell_visits);
         if (std::holds_alternative<RepresentationFailure>(raw)) {
             return std::get<RepresentationFailure>(std::move(raw));
         }
@@ -936,7 +1115,7 @@ RepresentationOutcome<CellField> voxelize_placed(std::shared_ptr<const VoxelGeom
         std::vector<CellIndex>().swap(offsets);
         budget.release_bytes(stencil_bytes);
         return detail::FieldBuilder::finish(std::move(value), FieldPurpose::placed_pair_blocker, std::move(geometry),
-                                            {}, CopyPose(pose), clearance, budget, limits.reserved_bytes);
+                                            {}, pose, clearance, budget, limits.reserved_bytes);
     };
     auto output = operation();
     if (auto failure = interruption_failure(control)) {
@@ -981,7 +1160,10 @@ RepresentationOutcome<CellField> voxelize_container(Container container, GridWin
                 return fail("FIELD_MEMORY_LIMIT", "analytic container output exceeds byte limit");
             }
             try {
-                RawField raw { requested, std::vector<std::uint8_t>(static_cast<std::size_t>(*requested_count)) };
+                RawField raw { requested, std::vector<std::uint8_t>(0) };
+                if (!initialize_cells(raw.cells, static_cast<std::size_t>(*requested_count), budget)) {
+                    return fail("FIELD_KERNEL_WORK_LIMIT", "container initialization exhausted its global budget");
+                }
                 CellVisitCapture capture(raw, cell_visits);
                 for (std::uint32_t z = 0; z < requested.shape[2]; ++z) {
                     for (std::uint32_t y = 0; y < requested.shape[1]; ++y) {
@@ -1055,8 +1237,10 @@ RepresentationOutcome<CellField> voxelize_container(Container container, GridWin
             return *admission;
         }
         try {
-            RawField raw { *work_window, std::vector<std::uint8_t>(static_cast<std::size_t>(*count)),
-                           std::move(placed.solid) };
+            RawField raw { *work_window, std::vector<std::uint8_t>(0), std::move(placed.solid) };
+            if (!initialize_cells(raw.cells, static_cast<std::size_t>(*count), budget)) {
+                return fail("FIELD_KERNEL_WORK_LIMIT", "container initialization exhausted its global budget");
+            }
             CellVisitCapture capture(raw, cell_visits);
             if (auto failure = kernel::rasterize_boundary(*raw.placed, *work_window, raw.cells, budget, raw.cell_visits,
                                                           limits.max_cell_visits)) {

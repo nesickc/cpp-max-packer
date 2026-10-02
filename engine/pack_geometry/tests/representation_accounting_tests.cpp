@@ -1,7 +1,9 @@
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <functional>
 #include <limits>
@@ -15,15 +17,43 @@
 #include <vector>
 
 #include "../src/field_kernel.hpp"
+#include "../src/placed_field_test_support.hpp"
 #include "spectrapack/geometry/conservative_fields.hpp"
 #include "validation_fixtures.hpp"
 
 namespace {
 std::atomic_bool fail_test_allocations {};
+std::atomic_size_t fail_large_test_allocation {};
+std::atomic_bool large_test_allocation_reached {};
+#if defined(_MSC_VER) && defined(_DEBUG)
+std::atomic_int fail_test_ordinal { -1 };
+bool report_empty_transfer_fault {};
+std::atomic_bool record_field_allocations {};
+std::array<std::size_t, 64> field_allocation_sizes {};
+std::size_t field_allocation_count {};
+#endif
 }
 
 void* operator new(std::size_t size)
 {
+#if defined(_MSC_VER) && defined(_DEBUG)
+    if (record_field_allocations.load(std::memory_order_relaxed) &&
+        field_allocation_count < field_allocation_sizes.size()) {
+        field_allocation_sizes[field_allocation_count++] = size;
+    }
+    if (fail_test_ordinal.load(std::memory_order_relaxed) >= 0 &&
+        fail_test_ordinal.fetch_sub(1, std::memory_order_relaxed) == 0) {
+        if (report_empty_transfer_fault) {
+            std::fputs("EMPTY_POST_OUTPUT_ALLOCATION_FAULT_REACHED\n", stderr);
+        }
+        throw std::bad_alloc {};
+    }
+#endif
+    const auto threshold = fail_large_test_allocation.load(std::memory_order_relaxed);
+    if (threshold && size >= threshold) {
+        large_test_allocation_reached.store(true, std::memory_order_relaxed);
+        throw std::bad_alloc {};
+    }
     if (fail_test_allocations.load(std::memory_order_relaxed)) {
         throw std::bad_alloc {};
     }
@@ -533,3 +563,214 @@ TEST_CASE("T011 raw-field failure retains diagnostics and visits under persisten
     CHECK(attempt.cell_visits == 5);
     CHECK(attempt.kernel_work > 0);
 }
+
+TEST_CASE("SOL06 placed output allocation failure preserves the previously published field", "[placed-support]")
+{
+    const auto source = geometry();
+    const geo::CopyPose pose {
+        "retained", { 1.5, 1.5, 1.5 },
+         { 0, 0, 0, 1 }
+    };
+    const auto retained = value(geo::voxelize_placed(source, window(), pose, 0));
+    const std::vector<std::uint8_t> original(retained->cells().begin(), retained->cells().end());
+    for (const bool empty : { false, true }) {
+        geo::RepresentationAttemptStats attempt;
+        std::optional<geo::RepresentationOutcome<geo::CellField>> outcome;
+        bool escaped {};
+        bool reached {};
+        {
+            struct Reset {
+                ~Reset() { fail_large_test_allocation.store(0, std::memory_order_relaxed); }
+            } reset;
+            large_test_allocation_reached.store(false, std::memory_order_relaxed);
+            fail_large_test_allocation.store(1'000'000, std::memory_order_relaxed);
+            try {
+                outcome.emplace(
+                    geo::voxelize_placed(source,
+                                         {
+                                             { {}, 1 },
+                                             {},
+                                             { 100, 100, 100 }
+                },
+                                         { "trial",
+                                           empty ? geo::Vec3 { 1000, 1000, 1000 } : geo::Vec3 { 50.5, 50.5, 50.5 },
+                                           { 0, 0, 0, 1 } },
+                                         0, {}, attempt));
+            }
+            catch (...) {
+                escaped = true;
+            }
+            reached = large_test_allocation_reached.load(std::memory_order_relaxed);
+        }
+        CHECK(reached);
+        CHECK_FALSE(escaped);
+        REQUIRE(outcome);
+        REQUIRE(std::holds_alternative<geo::RepresentationFailure>(*outcome));
+        CHECK(std::get<geo::RepresentationFailure>(*outcome).code == "FIELD_ALLOCATION_FAILURE");
+        CHECK(attempt.input_accounting_complete);
+        CHECK(attempt.admitted_bytes_upper_bound >= 1'000'000 + attempt.input_resident_bytes);
+        CHECK(std::equal(original.begin(), original.end(), retained->cells().begin()));
+    }
+}
+
+#if defined(_MSC_VER) && defined(_DEBUG)
+TEST_CASE("T011 new zero-cell owners propagate reached Debug proxy allocation failures", "[placed-support]")
+{
+    const auto source = geometry();
+    const auto retained = blocker(source);
+    const std::vector<std::uint8_t> original(retained->cells().begin(), retained->cells().end());
+    for (const bool empty : { false, true }) {
+        const geo::CopyPose pose {
+            "proxy", empty ? geo::Vec3 { 1000, 1000, 1000 }
+                : geo::Vec3 { 50.5, 50.5, 50.5 },
+                { 0, 0, 0, 1 }
+        };
+        std::vector<std::size_t> ordinals;
+        {
+            struct Reset {
+                ~Reset() { record_field_allocations.store(false, std::memory_order_relaxed); }
+            } reset;
+            field_allocation_count = 0;
+            record_field_allocations.store(true, std::memory_order_relaxed);
+            const auto output = geo::voxelize_placed(source,
+                                                     {
+                                                         { {}, 1 },
+                                                         {},
+                                                         { 100, 100, 100 }
+            },
+                                                     pose, 0);
+            record_field_allocations.store(false, std::memory_order_relaxed);
+            REQUIRE(std::holds_alternative<std::shared_ptr<const geo::CellField>>(output));
+        }
+        // Raw/seen payloads request 27 bytes; full output is the only >=1,000,000-byte request
+        // (MSVC adds alignment metadata to its large allocation).
+        // Inject into the small allocation immediately preceding each such payload:
+        // the new throwing zero-count vector constructor's Debug proxy.
+        for (std::size_t index = 1; index != field_allocation_count; ++index) {
+            if (field_allocation_sizes[index] == 27 || field_allocation_sizes[index] >= 1'000'000) {
+                REQUIRE(field_allocation_sizes[index - 1] <= 64);
+                ordinals.push_back(index - 1);
+            }
+        }
+        CAPTURE(empty, field_allocation_count, field_allocation_sizes);
+        REQUIRE(ordinals.size() == (empty ? 1 : 3));
+        for (const auto ordinal : ordinals) {
+            geo::RepresentationAttemptStats attempt;
+            std::optional<geo::RepresentationOutcome<geo::CellField>> outcome;
+            bool escaped {};
+            bool reached {};
+            {
+                struct Reset {
+                    ~Reset() { fail_test_ordinal.store(-1, std::memory_order_relaxed); }
+                } reset;
+                fail_test_ordinal.store(static_cast<int>(ordinal), std::memory_order_relaxed);
+                try {
+                    outcome.emplace(geo::voxelize_placed(source,
+                                                         {
+                                                             { {}, 1 },
+                                                             {},
+                                                             { 100, 100, 100 }
+                    },
+                                                         pose, 0, {}, attempt));
+                }
+                catch (...) {
+                    escaped = true;
+                }
+                reached = fail_test_ordinal.load(std::memory_order_relaxed) == -1;
+            }
+            CAPTURE(empty, ordinal);
+            CHECK(reached);
+            CHECK_FALSE(escaped);
+            REQUIRE(outcome);
+            REQUIRE(std::holds_alternative<geo::RepresentationFailure>(*outcome));
+            CHECK(std::get<geo::RepresentationFailure>(*outcome).code == "FIELD_ALLOCATION_FAILURE");
+            CHECK(attempt.admitted_bytes_upper_bound <= geo::RepresentationLimits {}.max_working_bytes);
+            CHECK(std::equal(original.begin(), original.end(), retained->cells().begin()));
+        }
+    }
+}
+#endif
+
+#if defined(_MSC_VER) && defined(_DEBUG)
+TEST_CASE("T011 empty placed post-output transfers have owned allocation outcomes", "[placed-support]")
+{
+    const auto source = geometry();
+    const geo::GridWindow output_window {
+        { {}, 1 },
+        {},
+        { 100, 100, 100 }
+    };
+    const geo::CopyPose pose {
+        "transfer", { 1000, 1000, 1000 },
+         { 0, 0, 0, 1 }
+    };
+    std::shared_ptr<const geo::CellField> retained;
+    {
+        struct Reset {
+            ~Reset() { record_field_allocations.store(false, std::memory_order_relaxed); }
+        } reset;
+        field_allocation_count = 0;
+        record_field_allocations.store(true, std::memory_order_relaxed);
+        geo::RepresentationAttemptStats successful_attempt;
+        const auto successful = geo::voxelize_placed(source, output_window, pose, 0, {}, successful_attempt);
+        record_field_allocations.store(false, std::memory_order_relaxed);
+        retained = value(successful);
+    }
+    const auto allocation_count = field_allocation_count;
+    REQUIRE(allocation_count < field_allocation_sizes.size());
+    const auto original_stats = retained->stats();
+    const std::vector<std::uint8_t> original(retained->cells().begin(), retained->cells().end());
+    std::optional<std::size_t> payload_ordinal;
+    for (std::size_t index = 0; index != field_allocation_count; ++index) {
+        if (field_allocation_sizes[index] >= 1'000'000) {
+            payload_ordinal = index;
+        }
+    }
+    REQUIRE(payload_ordinal);
+    REQUIRE(*payload_ordinal + 1 < field_allocation_count);
+    // Exercise every allocation after the large output payload, then the first
+    // unconsumed ordinal: that call must complete publication without a fault.
+    for (auto ordinal = *payload_ordinal + 1; ordinal <= allocation_count; ++ordinal) {
+        geo::RepresentationAttemptStats attempt;
+        std::optional<geo::RepresentationOutcome<geo::CellField>> outcome;
+        bool escaped {};
+        bool reached {};
+        {
+            struct Reset {
+                ~Reset()
+                {
+                    fail_test_ordinal.store(-1, std::memory_order_relaxed);
+                    report_empty_transfer_fault = false;
+                }
+            } reset;
+            report_empty_transfer_fault = true;
+            fail_test_ordinal.store(static_cast<int>(ordinal), std::memory_order_relaxed);
+            try {
+                outcome.emplace(geo::voxelize_placed(source, output_window, pose, 0, {}, attempt));
+            }
+            catch (...) {
+                escaped = true;
+            }
+            reached = fail_test_ordinal.load(std::memory_order_relaxed) == -1;
+        }
+        CAPTURE(ordinal, allocation_count, field_allocation_sizes);
+        CHECK(reached == (ordinal < allocation_count));
+        CHECK_FALSE(escaped);
+        REQUIRE(outcome);
+        if (ordinal < allocation_count) {
+            REQUIRE(std::holds_alternative<geo::RepresentationFailure>(*outcome));
+            CHECK(std::get<geo::RepresentationFailure>(*outcome).code == "FIELD_ALLOCATION_FAILURE");
+        }
+        else {
+            const auto published = value(*outcome);
+            CHECK(published->stats().occupied_cells == 0);
+            CHECK(published->stats().kernel_work == original_stats.kernel_work);
+        }
+        CHECK(attempt.input_accounting_complete);
+        CHECK(attempt.admitted_bytes_upper_bound >= original.size() + attempt.input_resident_bytes);
+        CHECK(attempt.admitted_bytes_upper_bound <= geo::RepresentationLimits {}.max_working_bytes);
+        CHECK(std::equal(original.begin(), original.end(), retained->cells().begin()));
+        CHECK(retained->stats().kernel_work == original_stats.kernel_work);
+    }
+}
+#endif

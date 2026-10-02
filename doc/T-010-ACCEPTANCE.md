@@ -41,6 +41,25 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 
 ## Retained evidence and qualification
 
+- Certified placed-support reduction: current-source Release practical checks pass
+  2 cases / 54 assertions. Actual advised Ulamok 4 mm completes 48 correlations,
+  retains 36 independently revalidated copies, and uses 1,174,267,251 representation
+  work units under the unchanged 1.3 billion cap. Separate Ulamok 16 mm uses
+  337,270,633 units; full Pryanik 1/2 retain two valid copies with two correlations
+  and use 834,836,776 / 1,289,972,641 units. Debug practical repetition is pending.
+  `.local/t011/placed-support/practical-release/` saves the relinked test PE,
+  complete successful-assertion log, command/exit and 128 stable source identities.
+  The final field suites pass 38 cases in each build; accounting passes 16 Debug /
+  14 Release. Five reached empty-output transfer allocation failures recover,
+  and subsequent publication succeeds. `.local/t011/placed-support/RECOVERY_INDEX.md`
+  preserves the causal sparse-resource, dangling-descriptor and Debug abort reds,
+  fixture setup failures, final sources and binaries. Primary verified 69 hashes
+  and rechecked the local transfer correction after the agent thread limit refused
+  both reviewer reactivation and a fresh review. The earlier independent geometric
+  review stands; the correction recheck is not independent. This step adds 233 /
+  removes 49 implementation lines, plus 833 test lines, a 28-line private support
+  header and two benchmark provenance lines. Budget assertions are not measured
+  heap telemetry. Startup, full adapter bounds and integrated journeys remain open.
 - Desktop lifecycle tests now observe sequenced native work instead of waiting
   for the obsolete `running` phase. Against the held `adapter-overlap/r01` Release
   engine, the existing Rust suite passes 25 library and 11 integration tests;

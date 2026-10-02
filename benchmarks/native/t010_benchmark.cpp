@@ -7,6 +7,7 @@
 
 #include "../../engine/pack_geometry/src/field_kernel.hpp"
 #include "../../engine/pack_geometry/src/field_profile.hpp"
+#include "../../engine/pack_geometry/src/placed_field_test_support.hpp"
 #include "../../engine/pack_geometry/tests/validation_fixtures.hpp"
 #include "../../engine/pack_solver/src/pipeline_profile.hpp"
 #include "baseline_support.hpp"
@@ -289,6 +290,7 @@ int main(int argc, char** argv)
             { "representation_work_cap",       limits.max_representation_kernel_work                  },
             { "scope",                         scope                                                  },
             { "field_work_revision",           geo::detail::validation_kernel::kRasterWorkRevision    },
+            { "placed_support_policy",         geo::detail::kPlacedSupportPolicy                      },
             { "preparation_state",
              scope == "field" ? "accepted-input-and-retained-baseline-fixed" : "accepted-input-fixed" },
             { "included_phases",               included_phases                                        },
