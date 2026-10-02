@@ -22,11 +22,11 @@ if(BUILD_TESTING)
   catch_discover_tests(spectrapack_runtime_wire_tests)
   add_executable(spectrapack_cli_memory_check
     tests/solve_memory_test_main.cpp
-    src/solve.cpp)
+    src/solve.cpp src/desktop.cpp src/desktop_session.cpp)
   target_include_directories(spectrapack_cli_memory_check PRIVATE src)
   target_link_libraries(spectrapack_cli_memory_check PRIVATE pack_service pack_solver)
   if(WIN32)
-    target_link_libraries(spectrapack_cli_memory_check PRIVATE Psapi)
+    target_link_libraries(spectrapack_cli_memory_check PRIVATE Psapi bcrypt)
   endif()
   target_compile_features(spectrapack_cli_memory_check PRIVATE cxx_std_20)
   target_compile_definitions(spectrapack_cli_memory_check PRIVATE SPECTRAPACK_CLI_TESTING)

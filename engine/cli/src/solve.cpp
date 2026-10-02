@@ -37,62 +37,42 @@ namespace geo = spectrapack::geometry;
 namespace io = spectrapack::io;
 namespace solver = spectrapack::solver;
 using io::Json;
-thread_local const spectrapack::cli::SolveRuntime* current_runtime {};
 struct FailureTiming {
     spectrapack::cli::Timeline& timeline;
+    const spectrapack::cli::SolveRuntime& runtime;
     std::string scope { "search_only" };
     double budget {};
     bool empty { true };
-    int (*cleanup)(void*) {};
-    void* cleanup_context {};
-};
-thread_local FailureTiming* failure_timing {};
-struct FailureTimingGuard {
-    FailureTiming* old;
-    explicit FailureTimingGuard(FailureTiming& value) : old(failure_timing) { failure_timing = &value; }
-    ~FailureTimingGuard() { failure_timing = old; }
-};
-std::ostream& output() { return current_runtime && current_runtime->output ? *current_runtime->output : std::cout; }
-struct RuntimeGuard {
-    const spectrapack::cli::SolveRuntime* old;
-    explicit RuntimeGuard(const spectrapack::cli::SolveRuntime* value) : old(current_runtime)
-    {
-        current_runtime = value;
-    }
-    ~RuntimeGuard() { current_runtime = old; }
 };
 
 #ifdef SPECTRAPACK_CLI_TESTING
 std::atomic_uint64_t result_build_max_working_bytes_for_test {};
 std::atomic_uint64_t result_export_max_working_bytes_for_test {};
+std::atomic<spectrapack::cli::test::PublicationHook> publication_hook_for_test {};
+std::atomic<void*> publication_hook_context_for_test {};
 #endif
 
-int fail(std::string code, std::string message, int exit_code, Json details = Json::object())
+spectrapack::cli::SolveOutcome failure_outcome(FailureTiming& timing, std::string code, std::string message,
+                                               int exit_code, Json details = Json::object())
 {
-    if (failure_timing) {
-        auto& timing = *failure_timing;
-        spectrapack::cli::Timeline::phase_sink(&timing.timeline, spectrapack::runtime::Phase::cleanup);
-        if (timing.cleanup && timing.cleanup(timing.cleanup_context)) {
-            details["stop_monitor_failed"] = true;
-            if (code == "OPERATION_CANCELLED") {
-                code = "STOP_MONITOR_FAILED";
-                message = "Operation-scoped Stop transport failed.";
-            }
+    spectrapack::cli::Timeline::phase_sink(&timing.timeline, spectrapack::runtime::Phase::cleanup);
+    if (timing.runtime.stop_monitor_status &&
+        timing.runtime.stop_monitor_status(timing.runtime.stop_monitor_context).failed) {
+        details["stop_monitor_failed"] = true;
+        if (code == "OPERATION_CANCELLED") {
+            code = "STOP_MONITOR_FAILED";
+            message = "Operation-scoped Stop transport failed.";
         }
-        auto measured =
-            timing.timeline.record(timing.scope, timing.budget, current_runtime && current_runtime->preparation_reused,
-                                   timing.empty, "before_terminal_response");
-        details["completion_elapsed_seconds"] = measured["total_elapsed_seconds"];
-        details["native_completion_elapsed_seconds"] = measured["native_elapsed_seconds"];
-        details["no_nonempty_incumbent"] = timing.empty;
-        details["runtime"] = std::move(measured);
     }
-    output() << Json{{"protocol_version", 1}, {"request_id", nullptr}, {"ok", false},
-                    {"error", {{"code", std::move(code)}, {"message", std::move(message)},
-                               {"details", std::move(details)}, {"recoverable", true}}}}
-                   .dump()
-            << '\n' << std::flush;
-    return output() ? exit_code : 4;
+    auto measured = timing.timeline.record(timing.scope, timing.budget, timing.runtime.preparation_reused, timing.empty,
+                                           "before_terminal_response");
+    details["completion_elapsed_seconds"] = measured["total_elapsed_seconds"];
+    details["native_completion_elapsed_seconds"] = measured["native_elapsed_seconds"];
+    details["no_nonempty_incumbent"] = timing.empty;
+    details["runtime"] = std::move(measured);
+    return {
+        exit_code, io::Error { std::move(code), std::move(message), std::move(details), true }
+    };
 }
 
 bool aliases(const std::filesystem::path& a, const std::filesystem::path& b)
@@ -422,30 +402,15 @@ bool add_path_bytes(uint64_t& total, const std::filesystem::path& path)
            add_repeated_bytes(total, path.native().capacity(), sizeof(std::filesystem::path::value_type));
 }
 
-std::optional<uint64_t> command_resident_bytes(const std::vector<std::string>& arguments,
-                                               const std::optional<std::filesystem::path>& settings_path,
-                                               const std::optional<std::filesystem::path>& object_report,
-                                               const std::optional<std::filesystem::path>& container_report,
-                                               const std::optional<std::filesystem::path>& result_path,
-                                               const std::optional<std::filesystem::path>& stl_path,
-                                               const std::string* engine_version = nullptr,
-                                               const std::string* engine_commit = nullptr)
+std::optional<uint64_t> request_resident_bytes(const spectrapack::cli::SolveRequest& request, uint64_t adapter_reserve)
 {
-    uint64_t total {};
-    if (!add_bytes(total, sizeof(arguments)) || !add_repeated_bytes(total, arguments.capacity(), sizeof(std::string))) {
+    uint64_t total = adapter_reserve;
+    if (!add_bytes(total, sizeof(request)) || !add_path_bytes(total, request.object_report) ||
+        !add_path_bytes(total, request.result_path) || !add_bytes(total, request.engine_version.capacity()) ||
+        !add_bytes(total, request.engine_commit.capacity())) {
         return {};
     }
-    for (const auto* engine_string : { engine_version, engine_commit }) {
-        if (engine_string && (!add_bytes(total, sizeof(std::string)) || !add_bytes(total, engine_string->capacity()))) {
-            return {};
-        }
-    }
-    for (const auto& argument : arguments) {
-        if (!add_bytes(total, argument.capacity())) {
-            return {};
-        }
-    }
-    for (const auto* path : { &settings_path, &object_report, &container_report, &result_path, &stl_path }) {
+    for (const auto* path : { &request.container_report, &request.stl_path }) {
         if (*path && !add_path_bytes(total, **path)) {
             return {};
         }
@@ -513,32 +478,17 @@ struct ExportResidualBytes {
     uint64_t context_catalog {};
 };
 
-std::optional<ExportResidualBytes> export_residual_bytes(const std::vector<std::string>& arguments,
-                                                         const Json& diagnostics,
+std::optional<ExportResidualBytes> export_residual_bytes(const spectrapack::cli::SolveRequest& request,
+                                                         uint64_t adapter_reserve, const Json& diagnostics,
                                                          const Json& retained_diagnostics,
-                                                         const std::optional<std::filesystem::path>& settings_path,
-                                                         const std::optional<std::filesystem::path>& object_report,
-                                                         const std::optional<std::filesystem::path>& container_report,
-                                                         const std::optional<std::filesystem::path>& result_path,
-                                                         const std::optional<std::filesystem::path>& stl_path,
                                                          const geo::ValidatedSolution& solution)
 {
     ExportResidualBytes bytes;
-    if (!add_bytes(bytes.non_context, sizeof(arguments)) ||
-        !add_repeated_bytes(bytes.non_context, arguments.capacity(), sizeof(std::string)) ||
+    const auto request_bytes = request_resident_bytes(request, adapter_reserve);
+    if (!request_bytes || !add_bytes(bytes.non_context, *request_bytes) ||
         !json_payload_bytes(diagnostics, bytes.non_context) ||
         !json_payload_bytes(retained_diagnostics, bytes.non_context)) {
         return {};
-    }
-    for (const auto& argument : arguments) {
-        if (!add_bytes(bytes.non_context, argument.capacity())) {
-            return {};
-        }
-    }
-    for (const auto* path : { &settings_path, &object_report, &container_report, &result_path, &stl_path }) {
-        if (*path && !add_path_bytes(bytes.non_context, **path)) {
-            return {};
-        }
     }
     const auto& context = solution.context();
     if (!context ||
@@ -607,8 +557,18 @@ Json failure_details(const solver::RunFailureDetails& failure)
 }
 }  // namespace
 
+bool spectrapack::cli::solve_paths_alias(const std::filesystem::path& a, const std::filesystem::path& b)
+{
+    return aliases(a, b);
+}
+
 #ifdef SPECTRAPACK_CLI_TESTING
 namespace spectrapack::cli::test {
+void set_publication_hook(PublicationHook hook, void* context) noexcept
+{
+    publication_hook_context_for_test.store(context);
+    publication_hook_for_test.store(hook);
+}
 void set_result_build_max_working_bytes(std::uint64_t bytes) noexcept
 {
     result_build_max_working_bytes_for_test.store(bytes, std::memory_order_relaxed);
@@ -620,131 +580,29 @@ void set_result_export_max_working_bytes(std::uint64_t bytes) noexcept
 }  // namespace spectrapack::cli::test
 #endif
 
-int run_solve_prepared(const std::vector<std::string>& arguments, std::string engine_version, std::string engine_commit,
-                       const spectrapack::cli::SolveRuntime& run_runtime)
+spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, const SolveRuntime& run_runtime)
 {
-    const RuntimeGuard runtime_guard(&run_runtime);
     const auto registered_start = run_runtime.native_start;
-    ConsoleControlRegistration console_controls;
-    std::stop_callback forwarded_stop(run_runtime.control.stop, [source = console_controls.source()] {
-        source->request_stop();
-    });
-    spectrapack::cli::Timeline timeline(registered_start, run_runtime.elapsed_before_native_seconds,
-                                        run_runtime.control);
-    FailureTiming timing { timeline };
-    const FailureTimingGuard timing_guard(timing);
-    auto control = run_runtime.control;
-    control.stop = console_controls.token();
-    control.phase_sink = spectrapack::cli::Timeline::phase_sink;
-    control.phase_context = &timeline;
-    std::optional<std::filesystem::path> settings_path, object_report, container_report, result_path, stl_path,
-        stop_file;
-    for (size_t index = 0; index < arguments.size(); ++index) {
-        if (index + 1 == arguments.size()) {
-            return fail("INVALID_REQUEST", "solve options are invalid.", 2);
-        }
-        const auto option = arguments[index++];
-        const auto value = std::filesystem::u8path(arguments[index]);
-        auto set = [&](std::optional<std::filesystem::path>& target) {
-            if (target) {
-                return false;
-            }
-            target = value;
-            return true;
-        };
-        if (option == "--settings") {
-            if (!set(settings_path)) {
-                return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
-            }
-        }
-        else if (option == "--object-report") {
-            if (!set(object_report)) {
-                return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
-            }
-        }
-        else if (option == "--container-report") {
-            if (!set(container_report)) {
-                return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
-            }
-        }
-        else if (option == "--result") {
-            if (!set(result_path)) {
-                return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
-            }
-        }
-        else if (option == "--stl") {
-            if (!set(stl_path)) {
-                return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
-            }
-        }
-        else if (option == "--stop-file") {
-            if (!set(stop_file)) {
-                return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
-            }
-        }
-        else {
-            return fail("INVALID_REQUEST", "solve options are invalid.", 2);
-        }
-    }
-    if (!settings_path || !object_report || !result_path) {
-        return fail("INVALID_REQUEST", "solve requires --settings, --object-report, and --result.", 2);
-    }
-    if (aliases(*settings_path, *result_path)) {
-        return fail("INVALID_REQUEST", "Result path aliases the settings input.", 2);
-    }
-    if (stop_file && (aliases(*stop_file, *settings_path) || aliases(*stop_file, *object_report) ||
-                      aliases(*stop_file, *result_path) || (stl_path && aliases(*stop_file, *stl_path)) ||
-                      (container_report && aliases(*stop_file, *container_report)))) {
-        return fail("INVALID_REQUEST", "Stop marker aliases an input or output.", 2);
-    }
-    StopFileWatcher stop_watcher(stop_file, console_controls.source());
-    timing.cleanup = [](void* raw) {
-        return static_cast<StopFileWatcher*>(raw)->finish();
+    Timeline timeline(registered_start, run_runtime.elapsed_before_native_seconds, run_runtime.control);
+    FailureTiming timing { timeline, run_runtime };
+    const auto fail = [&](std::string code, std::string message, int exit_code, Json details = Json::object()) {
+        return failure_outcome(timing, std::move(code), std::move(message), exit_code, std::move(details));
     };
-    timing.cleanup_context = &stop_watcher;
-    control.phase(spectrapack::runtime::Phase::loading);
-    Json settings;
-    try {
-        std::uint64_t settings_owners = run_runtime.retained_reserve_bytes;
-        const auto object_bytes =
-            run_runtime.object ? run_runtime.object->resident_buffer_bytes() : std::optional<std::uint64_t>(0);
-        const auto solid_bytes =
-            run_runtime.object ? run_runtime.object->solid()->resident_buffer_bytes() : std::optional<std::uint64_t>(0);
-        if (!object_bytes || !solid_bytes || !add_bytes(settings_owners, *object_bytes) ||
-            !add_bytes(settings_owners, *solid_bytes) || settings_owners >= (512ULL << 20)) {
-            return fail("MEMORY_LIMIT", "Settings admission cannot retain current native owners.", 3);
-        }
-        spectrapack::cli::HostAdmission settings_admission((512ULL << 20) - settings_owners);
-        auto source = spectrapack::cli::read_settings_file(*settings_path, settings_admission);
-        if (!source) {
-            return fail("SETTINGS_LOAD", "Settings file cannot be read.", 3);
-        }
-        spectrapack::cli::HostJsonAdmission syntax_admission(settings_admission);
-        if (!Json::sax_parse(*source, &syntax_admission)) {
-            return fail("INVALID_SETTINGS", "Settings JSON is malformed or too deeply nested.", 2);
-        }
-        io::ContractValidator validator;
-        auto decoded = validator.parse(io::ContractKind::settings, *source, run_runtime.diagnostic_limits);
-        if (!std::holds_alternative<io::ValidatedDocument>(decoded)) {
-            const auto raw = Json::parse(*source, nullptr, false);
-            if (raw.is_object() && raw.contains("compute") && raw["compute"].is_object()) {
-                const auto threads = raw["compute"].value("thread_count", Json());
-                if (threads.is_number_integer() && (threads < 1 || threads > solver::cpu_supported_thread_count())) {
-                    return fail("UNSUPPORTED_THREAD_COUNT", "CPU count is outside actual native support.", 3,
-                                {
-                                    { "supported_min", 1                                    },
-                                    { "supported_max", solver::cpu_supported_thread_count() },
-                                    { "requested",     threads                              }
-                    });
-                }
-            }
-            return fail("INVALID_SETTINGS", "Settings do not satisfy the contract.", 2);
-        }
-        settings = std::get<io::ValidatedDocument>(decoded).value();
+    auto control = run_runtime.control;
+    control.phase_sink = Timeline::phase_sink;
+    control.phase_context = &timeline;
+    control.phase(runtime::Phase::loading);
+    std::optional<io::ValidatedDocument> settings_owner { std::move(request.settings) };
+    if (settings_owner->kind() != io::ContractKind::settings) {
+        return fail("INVALID_SETTINGS", "Settings do not satisfy the contract.", 2);
     }
-    catch (const spectrapack::cli::HostMemoryLimit&) {
-        return fail("MEMORY_LIMIT", "Settings parser scratch exceeds remaining host allowance.", 3);
-    }
+    const auto& settings = settings_owner->value();
+    const auto& object_report = request.object_report;
+    const auto& container_report = request.container_report;
+    const auto& result_path = request.result_path;
+    const auto& stl_path = request.stl_path;
+    auto& engine_version = request.engine_version;
+    auto& engine_commit = request.engine_commit;
     if (!settings.contains("resolved")) {
         return fail("UNSUPPORTED_SETTINGS", "solve requires resolved settings.", 3);
     }
@@ -769,14 +627,15 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
     }
     constexpr std::uint64_t host_cap = 512ULL << 20;
     std::uint64_t loading_reserve = run_runtime.retained_reserve_bytes;
-    if (!add_bytes(loading_reserve, 16ULL << 20) || !json_payload_bytes(settings, loading_reserve) ||
-        loading_reserve >= host_cap) {
+    const auto loading_request_bytes = request_resident_bytes(request, run_runtime.adapter_reserve_bytes);
+    if (!loading_request_bytes || !add_bytes(loading_reserve, *loading_request_bytes) ||
+        !json_payload_bytes(settings, loading_reserve) || loading_reserve >= host_cap) {
         return fail("MEMORY_LIMIT", "Loading inputs exceed remaining host allowance.", 3);
     }
     const io::AssetLoadOutcome loaded_object =
-        run_runtime.object ? io::AssetLoadOutcome(run_runtime.object)
-                           : io::load_accepted_asset(*object_report, control,
-                                                     { host_cap - loading_reserve, run_runtime.diagnostic_limits });
+        request.object ? io::AssetLoadOutcome(request.object)
+                       : io::load_accepted_asset(object_report, control,
+                                                 { host_cap - loading_reserve, run_runtime.diagnostic_limits });
     if (!std::holds_alternative<std::shared_ptr<const io::VerifiedAsset>>(loaded_object)) {
         const auto& error = std::get<io::Error>(loaded_object);
         return fail(error.code, error.message, 3, error.details);
@@ -833,7 +692,9 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
     }
     if (!settings["resolved"].contains("cpu_runtime") && thread_count != 1) {
         return fail("CPU_RUNTIME_REQUIRED",
-                    "Legacy execution is serial; explicit parallel settings need runtime provenance.", 3);
+                    "Legacy execution is serial; explicit parallel settings need "
+                    "runtime provenance.",
+                    3);
     }
     if (settings["resolved"].contains("cpu_runtime") &&
         settings["resolved"]["cpu_runtime"]["scheduling_policy"] != std::string(solver::cpu_scheduling_policy()) &&
@@ -892,8 +753,7 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
         }
     }
     const auto input_reserve = input_resident_bytes(settings, object, container_asset);
-    const auto command_reserve = command_resident_bytes(arguments, settings_path, object_report, container_report,
-                                                        result_path, stl_path, &engine_version, &engine_commit);
+    const auto command_reserve = request_resident_bytes(request, run_runtime.adapter_reserve_bytes);
     uint64_t caller_reserve {};
     if (!input_reserve || !command_reserve || !add_bytes(caller_reserve, *input_reserve) ||
         !add_bytes(caller_reserve, *command_reserve)) {
@@ -907,7 +767,7 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
     std::optional<double> last_snapshot_seconds;
     std::atomic_bool reported_snapshot {};
     std::shared_ptr<const geo::ValidatedSolution> initial;
-    if (stop_file) {
+    if (run_runtime.initialize_valid_empty) {
         const auto empty =
             geo::make_candidate(std::get<std::shared_ptr<const geo::ValidationContext>>(context_value), {});
         if (!std::holds_alternative<std::shared_ptr<const geo::Candidate>>(empty)) {
@@ -938,18 +798,27 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
             }
         }
     }, std::move(initial));
-    const auto stop_monitor_error = stop_watcher.finish();
+    const auto stop_monitor_error = run_runtime.stop_monitor_status
+                                        ? run_runtime.stop_monitor_status(run_runtime.stop_monitor_context)
+                                        : spectrapack::cli::StopMonitorResult {};
     const auto elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-    Json retained_diagnostics { { "diagnostic_code", std::string(outcome.run.diagnostic_code) } };
+    Json retained_diagnostics {
+        { "diagnostic_code", std::string(outcome.run.diagnostic_code) }
+    };
     if (outcome.run.failure_details) {
         retained_diagnostics["failure"] = failure_details(*outcome.run.failure_details);
     }
-    if (stop_monitor_error) {
+    if (stop_monitor_error.failed) {
         retained_diagnostics["diagnostic_code"] = "STOP_MONITOR_FAILED";
-        retained_diagnostics["failure"] = { { "phase", "stop_monitor" }, { "cause_code", "STOP_MONITOR_FAILED" } };
+        retained_diagnostics["failure"] = {
+            { "phase",      "stop_monitor"        },
+            { "cause_code", "STOP_MONITOR_FAILED" }
+        };
     }
     if (!outcome.run.retained_solution) {
-        Json details { { "diagnostics", command_diagnostics(outcome, limits, caller_reserve, "retained_return") } };
+        Json details {
+            { "diagnostics", command_diagnostics(outcome, limits, caller_reserve, "retained_return") }
+        };
         if (retained_diagnostics.contains("failure")) {
             details["failure"] = retained_diagnostics["failure"];
         }
@@ -967,15 +836,19 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
     const auto time_to_best_basis = final_snapshot ? "snapshot" : "retained_return";
     const auto diagnostics = command_diagnostics(outcome, limits, caller_reserve, time_to_best_basis);
     const auto termination_reason =
-        stop_monitor_error ? solver::TerminationReason::error : outcome.run.termination_reason;
-    if (run_runtime.object && run_runtime.preserve_previous_on_empty &&
-        outcome.run.retained_solution->copies().empty() &&
+        stop_monitor_error.failed ? solver::TerminationReason::error : outcome.run.termination_reason;
+    if (request.object && run_runtime.preserve_previous_on_empty && outcome.run.retained_solution->copies().empty() &&
         (termination_reason == solver::TerminationReason::user_stopped ||
          termination_reason == solver::TerminationReason::budget_exhausted)) {
-        output() << Json{{"ok",true},{"termination_reason",reason(termination_reason)},
-                         {"no_nonempty_incumbent",true},{"preparation_reused",run_runtime.preparation_reused},
-                         {"runtime",timeline.record(budget_scope,deterministic?0:search["budget_seconds"].get<double>(),run_runtime.preparation_reused,true,"before_terminal_response")}}.dump() << '\n' << std::flush;
-        return output() ? 0 : 4;
+        return {
+            0, Json { { "ok", true },
+                     { "termination_reason", reason(termination_reason) },
+                     { "no_nonempty_incumbent", true },
+                     { "preparation_reused", run_runtime.preparation_reused },
+                     { "runtime",
+                        timeline.record(budget_scope, deterministic ? 0 : search["budget_seconds"].get<double>(),
+                                        run_runtime.preparation_reused, true, "before_terminal_response") } }
+        };
     }
     const auto run_stats = outcome.run.stats;
     const auto retained_solution = outcome.run.retained_solution;
@@ -1042,8 +915,7 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
         !add_bytes(build_metadata_bytes, build_catalog_bytes)) {
         return fail("MEMORY_LIMIT", "CLI result catalog residency cannot be represented.", 3);
     }
-    const auto build_command_reserve =
-        command_resident_bytes(arguments, settings_path, object_report, container_report, result_path, stl_path);
+    const auto build_command_reserve = request_resident_bytes(request, run_runtime.adapter_reserve_bytes);
     const auto build_native_reserve = solution_resident_bytes(*retained_solution);
     uint64_t build_diagnostics_bytes {};
     uint64_t build_live_bytes {};
@@ -1072,11 +944,10 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
         const auto& error = std::get<io::Error>(document);
         return fail(error.code, error.message, 3, error.details);
     }
-    settings = Json();
+    settings_owner.reset();
     result_request.metadata = Json();
-    const auto export_reserve = export_residual_bytes(arguments, diagnostics, retained_diagnostics, settings_path,
-                                                     object_report, container_report, result_path, stl_path,
-                                                     *retained_solution);
+    const auto export_reserve = export_residual_bytes(request, run_runtime.adapter_reserve_bytes, diagnostics,
+                                                      retained_diagnostics, *retained_solution);
     const auto export_limit = result_export_max_working_bytes(limits.max_working_bytes);
     uint64_t export_live_bytes {};
     const bool export_representable = export_reserve && add_bytes(export_live_bytes, export_reserve->non_context) &&
@@ -1092,7 +963,7 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
                                        container_asset,
                                        std::move(result_request.catalog),
                                        std::get<io::ValidatedDocument>(std::move(document)),
-                                       *result_path,
+                                       result_path,
                                        stl_path };
     export_request.diagnostic_limits = run_runtime.diagnostic_limits;
     export_request.max_working_bytes = export_limit - export_live_bytes;
@@ -1101,11 +972,22 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
         const std::string& scope;
         double budget;
         bool reused, empty;
+#ifdef SPECTRAPACK_CLI_TESTING
+        std::stop_token operation_stop;
+#endif
     } final_runtime { timeline, budget_scope, time_budget, run_runtime.preparation_reused,
                       retained_solution->copies().empty() };
+#ifdef SPECTRAPACK_CLI_TESTING
+    final_runtime.operation_stop = control.stop;
+#endif
     export_request.runtime_context = &final_runtime;
     export_request.runtime_before_commit = [](void* context) {
         const auto& value = *static_cast<const FinalRuntime*>(context);
+#ifdef SPECTRAPACK_CLI_TESTING
+        if (const auto hook = publication_hook_for_test.load()) {
+            hook(publication_hook_context_for_test.load(), value.operation_stop);
+        }
+#endif
         return value.timeline.record(value.scope, value.budget, value.reused, value.empty);
     };
     auto published = io::export_result(export_request, cleanup_control);
@@ -1114,24 +996,32 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
         return fail(error.code, error.message, 3, error.details);
     }
     const auto& success = std::get<io::ExportSuccess>(published);
-    if (stop_monitor_error) {
-        return fail(
-            "STOP_MONITOR_FAILED", "Stop marker monitoring failed after publishing the retained valid solution.", 3,
-            {
-                { "result_path",  portable_path(success.result_path) },
-                { "failure",      retained_diagnostics["failure"]  },
-                { "system_error", stop_monitor_error                 }
-        });
+    if (stop_monitor_error.failed) {
+        Json details {
+            { "result_path", portable_path(success.result_path) },
+            { "failure",     retained_diagnostics["failure"]    }
+        };
+        if (stop_monitor_error.system_error) {
+            details["system_error"] = *stop_monitor_error.system_error;
+        }
+        return fail("STOP_MONITOR_FAILED",
+                    "Stop marker monitoring failed after publishing the retained "
+                    "valid solution.",
+                    3, std::move(details));
     }
     if (termination_reason == solver::TerminationReason::resource_limit ||
         termination_reason == solver::TerminationReason::error) {
-        Json details { { "result_path", portable_path(success.result_path) }, { "diagnostics", diagnostics } };
+        Json details {
+            { "result_path", portable_path(success.result_path) },
+            { "diagnostics", diagnostics                        }
+        };
         if (retained_diagnostics.contains("failure")) {
             details["failure"] = retained_diagnostics["failure"];
         }
         return fail(termination_reason == solver::TerminationReason::resource_limit ? "RESOURCE_LIMIT" : "SOLVE_FAILED",
                     termination_reason == solver::TerminationReason::resource_limit
-                        ? "Search stopped at a resource limit after publishing the retained solution."
+                        ? "Search stopped at a resource limit after publishing the "
+                          "retained solution."
                         : "Search failed after publishing the retained solution.",
                     termination_reason == solver::TerminationReason::resource_limit ? 3 : 4, std::move(details));
     }
@@ -1147,15 +1037,165 @@ int run_solve_prepared(const std::vector<std::string>& arguments, std::string en
     if (success.stl_path) {
         reply["stl_path"] = portable_path(*success.stl_path);
     }
-    output() << reply.dump() << '\n' << std::flush;
-    return output() ? 0 : 4;
+    return { 0, std::move(reply) };
 }
 
 int run_solve_command(const std::vector<std::string>& arguments, std::string engine_version, std::string engine_commit)
 {
     spectrapack::cli::SolveRuntime runtime;
     runtime.diagnostic_limits = { 16, 256 };
-    return run_solve_prepared(arguments, std::move(engine_version), std::move(engine_commit), runtime);
+    ConsoleControlRegistration console_controls;
+    runtime.control.stop = console_controls.token();
+    spectrapack::cli::Timeline timeline(runtime.native_start, 0, runtime.control);
+    FailureTiming timing { timeline, runtime };
+    const auto fail = [&](std::string code, std::string message, int exit_code, Json details = Json::object()) {
+        return failure_outcome(timing, std::move(code), std::move(message), exit_code, std::move(details));
+    };
+    auto control = runtime.control;
+    control.phase_sink = spectrapack::cli::Timeline::phase_sink;
+    control.phase_context = &timeline;
+    const auto execute = [&]() -> spectrapack::cli::SolveOutcome {
+        std::optional<std::filesystem::path> settings_path, object_report, container_report, result_path, stl_path,
+            stop_file;
+        for (size_t index = 0; index < arguments.size(); ++index) {
+            if (index + 1 == arguments.size()) {
+                return fail("INVALID_REQUEST", "solve options are invalid.", 2);
+            }
+            const auto option = arguments[index++];
+            const auto value = std::filesystem::u8path(arguments[index]);
+            auto set = [&](std::optional<std::filesystem::path>& target) {
+                if (target) {
+                    return false;
+                }
+                target = value;
+                return true;
+            };
+            if (option == "--settings") {
+                if (!set(settings_path)) {
+                    return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
+                }
+            }
+            else if (option == "--object-report") {
+                if (!set(object_report)) {
+                    return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
+                }
+            }
+            else if (option == "--container-report") {
+                if (!set(container_report)) {
+                    return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
+                }
+            }
+            else if (option == "--result") {
+                if (!set(result_path)) {
+                    return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
+                }
+            }
+            else if (option == "--stl") {
+                if (!set(stl_path)) {
+                    return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
+                }
+            }
+            else if (option == "--stop-file") {
+                if (!set(stop_file)) {
+                    return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
+                }
+            }
+            else {
+                return fail("INVALID_REQUEST", "solve options are invalid.", 2);
+            }
+        }
+        if (!settings_path || !object_report || !result_path) {
+            return fail("INVALID_REQUEST", "solve requires --settings, --object-report, and --result.", 2);
+        }
+        if (aliases(*settings_path, *result_path)) {
+            return fail("INVALID_REQUEST", "Result path aliases the settings input.", 2);
+        }
+        if (stop_file && (aliases(*stop_file, *settings_path) || aliases(*stop_file, *object_report) ||
+                          aliases(*stop_file, *result_path) || (stl_path && aliases(*stop_file, *stl_path)) ||
+                          (container_report && aliases(*stop_file, *container_report)))) {
+            return fail("INVALID_REQUEST", "Stop marker aliases an input or output.", 2);
+        }
+        StopFileWatcher stop_watcher(stop_file, console_controls.source());
+        runtime.stop_monitor_status = [](void* raw) {
+            const auto cause = static_cast<StopFileWatcher*>(raw)->finish();
+            return spectrapack::cli::StopMonitorResult { cause != 0, cause ? std::optional<int>(cause) : std::nullopt };
+        };
+        runtime.stop_monitor_context = &stop_watcher;
+        control.phase(spectrapack::runtime::Phase::loading);
+        std::optional<io::ValidatedDocument> settings_document;
+        try {
+            spectrapack::cli::HostAdmission settings_admission(512ULL << 20);
+            auto source = spectrapack::cli::read_settings_file(*settings_path, settings_admission);
+            if (!source) {
+                return fail("SETTINGS_LOAD", "Settings file cannot be read.", 3);
+            }
+            spectrapack::cli::HostJsonAdmission syntax_admission(settings_admission);
+            if (!Json::sax_parse(*source, &syntax_admission)) {
+                return fail("INVALID_SETTINGS", "Settings JSON is malformed or too deeply nested.", 2);
+            }
+            io::ContractValidator validator;
+            auto decoded = validator.parse(io::ContractKind::settings, *source, runtime.diagnostic_limits);
+            if (!std::holds_alternative<io::ValidatedDocument>(decoded)) {
+                const auto raw = Json::parse(*source, nullptr, false);
+                if (raw.is_object() && raw.contains("compute") && raw["compute"].is_object()) {
+                    const auto threads = raw["compute"].value("thread_count", Json());
+                    if (threads.is_number_integer() &&
+                        (threads < 1 || threads > solver::cpu_supported_thread_count())) {
+                        return fail("UNSUPPORTED_THREAD_COUNT", "CPU count is outside actual native support.", 3,
+                                    {
+                                        { "supported_min", 1                                    },
+                                        { "supported_max", solver::cpu_supported_thread_count() },
+                                        { "requested",     threads                              }
+                        });
+                    }
+                }
+                return fail("INVALID_SETTINGS", "Settings do not satisfy the contract.", 2);
+            }
+            settings_document.emplace(std::get<io::ValidatedDocument>(std::move(decoded)));
+        }
+        catch (const spectrapack::cli::HostMemoryLimit&) {
+            return fail("MEMORY_LIMIT", "Settings parser scratch exceeds remaining host allowance.", 3);
+        }
+        // The argv and settings/Stop paths remain adapter-owned while solve runs.
+        std::uint64_t adapter_bytes = 16ULL << 20;
+        if (!add_bytes(adapter_bytes, sizeof(arguments)) ||
+            !add_repeated_bytes(adapter_bytes, arguments.capacity(), sizeof(std::string)) ||
+            !add_path_bytes(adapter_bytes, *settings_path) ||
+            (stop_file && !add_path_bytes(adapter_bytes, *stop_file))) {
+            return fail("MEMORY_LIMIT", "CLI input residency cannot be represented.", 3);
+        }
+        for (const auto& argument : arguments) {
+            if (!add_bytes(adapter_bytes, argument.capacity())) {
+                return fail("MEMORY_LIMIT", "CLI input residency cannot be represented.", 3);
+            }
+        }
+        runtime.adapter_reserve_bytes = adapter_bytes;
+        runtime.initialize_valid_empty = stop_file.has_value();
+        return spectrapack::cli::solve({ std::move(*settings_document),
+                                         std::move(*object_report),
+                                         std::move(*result_path),
+                                         std::move(container_report),
+                                         std::move(stl_path),
+                                         {},
+                                         std::move(engine_version),
+                                         std::move(engine_commit) },
+                                       runtime);
+    };
+    auto outcome = execute();
+    Json terminal;
+    if (const auto* error = std::get_if<io::Error>(&outcome.terminal)) {
+        terminal = {
+            { "protocol_version", 1                      },
+            { "request_id",       nullptr                },
+            { "ok",               false                  },
+            { "error",            io::error_json(*error) }
+        };
+    }
+    else {
+        terminal = std::get<Json>(std::move(outcome.terminal));
+    }
+    std::cout << terminal.dump() << '\n' << std::flush;
+    return std::cout ? outcome.exit_code : 4;
 }
 std::optional<std::uint64_t> spectrapack::cli::retained_solution_bytes(
     const geometry::ValidatedSolution& solution, std::span<const geometry::AcceptedSolid* const> already_charged)

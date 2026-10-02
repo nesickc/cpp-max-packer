@@ -464,6 +464,7 @@ public:
             }
         });
     }
+    bool failed() const noexcept { return failed_.load(); }
     bool finish()
     {
         thread_.request_stop();
@@ -733,16 +734,17 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
                 }
                 settings = std::get<Json>(std::move(resolved));
             }
+            std::optional<io::ValidatedDocument> validated_settings;
             {
-                // Retain no compiled catalog across nested solve/IO calls.
-                // Together with the command-loop owner, at most two overlap.
+                // Release the compiled validator before shared solve/IO calls.
                 io::ContractValidator validator;
-                if (!std::holds_alternative<io::ValidatedDocument>(
-                        validator.validate(io::ContractKind::settings, settings, { 16, 256 }))) {
+                auto decoded = validator.validate(io::ContractKind::settings, settings, { 16, 256 });
+                if (!std::holds_alternative<io::ValidatedDocument>(decoded)) {
                     return response(
                         request, false,
                         io::error_json(error("INVALID_SETTINGS", "Run requires validated resolved native settings.")));
                 }
+                validated_settings.emplace(std::get<io::ValidatedDocument>(std::move(decoded)));
             }
             const auto envelope = clock_envelope(params, settings);
             if (const auto* failure = std::get_if<io::Error>(&envelope)) {
@@ -751,33 +753,19 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
             const auto clock = std::get<ClockEnvelope>(envelope);
             control.deadline = clock.deadline;
             const auto output = std::filesystem::u8path(params.at("result_path").get<std::string>());
-            const auto settings_path = output.parent_path() / "session.settings.json";
-            std::ofstream settings_file(settings_path, std::ios::binary | std::ios::trunc);
-            settings_file << settings.dump(2);
-            settings_file.close();
-            if (!settings_file) {
-                return response(
-                    request, false,
-                    io::error_json(error("OUTPUT_WRITE_FAILED", "Scoped session settings could not be written.")));
-            }
-            std::vector<std::string> arguments { "--settings",      path_text(settings_path),
-                                                 "--object-report", path_text(prepared->report),
-                                                 "--result",        path_text(output),
-                                                 "--stop-file",     params.at("stop_file").get<std::string>() };
-            if (params.contains("stl_path")) {
-                arguments.push_back("--stl");
-                arguments.push_back(params.at("stl_path").get<std::string>());
-            }
-            std::ostringstream terminal;
+            const auto resolved_thread_count = settings.at("resolved").at("thread_count").get<std::uint64_t>();
+            settings = Json();
             cli::SolveRuntime runtime_run;
             runtime_run.diagnostic_limits = { 16, 256 };
-            runtime_run.object = prepared->verified;
             runtime_run.control = control;
             runtime_run.native_start = clock.native_start;
             runtime_run.elapsed_before_native_seconds = clock.earlier_seconds;
             runtime_run.preparation_reused = true;
-            runtime_run.operation_id = request.at("operation_id").get<std::string>();
-            runtime_run.output = &terminal;
+            runtime_run.initialize_valid_empty = marker.has_value();
+            runtime_run.stop_monitor_status = [](void* raw) {
+                return cli::StopMonitorResult { static_cast<MarkerWatcher*>(raw)->failed(), std::nullopt };
+            };
+            runtime_run.stop_monitor_context = &watcher;
             runtime_run.last_validated = &session.retained_solution;
             const auto reserve = retained_other_bytes(session, prepared);
             if (!reserve) {
@@ -785,22 +773,54 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
                                 io::error_json(error("MEMORY_LIMIT", "Retained owners exceed Start admission.")));
             }
             runtime_run.retained_reserve_bytes = *reserve;
-            const auto exit = run_solve_prepared(arguments, session.engine_version, session.engine_commit, runtime_run);
-            const auto native = Json::parse(terminal.str());
-            if (!native.value("ok", false)) {
-                const auto code = native.at("error").at("code").get<std::string>();
+            // This reserve includes the one 16 MiB session adapter allowance:
+            // the live raw request, canonical record, validators and wire
+            // storage. Shared solve charges its validated settings and typed
+            // paths separately.
+            std::optional<std::filesystem::path> stl_path;
+            if (params.contains("stl_path")) {
+                stl_path = std::filesystem::u8path(params.at("stl_path").get<std::string>());
+            }
+            if (marker &&
+                (cli::solve_paths_alias(*marker, prepared->report) || cli::solve_paths_alias(*marker, output) ||
+                 (stl_path && cli::solve_paths_alias(*marker, *stl_path)))) {
+                cli::Timeline timeline(clock.native_start, clock.earlier_seconds, control);
+                cli::Timeline::phase_sink(&timeline, runtime::Phase::cleanup);
+                const auto measured = timeline.record("search_only", 0, true, true, "before_terminal_response");
+                auto failure = error("INVALID_REQUEST", "Stop marker aliases an input or output.");
+                failure.details = {
+                    { "runtime",                           measured                              },
+                    { "no_nonempty_incumbent",             true                                  },
+                    { "preparation_reused",                true                                  },
+                    { "completion_elapsed_seconds",        measured.at("total_elapsed_seconds")  },
+                    { "native_completion_elapsed_seconds", measured.at("native_elapsed_seconds") }
+                };
+                return response(request, false, io::error_json(failure));
+            }
+            auto native = cli::solve({ std::move(*validated_settings),
+                                       prepared->report,
+                                       output,
+                                       {},
+                                       std::move(stl_path),
+                                       prepared->verified,
+                                       session.engine_version,
+                                       session.engine_commit },
+                                     runtime_run);
+            validated_settings.reset();
+            if (const auto* native_error = std::get_if<io::Error>(&native.terminal)) {
+                const auto& code = native_error->code;
                 if (code == "OPERATION_CANCELLED" || code == "DEADLINE_EXCEEDED") {
                     result = {
                         { "termination_reason",    code == "OPERATION_CANCELLED" ? "user_stopped" : "budget_exhausted" },
                         { "no_nonempty_incumbent", true                                                                },
                         { "preparation_reused",    true                                                                }
                     };
-                    if (native.at("error").at("details").contains("runtime")) {
-                        result["runtime"] = native.at("error").at("details").at("runtime");
+                    if (native_error->details.contains("runtime")) {
+                        result["runtime"] = native_error->details.at("runtime");
                     }
                 }
                 else {
-                    auto failure = native.at("error");
+                    auto failure = io::error_json(*native_error);
                     failure["details"]["preparation_reused"] = true;
                     failure["details"]["completion_elapsed_seconds"] =
                         clock.earlier_seconds +
@@ -811,11 +831,10 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
                 }
             }
             else {
-                result = native;
+                result = std::get<Json>(std::move(native.terminal));
                 result.erase("ok");
             }
-            (void)exit;
-            result["resolved_thread_count"] = settings.at("resolved").at("thread_count");
+            result["resolved_thread_count"] = resolved_thread_count;
             result["completion_elapsed_seconds"] =
                 clock.earlier_seconds +
                 std::chrono::duration<double>(runtime::Clock::now() - clock.native_start).count();

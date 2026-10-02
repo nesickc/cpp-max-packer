@@ -16,6 +16,7 @@ import solve_subprocess_test as fixtures
 
 ENGINE = None
 PRACTICAL_REPORT = None
+MEMORY_HELPER = None
 
 
 def qpc():
@@ -26,8 +27,8 @@ def qpc():
 
 
 class Session:
-    def __init__(self):
-        self.child = subprocess.Popen([str(ENGINE), "desktop-session"], stdin=subprocess.PIPE,
+    def __init__(self, command=None):
+        self.child = subprocess.Popen(command or [str(ENGINE), "desktop-session"], stdin=subprocess.PIPE,
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                       text=True, encoding="utf-8", bufsize=1)
         # The native transport is binary NDJSON. Preserve the exact record limit
@@ -45,7 +46,7 @@ class Session:
             self.records.put(json.loads(line))
         self.records.put(None)
 
-    def request(self, value):
+    def request(self, value, on_phase=None):
         self.child.stdin.write(json.dumps(value) + "\n")
         self.child.stdin.flush()
         phases = []
@@ -57,6 +58,8 @@ class Session:
                 assert record["operation_id"] == value["operation_id"]
                 assert not phases or record["sequence"] > phases[-1]["sequence"]
                 phases.append(record)
+                if on_phase:
+                    on_phase(record)
             else:
                 return record, phases
 
@@ -77,6 +80,60 @@ class Session:
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_stop_monitor_failure_during_publication(self):
+        if MEMORY_HELPER is None:
+            self.skipTest("Publication barrier requires the existing CLI test helper")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            source, report = root/'cube.stl', root/'object.report.json'
+            fixtures.write_cube_stl(source)
+            imported = subprocess.run([str(ENGINE),'inspect','--stl',str(source),'--units','mm',
+                                       '--report',str(report)],capture_output=True,text=True,timeout=15)
+            self.assertEqual(imported.returncode,0,imported.stdout+imported.stderr)
+            gate=root/'gate';gate.mkdir()
+            session=Session([str(MEMORY_HELPER),'session-publication-barrier',str(gate)])
+            try:
+                preview=root/'preview';preview.mkdir()
+                prepared,_=session.request({'runtime_version':1,'request_id':'prepare-publication',
+                    'operation_id':'prepare-publication-op','method':'prepare','params':{
+                        'object_report':str(report),'output_directory':str(preview)}})
+                self.assertTrue(prepared['ok'],prepared)
+                output=root/'run';output.mkdir();marker=output/'stop.marker'
+                ticks,frequency=qpc()
+                observed=[]
+                def during_publication(phase):
+                    if phase['phase'] != 'saving':
+                        return
+                    try:
+                        until=time.monotonic()+2
+                        while not (gate/'ready').exists() and time.monotonic()<until:
+                            time.sleep(.01)
+                        self.assertTrue((gate/'ready').exists(),'Publication barrier did not become ready')
+                        marker.mkdir()
+                        until=time.monotonic()+2
+                        while not (gate/'observed').exists() and time.monotonic()<until:
+                            time.sleep(.01)
+                        observed.append((gate/'observed').exists())
+                    finally:
+                        (gate/'release').write_bytes(b'release')
+                reply,_=session.request({'runtime_version':1,'request_id':'publication-run',
+                    'operation_id':'publication-run-op','method':'run','params':{
+                        'asset_token':prepared['result']['asset_token'],
+                        'settings':{'desktop_version':1,'box_dimensions_mm':[20,20,20],
+                            'clearance_mm':{'pair':0,'wall':0},'pitch_mm':10,
+                            'orientation':{'mode':'fixed','quaternion_xyzw':[0,0,0,1]},
+                            'budget_seconds':10,'seed':'42','thread_count':1,'budget_scope':'total_start'},
+                        'result_path':str(output/'result.json'),'stop_file':str(marker),
+                        'start_qpc_ticks':ticks,'qpc_frequency_hz':frequency}},during_publication)
+                self.assertEqual(observed,[True],f'Stop monitor stopped before publication: {reply}')
+                self.assertFalse(reply['ok'],reply)
+                self.assertEqual(reply['error']['code'],'STOP_MONITOR_FAILED')
+                document=json.loads((output/'result.json').read_text())
+                self.assertEqual(document['validation']['status'],'valid')
+            finally:
+                (gate/'release').write_bytes(b'release')
+                session.close()
+
     def test_increasing_escaped_requests_cache_owned_failure_without_losing_epoch(self):
         session = Session()
         try:
@@ -341,8 +398,11 @@ class RuntimeTests(unittest.TestCase):
                        'resolution':{'mode':'manual','pitch_mm':10},'compute':{'backend':'cpu'},
                        'resolved':{'pitch_mm':10,'orientation_catalog_sha256':fixtures.IDENTITY_CATALOG_SHA256,
                                    'orientation_catalog_version':1,'backend':'cpu','thread_count':1}}
-                def fixed_run(name,stl=False):
+                def fixed_run(name,stl=False,block_settings_path=False):
                     output=root/name;output.mkdir();ticks,frequency=qpc()
+                    if block_settings_path:
+                        unrelated=output/'session.settings.json';unrelated.mkdir()
+                        (unrelated/'keep.txt').write_bytes(b'unrelated user data')
                     params={'asset_token':token,'settings':fixed,'result_path':str(output/'result.json'),
                             'stop_file':str(output/'stop.marker'),'start_qpc_ticks':ticks,'qpc_frequency_hz':frequency}
                     if stl:params['stl_path']=str(output/'packing.stl')
@@ -351,8 +411,20 @@ class RuntimeTests(unittest.TestCase):
                     document=json.loads((output/'result.json').read_text())
                     self.assertGreater(document['count'],0)
                     self.assertEqual(document['validation']['status'],'valid')
+                    if block_settings_path:
+                        self.assertEqual((unrelated/'keep.txt').read_bytes(),b'unrelated user data')
                     return document,output
-                before,_=fixed_run('before-tamper')
+                before,_=fixed_run('before-tamper',block_settings_path=True)
+                alias_output=root/'marker-output-alias';alias_output.mkdir();ticks,frequency=qpc()
+                alias_path=alias_output/'result.json'
+                alias_path.write_bytes(b'previous complete result')
+                alias_reply,_=session.request({'runtime_version':1,'request_id':'marker-output-alias',
+                    'operation_id':'marker-output-alias-op','method':'run','params':{
+                        'asset_token':token,'settings':fixed,'result_path':str(alias_path),
+                        'stop_file':str(alias_path),'start_qpc_ticks':ticks,'qpc_frequency_hz':frequency}})
+                self.assertFalse(alias_reply['ok'],alias_reply)
+                self.assertEqual(alias_reply['error']['code'],'INVALID_REQUEST')
+                self.assertEqual(alias_path.read_bytes(),b'previous complete result')
                 # A token pins independently verified source/accepted bytes; changing disk assertions cannot mint authority.
                 source.write_bytes(b"tampered")
                 (root/record['source']['path']).write_bytes(b'tampered pinned source')
@@ -423,7 +495,9 @@ if __name__ == "__main__":
     parser.add_argument("engine", type=pathlib.Path)
     parser.add_argument("--case", default=None)
     parser.add_argument('--practical-report',type=pathlib.Path,default=None)
+    parser.add_argument('--memory-helper',type=pathlib.Path,default=None)
     arguments = parser.parse_args()
     ENGINE = arguments.engine.resolve()
     PRACTICAL_REPORT = arguments.practical_report.resolve() if arguments.practical_report else None
+    MEMORY_HELPER = arguments.memory_helper.resolve() if arguments.memory_helper else None
     unittest.main(argv=[sys.argv[0]] + (["RuntimeTests." + arguments.case] if arguments.case else []))

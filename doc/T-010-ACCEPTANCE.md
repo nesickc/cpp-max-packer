@@ -41,6 +41,21 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 
 ## Retained evidence and qualification
 
+- Typed-solve simplification: the retained session passes a validated in-memory
+  request to the shared native solve entrypoint and consumes its structured result.
+  The temporary settings file, synthetic argv, terminal text/parse roundtrip, TLS
+  runtime state and nested monitor are removed. Real regressions cover an existing
+  directory at `session.settings.json` and monitor failure during publication;
+  the latter preserves an independently valid saved result. Frozen Release PEs
+  pass solve 6/6, controls 4/4 and runtime-session 10 executed cases with two
+  practical-report cases explicitly skipped. Selected Debug CTest passes 9/11;
+  cube64 and Unicode relocation exceed the unchanged cleanup deadline. A matched
+  pre-refactor/final Debug cube64 comparison validates 64 copies then returns
+  `DEADLINE_EXCEEDED` in both; it does not establish the Unicode failure's history
+  or a speed improvement. The final Debug publication regression passes.
+  `.local/t011/runtime-simplification/` retains source/binary manifests, causal
+  reds, complete logs and the comparison. Independent Sol review accepts this
+  bounded interface; no whole adapter-memory, practical or ticket gate is closed.
 - Portable export checkpoint `2292f1a`: captured Windows alias/canonical paths
   and the certified file-name pin remain valid through final JSON publication.
   Full I/O Debug/Release suites pass 65 cases / 12,789 assertions each on the

@@ -137,9 +137,12 @@ code. CLI parsing/file admission remains in its adapter. The session passes its
 validated in-memory request directly: no `session.settings.json`, synthetic argv,
 captured terminal stream or JSON-text reparse. This private C++ change does not
 change wire schemas, authoritative validation, result paths or budget semantics.
-Runtime borrows the existing operation control and an idempotent finish-monitor
-callback/context so transport failure remains distinguishable from user Stop
-before result publication. Charge live adapter/request owners; remove only the
+Runtime borrows the existing operation control and a monitor-status callback/context
+so transport failure remains distinguishable from user Stop before publication.
+The adapter owns monitor lifetime: standalone CLI may finish its search monitor,
+while the session samples status and keeps its sole monitor alive through final
+publication, then joins it at the existing operation boundary. Charge live
+adapter/request owners; remove only the
 obsolete serialization/file-roundtrip ownership allowances. No new lifecycle
 framework or child owner is introduced by this refactor.
 
