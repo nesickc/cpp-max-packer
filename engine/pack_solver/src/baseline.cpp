@@ -24,6 +24,8 @@ namespace {
 using Matrix = std::array<int, 9>;
 constexpr std::uint64_t kSeedScratchBytes =
     sizeof(std::array<Matrix, 24>) + sizeof(std::array<int, 3>);
+// A non-elided return can coexist with its source outcome and run control.
+constexpr std::uint64_t kBaselineMetadataBytes = 2 * sizeof(BaselineOutcome) + sizeof(RunControl);
 
 enum class Boundary { none, stopped, deadline };
 
@@ -267,7 +269,7 @@ void apply_physical_failure(BaselineOutcome& out, std::string_view code)
     out.termination_reason =
         physical_resource_code(code) ? TerminationReason::resource_limit : TerminationReason::error;
     out.diagnostic_code = physical_diagnostic(code);
-    out.failure_details = RunFailureDetails { out.termination_reason, "physical_query", std::string(code), {}, {} };
+    out.failure_details = RunFailureDetails { out.termination_reason, "physical_query", code, {}, {} };
 }
 
 std::optional<geometry::Bounds> container_bounds(
@@ -398,6 +400,9 @@ std::optional<std::uint64_t> resident_bytes(
     const geometry::ValidationContext& context,
     const BaselineLimits& limits) noexcept {
   std::uint64_t bytes = limits.reserved_bytes;
+  if (!checked_add(bytes, kBaselineMetadataBytes)) {
+      return {};
+  }
   if (!add_optional(bytes, context.object()->resident_buffer_bytes())) return {};
   if (const auto* solid =
           std::get_if<std::shared_ptr<const geometry::AcceptedSolid>>(
@@ -476,6 +481,20 @@ BaselineOutcome run_aabb_baseline_impl(
   }
   if (initial && initial->context() == context) out.retained_solution = initial;
   initial.reset();
+  std::uint64_t metadata = limits.reserved_bytes;
+  if (!checked_add(metadata, kBaselineMetadataBytes) || metadata > limits.max_working_bytes) {
+      out.termination_reason = TerminationReason::resource_limit;
+      out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
+      out.failure_details = RunFailureDetails {
+          TerminationReason::resource_limit,
+          "preflight",
+          "PHYSICAL_RESOURCE_LIMIT",
+          ResourceLimitDetails { "fixed_metadata", metadata, limits.max_working_bytes },
+          {}
+      };
+      return out;
+  }
+  out.stats.tracked_working_bytes_peak = metadata;
   if (const auto before_start = boundary(control); before_start != Boundary::none) {
       apply_boundary(out, before_start);
       return out;

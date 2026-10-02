@@ -3,7 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
-#include <string>
+#include <string_view>
 #include <variant>
 
 namespace spectrapack::geometry {
@@ -39,8 +39,10 @@ struct RepresentationAttemptStats {
 };
 
 struct RepresentationFailure {
-    std::string code;
-    std::string message;
+    // Computational descriptors always refer to static storage (ADR 0015).
+    std::string_view code;
+    std::string_view message;
+    std::string_view method {};
 };
 
 template <class T>

@@ -13,6 +13,7 @@
 #include <set>
 #include <string>
 #include <tuple>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -32,11 +33,19 @@ namespace solver = spectrapack::solver;
 
 namespace {
 std::atomic_bool fail_test_allocations {};
+std::atomic<std::uint64_t> test_allocation_attempts {};
+std::atomic<std::uint64_t> field_hook_allocation_start {};
+std::atomic<std::int64_t> fail_after_test_allocations { -1 };
+std::atomic<std::uint64_t> persistent_field_hook_calls {};
+std::int64_t transient_field_fault_ordinal {};
 }
 
 void* operator new(std::size_t size)
 {
-    if (fail_test_allocations.load(std::memory_order_relaxed)) {
+    test_allocation_attempts.fetch_add(1, std::memory_order_relaxed);
+    if (fail_test_allocations.load(std::memory_order_relaxed) ||
+        (fail_after_test_allocations.load(std::memory_order_relaxed) >= 0 &&
+         fail_after_test_allocations.fetch_sub(1, std::memory_order_relaxed) == 0)) {
         throw std::bad_alloc {};
     }
     if (void* allocation = std::malloc(std::max<std::size_t>(size, 1))) {
@@ -53,6 +62,22 @@ void operator delete[](void* pointer, std::size_t) noexcept { std::free(pointer)
 namespace {
 
 void enable_persistent_allocation_failure() noexcept { fail_test_allocations.store(true, std::memory_order_relaxed); }
+void enable_counted_persistent_field_failure() noexcept
+{
+    if (persistent_field_hook_calls.fetch_add(1, std::memory_order_relaxed) == 0) {
+        field_hook_allocation_start.store(test_allocation_attempts.load(std::memory_order_relaxed),
+                                          std::memory_order_relaxed);
+    }
+    enable_persistent_allocation_failure();
+}
+void enable_transient_field_failure() noexcept
+{
+    if (persistent_field_hook_calls.fetch_add(1, std::memory_order_relaxed) == 0) {
+        field_hook_allocation_start.store(test_allocation_attempts.load(std::memory_order_relaxed),
+                                          std::memory_order_relaxed);
+    }
+    fail_after_test_allocations.store(transient_field_fault_ordinal, std::memory_order_relaxed);
+}
 
 class SolverAllocationFailure final {
 public:
@@ -66,10 +91,24 @@ public:
 class AllocationFailureReset final {
 public:
     AllocationFailureReset() = default;
-    ~AllocationFailureReset() { fail_test_allocations.store(false, std::memory_order_relaxed); }
+    ~AllocationFailureReset()
+    {
+        fail_test_allocations.store(false, std::memory_order_relaxed);
+        fail_after_test_allocations.store(-1, std::memory_order_relaxed);
+    }
 
     AllocationFailureReset(const AllocationFailureReset&) = delete;
     AllocationFailureReset& operator=(const AllocationFailureReset&) = delete;
+};
+
+class FieldAllocationFailureReset final {
+public:
+    ~FieldAllocationFailureReset()
+    {
+        geo::detail::validation_kernel::set_field_failure_allocation_hook(nullptr);
+        fail_test_allocations.store(false, std::memory_order_relaxed);
+        fail_after_test_allocations.store(-1, std::memory_order_relaxed);
+    }
 };
 
 geo::test_support::Mesh l_prism()
@@ -223,6 +262,20 @@ struct BinaryOracleCapture {
 };
 
 BinaryOracleCapture* binary_capture_target {};
+struct WorkspaceFieldCapture {
+    std::vector<std::uint8_t> environment, kernel;
+    std::vector<double> proximity, binary, ranked;
+};
+WorkspaceFieldCapture* workspace_field_target {};
+void capture_workspace_fields(const solver::detail::BinaryObservation& observation) noexcept
+{
+    auto& capture = *workspace_field_target;
+    capture.environment.assign(observation.environment.begin(), observation.environment.end());
+    capture.kernel.assign(observation.kernel.begin(), observation.kernel.end());
+    capture.proximity.assign(observation.proximity.begin(), observation.proximity.end());
+    capture.binary.assign(observation.values.begin(), observation.values.end());
+    capture.ranked.assign(observation.proximity_values.begin(), observation.proximity_values.end());
+}
 
 struct PageOracleCapture {
     std::vector<solver::detail::SpectralPipelineResult::RankedCandidate> candidates;
@@ -1442,7 +1495,86 @@ TEST_CASE("AT-16 spectral wrapper accounts copied long ids during proposal valid
     CHECK(limited.run.retained_solution == limited_publications.back()->solution);
     CHECK(limited.run.best->solution->copies().size() < long_run.run.best->solution->copies().size());
     REQUIRE(long_run.run.stats.candidate_evaluations >= 2);
-    CHECK(limited.run.stats.candidate_evaluations == 2);
+    CHECK(limited.run.stats.candidate_evaluations <= long_run.run.stats.candidate_evaluations);
+    CHECK(limited.run.retained_solution == long_initial);
+    REQUIRE(limited.run.failure_details);
+    CHECK(limited.run.failure_details->reason == solver::TerminationReason::resource_limit);
+    CHECK(limited.run.failure_details->cause_code == "FIELD_MEMORY_LIMIT");
+}
+
+TEST_CASE("AT-16 candidate id ownership bounds real spectral validation", "[solver][T010][AT-16][wrapper]")
+{
+    // Many independently accepted closed components retain the unit envelope,
+    // but real validation preparation/placements need more scratch than copying
+    // two ID buffers. This distinguishes candidate ownership from field caching.
+    geo::test_support::Mesh mesh;
+    for (int z = 0; z != 4; ++z) {
+        for (int y = 0; y != 4; ++y) {
+            for (int x = 0; x != 4; ++x) {
+                const geo::Vec3 lo { -.5 + .25 * x, -.5 + .25 * y, -.5 + .25 * z };
+                geo::test_support::append_cuboid(mesh, lo, { lo[0] + .125, lo[1] + .125, lo[2] + .125 });
+            }
+        }
+    }
+    const auto accepted = geo::test_support::accepted(mesh, geo::AssetRole::object);
+    geo::Constraints constraints;
+    constraints.orientations.mode = geo::OrientationMode::fixed;
+    const auto made = geo::make_validation_context(accepted, geo::BoxDimensions { 3, 1, 1 }, constraints);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+    const geo::Quaternion identity { 0, 0, 0, 1 };
+    const std::string long_id(8192, 'x');
+    const auto initial = native_solution(context, {
+                                                      { long_id, { 1.4, .5, .5 }, identity }
+    });
+    const auto short_initial = native_solution(context, {
+                                                            { "s", { 1.4, .5, .5 }, identity }
+    });
+    solver::SpectralLimits limits;
+    limits.baseline.max_candidate_evaluations = 0;
+    limits.baseline.max_search_passes = 0;
+    limits.spectral.max_candidate_evaluations = 1;
+    limits.spectral.max_search_passes = 1;
+    limits.spectral.max_copies = 3;
+    limits.per_representation.max_cells = 10'000;
+    limits.per_correlation.max_padded_cells = 10'000;
+    const auto run = [&](const std::shared_ptr<const geo::ValidatedSolution>& seed,
+                         const solver::SpectralLimits& allowance, solver::SnapshotSink sink = {}) {
+        return solver::run_cpu_spectral(context, { {}, .5 }, allowance, {}, std::move(sink), seed);
+    };
+    const auto measured = run(initial, limits);
+    const auto measured_short = run(short_initial, limits);
+    REQUIRE(measured.run.best);
+    REQUIRE(measured.run.best->solution->copies().size() == 2);
+    REQUIRE(measured.run.stats.candidate_evaluations > 0);
+    REQUIRE(measured_short.run.best);
+    REQUIRE(measured_short.run.best->solution->copies().size() == 2);
+    const auto id_bytes =
+        initial->copies().front().copy_id.capacity() - short_initial->copies().front().copy_id.capacity();
+    // The short-ID run measures real geometry scratch independently of these
+    // long-ID charges. Three retained IDs belong to source/workspace owners;
+    // validation must additionally retain the candidate's fourth ID buffer.
+    auto capped = limits;
+    capped.max_working_bytes = measured_short.run.stats.tracked_working_bytes_peak + 3 * id_bytes + id_bytes / 2;
+    capped.spectral.max_working_bytes = capped.max_working_bytes;
+    std::vector<solver::SnapshotHandle> publications;
+    const auto limited = run(initial, capped, [&](solver::SnapshotHandle snapshot) {
+        publications.push_back(std::move(snapshot));
+    });
+    const auto short_control = run(short_initial, capped);
+    CAPTURE(capped.max_working_bytes, measured.run.stats.tracked_working_bytes_peak, limited.run.diagnostic_code,
+            limited.run.stats.candidate_evaluations);
+    REQUIRE(short_control.run.best);
+    CHECK(short_control.run.best->solution->copies().size() == 2);
+    CHECK(limited.run.stats.candidate_evaluations > 0);
+    CHECK(limited.run.termination_reason == solver::TerminationReason::resource_limit);
+    CHECK(limited.run.diagnostic_code == "PHYSICAL_VALIDATION_RESOURCE");
+    CHECK(limited.run.stats.tracked_working_bytes_peak <= capped.max_working_bytes);
+    REQUIRE(limited.run.best);
+    REQUIRE_FALSE(publications.empty());
+    CHECK(limited.run.best == publications.back());
+    CHECK(limited.run.retained_solution == publications.back()->solution);
+    CHECK(limited.run.retained_solution == initial);
 }
 
 TEST_CASE("AT-16 spectral wrapper retains a validated initial when central allocation fails",
@@ -2008,7 +2140,7 @@ TEST_CASE("AT-16 spectral retains its same-context initial on a catalog allocati
     CHECK(outcome.run.stats.candidate_evaluations == 0);
 }
 
-TEST_CASE("AT-16 resolved cube retains its same-context initial on catalog verification allocation failure",
+TEST_CASE("AT-16 resolved cube verification allocates nothing and preserves its initial on later failure",
           "[solver][T007][AT-16][catalog]")
 {
     const auto context = cube_context();
@@ -2035,10 +2167,34 @@ TEST_CASE("AT-16 resolved cube retains its same-context initial on catalog verif
                                            catalog, limits, {}, {}, initial);
     }
     CHECK(outcome.run.termination_reason == solver::TerminationReason::resource_limit);
-    CHECK(outcome.run.diagnostic_code == "SPECTRAL_CATALOG_ALLOCATION");
+    CHECK(outcome.run.diagnostic_code == "PHYSICAL_ALLOCATION_FAILURE");
     CHECK(outcome.run.retained_solution == initial);
     CHECK_FALSE(outcome.run.best);
     CHECK(outcome.run.stats.candidate_evaluations == 0);
+    auto invalid = catalog;
+    invalid.quaternions.front()[0] = .125;
+    std::optional<solver::SpectralOutcome> rejected;
+    bool escaped {};
+    const auto attempts = test_allocation_attempts.load(std::memory_order_relaxed);
+    {
+        AllocationFailureReset reset;
+        fail_test_allocations.store(true, std::memory_order_relaxed);
+        try {
+            rejected.emplace(solver::run_cpu_spectral(context, { {}, .5 }, invalid, limits, {}, {}, initial));
+        }
+        catch (...) {
+            escaped = true;
+        }
+    }
+    const auto allocations = test_allocation_attempts.load(std::memory_order_relaxed) - attempts;
+    CHECK(allocations == 0);
+    CHECK_FALSE(escaped);
+    REQUIRE(rejected);
+    CHECK(rejected->run.termination_reason == solver::TerminationReason::error);
+    CHECK(rejected->run.diagnostic_code == "SPECTRAL_CATALOG_INVALID");
+    CHECK(rejected->run.retained_solution == initial);
+    CHECK_FALSE(rejected->run.best);
+    CHECK(rejected->run.stats.candidate_evaluations == 0);
 }
 
 TEST_CASE("AT-16 spectral baseline cap includes admitted catalog while copying seeds", "[solver][T007][AT-16][catalog]")
@@ -2194,12 +2350,14 @@ TEST_CASE("AT-12 spectral stage A correlates conservative scene fields", "[solve
     solver::SpectralLimits limits;
     limits.per_representation.max_cells = 100'000;
     limits.per_correlation.max_padded_cells = 100'000;
+    const auto explicit_catalog = std::get<solver::OrientationCatalog>(
+        solver::make_orientation_catalog(context->constraints().orientations, limits.spectral.max_orientations));
     const auto pipeline = solver::detail::build_spectral_pipeline(context,
                                                                   {
                                                                       { -.5, .25, -.5 },
                                                                       .5
     },
-                                                                  limits, initial);
+                                                                  limits, initial, explicit_catalog);
     CAPTURE(pipeline.diagnostic, pipeline.stats.representation_kernel_work, pipeline.stats.representation_cell_visits);
     REQUIRE(pipeline.complete);
     CHECK(pipeline.stats.correlations == 2);
@@ -2219,12 +2377,15 @@ TEST_CASE("AT-12 stage A binary correlation matches every actual scene translati
     limits.per_correlation.max_padded_cells = 100'000;
     BinaryOracleCapture capture;
     binary_capture_target = &capture;
-    const auto pipeline = solver::detail::build_spectral_pipeline(context,
-                                                                  {
-                                                                      { -.5, .25, -.5 },
-                                                                      .5
+    const auto explicit_catalog = std::get<solver::OrientationCatalog>(
+        solver::make_orientation_catalog(context->constraints().orientations, limits.spectral.max_orientations));
+    const auto pipeline =
+        solver::detail::build_spectral_pipeline(context,
+                                                {
+                                                    { -.5, .25, -.5 },
+                                                    .5
     },
-                                                                  limits, initial, &capture_binary_oracle);
+                                                limits, initial, explicit_catalog, &capture_binary_oracle);
     binary_capture_target = nullptr;
     REQUIRE(pipeline.complete);
     REQUIRE(capture.called);
@@ -2270,16 +2431,16 @@ TEST_CASE("AT-12 pipeline returns a bounded stable ordinary candidate page", "[s
     const auto first = solver::detail::build_spectral_pipeline(
         context, oracle.lattice, limits, {}, catalog, solver::detail::CandidatePageQuery {}, &capture_page_oracle);
     page_oracle_target = nullptr;
-    CAPTURE(first.diagnostic, first.ranked_candidates.size(), first.stats.direct_terms);
+    CAPTURE(first.diagnostic, first.ranked_candidates->size(), first.stats.direct_terms);
     REQUIRE(first.complete);
-    REQUIRE(first.ranked_candidates.size() == 32);
-    CHECK(first.ranked_candidates.capacity() == 32);
+    REQUIRE(first.ranked_candidates->size() == 32);
+    CHECK(first.ranked_candidates->capacity() == 32);
     REQUIRE(oracle.candidates.size() > 64);
     REQUIRE(oracle.kernel_has_zero);
     REQUIRE(oracle.kernel_has_one);
-    for (std::size_t index = 0; index != first.ranked_candidates.size(); ++index) {
-        CHECK(first.ranked_candidates[index].translation == oracle.candidates[index].translation);
-        CHECK(first.ranked_candidates[index].score == Catch::Approx(oracle.candidates[index].score));
+    for (std::size_t index = 0; index != first.ranked_candidates->size(); ++index) {
+        CHECK((*first.ranked_candidates)[index].translation == oracle.candidates[index].translation);
+        CHECK((*first.ranked_candidates)[index].score == Catch::Approx(oracle.candidates[index].score));
     }
     solver::detail::CandidatePageQuery identity_low_query;
     identity_low_query.mode = solver::detail::CandidatePageMode::low_overlap;
@@ -2289,13 +2450,13 @@ TEST_CASE("AT-12 pipeline returns a bounded stable ordinary candidate page", "[s
     CHECK(first.stats.direct_terms ==
           oracle.binary_probe_terms + oracle.legal_examinations + oracle.selected_recheck_cells);
     solver::detail::CandidatePageQuery next;
-    next.exclusive_cursor = first.ranked_candidates.back();
+    next.exclusive_cursor = first.ranked_candidates->back();
     const auto second = solver::detail::build_spectral_pipeline(context, oracle.lattice, limits, {}, catalog, next);
     REQUIRE(second.complete);
-    REQUIRE(second.ranked_candidates.size() == 32);
-    for (std::size_t index = 0; index != second.ranked_candidates.size(); ++index) {
-        CHECK(second.ranked_candidates[index].translation == oracle.candidates[index + 32].translation);
-        CHECK(second.ranked_candidates[index].score == Catch::Approx(oracle.candidates[index + 32].score));
+    REQUIRE(second.ranked_candidates->size() == 32);
+    for (std::size_t index = 0; index != second.ranked_candidates->size(); ++index) {
+        CHECK((*second.ranked_candidates)[index].translation == oracle.candidates[index + 32].translation);
+        CHECK((*second.ranked_candidates)[index].score == Catch::Approx(oracle.candidates[index + 32].score));
     }
 
     const solver::OrientationCatalog complete_catalog {
@@ -2323,18 +2484,18 @@ TEST_CASE("AT-12 pipeline returns a bounded stable ordinary candidate page", "[s
     page_oracle_target = nullptr;
     REQUIRE(low_first.complete);
     REQUIRE(low_oracle.candidates.size() > 64);
-    REQUIRE(low_first.ranked_candidates.size() == 32);
-    for (std::size_t index = 0; index != low_first.ranked_candidates.size(); ++index) {
-        CHECK(low_first.ranked_candidates[index].orientation_index == 1);
-        CHECK(low_first.ranked_candidates[index].translation == low_oracle.candidates[index].translation);
+    REQUIRE(low_first.ranked_candidates->size() == 32);
+    for (std::size_t index = 0; index != low_first.ranked_candidates->size(); ++index) {
+        CHECK((*low_first.ranked_candidates)[index].orientation_index == 1);
+        CHECK((*low_first.ranked_candidates)[index].translation == low_oracle.candidates[index].translation);
     }
-    low_query.exclusive_cursor = low_first.ranked_candidates.back();
+    low_query.exclusive_cursor = low_first.ranked_candidates->back();
     const auto low_second =
         solver::detail::build_spectral_pipeline(context, oracle.lattice, limits, {}, complete_catalog, low_query);
     REQUIRE(low_second.complete);
-    REQUIRE(low_second.ranked_candidates.size() == 32);
-    for (std::size_t index = 0; index != low_second.ranked_candidates.size(); ++index) {
-        CHECK(low_second.ranked_candidates[index].translation == low_oracle.candidates[index + 32].translation);
+    REQUIRE(low_second.ranked_candidates->size() == 32);
+    for (std::size_t index = 0; index != low_second.ranked_candidates->size(); ++index) {
+        CHECK((*low_second.ranked_candidates)[index].translation == low_oracle.candidates[index + 32].translation);
     }
     const auto first_collision =
         std::find_if(low_oracle.candidates.begin(), low_oracle.candidates.end(), [](const auto& candidate) {
@@ -2345,21 +2506,22 @@ TEST_CASE("AT-12 pipeline returns a bounded stable ordinary candidate page", "[s
     solver::detail::CandidatePageQuery collision_query;
     collision_query.orientation_index = 1;
     collision_query.mode = solver::detail::CandidatePageMode::low_overlap;
-    solver::detail::SpectralPipelineResult collision_page;
+    std::optional<solver::detail::SpectralPipelineResult> collision_page;
     std::size_t collision_page_first {};
     do {
-        collision_page = solver::detail::build_spectral_pipeline(context, oracle.lattice, limits, {}, complete_catalog,
-                                                                 collision_query);
-        REQUIRE(collision_page.complete);
-        REQUIRE_FALSE(collision_page.ranked_candidates.empty());
-        if (collision_page_first + collision_page.ranked_candidates.size() > collision_index) {
+        collision_page.reset();
+        collision_page.emplace(solver::detail::build_spectral_pipeline(context, oracle.lattice, limits, {},
+                                                                       complete_catalog, collision_query));
+        REQUIRE(collision_page->complete);
+        REQUIRE_FALSE(collision_page->ranked_candidates->empty());
+        if (collision_page_first + collision_page->ranked_candidates->size() > collision_index) {
             break;
         }
-        REQUIRE(collision_page.ranked_candidates.size() == 32);
-        collision_page_first += collision_page.ranked_candidates.size();
-        collision_query.exclusive_cursor = collision_page.ranked_candidates.back();
+        REQUIRE(collision_page->ranked_candidates->size() == 32);
+        collision_page_first += collision_page->ranked_candidates->size();
+        collision_query.exclusive_cursor = collision_page->ranked_candidates->back();
     } while (true);
-    const auto& collision_candidate = collision_page.ranked_candidates[collision_index - collision_page_first];
+    const auto& collision_candidate = (*collision_page->ranked_candidates)[collision_index - collision_page_first];
     CHECK(collision_candidate.binary_overlap > 0.);
     CHECK(collision_candidate.translation == first_collision->translation);
 
@@ -2395,33 +2557,45 @@ TEST_CASE("AT-12 stage A preserves a throwing representation attempt", "[solver]
     limits.per_representation.max_cell_visits = 5;
     limits.per_correlation.max_padded_cells = 100'000;
 
+    const auto explicit_catalog = std::get<solver::OrientationCatalog>(
+        solver::make_orientation_catalog(context->constraints().orientations, limits.spectral.max_orientations));
     const auto exhausted = solver::detail::build_spectral_pipeline(context,
                                                                    {
                                                                        { 0, 0, 0 },
                                                                        1
     },
-                                                                   limits, {});
+                                                                   limits, {}, explicit_catalog);
     REQUIRE_FALSE(exhausted.complete);
     REQUIRE(exhausted.diagnostic == "SPECTRAL_PIPELINE_MASK");
     REQUIRE(exhausted.stats.representation_cell_visits == 5);
     REQUIRE(exhausted.stats.representation_kernel_work > 0);
 
-    geo::detail::validation_kernel::set_field_failure_allocation_hook(enable_persistent_allocation_failure);
-    const auto allocation = solver::detail::build_spectral_pipeline(context,
-                                                                    {
-                                                                        { 0, 0, 0 },
-                                                                        1
-    },
-                                                                    limits, {});
-    fail_test_allocations.store(false, std::memory_order_relaxed);
-    geo::detail::validation_kernel::set_field_failure_allocation_hook(nullptr);
-
-    REQUIRE_FALSE(allocation.complete);
-    CHECK(allocation.diagnostic == "SPECTRAL_PIPELINE_ALLOCATION");
-    CHECK_FALSE(allocation.failure_details);
-    CHECK(allocation.stats.representation_cell_visits == exhausted.stats.representation_cell_visits);
-    CHECK(allocation.stats.representation_kernel_work == exhausted.stats.representation_kernel_work);
-    CHECK(allocation.working_bytes_peak == exhausted.working_bytes_peak);
+    std::optional<solver::detail::SpectralPipelineResult> allocation;
+    bool escaped {};
+    {
+        FieldAllocationFailureReset reset;
+        geo::detail::validation_kernel::set_field_failure_allocation_hook(enable_persistent_allocation_failure);
+        try {
+            allocation.emplace(solver::detail::build_spectral_pipeline(context,
+                                                                       {
+                                                                           { 0, 0, 0 },
+                                                                           1
+            },
+                                                                       limits, {}, explicit_catalog));
+        }
+        catch (...) {
+            escaped = true;
+        }
+    }
+    CHECK_FALSE(escaped);
+    REQUIRE(allocation);
+    REQUIRE_FALSE(allocation->complete);
+    CHECK(allocation->diagnostic == exhausted.diagnostic);
+    REQUIRE(allocation->failure_details);
+    CHECK(allocation->failure_details->cause_code == "FIELD_CELL_VISIT_LIMIT");
+    CHECK(allocation->stats.representation_cell_visits == exhausted.stats.representation_cell_visits);
+    CHECK(allocation->stats.representation_kernel_work == exhausted.stats.representation_kernel_work);
+    CHECK(allocation->working_bytes_peak == exhausted.working_bytes_peak);
 }
 
 TEST_CASE("AT-12 stage A keeps the physical off-grid blocker field", "[solver][T007][AT-12][pipeline]")
@@ -2494,8 +2668,10 @@ TEST_CASE("AT-12 stage A keeps the physical off-grid blocker field", "[solver][T
     limits.per_correlation.max_padded_cells = 100'000;
     IndependentFieldCapture capture { actual.get() };
     independent_field_target = &capture;
+    const auto explicit_catalog = std::get<solver::OrientationCatalog>(
+        solver::make_orientation_catalog(context->constraints().orientations, limits.spectral.max_orientations));
     const auto pipeline = solver::detail::build_spectral_pipeline(context, lattice, limits, checked.validated_solution,
-                                                                  &capture_independent_fields);
+                                                                  explicit_catalog, &capture_independent_fields);
     independent_field_target = nullptr;
     REQUIRE(pipeline.complete);
     REQUIRE(capture.called);
@@ -2510,12 +2686,14 @@ TEST_CASE("AT-12 stage A distinguishes correlation resource and numeric failures
     solver::SpectralLimits limits;
     limits.per_representation.max_cells = 100'000;
     limits.per_correlation.max_padded_cells = 1;
+    const auto explicit_catalog = std::get<solver::OrientationCatalog>(
+        solver::make_orientation_catalog(context->constraints().orientations, limits.spectral.max_orientations));
     const auto resource = solver::detail::build_spectral_pipeline(context,
                                                                   {
                                                                       { -.5, .25, -.5 },
                                                                       .5
     },
-                                                                  limits, {});
+                                                                  limits, {}, explicit_catalog);
     REQUIRE_FALSE(resource.complete);
     CHECK(resource.diagnostic == "CORRELATION_PADDED_CELL_LIMIT");
     CHECK(resource.stats.unreliable_passes == 0);
@@ -2526,7 +2704,7 @@ TEST_CASE("AT-12 stage A distinguishes correlation resource and numeric failures
                                                                       { -.5, .25, -.5 },
                                                                       .5
     },
-                                                                  limits, {});
+                                                                  limits, {}, explicit_catalog);
     REQUIRE(measured.complete);
     REQUIRE(measured.stats.proximity_terms > measured.stats.direct_terms);
     auto proximity_limits = limits;
@@ -2536,7 +2714,7 @@ TEST_CASE("AT-12 stage A distinguishes correlation resource and numeric failures
                                                                                 { -.5, .25, -.5 },
                                                                                 .5
     },
-                                                                            proximity_limits, {});
+                                                                            proximity_limits, {}, explicit_catalog);
     REQUIRE_FALSE(proximity_resource.complete);
     CHECK(proximity_resource.stats.correlations == 2);
     CHECK(proximity_resource.diagnostic == "CORRELATION_DIRECT_TERM_LIMIT");
@@ -2549,7 +2727,7 @@ TEST_CASE("AT-12 stage A distinguishes correlation resource and numeric failures
                                                                      { -.5, .25, -.5 },
                                                                      .5
     },
-                                                                 limits, {});
+                                                                 limits, {}, explicit_catalog);
     spectrapack::compute::detail::set_numeric_fault_for_test(spectrapack::compute::detail::NumericFault::none);
     REQUIRE_FALSE(numeric.complete);
     CHECK(numeric.diagnostic == "CORRELATION_NUMERIC");
@@ -2577,16 +2755,18 @@ TEST_CASE("AT-12 stage A accepted STL cavity scene feeds actual fields", "[solve
     limits.per_correlation.max_padded_cells = 100'000;
     BinaryOracleCapture capture;
     binary_capture_target = &capture;
-    const auto pipeline =
-        solver::detail::build_spectral_pipeline(context,
-                                                {
-                                                    { -.5, -.5, -.5 },
-                                                    1.0
+    const auto explicit_catalog = std::get<solver::OrientationCatalog>(
+        solver::make_orientation_catalog(context->constraints().orientations, limits.spectral.max_orientations));
+    const auto pipeline = solver::detail::build_spectral_pipeline(context,
+                                                                  {
+                                                                      { -.5, -.5, -.5 },
+                                                                      1.0
     },
-                                                limits, checked.validated_solution, &capture_binary_oracle);
+                                                                  limits, checked.validated_solution, explicit_catalog,
+                                                                  &capture_binary_oracle);
     binary_capture_target = nullptr;
     CAPTURE(pipeline.diagnostic, pipeline.stats.direct_terms, pipeline.stats.proximity_terms,
-            pipeline.ranked_candidates.size());
+            (pipeline.ranked_candidates ? pipeline.ranked_candidates->size() : 0));
     REQUIRE(pipeline.complete);
     REQUIRE(capture.interior_unblocked);
     REQUIRE(capture.cavity_blocked);
@@ -2680,12 +2860,15 @@ TEST_CASE("AT-12 pipeline refuses cap below retained payload plus new fields", "
     solver::SpectralLimits generous;
     generous.per_representation.max_cells = 100'000;
     generous.per_correlation.max_padded_cells = 100'000;
-    const auto baseline = solver::detail::build_spectral_pipeline(context,
-                                                                  {
-                                                                      { -.5, .25, -.5 },
-                                                                      .5
+    const auto explicit_catalog = std::get<solver::OrientationCatalog>(
+        solver::make_orientation_catalog(context->constraints().orientations, generous.spectral.max_orientations));
+    const auto baseline =
+        solver::detail::build_spectral_pipeline(context,
+                                                {
+                                                    { -.5, .25, -.5 },
+                                                    .5
     },
-                                                                  generous, checked.validated_solution);
+                                                generous, checked.validated_solution, explicit_catalog);
     CAPTURE(baseline.diagnostic, baseline.stats.representation_kernel_work, baseline.stats.representation_cell_visits);
     REQUIRE(baseline.complete);
     auto capped = generous;
@@ -2696,9 +2879,14 @@ TEST_CASE("AT-12 pipeline refuses cap below retained payload plus new fields", "
                                                                      { -.5, .25, -.5 },
                                                                      .5
     },
-                                                                 capped, checked.validated_solution);
+                                                                 capped, checked.validated_solution, explicit_catalog);
     CHECK_FALSE(refused.complete);
-    CHECK((refused.diagnostic == "SPECTRAL_PIPELINE_PLACED" || refused.diagnostic == "SPECTRAL_PIPELINE_RESIDENCY"));
+    REQUIRE(refused.failure_details);
+    CHECK(refused.failure_details->reason == solver::TerminationReason::resource_limit);
+    CHECK(refused.failure_details->cause_code == "FIELD_MEMORY_LIMIT");
+    CHECK(refused.working_bytes_peak <= capped.max_working_bytes);
+    CHECK(!refused.ranked_candidates);
+    CHECK(geo::revalidate(checked.validated_solution).validated_solution);
 }
 
 TEST_CASE("AT-12 stage A clamps cumulative representation and proximity work", "[solver][T007][AT-12][pipeline]")
@@ -2709,12 +2897,14 @@ TEST_CASE("AT-12 stage A clamps cumulative representation and proximity work", "
     solver::SpectralLimits generous;
     generous.per_representation.max_cells = 100'000;
     generous.per_correlation.max_padded_cells = 100'000;
+    const auto explicit_catalog = std::get<solver::OrientationCatalog>(
+        solver::make_orientation_catalog(context->constraints().orientations, generous.spectral.max_orientations));
     const auto measured = solver::detail::build_spectral_pipeline(context,
                                                                   {
                                                                       { -.5, .25, -.5 },
                                                                       .5
     },
-                                                                  generous, {});
+                                                                  generous, {}, explicit_catalog);
     REQUIRE(measured.complete);
     REQUIRE(measured.stats.representation_kernel_work > 1);
     REQUIRE(measured.stats.representation_cell_visits > 1);
@@ -2729,7 +2919,7 @@ TEST_CASE("AT-12 stage A clamps cumulative representation and proximity work", "
                                                                           { -.5, .25, -.5 },
                                                                           .5
     },
-                                                                      reserved, {});
+                                                                      reserved, {}, explicit_catalog);
     REQUIRE(with_reserve.complete);
     CHECK(with_reserve.working_bytes_peak == measured.working_bytes_peak + reserved.reserved_bytes);
 
@@ -2740,7 +2930,7 @@ TEST_CASE("AT-12 stage A clamps cumulative representation and proximity work", "
                                                                   { -.5, .25, -.5 },
                                                                   .5
     },
-                                                              work_limited, {});
+                                                              work_limited, {}, explicit_catalog);
     CHECK_FALSE(work.complete);
     CHECK(work.stats.representation_kernel_work <= work_limited.max_representation_kernel_work);
 
@@ -2751,7 +2941,7 @@ TEST_CASE("AT-12 stage A clamps cumulative representation and proximity work", "
                                                                     { -.5, .25, -.5 },
                                                                     .5
     },
-                                                                visit_limited, {});
+                                                                visit_limited, {}, explicit_catalog);
     CHECK_FALSE(visits.complete);
     CHECK(visits.stats.representation_cell_visits <= visit_limited.max_representation_cell_visits);
 
@@ -2762,7 +2952,7 @@ TEST_CASE("AT-12 stage A clamps cumulative representation and proximity work", "
                                                                        { -.5, .25, -.5 },
                                                                        .5
     },
-                                                                   proximity_limited, {});
+                                                                   proximity_limited, {}, explicit_catalog);
     CHECK_FALSE(proximity.complete);
     CHECK(proximity.stats.proximity_terms <= proximity_limited.max_proximity_terms);
 }
@@ -2772,14 +2962,1086 @@ TEST_CASE("AT-12 stage A rejects an out-of-range signed grid window before conve
 {
     const auto context = l_context({ 3, 2, 1 });
     solver::SpectralLimits limits;
+    const auto explicit_catalog = std::get<solver::OrientationCatalog>(
+        solver::make_orientation_catalog(context->constraints().orientations, limits.spectral.max_orientations));
     const auto pipeline = solver::detail::build_spectral_pipeline(context,
                                                                   {
                                                                       { -0x1p63, 0, 0 },
                                                                       1
     },
-                                                                  limits, {});
+                                                                  limits, {}, explicit_catalog);
     CHECK_FALSE(pipeline.complete);
     CHECK(pipeline.diagnostic == "SPECTRAL_PIPELINE_WINDOW_LIMIT");
     CHECK(pipeline.stats.representation_kernel_work == 0);
     CHECK(pipeline.stats.representation_cell_visits == 0);
+}
+
+TEST_CASE("T010 workspace reuses exact fields and correlation for a bounded second page", "[solver][T010][workspace]")
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .125;
+    const auto context = cuboid_context(
+        {
+            -.25, -.25, -.25
+    },
+        { .25, .25, .25 }, { 4, 4, 4 }, { { 0, 0, 0, 1 } }, constraints);
+    const auto seed =
+        native_solution(context, {
+                                     { "a", { 1, 1, 1 },    { 0, 0, 0, 1 } },
+                                     { "b", { 1.75, 1, 1 }, { 0, 0, 0, 1 } }
+    });
+    const solver::OrientationCatalog catalog { 1, { { 0, 0, 0, 1 } } };
+    const geo::GridLattice lattice {
+        { -.125, .25, -.125 },
+        .5
+    };
+    solver::SpectralLimits limits;
+    limits.per_representation.max_cells = 100'000;
+    limits.per_correlation.max_padded_cells = 100'000;
+    solver::detail::SpectralWorkspace workspace;
+    BinaryOracleCapture first_capture;
+    binary_capture_target = &first_capture;
+    const auto first = solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, seed, catalog, {},
+                                                               &capture_binary_oracle);
+    binary_capture_target = nullptr;
+    REQUIRE(first.complete);
+    REQUIRE(first_capture.exact);
+    REQUIRE(first_capture.proximity_observed);
+    CHECK(first_capture.proximity_max_error < 1e-10);
+    REQUIRE_FALSE(first.ranked_candidates->empty());
+    const auto revision = workspace.layout_revision();
+    CHECK(revision > 0);
+    auto bounded = limits;
+    bounded.max_representation_kernel_work = first.stats.representation_kernel_work / 4;
+    BinaryOracleCapture second_capture;
+    binary_capture_target = &second_capture;
+    const solver::detail::CandidatePageQuery query { 0, first.ranked_candidates->back(),
+                                                     solver::detail::CandidatePageMode::ordinary };
+    const auto second = solver::detail::build_spectral_pipeline(workspace, context, lattice, bounded, seed, catalog,
+                                                                query, &capture_binary_oracle);
+    binary_capture_target = nullptr;
+    CAPTURE(second.diagnostic, second.stats.representation_kernel_work);
+    REQUIRE(second.complete);
+    REQUIRE(second_capture.exact);
+    REQUIRE(second_capture.proximity_observed);
+    CHECK(second_capture.proximity_max_error < 1e-10);
+    CHECK(second.stats.correlations == 0);
+    CHECK(second.stats.representation_cell_visits == 0);
+    CHECK(second.stats.representation_kernel_work > 0);
+    CHECK(workspace.layout_revision() == revision);
+    for (const auto& page : *second.ranked_candidates) {
+        CHECK(std::none_of(first.ranked_candidates->begin(), first.ranked_candidates->end(), [&](const auto& earlier) {
+            return page.translation == earlier.translation;
+        }));
+    }
+}
+
+TEST_CASE("T010 workspace layout updates preserve exact overlapping fields and rejected layout revision",
+          "[solver][T010][workspace]")
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .125;
+    const auto context = cuboid_context(
+        {
+            -.25, -.25, -.25
+    },
+        { .25, .25, .25 }, { 4, 4, 4 }, { { 0, 0, 0, 1 } }, constraints);
+    const geo::CopyPose a {
+        "a", { 1, 1, 1 },
+         { 0, 0, 0, 1 }
+    },
+        b { "b", { 1.75, 1, 1 }, { 0, 0, 0, 1 } }, moved_b { "b", { 2.5, 1.5, 1 }, { 0, 0, 0, 1 } };
+    const solver::OrientationCatalog catalog { 1, { { 0, 0, 0, 1 } } };
+    const geo::GridLattice lattice {
+        { -.125, .25, -.125 },
+        .5
+    };
+    solver::SpectralLimits limits;
+    limits.per_representation.max_cells = limits.per_correlation.max_padded_cells = 100'000;
+    solver::detail::SpectralWorkspace workspace;
+    std::uint64_t previous_revision = 0;
+    std::shared_ptr<const geo::ValidatedSolution> last;
+    for (const auto& poses : {
+             std::vector<geo::CopyPose> { a, b },
+              std::vector<geo::CopyPose> { b },
+              std::vector<geo::CopyPose> { a, b },
+             std::vector<geo::CopyPose> { a, moved_b }
+    }) {
+        last = native_solution(context, poses);
+        BinaryOracleCapture capture;
+        binary_capture_target = &capture;
+        const auto current = solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, last, catalog,
+                                                                     {}, &capture_binary_oracle);
+        binary_capture_target = nullptr;
+        REQUIRE(current.complete);
+        WorkspaceFieldCapture reused_fields, fresh_fields;
+        workspace_field_target = &reused_fields;
+        const auto reused = solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, last, catalog,
+                                                                    {}, &capture_workspace_fields);
+        workspace_field_target = &fresh_fields;
+        const auto fresh =
+            solver::detail::build_spectral_pipeline(context, lattice, limits, last, catalog, &capture_workspace_fields);
+        workspace_field_target = nullptr;
+        REQUIRE(reused.complete);
+        REQUIRE(fresh.complete);
+        CHECK(reused_fields.environment == fresh_fields.environment);
+        CHECK(reused_fields.kernel == fresh_fields.kernel);
+        CHECK(reused_fields.proximity == fresh_fields.proximity);
+        CHECK(reused_fields.binary == fresh_fields.binary);
+        CHECK(reused_fields.ranked == fresh_fields.ranked);
+        CHECK(capture.exact);
+        CHECK(capture.proximity_observed);
+        CHECK(capture.proximity_max_error < 1e-10);
+        CHECK(workspace.layout_revision() > previous_revision);
+        previous_revision = workspace.layout_revision();
+    }
+    const auto foreign = default_fixed_context();
+    const auto wrong = native_solution(foreign, {});
+    const auto rejected =
+        solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, wrong, catalog, {});
+    CHECK_FALSE(rejected.complete);
+    CHECK(workspace.layout_revision() == previous_revision);
+    std::stop_source stop;
+    stop.request_stop();
+    const auto interrupted =
+        solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, native_solution(context, { b }),
+                                                catalog, {}, nullptr, { stop.get_token() });
+    CHECK_FALSE(interrupted.complete);
+    CHECK(workspace.layout_revision() == previous_revision);
+    const auto retained =
+        solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, last, catalog, {});
+    REQUIRE(retained.complete);
+    CHECK(retained.stats.correlations == 0);
+    CHECK(workspace.layout_revision() == previous_revision);
+}
+
+TEST_CASE("T010 workspace evicts bounded orientations and rejects staged memory or late Stop",
+          "[solver][T010][workspace]")
+{
+    const std::vector<geo::Quaternion> rotations {
+        { 0, 0, 0, 1 },
+        { 0, 0, 1, 0 },
+        { 1, 0, 0, 0 }
+    };
+    const auto context = cuboid_context({ -.25, -.375, -.125 }, { .25, .375, .125 }, { 4, 4, 4 }, rotations);
+    const solver::OrientationCatalog catalog { 1, rotations };
+    const auto first_layout = native_solution(context, {
+                                                           { "a", { 1, 1, 1 }, { 0, 0, 0, 1 } }
+    });
+    const auto changed = native_solution(context, {
+                                                      { "a", { 2, 1, 1 }, { 0, 0, 0, 1 } }
+    });
+    const geo::GridLattice lattice {
+        { -.125, .25, -.125 },
+        .5
+    };
+    solver::SpectralLimits limits;
+    limits.per_representation.max_cells = limits.per_correlation.max_padded_cells = 100'000;
+    solver::detail::SpectralWorkspace workspace;
+    for (const auto orientation : { 0ULL, 1ULL, 2ULL, 0ULL }) {
+        BinaryOracleCapture reused_capture, fresh_capture;
+        binary_capture_target = &reused_capture;
+        const solver::detail::CandidatePageQuery query { orientation };
+        const auto reused = solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, first_layout,
+                                                                    catalog, query, &capture_binary_oracle);
+        binary_capture_target = &fresh_capture;
+        const auto fresh = solver::detail::build_spectral_pipeline(context, lattice, limits, first_layout, catalog,
+                                                                   query, &capture_binary_oracle);
+        binary_capture_target = nullptr;
+        REQUIRE(reused.complete);
+        REQUIRE(fresh.complete);
+        CHECK(reused_capture.exact);
+        CHECK(reused_capture.proximity_max_error < 1e-10);
+        REQUIRE(reused.ranked_candidates->size() == fresh.ranked_candidates->size());
+        for (std::size_t index = 0; index != reused.ranked_candidates->size(); ++index) {
+            CHECK((*reused.ranked_candidates)[index].translation == (*fresh.ranked_candidates)[index].translation);
+            CHECK((*reused.ranked_candidates)[index].score == (*fresh.ranked_candidates)[index].score);
+        }
+    }
+    const auto revision = workspace.layout_revision();
+    auto rejected_limits = limits;
+    rejected_limits.max_working_bytes = 1;
+    const auto rejected =
+        solver::detail::build_spectral_pipeline(workspace, context, lattice, rejected_limits, changed, catalog, {});
+    CHECK_FALSE(rejected.complete);
+    CHECK_FALSE(rejected.field_admission);
+    CHECK(workspace.layout_revision() == revision);
+    for (std::int64_t ordinal = 0; ordinal != 4; ++ordinal) {
+        fail_after_test_allocations.store(ordinal, std::memory_order_relaxed);
+        const auto failed =
+            solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, changed, catalog, {});
+        fail_after_test_allocations.store(-1, std::memory_order_relaxed);
+        CAPTURE(ordinal, failed.diagnostic);
+        CHECK_FALSE(failed.complete);
+        CHECK_FALSE(failed.field_admission);
+        CHECK(workspace.layout_revision() == revision);
+        const auto retained =
+            solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, first_layout, catalog, {});
+        REQUIRE(retained.complete);
+        CHECK(retained.stats.correlations == 0);
+    }
+    std::uint64_t polls {};
+    const auto now = [](void* context) noexcept {
+        auto& count = *static_cast<std::uint64_t*>(context);
+        return spectrapack::runtime::Clock::time_point {} + std::chrono::milliseconds(++count);
+    };
+    const solver::RunControl control {
+        {}, spectrapack::runtime::Clock::time_point {} + std::chrono::milliseconds(8), now, &polls
+    };
+    const auto stopped = solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, changed, catalog,
+                                                                 {}, nullptr, control);
+    CHECK_FALSE(stopped.complete);
+    CHECK_FALSE(stopped.field_admission);
+    CHECK(polls >= 8);
+    CHECK(workspace.layout_revision() == revision);
+    const auto resumed =
+        solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, first_layout, catalog, {});
+    REQUIRE(resumed.complete);
+    CHECK(resumed.stats.correlations == 0);
+    REQUIRE(resumed.field_admission);
+    CHECK(resumed.field_admission->working_bytes_upper_bound <= limits.max_working_bytes);
+    CHECK(resumed.field_admission->footprint_copy_count == 1);
+    CHECK(workspace.layout_revision() == revision);
+}
+
+#if defined(_MSC_VER) && defined(_DEBUG)
+TEST_CASE("T010 workspace reports admitted constructor payload freed by a later failure", "[solver][T010][workspace]")
+{
+    const auto context = default_fixed_context();
+    const solver::OrientationCatalog catalog { 1, { { 0, 0, 0, 1 } } };
+    solver::SpectralLimits limits;
+    limits.max_representation_kernel_work = 0;
+    solver::detail::SpectralWorkspace measured;
+    const auto first = solver::detail::build_spectral_pipeline(measured, context, { {}, .5 }, limits, {}, catalog, {});
+    REQUIRE_FALSE(first.complete);
+    REQUIRE(first.diagnostic == "SPECTRAL_PIPELINE_PREPARE");
+    // The three empty PMR containers own checked MSVC iterator proxies.
+    // A cap one proxy below their combined successful constructor residency
+    // admits two proxies, then rejects the third after the earlier two are freed.
+    limits.max_working_bytes = first.working_bytes_peak - sizeof(std::_Container_proxy);
+    solver::detail::SpectralWorkspace denied;
+    const auto failed = solver::detail::build_spectral_pipeline(denied, context, { {}, .5 }, limits, {}, catalog, {});
+    REQUIRE_FALSE(failed.complete);
+    REQUIRE(failed.diagnostic == "SPECTRAL_PIPELINE_ALLOCATION");
+    CHECK(failed.working_bytes_peak == limits.max_working_bytes);
+    CHECK(failed.admitted_bytes_upper_bound == limits.max_working_bytes);
+    CHECK_FALSE(failed.field_admission);
+    CHECK(denied.layout_revision() == 0);
+    CHECK(denied.resident_bytes() == 0);
+}
+#endif
+
+TEST_CASE("T010 correlation entry Stop cannot retain an unenforced admission", "[solver][T010][workspace][entry-stop]")
+{
+    const geo::Quaternion identity { 0, 0, 0, 1 }, z90 { 0, 0, std::sqrt(.5), std::sqrt(.5) };
+    // Strong axis asymmetry keeps the cancelled orientation's FFT-only bound
+    // above the rotated retry's complete field/page admission, without cap changes.
+    const auto context = cuboid_context({ -.125, -4, -.125 }, { .125, 4, .125 }, { 128, 8, 1 }, { identity, z90 });
+    const solver::OrientationCatalog catalog {
+        1, { identity, z90 }
+    };
+    const geo::GridLattice lattice { {}, .5 };
+    solver::SpectralLimits limits;
+    limits.per_representation.max_cells = limits.per_correlation.max_padded_cells = 100'000;
+    struct EntryStop {
+        std::stop_source stop;
+        spectrapack::compute::CorrelationSpec spec {};
+        unsigned calls {}, stop_at {};
+    };
+    struct HookReset {
+        ~HookReset() { spectrapack::compute::detail::set_correlation_entry_hook_for_test(nullptr, nullptr); }
+    };
+    for (const unsigned stop_at : { 1U, 2U }) {
+        solver::detail::SpectralWorkspace workspace;
+        EntryStop entry { {}, {}, 0, stop_at };
+        const auto on_entry = [](const spectrapack::compute::CorrelationSpec& spec, void* state) noexcept {
+            auto& entry = *static_cast<EntryStop*>(state);
+            entry.spec = spec;
+            if (++entry.calls == entry.stop_at) {
+                entry.stop.request_stop();
+            }
+        };
+        HookReset reset;
+        spectrapack::compute::detail::set_correlation_entry_hook_for_test(on_entry, &entry);
+        const auto stopped = solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, {}, catalog,
+                                                                     {}, nullptr, { entry.stop.get_token() });
+        spectrapack::compute::detail::set_correlation_entry_hook_for_test(nullptr, nullptr);
+        CAPTURE(stop_at, stopped.working_bytes_peak, stopped.admitted_bytes_upper_bound);
+        REQUIRE(entry.calls == stop_at);
+        REQUIRE_FALSE(stopped.complete);
+        REQUIRE_FALSE(stopped.field_admission);
+        REQUIRE(stopped.failure_details);
+        CHECK(stopped.failure_details->cause_code == "OPERATION_CANCELLED");
+        CHECK(stopped.stats.correlations == stop_at);
+        CHECK(!stopped.ranked_candidates);
+        // This fixture's completed field preparations are smaller than the
+        // first FFT workspace. An entry Stop must not claim its preflight.
+        const auto estimated = spectrapack::compute::estimate_correlation_cpu(entry.spec);
+        REQUIRE(std::holds_alternative<spectrapack::compute::CorrelationEstimate>(estimated));
+        const auto fft_bytes = std::get<spectrapack::compute::CorrelationEstimate>(estimated).working_bytes;
+        if (stop_at == 1) {
+            REQUIRE(stopped.working_bytes_peak < fft_bytes);
+            CHECK(stopped.admitted_bytes_upper_bound < fft_bytes);
+        }
+        else {
+            // Only binary preflight occurred; the larger proximity reserve
+            // includes its output and has never been checked at this entry.
+            CHECK(stopped.admitted_bytes_upper_bound <= stopped.working_bytes_peak);
+        }
+        const auto retry =
+            solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, {}, catalog, { 1 });
+        CAPTURE(retry.diagnostic);
+        REQUIRE(retry.complete);
+        REQUIRE(retry.field_admission);
+        CHECK(retry.field_admission->working_bytes_upper_bound <= limits.max_working_bytes);
+        if (stop_at == 1) {
+            // The rotated kernel has smaller padding. The failed larger FFT
+            // must not inflate a later successful publication from this workspace.
+            CHECK(retry.field_admission->working_bytes_upper_bound < fft_bytes);
+        }
+    }
+}
+
+TEST_CASE("AT-16 compact public failures and lazy pages transfer without allocation",
+          "[solver][T011][allocation][result-transfer]")
+{
+    using Result = solver::detail::SpectralPipelineResult;
+    STATIC_REQUIRE(std::is_nothrow_move_constructible_v<solver::BaselineOutcome>);
+    STATIC_REQUIRE(std::is_nothrow_move_constructible_v<solver::SpectralOutcome>);
+    STATIC_REQUIRE(std::is_nothrow_move_constructible_v<Result>);
+    const auto context = l_context({ 3.25, 2.25, 1 });
+    const auto initial = native_solution(context, {});
+    solver::SpectralOutcome source;
+    source.run.retained_solution = initial;
+    source.run.stats.candidate_evaluations = 7;
+    source.spectral_stats.correlations = 2;
+    source.run.termination_reason = solver::TerminationReason::resource_limit;
+    source.run.diagnostic_code = "SPECTRAL_PIPELINE_MASK";
+    source.run.failure_details = solver::RunFailureDetails {
+        solver::TerminationReason::resource_limit, "mask", "FIELD_CELL_VISIT_LIMIT",
+        solver::ResourceLimitDetails { "cell_visits", 6, 5 },
+         .5
+    };
+    Result page;
+    page.ranked_candidates = std::make_unique<Result::RankedPage>(std::initializer_list<Result::RankedCandidate> {
+        { { 1, 2, 3 }, 7, true, 4, 0 }
+    });
+    const auto* original_page = page.ranked_candidates.get();
+    std::optional<solver::SpectralOutcome> destination;
+    std::optional<solver::BaselineOutcome> baseline;
+    std::optional<Result> transferred_page;
+    const auto attempts = test_allocation_attempts.load(std::memory_order_relaxed);
+    {
+        AllocationFailureReset reset;
+        fail_test_allocations.store(true, std::memory_order_relaxed);
+        // Fresh optional destinations force non-elided public value transfers.
+        destination.emplace(std::move(source));
+        baseline.emplace(destination->run);
+        transferred_page.emplace(std::move(page));
+        const geo::detail::validation_kernel::KernelFailure kernel { "FIELD_CELL_VISIT_LIMIT", "rasterize-boundary" };
+        const geo::RepresentationFailure field { kernel.code, "conservative field kernel failed", kernel.method };
+        const std::optional<geo::RepresentationFailure> field_destination(field);
+        const spectrapack::compute::CorrelationFailure failure {
+            "CORRELATION_ALLOCATION", "Correlation allocation failed.", { 2, 100, 3 }
+        };
+        const spectrapack::compute::CorrelationOutcome compute_destination(failure);
+        (void)field_destination;
+        (void)compute_destination;
+    }
+    CHECK(test_allocation_attempts.load(std::memory_order_relaxed) == attempts);
+    REQUIRE(destination);
+    CHECK(destination->run.retained_solution == initial);
+    CHECK(destination->run.stats.candidate_evaluations == 7);
+    CHECK(destination->spectral_stats.correlations == 2);
+    REQUIRE(destination->run.failure_details);
+    CHECK(destination->run.failure_details->phase == "mask");
+    CHECK(destination->run.failure_details->cause_code == "FIELD_CELL_VISIT_LIMIT");
+    REQUIRE(destination->run.failure_details->resource);
+    CHECK(destination->run.failure_details->resource->resource == "cell_visits");
+    CHECK(destination->run.failure_details->resource->required == 6);
+    CHECK(destination->run.failure_details->resource->limit == 5);
+    CHECK(destination->run.failure_details->suggested_pitch_mm == .5);
+    REQUIRE(baseline);
+    CHECK(baseline->retained_solution == initial);
+    REQUIRE(transferred_page);
+    CHECK_FALSE(page.ranked_candidates);
+    CHECK(transferred_page->ranked_candidates.get() == original_page);
+    CHECK(transferred_page->ranked_candidates->front().translation == geo::CellIndex { 1, 2, 3 });
+}
+
+TEST_CASE("AT-16 public spectral run contains persistent failure reached inside a field",
+          "[solver][T010][allocation][public-field-oom]")
+{
+    const auto object = geo::test_support::accepted(geo::test_support::cuboid({ -.25, -.25, -.25 }, { .25, .25, .25 }),
+                                                    geo::AssetRole::object);
+    const auto container =
+        geo::test_support::accepted(geo::test_support::cuboid({ 0, 0, 0 }, { 3, 2, 2 }), geo::AssetRole::container);
+    geo::Constraints constraints;
+    constraints.orientations.mode = geo::OrientationMode::fixed;
+    const auto made = geo::make_validation_context(object, container, constraints);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+    const auto initial = native_solution(context, {
+                                                      { "initial", { 1, 1, 1 }, { 0, 0, 0, 1 } }
+    });
+    solver::SpectralLimits limits;
+    limits.baseline.max_candidate_evaluations = 0;
+    limits.baseline.max_search_passes = 0;
+    limits.per_representation.max_cell_visits = 5;
+    solver::SnapshotHandle published;
+    std::optional<solver::SpectralOutcome> outcome;
+    bool escaped {};
+    persistent_field_hook_calls.store(0, std::memory_order_relaxed);
+    {
+        FieldAllocationFailureReset reset;
+        geo::detail::validation_kernel::set_field_failure_allocation_hook(enable_counted_persistent_field_failure);
+        try {
+            outcome.emplace(
+                solver::run_cpu_spectral(context, { {}, .5 }, limits, {}, [&](solver::SnapshotHandle value) {
+                published = value;
+            }, initial));
+        }
+        catch (...) {
+            escaped = true;
+        }
+    }
+    const auto after_hook = test_allocation_attempts.load(std::memory_order_relaxed) -
+                            field_hook_allocation_start.load(std::memory_order_relaxed);
+    CHECK(after_hook == 0);
+    if (outcome) {
+        CAPTURE(outcome->run.diagnostic_code, outcome->run.stats.candidate_evaluations);
+    }
+    REQUIRE(persistent_field_hook_calls.load(std::memory_order_relaxed) > 0);
+    CHECK_FALSE(escaped);
+    REQUIRE(outcome);
+    CHECK(outcome->run.termination_reason == solver::TerminationReason::resource_limit);
+    CHECK(outcome->run.retained_solution == initial);
+    REQUIRE(outcome->run.failure_details);
+    CHECK(outcome->run.failure_details->cause_code == "FIELD_CELL_VISIT_LIMIT");
+    CHECK(outcome->run.stats.candidate_evaluations == 0);
+    CHECK(outcome->spectral_stats.representation_cell_visits == 5);
+    REQUIRE(published);
+    REQUIRE(outcome->run.best);
+    CHECK(outcome->run.best == published);
+    CHECK(published->solution == initial);
+}
+
+TEST_CASE("AT-16 public field diagnostic publication contains transient allocation rejection",
+          "[solver][T010][allocation][public-diagnostic-ordinal]")
+{
+    const auto object = geo::test_support::accepted(geo::test_support::cuboid({ -.25, -.25, -.25 }, { .25, .25, .25 }),
+                                                    geo::AssetRole::object);
+    const auto container =
+        geo::test_support::accepted(geo::test_support::cuboid({ 0, 0, 0 }, { 3, 2, 2 }), geo::AssetRole::container);
+    geo::Constraints constraints;
+    constraints.orientations.mode = geo::OrientationMode::fixed;
+    const auto made = geo::make_validation_context(object, container, constraints);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+    const auto initial = native_solution(context, {
+                                                      { "initial", { 1, 1, 1 }, { 0, 0, 0, 1 } }
+    });
+    solver::SpectralLimits limits;
+    limits.baseline.max_candidate_evaluations = 0;
+    limits.baseline.max_search_passes = 0;
+    limits.per_representation.max_cell_visits = 5;
+    for (std::int64_t ordinal = 0; ordinal != 13; ++ordinal) {
+        std::optional<solver::SpectralOutcome> outcome;
+        solver::SnapshotHandle published;
+        bool escaped {};
+        persistent_field_hook_calls.store(0, std::memory_order_relaxed);
+        transient_field_fault_ordinal = ordinal;
+        {
+            FieldAllocationFailureReset reset;
+            geo::detail::validation_kernel::set_field_failure_allocation_hook(enable_transient_field_failure);
+            try {
+                outcome.emplace(
+                    solver::run_cpu_spectral(context, { {}, .5 }, limits, {}, [&](solver::SnapshotHandle value) {
+                    published = value;
+                }, initial));
+            }
+            catch (...) {
+                escaped = true;
+            }
+        }
+        const auto after_hook = test_allocation_attempts.load(std::memory_order_relaxed) -
+                                field_hook_allocation_start.load(std::memory_order_relaxed);
+        CAPTURE(ordinal);
+        CHECK(after_hook == 0);
+        REQUIRE(persistent_field_hook_calls.load(std::memory_order_relaxed) > 0);
+        CHECK_FALSE(escaped);
+        REQUIRE(outcome);
+        CHECK(outcome->run.termination_reason == solver::TerminationReason::resource_limit);
+        CHECK(outcome->run.retained_solution == initial);
+        REQUIRE(outcome->run.failure_details);
+        CHECK(outcome->run.failure_details->cause_code == "FIELD_CELL_VISIT_LIMIT");
+        CHECK(outcome->run.stats.candidate_evaluations == 0);
+        CHECK(outcome->spectral_stats.representation_cell_visits == 5);
+        REQUIRE(published);
+        REQUIRE(outcome->run.best);
+        CHECK(outcome->run.best == published);
+    }
+}
+
+TEST_CASE("AT-16 computational metadata rejects below its boundary before allocation",
+          "[solver][T011][allocation][metadata-boundary]")
+{
+    const auto context = l_context({ 3.25, 2.25, 1 });
+    const auto initial = native_solution(context, {});
+    std::stop_source stop;
+    stop.request_stop();
+    solver::BaselineLimits baseline_limits;
+    baseline_limits.max_working_bytes = 0;
+    const auto baseline_rejected = solver::run_aabb_baseline(context, baseline_limits, {}, {}, initial);
+    REQUIRE(baseline_rejected.failure_details);
+    REQUIRE(baseline_rejected.failure_details->resource);
+    const auto baseline_boundary = baseline_rejected.failure_details->resource->required;
+    REQUIRE(baseline_boundary > 0);
+    solver::SpectralLimits spectral_limits;
+    const auto catalog = std::get<solver::OrientationCatalog>(solver::make_orientation_catalog(
+        context->constraints().orientations, spectral_limits.spectral.max_orientations));
+    spectral_limits.max_working_bytes = 0;
+    const auto spectral_rejected =
+        solver::run_cpu_spectral(context, { {}, 1 }, catalog, spectral_limits, {}, {}, initial);
+    REQUIRE(spectral_rejected.run.failure_details);
+    REQUIRE(spectral_rejected.run.failure_details->resource);
+    const auto spectral_boundary = spectral_rejected.run.failure_details->resource->required;
+    REQUIRE(spectral_boundary > 0);
+    for (const bool exact : { false, true }) {
+        baseline_limits.max_working_bytes = baseline_boundary - !exact;
+        spectral_limits.max_working_bytes = spectral_boundary - !exact;
+        std::optional<solver::BaselineOutcome> baseline;
+        std::optional<solver::SpectralOutcome> spectral;
+        const auto attempts = test_allocation_attempts.load(std::memory_order_relaxed);
+        {
+            AllocationFailureReset reset;
+            fail_test_allocations.store(true, std::memory_order_relaxed);
+            baseline.emplace(solver::run_aabb_baseline(context, baseline_limits, { stop.get_token() }, {}, initial));
+            spectral.emplace(solver::run_cpu_spectral(context, { {}, 1 }, catalog, spectral_limits,
+                                                      { stop.get_token() }, {}, initial));
+        }
+        const auto allocations = test_allocation_attempts.load(std::memory_order_relaxed) - attempts;
+        CAPTURE(exact, baseline_boundary, spectral_boundary);
+        CHECK(allocations == 0);
+        REQUIRE(baseline);
+        REQUIRE(spectral);
+        CHECK(baseline->retained_solution == initial);
+        CHECK(spectral->run.retained_solution == initial);
+        const auto reason = exact ? solver::TerminationReason::user_stopped : solver::TerminationReason::resource_limit;
+        CHECK(baseline->termination_reason == reason);
+        CHECK(spectral->run.termination_reason == reason);
+        CHECK(baseline->stats.candidate_evaluations == 0);
+        CHECK(spectral->run.stats.candidate_evaluations == 0);
+        if (exact) {
+            CHECK(baseline->stats.tracked_working_bytes_peak == baseline_boundary);
+            CHECK(spectral->run.stats.tracked_working_bytes_peak == spectral_boundary);
+        }
+        else {
+            REQUIRE(baseline->failure_details->resource);
+            REQUIRE(spectral->run.failure_details->resource);
+            CHECK(baseline->failure_details->resource->limit == baseline_boundary - 1);
+            CHECK(spectral->run.failure_details->resource->limit == spectral_boundary - 1);
+        }
+    }
+}
+
+TEST_CASE("AT-16 real correlation payload transfer safely rejects allocation",
+          "[solver][T011][allocation][compute-transfer]")
+{
+    namespace compute = spectrapack::compute;
+    const compute::CorrelationSpec spec {
+        { 1, 1, 1 },
+        { 1, 1, 1 },
+        {},
+        {}
+    };
+    const std::array<std::uint8_t, 1> cells { 1 };
+    auto completed = compute::correlate_binary_cpu(spec, cells, cells);
+    REQUIRE(std::holds_alternative<compute::CorrelationResult>(completed));
+    auto& source = std::get<compute::CorrelationResult>(completed);
+    const auto* payload = source.values.data();
+    std::optional<compute::CorrelationResult> destination;
+    bool rejected {};
+    {
+        AllocationFailureReset reset;
+        fail_test_allocations.store(true, std::memory_order_relaxed);
+        try {
+            destination.emplace(std::move(source));
+        }
+        catch (const std::bad_alloc&) {
+            rejected = true;
+        }
+    }
+#if defined(_MSC_VER) && defined(_DEBUG)
+    CHECK(rejected);
+    CHECK_FALSE(destination);
+    CHECK(source.values.data() == payload);
+    REQUIRE(source.values.size() == 1);
+    CHECK(source.values.front() == 1);
+#else
+    CHECK_FALSE(rejected);
+    REQUIRE(destination);
+    CHECK(destination->values.data() == payload);
+    CHECK(destination->values.front() == 1);
+#endif
+    std::optional<compute::CorrelationOutcome> failed;
+    {
+        AllocationFailureReset reset;
+        fail_test_allocations.store(true, std::memory_order_relaxed);
+        failed.emplace(compute::correlate_binary_cpu(spec, cells, cells));
+    }
+    REQUIRE(failed);
+    REQUIRE(std::holds_alternative<compute::CorrelationFailure>(*failed));
+    const auto& failure = std::get<compute::CorrelationFailure>(*failed);
+    CHECK(failure.code == "CORRELATION_ALLOCATION");
+    CHECK(failure.stats.working_bytes_peak > 0);
+    CHECK(failure.stats.padded_cells == 1);
+}
+
+TEST_CASE("AT-16 lazy ranked page allocation failure leaves reusable native workspace",
+          "[solver][T011][allocation][page-allocation]")
+{
+    const auto context = l_context({ 8, 8, 8 });
+    solver::SpectralLimits limits;
+    const auto catalog = std::get<solver::OrientationCatalog>(
+        solver::make_orientation_catalog(context->constraints().orientations, limits.spectral.max_orientations));
+    solver::detail::SpectralWorkspace workspace;
+    const auto warm = solver::detail::build_spectral_pipeline(workspace, context, { {}, 1 }, limits, {}, catalog, {});
+    REQUIRE(warm.complete);
+    REQUIRE(warm.ranked_candidates);
+    REQUIRE_FALSE(warm.ranked_candidates->empty());
+    const auto revision = workspace.layout_revision();
+    const auto resident = workspace.resident_bytes();
+    bool hook_reached {};
+    static thread_local bool* observer_reached;
+    struct ObserverReset {
+        ~ObserverReset() { observer_reached = nullptr; }
+    } observer_reset;
+    observer_reached = &hook_reached;
+    const auto fail_after_cached_correlations = [](const solver::detail::BinaryObservation& fields) noexcept {
+        if (!fields.proximity_values.empty()) {
+            *observer_reached = true;
+            enable_persistent_allocation_failure();
+        }
+    };
+    std::optional<solver::detail::SpectralPipelineResult> failed;
+    {
+        AllocationFailureReset reset;
+        failed.emplace(solver::detail::build_spectral_pipeline(workspace, context, { {}, 1 }, limits, {}, catalog, {},
+                                                               fail_after_cached_correlations));
+    }
+    observer_reached = nullptr;
+    REQUIRE(hook_reached);
+    REQUIRE(failed);
+    REQUIRE_FALSE(failed->complete);
+    REQUIRE(failed->failure_details);
+    CHECK(failed->failure_details->cause_code == "FIELD_ALLOCATION_FAILURE");
+    CHECK_FALSE(failed->ranked_candidates);
+    CHECK(failed->stats.correlations == 0);
+    CHECK(workspace.layout_revision() == revision);
+    CHECK(workspace.resident_bytes() == resident);
+    const auto retry = solver::detail::build_spectral_pipeline(workspace, context, { {}, 1 }, limits, {}, catalog, {});
+    REQUIRE(retry.complete);
+    REQUIRE(retry.ranked_candidates);
+    REQUIRE(retry.ranked_candidates->size() == warm.ranked_candidates->size());
+    for (std::size_t index = 0; index != retry.ranked_candidates->size(); ++index) {
+        CHECK((*retry.ranked_candidates)[index].translation == (*warm.ranked_candidates)[index].translation);
+        CHECK((*retry.ranked_candidates)[index].score == (*warm.ranked_candidates)[index].score);
+    }
+}
+
+TEST_CASE("AT-16 public catalog OOM returns a resource failure with the original incumbent",
+          "[solver][T011][allocation][catalog-oom]")
+{
+    const auto context = l_context({ 3.25, 2.25, 1 });
+    const auto initial = native_solution(context, {});
+    std::optional<solver::SpectralOutcome> out;
+    bool escaped {};
+    {
+        AllocationFailureReset reset;
+        fail_test_allocations.store(true, std::memory_order_relaxed);
+        try {
+            out.emplace(solver::run_cpu_spectral(context, { {}, 1 }, {}, {}, {}, initial));
+        }
+        catch (...) {
+            escaped = true;
+        }
+    }
+    CHECK_FALSE(escaped);
+    REQUIRE(out);
+    CHECK(out->run.termination_reason == solver::TerminationReason::resource_limit);
+    CHECK(out->run.diagnostic_code == "SPECTRAL_CATALOG_ALLOCATION");
+    CHECK(out->run.retained_solution == initial);
+    CHECK_FALSE(out->run.best);
+    CHECK(out->run.stats.candidate_evaluations == 0);
+}
+
+TEST_CASE("AT-16 raw catalog bytes and existing inputs are admitted before allocation",
+          "[solver][T011][allocation][catalog-admission]")
+{
+    const auto context = l_context({ 3.25, 2.25, 1 });
+    const auto initial = native_solution(context, {});
+    solver::SpectralLimits limits;
+    limits.reserved_bytes = 321;
+    limits.spectral.reserved_bytes = 123;
+    limits.max_working_bytes = 0;
+    const auto below = solver::run_cpu_spectral(context, { {}, 1 }, limits, {}, {}, initial);
+    REQUIRE(below.run.failure_details);
+    REQUIRE(below.run.failure_details->resource);
+    const auto fixed = below.run.failure_details->resource->required;
+    limits.max_working_bytes = fixed + 1024;
+    const auto attempts = test_allocation_attempts.load(std::memory_order_relaxed);
+    const auto out = solver::run_cpu_spectral(context, { {}, 1 }, limits, {}, {}, initial);
+    const auto allocations = test_allocation_attempts.load(std::memory_order_relaxed) - attempts;
+    CHECK(allocations == 0);
+    CHECK(out.run.termination_reason == solver::TerminationReason::resource_limit);
+    CHECK(out.run.retained_solution == initial);
+    CHECK(out.run.diagnostic_code == "SPECTRAL_RESOURCE_LIMIT");
+    REQUIRE(out.run.failure_details);
+    REQUIRE(out.run.failure_details->resource);
+    CHECK(out.run.failure_details->resource->resource == "orientation_catalog");
+    const auto required = out.run.failure_details->resource->required;
+    REQUIRE(required > limits.max_working_bytes);
+    std::stop_source stop;
+    stop.request_stop();
+    auto generous = limits;
+    generous.max_working_bytes = UINT64_MAX;
+    const auto entry_stop = solver::run_cpu_spectral(context, { {}, 1 }, generous, { stop.get_token() }, {}, initial);
+    REQUIRE(entry_stop.run.termination_reason == solver::TerminationReason::user_stopped);
+    const auto existing = entry_stop.run.stats.tracked_working_bytes_peak;
+    REQUIRE(existing < required);
+    CHECK(out.run.stats.tracked_working_bytes_peak == existing);
+    for (const bool below_input : { false, true }) {
+        limits.max_working_bytes = existing - below_input;
+        const auto start = test_allocation_attempts.load(std::memory_order_relaxed);
+        const auto refused = solver::run_cpu_spectral(context, { {}, 1 }, limits, {}, {}, initial);
+        const auto allocated = test_allocation_attempts.load(std::memory_order_relaxed) - start;
+        CAPTURE(below_input, existing, required, allocated);
+        CHECK(allocated == 0);
+        CHECK(refused.run.termination_reason == solver::TerminationReason::resource_limit);
+        CHECK(refused.run.retained_solution == initial);
+        CHECK(refused.run.stats.tracked_working_bytes_peak == existing);
+        REQUIRE(refused.run.failure_details->resource);
+        CHECK(refused.run.failure_details->resource->required == required);
+    }
+    for (const bool exact : { false, true }) {
+        limits.max_working_bytes = required - !exact;
+        const auto start = test_allocation_attempts.load(std::memory_order_relaxed);
+        const auto stopped = solver::run_cpu_spectral(context, { {}, 1 }, limits, { stop.get_token() }, {}, initial);
+        const auto allocated = test_allocation_attempts.load(std::memory_order_relaxed) - start;
+        CAPTURE(exact, required, allocated);
+        CHECK(stopped.run.retained_solution == initial);
+        if (exact) {
+            CHECK(stopped.run.termination_reason == solver::TerminationReason::user_stopped);
+            CHECK(allocated == 0);
+            CHECK(stopped.run.stats.tracked_working_bytes_peak <= required);
+        }
+        else {
+            CHECK(stopped.run.termination_reason == solver::TerminationReason::resource_limit);
+            CHECK(allocated == 0);
+            REQUIRE(stopped.run.failure_details->resource);
+            CHECK(stopped.run.failure_details->resource->required == required);
+            CHECK(stopped.run.stats.tracked_working_bytes_peak <= limits.max_working_bytes);
+        }
+    }
+}
+
+TEST_CASE("AT-16 refused lazy page admission does not raise observed peak", "[solver][T011][allocation][page-cap-peak]")
+{
+    const auto context = l_context({ 8, 8, 8 });
+    solver::SpectralLimits limits;
+    const auto catalog = std::get<solver::OrientationCatalog>(
+        solver::make_orientation_catalog(context->constraints().orientations, limits.spectral.max_orientations));
+    solver::detail::SpectralWorkspace workspace;
+    const auto warm = solver::detail::build_spectral_pipeline(workspace, context, { {}, 1 }, limits, {}, catalog, {});
+    REQUIRE(warm.complete);
+    const auto measured =
+        solver::detail::build_spectral_pipeline(workspace, context, { {}, 1 }, limits, {}, catalog, {});
+    REQUIRE(measured.complete);
+    REQUIRE(measured.ranked_candidates);
+    limits.max_working_bytes = measured.working_bytes_peak - 1;
+    const auto attempts = test_allocation_attempts.load(std::memory_order_relaxed);
+    const auto refused =
+        solver::detail::build_spectral_pipeline(workspace, context, { {}, 1 }, limits, {}, catalog, {});
+    const auto allocations = test_allocation_attempts.load(std::memory_order_relaxed) - attempts;
+    CAPTURE(measured.working_bytes_peak, refused.working_bytes_peak, limits.max_working_bytes, allocations);
+    REQUIRE_FALSE(refused.complete);
+    CHECK(refused.diagnostic == "SPECTRAL_PIPELINE_RESIDENCY");
+    CHECK_FALSE(refused.ranked_candidates);
+    CHECK(refused.working_bytes_peak <= limits.max_working_bytes);
+    CHECK_FALSE(refused.field_admission);
+}
+
+TEST_CASE("AT-16 catalog payload moves throw safely and compact failures allocate nothing",
+          "[solver][T011][allocation][catalog-transfer]")
+{
+    geo::OrientationPolicy policy;
+    auto source = solver::make_orientation_catalog(policy, 1);
+    REQUIRE(std::holds_alternative<solver::OrientationCatalog>(source));
+    const auto* payload = std::get<solver::OrientationCatalog>(source).quaternions.data();
+    std::optional<solver::CatalogOutcome> moved;
+    std::optional<solver::CatalogOutcome> failure;
+    bool rejected {};
+    const auto start = test_allocation_attempts.load(std::memory_order_relaxed);
+    {
+        AllocationFailureReset reset;
+        fail_test_allocations.store(true, std::memory_order_relaxed);
+        try {
+            moved.emplace(std::move(source));
+        }
+        catch (const std::bad_alloc&) {
+            rejected = true;
+        }
+        failure.emplace(
+            solver::CatalogFailure { "ORIENTATION_ALLOCATION_FAILURE", "Orientation catalog allocation failed." });
+    }
+    const auto allocations = test_allocation_attempts.load(std::memory_order_relaxed) - start;
+#if defined(_MSC_VER) && defined(_DEBUG)
+    CHECK(rejected);
+    CHECK_FALSE(moved);
+    CHECK(std::get<solver::OrientationCatalog>(source).quaternions.data() == payload);
+    CHECK(allocations == 1);
+#else
+    CHECK_FALSE(rejected);
+    REQUIRE(moved);
+    CHECK(std::get<solver::OrientationCatalog>(*moved).quaternions.data() == payload);
+    CHECK(allocations == 0);
+#endif
+    REQUIRE(failure);
+    CHECK(std::get<solver::CatalogFailure>(*failure).code == "ORIENTATION_ALLOCATION_FAILURE");
+
+    const auto context = l_context({ 3.25, 2.25, 1 });
+    const auto initial = native_solution(context, {});
+#if defined(_MSC_VER) && defined(_DEBUG)
+    constexpr std::int64_t factory_allocations = 3;
+#else
+    constexpr std::int64_t factory_allocations = 1;
+#endif
+    for (std::int64_t ordinal = 0; ordinal <= factory_allocations; ++ordinal) {
+        unsigned clock_calls {};
+        solver::RunControl control;
+        control.deadline = spectrapack::runtime::Clock::time_point { std::chrono::seconds { 1 } };
+        control.now_context = &clock_calls;
+        control.now_fn = [](void* context) noexcept {
+            const auto calls = ++*static_cast<unsigned*>(context);
+            return spectrapack::runtime::Clock::time_point { std::chrono::seconds { calls > 1 ? 1 : 0 } };
+        };
+        std::optional<solver::SpectralOutcome> out;
+        bool escaped {};
+        bool fault_reached {};
+        {
+            AllocationFailureReset reset;
+            fail_after_test_allocations.store(ordinal, std::memory_order_relaxed);
+            try {
+                out.emplace(solver::run_cpu_spectral(context, { {}, 1 }, {}, control, {}, initial));
+            }
+            catch (...) {
+                escaped = true;
+            }
+            fault_reached = fail_after_test_allocations.load(std::memory_order_relaxed) == -1;
+        }
+        CAPTURE(ordinal, clock_calls, fault_reached);
+        CHECK_FALSE(escaped);
+        REQUIRE(out);
+        CHECK(out->run.retained_solution == initial);
+        CHECK(out->run.stats.candidate_evaluations == 0);
+        CHECK_FALSE(out->run.best);
+        if (ordinal < factory_allocations) {
+            CHECK(fault_reached);
+            CHECK(clock_calls == 1);
+            CHECK(out->run.termination_reason == solver::TerminationReason::resource_limit);
+            CHECK(out->run.diagnostic_code == "SPECTRAL_CATALOG_ALLOCATION");
+        }
+        else {
+            CHECK_FALSE(fault_reached);
+            CHECK(clock_calls == 2);
+            CHECK(out->run.termination_reason == solver::TerminationReason::budget_exhausted);
+            CHECK(out->run.diagnostic_code == "PHYSICAL_DEADLINE");
+        }
+    }
+}
+
+TEST_CASE("AT-16 partial ranked page allocation reports actual owners and preserves workspace",
+          "[solver][T011][allocation][page-partial]")
+{
+    const auto context = l_context({ 8, 8, 8 });
+    solver::SpectralLimits limits;
+    const auto catalog = std::get<solver::OrientationCatalog>(
+        solver::make_orientation_catalog(context->constraints().orientations, limits.spectral.max_orientations));
+    solver::detail::SpectralWorkspace workspace;
+    const auto warm = solver::detail::build_spectral_pipeline(workspace, context, { {}, 1 }, limits, {}, catalog, {});
+    REQUIRE(warm.complete);
+    const auto measured =
+        solver::detail::build_spectral_pipeline(workspace, context, { {}, 1 }, limits, {}, catalog, {});
+    REQUIRE(measured.complete);
+    REQUIRE(measured.ranked_candidates);
+    const auto revision = workspace.layout_revision();
+    const auto resident = workspace.resident_bytes();
+    static thread_local std::int64_t* fault_ordinal;
+    struct ResetObserver {
+        ~ResetObserver() { fault_ordinal = nullptr; }
+    } reset_observer;
+    const auto fail_page = [](const solver::detail::BinaryObservation& fields) noexcept {
+        if (!fields.proximity_values.empty()) {
+            fail_after_test_allocations.store(*fault_ordinal, std::memory_order_relaxed);
+        }
+    };
+#if defined(_MSC_VER) && defined(_DEBUG)
+    constexpr std::int64_t allocation_count = 3;
+#else
+    constexpr std::int64_t allocation_count = 2;
+#endif
+    std::uint64_t previous_peak {};
+    for (std::int64_t ordinal = 0; ordinal != allocation_count; ++ordinal) {
+        fault_ordinal = &ordinal;
+        std::optional<solver::detail::SpectralPipelineResult> out;
+        {
+            AllocationFailureReset reset;
+            out.emplace(solver::detail::build_spectral_pipeline(workspace, context, { {}, 1 }, limits, {}, catalog, {},
+                                                                fail_page));
+        }
+        CAPTURE(ordinal, out->working_bytes_peak, measured.working_bytes_peak);
+        REQUIRE_FALSE(out->complete);
+        REQUIRE(out->failure_details);
+        CHECK(out->failure_details->cause_code == "FIELD_ALLOCATION_FAILURE");
+        CHECK(out->stats.correlations == 0);
+        CHECK(workspace.layout_revision() == revision);
+        CHECK(workspace.resident_bytes() == resident);
+        CHECK(out->working_bytes_peak < measured.working_bytes_peak);
+        if (ordinal != 0) {
+            CHECK(out->working_bytes_peak > previous_peak);
+        }
+        if (ordinal == allocation_count - 1) {
+            REQUIRE(out->ranked_candidates);
+            CHECK(out->ranked_candidates->capacity() == 0);
+        }
+        else {
+            CHECK_FALSE(out->ranked_candidates);
+        }
+        previous_peak = out->working_bytes_peak;
+    }
+}
+
+TEST_CASE("AT-16 raw catalog entry controls precede allocation after complete admission",
+          "[solver][T011][allocation][raw-entry-controls]")
+{
+    const auto context = l_context({ 3.25, 2.25, 1 });
+    const auto initial = native_solution(context, {});
+    std::stop_source stop;
+    stop.request_stop();
+    for (const bool deadline : { false, true }) {
+        solver::RunControl control;
+        if (deadline) {
+            control.deadline = std::chrono::steady_clock::now() - std::chrono::milliseconds { 1 };
+        }
+        else {
+            control.stop = stop.get_token();
+        }
+        std::optional<solver::SpectralOutcome> out;
+        bool escaped {};
+        const auto attempts = test_allocation_attempts.load(std::memory_order_relaxed);
+        {
+            AllocationFailureReset reset;
+            fail_test_allocations.store(true, std::memory_order_relaxed);
+            try {
+                out.emplace(solver::run_cpu_spectral(context, { {}, 1 }, {}, control, {}, initial));
+            }
+            catch (...) {
+                escaped = true;
+            }
+        }
+        const auto allocated = test_allocation_attempts.load(std::memory_order_relaxed) - attempts;
+        CAPTURE(deadline, allocated);
+        CHECK_FALSE(escaped);
+        REQUIRE(out);
+        CHECK(allocated == 0);
+        CHECK(out->run.termination_reason ==
+              (deadline ? solver::TerminationReason::budget_exhausted : solver::TerminationReason::user_stopped));
+        CHECK(out->run.diagnostic_code == (deadline ? "PHYSICAL_DEADLINE" : "PHYSICAL_USER_STOPPED"));
+        CHECK(out->run.retained_solution == initial);
+        CHECK_FALSE(out->run.best);
+        CHECK(out->run.stats.candidate_evaluations == 0);
+    }
+}
+
+#if defined(_MSC_VER) && defined(_DEBUG)
+TEST_CASE("AT-16 catalog transfer failure retains the allocated raw-buffer peak",
+          "[solver][T011][allocation][catalog-peak]")
+{
+    const auto context = l_context({ 3.25, 2.25, 1 });
+    const auto initial = native_solution(context, {});
+    unsigned calls {};
+    solver::RunControl control;
+    control.deadline = spectrapack::runtime::Clock::time_point { std::chrono::seconds { 1 } };
+    control.now_context = &calls;
+    control.now_fn = [](void* context) noexcept {
+        return spectrapack::runtime::Clock::time_point { std::chrono::seconds {
+            ++*static_cast<unsigned*>(context) > 1 ? 1 : 0 } };
+    };
+    const auto completed = solver::run_cpu_spectral(context, { {}, 1 }, {}, control, {}, initial);
+    REQUIRE(completed.run.termination_reason == solver::TerminationReason::budget_exhausted);
+    REQUIRE(calls == 2);
+    calls = 0;
+    std::optional<solver::SpectralOutcome> failed;
+    bool fault_reached {};
+    {
+        AllocationFailureReset reset;
+        fail_after_test_allocations.store(2, std::memory_order_relaxed);
+        failed.emplace(solver::run_cpu_spectral(context, { {}, 1 }, {}, control, {}, initial));
+        fault_reached = fail_after_test_allocations.load(std::memory_order_relaxed) == -1;
+    }
+    REQUIRE(fault_reached);
+    REQUIRE(failed);
+    CHECK(calls == 1);
+    CHECK(failed->run.termination_reason == solver::TerminationReason::resource_limit);
+    CHECK(failed->run.diagnostic_code == "SPECTRAL_CATALOG_ALLOCATION");
+    CHECK(failed->run.retained_solution == initial);
+    CHECK_FALSE(failed->run.best);
+    CHECK(failed->run.stats.candidate_evaluations == 0);
+    CHECK(failed->run.stats.tracked_working_bytes_peak == completed.run.stats.tracked_working_bytes_peak);
+}
+#endif
+
+TEST_CASE("AT-16 catalog failures distinguish allocated capacity from planned capacity",
+          "[solver][T011][allocation][catalog-capacity-observation]")
+{
+    geo::OrientationPolicy policy;
+    policy.mode = geo::OrientationMode::catalog;
+    policy.catalog_xyzw = {
+        { 0, 0, 0, 1 },
+        { 0, 0, 0, 0 }
+    };
+    const auto invalid = solver::make_orientation_catalog(policy, 2);
+    REQUIRE(std::holds_alternative<solver::CatalogFailure>(invalid));
+    const auto& after_allocation = std::get<solver::CatalogFailure>(invalid);
+    CHECK(after_allocation.code == "ORIENTATION_INVALID");
+    CHECK(after_allocation.raw_capacity_bytes_peak >= 2 * sizeof(geo::Quaternion));
+    std::optional<solver::CatalogOutcome> refused;
+    {
+        AllocationFailureReset reset;
+        fail_test_allocations.store(true, std::memory_order_relaxed);
+        refused.emplace(solver::make_orientation_catalog(policy, 2));
+    }
+    REQUIRE(refused);
+    REQUIRE(std::holds_alternative<solver::CatalogFailure>(*refused));
+    const auto& before_allocation = std::get<solver::CatalogFailure>(*refused);
+    CHECK(before_allocation.code == "ORIENTATION_ALLOCATION_FAILURE");
+    CHECK(before_allocation.raw_capacity_bytes_peak == 0);
+
+    const auto context = l_context({ 3.25, 2.25, 1 });
+    const auto initial = native_solution(context, {});
+    std::stop_source stop;
+    stop.request_stop();
+    const auto stopped = solver::run_cpu_spectral(context, { {}, 1 }, {}, { stop.get_token() }, {}, initial);
+    std::optional<solver::SpectralOutcome> failed;
+    {
+        AllocationFailureReset reset;
+        fail_test_allocations.store(true, std::memory_order_relaxed);
+        failed.emplace(solver::run_cpu_spectral(context, { {}, 1 }, {}, {}, {}, initial));
+    }
+    REQUIRE(failed);
+    CHECK(failed->run.termination_reason == solver::TerminationReason::resource_limit);
+    CHECK(failed->run.diagnostic_code == "SPECTRAL_CATALOG_ALLOCATION");
+    CHECK(failed->run.retained_solution == initial);
+    CHECK(failed->run.stats.tracked_working_bytes_peak == stopped.run.stats.tracked_working_bytes_peak);
 }

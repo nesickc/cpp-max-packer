@@ -12,7 +12,10 @@ and outcome finalizers. SOL-05/SOL-06, resource caps and incumbent validity rema
    (code/method), `RepresentationFailure` (code/message plus optional static method),
    `CorrelationFailure` and `CatalogFailure` (code/message), `ResourceLimitDetails` (resource), and
    `RunFailureDetails` (phase/cause). Numeric fields and failure classification
-   remain. Never borrow temporary strings, input buffers, IDs or `error.what()`.
+   remain. `CatalogFailure` additionally carries the observed raw-capacity byte
+   peak, initialized to zero and updated only after successful allocation, so a
+   later result-transfer failure does not lose the freed buffer's high-water mark.
+   Never borrow temporary strings, input buffers, IDs or `error.what()`.
    Correlation's native-only arbitrary exception prose becomes the stable message
    `Correlation operation failed.`; its code and stats remain. Dynamic import,
    repair and validation reports retain owned payloads.
@@ -24,11 +27,14 @@ and outcome finalizers. SOL-05/SOL-06, resource caps and incumbent validity rema
    private ranked page lazy owned storage, transferring its pointer. Admit its
    wrapper, proxy and capacity before its throwing construction. Preserve the
    public correlation and orientation-catalog vector payloads using narrow throwing
-   empty construction plus swap transfer, including variant/optional assembly;
+   empty construction plus swap transfer, including variant assembly;
    account simultaneous proxies. Use the existing cube seed array instead of an
    intermediate vector for catalog construction/verification. Remove the private
    implicit-catalog pipeline overload, which has no production callers; preserve
    both public solver APIs. Do not introduce a generic container/allocator framework.
+   Initialize the caller's catalog outcome directly instead of wrapping a returned
+   value in an optional and adding a second transfer. The factory source and result
+   vector proxies can still coexist and remain charged.
 4. Admit the fixed simultaneous control/result metadata before dynamic work.
    Below-bound and early failure outcomes must themselves remain reportable without
    allocation. Charge actual remaining owners, including IDs and buffers; remove
@@ -37,6 +43,9 @@ and outcome finalizers. SOL-05/SOL-06, resource caps and incumbent validity rema
    simultaneous owners before construction, including calls without an initial
    Stop. A refused page reservation must not raise an observed working peak;
    preserve actual partial-construction observations separately from admission.
+   After complete input/catalog admission, check entry Stop/deadline before any
+   catalog allocation. Record the existing input basis plus observed catalog
+   capacity on success and failure; planned but unallocated capacity is not a peak.
 5. Existing CLI/I/O adapters materialize the current structured wire diagnostics
    from these descriptors and numeric values. Preserve wire fields/codes, schema
    versions and termination mapping, including catalog allocation as a resource

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <string>
+#include <initializer_list>
 #include <string_view>
 #include <variant>
 #include <vector>
@@ -11,13 +11,23 @@
 namespace spectrapack::solver {
 
 struct OrientationCatalog {
+    OrientationCatalog() = default;
+    OrientationCatalog(std::uint64_t, const std::vector<geometry::Quaternion>&);
+    OrientationCatalog(std::uint64_t, std::initializer_list<geometry::Quaternion>);
+    OrientationCatalog(std::uint64_t, std::vector<geometry::Quaternion>&&);
+    OrientationCatalog(OrientationCatalog&&);
+    OrientationCatalog(const OrientationCatalog&) = default;
+    OrientationCatalog& operator=(OrientationCatalog&&) noexcept;
+    OrientationCatalog& operator=(const OrientationCatalog&) = default;
     std::uint64_t version { 1 };
-    std::vector<geometry::Quaternion> quaternions;
+    std::vector<geometry::Quaternion> quaternions { std::initializer_list<geometry::Quaternion> {},
+                                                    std::allocator<geometry::Quaternion> {} };
 };
 
 struct CatalogFailure {
     std::string_view code;
-    std::string message;
+    std::string_view message;
+    std::uint64_t raw_capacity_bytes_peak {};
 };
 
 using CatalogOutcome = std::variant<OrientationCatalog, CatalogFailure>;

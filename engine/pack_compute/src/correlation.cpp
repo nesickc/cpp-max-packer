@@ -16,15 +16,49 @@
 #include <exception>
 #include <limits>
 #include <new>
+#include <optional>
 #include <type_traits>
 #include <utility>
 
 namespace spectrapack::compute {
+
+CorrelationResult::CorrelationResult(Index3 first, Shape3 extent, std::vector<double>& source, NumericReport report,
+                                     CorrelationStats work) :
+    translation_first(first),
+    shape(extent),
+    numeric(report),
+    stats(work)
+{
+    values.swap(source);
+}
+
+CorrelationResult::CorrelationResult(CorrelationResult&& source) :
+    CorrelationResult(source.translation_first, source.shape, source.values, source.numeric, source.stats)
+{
+}
+
+CorrelationResult& CorrelationResult::operator=(CorrelationResult&& source) noexcept
+{
+    values.swap(source.values);
+    translation_first = source.translation_first;
+    shape = source.shape;
+    numeric = source.numeric;
+    stats = source.stats;
+    return *this;
+}
+
 namespace detail {
 
 thread_local NumericFault numeric_fault = NumericFault::none;
+thread_local CorrelationEntryHook correlation_entry_hook {};
+thread_local void* correlation_entry_context {};
 
 void set_numeric_fault_for_test(NumericFault fault) noexcept { numeric_fault = fault; }
+void set_correlation_entry_hook_for_test(CorrelationEntryHook hook, void* context) noexcept
+{
+    correlation_entry_hook = hook;
+    correlation_entry_context = context;
+}
 
 }  // namespace detail
 
@@ -36,6 +70,12 @@ constexpr std::uint64_t kLargestExactlyRepresentableInteger = 1ULL << 53;
 constexpr std::uint64_t kPocketfftFixedWorkspaceBytes = 64ULL << 10;
 constexpr std::uint64_t kPocketfftComplexValuesPerLongestAxis = 64;
 constexpr std::size_t kMaximumProbeCount = 8;
+constexpr std::uint64_t kCorrelationMetadataBytes = 2 * sizeof(CorrelationOutcome) + sizeof(std::vector<double>) +
+                                                    sizeof(runtime::OperationControl)
+#if defined(_MSC_VER) && defined(_DEBUG)
+                                                    + 3 * sizeof(std::_Container_proxy)
+#endif
+    ;
 
 bool checked_add(std::uint64_t first, std::uint64_t second, std::uint64_t& result) noexcept
 {
@@ -97,9 +137,9 @@ private:
     double correction_ {};
 };
 
-CorrelationOutcome failure(std::string_view code, std::string message, CorrelationStats stats = {})
+CorrelationOutcome failure(std::string_view code, std::string_view message, CorrelationStats stats = {})
 {
-    return CorrelationFailure { code, std::move(message), stats };
+    return CorrelationFailure { code, message, stats };
 }
 
 bool add_probe(std::array<std::size_t, kMaximumProbeCount>& probes, std::size_t& count, std::size_t candidate) noexcept
@@ -119,7 +159,8 @@ bool add_probe(std::array<std::size_t, kMaximumProbeCount>& probes, std::size_t&
 template <typename Environment>
 bool direct_probe(const CorrelationSpec& spec, std::span<const Environment> environment,
                   std::span<const std::uint8_t> kernel, Shape3 output_shape, std::size_t output_index,
-                  const CorrelationLimits& limits, CorrelationStats& stats, double& expected)
+                  const CorrelationLimits& limits, CorrelationStats& stats, double& expected,
+                  const runtime::OperationControl& control)
 {
     const auto x = static_cast<std::uint32_t>(output_index % output_shape[0]);
     const auto yz = output_index / output_shape[0];
@@ -132,10 +173,14 @@ bool direct_probe(const CorrelationSpec& spec, std::span<const Environment> envi
     };
 
     std::uint64_t integer_sum {};
+    std::uint32_t polls {};
     CompensatedSum real_sum;
     for (std::uint32_t kernel_z = 0; kernel_z != spec.kernel_shape[2]; ++kernel_z) {
         for (std::uint32_t kernel_y = 0; kernel_y != spec.kernel_shape[1]; ++kernel_y) {
             for (std::uint32_t kernel_x = 0; kernel_x != spec.kernel_shape[0]; ++kernel_x) {
+                if ((++polls & 255U) == 0 && control.poll() != runtime::StopCause::none) {
+                    return false;
+                }
                 const std::array<std::int64_t, 3> environment_cell { static_cast<std::int64_t>(kernel_x) + shift[0],
                                                                      static_cast<std::int64_t>(kernel_y) + shift[1],
                                                                      static_cast<std::int64_t>(kernel_z) + shift[2] };
@@ -198,9 +243,31 @@ bool calculate_pocketfft_workspace(std::uint64_t longest_axis, std::uint64_t& by
 
 template <typename Environment>
 CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Environment> environment,
-                             std::span<const std::uint8_t> kernel, const CorrelationLimits& limits)
+                             std::span<const std::uint8_t> kernel, const CorrelationLimits& limits,
+                             const runtime::OperationControl& control)
 {
     constexpr bool binary = std::is_same_v<Environment, std::uint8_t>;
+    std::uint64_t metadata {};
+    if (!checked_add(limits.reserved_bytes, kCorrelationMetadataBytes, metadata) ||
+        metadata > limits.max_working_bytes) {
+        return failure("CORRELATION_MEMORY_LIMIT", "Correlation metadata exceeds its memory limit.");
+    }
+    if (detail::correlation_entry_hook) {
+        detail::correlation_entry_hook(spec, detail::correlation_entry_context);
+    }
+    const auto interruption = [&](CorrelationStats stats = {}) -> std::optional<CorrelationFailure> {
+        const auto cause = control.poll();
+        if (cause == runtime::StopCause::none) {
+            return {};
+        }
+        return CorrelationFailure { cause == runtime::StopCause::user_stopped ? "OPERATION_CANCELLED"
+                                                                              : "DEADLINE_EXCEEDED",
+                                    "Correlation interrupted.", stats };
+    };
+    std::uint32_t polls {};
+    if (auto interrupted = interruption()) {
+        return *interrupted;
+    }
     std::uint64_t environment_count = 1;
     std::uint64_t kernel_count = 1;
     std::uint64_t padded_count = 1;
@@ -245,6 +312,11 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
     std::uint64_t kernel_ones {};
     CompensatedSum environment_mass_sum;
     for (const auto cell : environment) {
+        if ((++polls & 255U) == 0) {
+            if (auto interrupted = interruption()) {
+                return *interrupted;
+            }
+        }
         const double value = static_cast<double>(cell);
         if (!std::isfinite(value) || value < 0.0 || value > 1.0) {
             return failure("CORRELATION_INVALID_ENVIRONMENT", "Environment cells must be finite values in [0,1].");
@@ -257,6 +329,11 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
         }
     }
     for (const auto cell : kernel) {
+        if ((++polls & 255U) == 0) {
+            if (auto interrupted = interruption()) {
+                return *interrupted;
+            }
+        }
         if (cell > 1) {
             return failure("CORRELATION_INVALID_KERNEL", "Kernel cells must be binary.");
         }
@@ -315,12 +392,20 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
         return failure("CORRELATION_SHAPE_OVERFLOW", "FFT byte strides exceed ptrdiff_t.", stats);
     }
 
+    if (auto interrupted = interruption(stats)) {
+        return *interrupted;
+    }
     try {
         std::vector<Complex> blocked(static_cast<std::size_t>(padded_count));
         std::vector<Complex> occupied(static_cast<std::size_t>(padded_count));
         for (std::uint32_t z = 0; z != spec.environment_shape[2]; ++z) {
             for (std::uint32_t y = 0; y != spec.environment_shape[1]; ++y) {
                 for (std::uint32_t x = 0; x != spec.environment_shape[0]; ++x) {
+                    if ((++polls & 255U) == 0) {
+                        if (auto interrupted = interruption(stats)) {
+                            return *interrupted;
+                        }
+                    }
                     blocked[linear_index(padded, x, y, z)] = environment[linear_index(spec.environment_shape, x, y, z)];
                 }
             }
@@ -328,6 +413,11 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
         for (std::uint32_t z = 0; z != spec.kernel_shape[2]; ++z) {
             for (std::uint32_t y = 0; y != spec.kernel_shape[1]; ++y) {
                 for (std::uint32_t x = 0; x != spec.kernel_shape[0]; ++x) {
+                    if ((++polls & 255U) == 0) {
+                        if (auto interrupted = interruption(stats)) {
+                            return *interrupted;
+                        }
+                    }
                     occupied[linear_index(padded, x, y, z)] = kernel[linear_index(spec.kernel_shape, x, y, z)];
                 }
             }
@@ -339,18 +429,38 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
                                             static_cast<std::ptrdiff_t>(z_stride) };
         for (std::size_t axis = 0; axis != 3; ++axis) {
             const pocketfft::shape_t axes { axis };
+            if (auto interrupted = interruption(stats)) {
+                return *interrupted;
+            }
             pocketfft::c2c(shape, strides, strides, axes, true, blocked.data(), blocked.data(), 1.0, 1);
+            if (auto interrupted = interruption(stats)) {
+                return *interrupted;
+            }
             pocketfft::c2c(shape, strides, strides, axes, true, occupied.data(), occupied.data(), 1.0, 1);
+            if (auto interrupted = interruption(stats)) {
+                return *interrupted;
+            }
         }
         for (std::size_t index = 0; index != blocked.size(); ++index) {
+            if ((++polls & 255U) == 0) {
+                if (auto interrupted = interruption(stats)) {
+                    return *interrupted;
+                }
+            }
             blocked[index] *= std::conj(occupied[index]);
         }
         const double inverse_factor = (detail::numeric_fault == detail::NumericFault::bad_normalization ? 2.0 : 1.0) /
                                       static_cast<double>(padded_count);
         for (std::size_t axis = 0; axis != 3; ++axis) {
             const pocketfft::shape_t axes { axis };
+            if (auto interrupted = interruption(stats)) {
+                return *interrupted;
+            }
             pocketfft::c2c(shape, strides, strides, axes, false, blocked.data(), blocked.data(),
                            axis == 0 ? inverse_factor : 1.0, 1);
+            if (auto interrupted = interruption(stats)) {
+                return *interrupted;
+            }
         }
         if (detail::numeric_fault == detail::NumericFault::nan) {
             blocked[0] = { std::numeric_limits<double>::quiet_NaN(), 0.0 };
@@ -370,6 +480,11 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
         for (std::uint32_t z = 0; z != padded[2]; ++z) {
             for (std::uint32_t y = 0; y != padded[1]; ++y) {
                 for (std::uint32_t x = 0; x != padded[0]; ++x) {
+                    if ((++polls & 255U) == 0) {
+                        if (auto interrupted = interruption(stats)) {
+                            return *interrupted;
+                        }
+                    }
                     const auto transformed_x = static_cast<std::uint32_t>(
                         (static_cast<std::uint64_t>(x) + padded[0] - (spec.kernel_shape[0] - 1)) % padded[0]);
                     const auto transformed_y = static_cast<std::uint32_t>(
@@ -432,7 +547,10 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
         double maximum_probe_error {};
         for (std::size_t probe = 0; probe != probe_count; ++probe) {
             double expected {};
-            if (!direct_probe(spec, environment, kernel, padded, probes[probe], limits, stats, expected)) {
+            if (!direct_probe(spec, environment, kernel, padded, probes[probe], limits, stats, expected, control)) {
+                if (auto interrupted = interruption(stats)) {
+                    return *interrupted;
+                }
                 return failure("CORRELATION_DIRECT_TERM_LIMIT",
                                "Deterministic direct checks exhausted their work limit.", stats);
             }
@@ -444,19 +562,17 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
             }
         }
 
-        return CorrelationResult {
-            translation_first,
-            padded,
-            std::move(values),
-            { max_integer_residual, mass_residual, maximum_probe_error },
-            stats
-        };
+        if (auto interrupted = interruption(stats)) {
+            return *interrupted;
+        }
+        return CorrelationOutcome(std::in_place_type<CorrelationResult>, translation_first, padded, values,
+                                  NumericReport { max_integer_residual, mass_residual, maximum_probe_error }, stats);
     }
     catch (const std::bad_alloc&) {
         return failure("CORRELATION_ALLOCATION", "Correlation allocation failed.", stats);
     }
-    catch (const std::exception& error) {
-        return failure("CORRELATION_OPERATION", error.what(), stats);
+    catch (const std::exception&) {
+        return failure("CORRELATION_OPERATION", "Correlation operation failed.", stats);
     }
 }
 
@@ -490,6 +606,7 @@ CorrelationEstimateOutcome estimate_correlation_cpu(const CorrelationSpec& spec)
         !calculate_pocketfft_workspace(*std::max_element(estimate.padded_shape.begin(), estimate.padded_shape.end()),
                                        workspace) ||
         !checked_add(estimate.working_bytes, workspace, estimate.working_bytes) ||
+        !checked_add(estimate.working_bytes, kCorrelationMetadataBytes, estimate.working_bytes) ||
         !checked_add(estimate.working_bytes, sizeof(std::array<std::size_t, kMaximumProbeCount>),
                      estimate.working_bytes) ||
         estimate.padded_cells > std::numeric_limits<std::size_t>::max() ||
@@ -503,15 +620,17 @@ CorrelationEstimateOutcome estimate_correlation_cpu(const CorrelationSpec& spec)
 }
 
 CorrelationOutcome correlate_binary_cpu(const CorrelationSpec& spec, std::span<const std::uint8_t> environment,
-                                        std::span<const std::uint8_t> kernel, const CorrelationLimits& limits)
+                                        std::span<const std::uint8_t> kernel, const CorrelationLimits& limits,
+                                        const runtime::OperationControl& control)
 {
-    return correlate(spec, environment, kernel, limits);
+    return correlate(spec, environment, kernel, limits, control);
 }
 
 CorrelationOutcome correlate_proximity_cpu(const CorrelationSpec& spec, std::span<const double> environment,
-                                           std::span<const std::uint8_t> kernel, const CorrelationLimits& limits)
+                                           std::span<const std::uint8_t> kernel, const CorrelationLimits& limits,
+                                           const runtime::OperationControl& control)
 {
-    return correlate(spec, environment, kernel, limits);
+    return correlate(spec, environment, kernel, limits, control);
 }
 
 }  // namespace spectrapack::compute

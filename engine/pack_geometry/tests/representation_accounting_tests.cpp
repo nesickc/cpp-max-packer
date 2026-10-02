@@ -7,6 +7,7 @@
 #include <limits>
 #include <memory>
 #include <new>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -491,28 +492,44 @@ TEST_CASE("T007 tight identifier removal charges the record unlink")
     CHECK(missing_id->code == "FIELD_COPY_ID");
 }
 
-TEST_CASE("T007 raw-field visits survive diagnostic and outer-report allocation failure")
+TEST_CASE("T011 raw-field failure retains diagnostics and visits under persistent allocation failure")
 {
     const auto source = geometry();
     geo::RepresentationLimits limits;
     limits.max_cell_visits = 5;
     geo::RepresentationAttemptStats attempt;
-    bool threw = false;
-    geo::detail::validation_kernel::set_field_failure_allocation_hook(enable_persistent_allocation_failure);
-    try {
-        (void)geo::voxelize_placed(source, window(),
-                                   geo::CopyPose {
-                                       "fault", { 1.5, 1.5, 1.5 },
-                                        { 0, 0, 0, 1 }
-        },
-                                   0, limits, attempt);
+    std::optional<geo::RepresentationOutcome<geo::CellField>> outcome;
+    bool escaped {};
+    bool hook_reached {};
+    {
+        struct Reset {
+            ~Reset()
+            {
+                fail_test_allocations.store(false, std::memory_order_relaxed);
+                geo::detail::validation_kernel::set_field_failure_allocation_hook(nullptr);
+            }
+        } reset;
+        geo::detail::validation_kernel::set_field_failure_allocation_hook(enable_persistent_allocation_failure);
+        try {
+            outcome.emplace(geo::voxelize_placed(source, window(),
+                                                 geo::CopyPose {
+                                                     "fault", { 1.5, 1.5, 1.5 },
+                                                      { 0, 0, 0, 1 }
+            },
+                                                 0, limits, attempt));
+        }
+        catch (...) {
+            escaped = true;
+        }
+        hook_reached = fail_test_allocations.load(std::memory_order_relaxed);
     }
-    catch (const std::bad_alloc&) {
-        threw = true;
-    }
-    fail_test_allocations.store(false, std::memory_order_relaxed);
-    geo::detail::validation_kernel::set_field_failure_allocation_hook(nullptr);
-    REQUIRE(threw);
+    CHECK(hook_reached);
+    CHECK_FALSE(escaped);
+    REQUIRE(outcome);
+    REQUIRE(std::holds_alternative<geo::RepresentationFailure>(*outcome));
+    const auto& failure = std::get<geo::RepresentationFailure>(*outcome);
+    CHECK(failure.code == "FIELD_CELL_VISIT_LIMIT");
+    CHECK(failure.method == "rasterize-boundary");
     CHECK(attempt.cell_visits == 5);
     CHECK(attempt.kernel_work > 0);
 }

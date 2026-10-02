@@ -3,11 +3,38 @@
 #include <algorithm>
 #include <cmath>
 #include <new>
+#include <utility>
 
 #include "allocation_fault.hpp"
 #include "orientation_cube.hpp"
 
 namespace spectrapack::solver {
+OrientationCatalog::OrientationCatalog(std::uint64_t revision, const std::vector<geometry::Quaternion>& source) :
+    version(revision),
+    quaternions(source)
+{
+}
+OrientationCatalog::OrientationCatalog(std::uint64_t revision, std::initializer_list<geometry::Quaternion> source) :
+    version(revision),
+    quaternions(source)
+{
+}
+OrientationCatalog::OrientationCatalog(std::uint64_t revision, std::vector<geometry::Quaternion>&& source) :
+    version(revision)
+{
+    quaternions.swap(source);
+}
+OrientationCatalog::OrientationCatalog(OrientationCatalog&& source) :
+    OrientationCatalog(source.version, std::move(source.quaternions))
+{
+}
+OrientationCatalog& OrientationCatalog::operator=(OrientationCatalog&& source) noexcept
+{
+    quaternions.swap(source.quaternions);
+    version = source.version;
+    return *this;
+}
+
 namespace {
 bool valid(geometry::Quaternion q)
 {
@@ -44,14 +71,15 @@ geometry::Quaternion canonical(geometry::Quaternion q)
     }
     return q;
 }
-CatalogOutcome rejected(std::string_view code, std::string message)
+CatalogOutcome rejected(std::string_view code, std::string_view message, std::uint64_t peak = 0)
 {
-    return CatalogFailure { code, std::move(message) };
+    return CatalogFailure { code, message, peak };
 }
 }  // namespace
 
 CatalogOutcome make_orientation_catalog(const geometry::OrientationPolicy& policy, std::uint64_t maximum)
 {
+    std::uint64_t raw_capacity_bytes_peak {};
     try {
         std::uint64_t raw_count {};
         switch (policy.mode) {
@@ -73,7 +101,8 @@ CatalogOutcome make_orientation_catalog(const geometry::OrientationPolicy& polic
             return rejected("ORIENTATION_LIMIT", "Raw orientation policy exceeds the orientation limit.");
         }
 
-        std::vector<geometry::Quaternion> out;
+        std::vector<geometry::Quaternion> out { std::initializer_list<geometry::Quaternion> {},
+                                                std::allocator<geometry::Quaternion> {} };
         if (policy.mode == geometry::OrientationMode::fixed) {
             const auto q =
                 policy.catalog_xyzw.empty() ? geometry::Quaternion { 0, 0, 0, 1 } : policy.catalog_xyzw.front();
@@ -82,6 +111,7 @@ CatalogOutcome make_orientation_catalog(const geometry::OrientationPolicy& polic
             }
             detail::allocation_point();
             out.reserve(1);
+            raw_capacity_bytes_peak = out.capacity() * sizeof(geometry::Quaternion);
             out.push_back(canonical(q));
         }
         else if (policy.mode == geometry::OrientationMode::catalog) {
@@ -90,9 +120,11 @@ CatalogOutcome make_orientation_catalog(const geometry::OrientationPolicy& polic
             }
             detail::allocation_point();
             out.reserve(policy.catalog_xyzw.size());
+            raw_capacity_bytes_peak = out.capacity() * sizeof(geometry::Quaternion);
             for (const auto q : policy.catalog_xyzw) {
                 if (!valid(q)) {
-                    return rejected("ORIENTATION_INVALID", "Catalog contains an invalid quaternion.");
+                    return rejected("ORIENTATION_INVALID", "Catalog contains an invalid quaternion.",
+                                    raw_capacity_bytes_peak);
                 }
                 const auto normalized = canonical(q);
                 if (std::find(out.begin(), out.end(), normalized) == out.end()) {
@@ -102,12 +134,16 @@ CatalogOutcome make_orientation_catalog(const geometry::OrientationPolicy& polic
         }
         else {
             detail::allocation_point();
-            out = detail::cube_seed_quaternions();
+            const auto entries = detail::cube_seed_array();
+            out.reserve(entries.size());
+            raw_capacity_bytes_peak = out.capacity() * sizeof(geometry::Quaternion);
+            out.insert(out.end(), entries.begin(), entries.end());
         }
-        return OrientationCatalog { 1, std::move(out) };
+        return CatalogOutcome(std::in_place_type<OrientationCatalog>, 1, std::move(out));
     }
     catch (const std::bad_alloc&) {
-        return rejected("ORIENTATION_ALLOCATION_FAILURE", "Orientation catalog allocation failed.");
+        return rejected("ORIENTATION_ALLOCATION_FAILURE", "Orientation catalog allocation failed.",
+                        raw_capacity_bytes_peak);
     }
 }
 }  // namespace spectrapack::solver

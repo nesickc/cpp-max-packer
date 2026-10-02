@@ -2,11 +2,13 @@
 
 #include <array>
 #include <cstdint>
+#include <initializer_list>
 #include <span>
-#include <string>
 #include <string_view>
 #include <variant>
 #include <vector>
+
+#include "spectrapack/runtime/operation_control.hpp"
 
 namespace spectrapack::compute {
 
@@ -32,6 +34,8 @@ struct CorrelationLimits {
 
 struct CorrelationStats {
     std::uint64_t padded_cells {};
+    // Legacy name: the successful checked CPU preflight bound, including caller
+    // reserve, rather than observed allocation. Zero before that admission.
     std::uint64_t working_bytes_peak {};
     std::uint64_t direct_terms {};
 };
@@ -44,14 +48,21 @@ struct NumericReport {
 
 struct CorrelationFailure {
     std::string_view code;
-    std::string message;
+    std::string_view message;
     CorrelationStats stats;
 };
 
 struct CorrelationResult {
+    CorrelationResult() = default;
+    CorrelationResult(Index3, Shape3, std::vector<double>&, NumericReport, CorrelationStats);
+    CorrelationResult(CorrelationResult&&);
+    CorrelationResult(const CorrelationResult&) = default;
+    CorrelationResult& operator=(CorrelationResult&&) noexcept;
+    CorrelationResult& operator=(const CorrelationResult&) = default;
     Index3 translation_first;
     Shape3 shape;
-    std::vector<double> values;
+    // The initializer-list overload can throw when MSVC Debug creates its proxy.
+    std::vector<double> values { std::initializer_list<double> {}, std::allocator<double> {} };
     NumericReport numeric;
     CorrelationStats stats;
 };
@@ -67,10 +78,12 @@ using CorrelationEstimateOutcome = std::variant<CorrelationEstimate, Correlation
 
 [[nodiscard]] CorrelationOutcome correlate_binary_cpu(const CorrelationSpec&, std::span<const std::uint8_t> environment,
                                                       std::span<const std::uint8_t> kernel,
-                                                      const CorrelationLimits& = {});
+                                                      const CorrelationLimits& = {},
+                                                      const runtime::OperationControl& = {});
 
 [[nodiscard]] CorrelationOutcome correlate_proximity_cpu(const CorrelationSpec&, std::span<const double> environment,
                                                          std::span<const std::uint8_t> kernel,
-                                                         const CorrelationLimits& = {});
+                                                         const CorrelationLimits& = {},
+                                                         const runtime::OperationControl& = {});
 
 }  // namespace spectrapack::compute

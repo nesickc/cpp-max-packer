@@ -287,18 +287,20 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
     outcome.report.checks[1] = { ValidationCheck::orientation, CheckState::complete, "quaternion-permission" };
     const auto object = kernel::prepare(expected_context->object(), budget);
     if (!object)
-        return reject(Validity::indeterminate, object.failure.code, "Object preparation was unresolved.",
+        return reject(Validity::indeterminate, std::string(object.failure.code), "Object preparation was unresolved.",
                       ValidationCheck::pair_solids);
     std::shared_ptr<const kernel::PlacedSolid> container;
     if (const auto* solid = std::get_if<std::shared_ptr<const AcceptedSolid>>(&expected_context->container())) {
         const auto prepared = kernel::prepare(*solid, budget);
-        if (!prepared)
-            return reject(Validity::indeterminate, prepared.failure.code, "Container preparation was unresolved.",
-                          ValidationCheck::containment);
+        if (!prepared) {
+            return reject(Validity::indeterminate, std::string(prepared.failure.code),
+                          "Container preparation was unresolved.", ValidationCheck::containment);
+        }
         const auto placed_container = kernel::place(prepared.solid, { 0.0, 0.0, 0.0 }, { 0.0, 0.0, 0.0, 1.0 }, budget);
-        if (!placed_container)
-            return reject(Validity::indeterminate, placed_container.failure.code, "Container placement was unresolved.",
-                          ValidationCheck::containment);
+        if (!placed_container) {
+            return reject(Validity::indeterminate, std::string(placed_container.failure.code),
+                          "Container placement was unresolved.", ValidationCheck::containment);
+        }
         container = placed_container.solid;
     }
     const auto bounds = expected_context->object()->bounds_mm();
@@ -325,9 +327,10 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
     placed.reserve(candidate->copies().size());
     for (const auto& pose : candidate->copies()) {
         const auto result = kernel::place(object.solid, pose.translation_mm, pose.rotation_xyzw, budget);
-        if (!result)
-            return reject(Validity::indeterminate, result.failure.code, "Placement was unresolved.",
+        if (!result) {
+            return reject(Validity::indeterminate, std::string(result.failure.code), "Placement was unresolved.",
                           ValidationCheck::pair_solids, { pose.copy_id });
+        }
         placed.push_back(result.solid);
     }
     for (std::size_t first = 0; first != placed.size(); ++first)

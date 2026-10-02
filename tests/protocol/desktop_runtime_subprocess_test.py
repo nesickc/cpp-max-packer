@@ -17,6 +17,7 @@ import solve_subprocess_test as fixtures
 ENGINE = None
 PRACTICAL_REPORT = None
 MEMORY_HELPER = None
+OVERLAP_EVIDENCE = None
 
 
 def qpc():
@@ -80,6 +81,98 @@ class Session:
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_allocation_counted_publication_and_invalid_request_overlap(self):
+        if MEMORY_HELPER is None:
+            self.skipTest("Allocation overlap requires the existing CLI test helper")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = OVERLAP_EVIDENCE or pathlib.Path(temporary)
+            root.mkdir(parents=True, exist_ok=True)
+            source, report = root/'cube.stl', root/'object.report.json'
+            fixtures.write_cube_stl(source)
+            imported = subprocess.run([str(ENGINE), 'inspect', '--stl', str(source), '--units', 'mm',
+                '--report', str(report)], capture_output=True, text=True, timeout=15)
+            self.assertEqual(imported.returncode, 0, imported.stdout+imported.stderr)
+            gate = root/'gate'; gate.mkdir()
+            stats_path = root/'allocations.json'
+            session = Session([str(MEMORY_HELPER), 'session-publication-barrier', str(gate), str(stats_path)])
+            prepared = []
+            try:
+                for letter in ('a', 'b'):
+                    preview = root/('preview-'+letter*12); preview.mkdir()
+                    reply, _ = session.request({'runtime_version': 1, 'request_id': 'prepare-'+letter,
+                        'operation_id': 'prepare-'+letter+'-op', 'method': 'prepare', 'params': {
+                            'object_report': str(report), 'output_directory': str(preview)}})
+                    self.assertTrue(reply['ok'], reply)
+                    prepared.append(reply)
+                self.assertNotEqual(prepared[0]['result']['asset_token'], prepared[1]['result']['asset_token'])
+                self.assertTrue(prepared[1]['result']['preparation_reused'], prepared[1])
+                fixture = fixtures.SolveSubprocessTests()
+                fixture.object_report_path = report
+                settings = fixture.settings(dimensions=(20, 20, 20), candidates=128)
+                settings['orientation'] = {'mode': 'custom', 'quaternions_xyzw': [
+                    [fixtures.NEAR_UNIT_COMPONENT]*4, [0.0, 0.0, 0.0, 1.0]]}
+                settings['resolved']['orientation_catalog_sha256'] = fixtures.NEAR_UNIT_CUSTOM_SHA256
+                output = root/('result-'+'r'*12); output.mkdir()
+                ticks, frequency = qpc()
+                invalid = {'runtime_version': 1, 'request_id': 'overlap-invalid',
+                    'operation_id': 'overlap-invalid-op', 'method': 'run',
+                    'params': {'payload': [{} for _ in range(2040)], 'text': ''}}
+                # Seven non-text nodes plus 2,040 empty objects and text = 2,048 value nodes.
+                decoded = sum(len(key) for key in invalid) + sum(len(key) for key in invalid['params'])
+                decoded += sum(len(value) for value in invalid.values() if isinstance(value, str))
+                invalid['params']['text'] = 'x'*(65536-decoded)
+                rejected = []
+                def overlap(phase):
+                    if phase['phase'] != 'saving':
+                        return
+                    try:
+                        until = time.monotonic()+2
+                        while not (gate/'ready').exists() and time.monotonic() < until:
+                            time.sleep(.01)
+                        self.assertTrue((gate/'ready').exists(), 'Publication barrier did not become ready')
+                        session.child.stdin.write(json.dumps(invalid)+'\n'); session.child.stdin.flush()
+                        while True:
+                            record = session.records.get(timeout=2)
+                            self.assertIsNotNone(record, ''.join(session.stderr))
+                            if record['request_id'] == invalid['request_id']:
+                                self.assertEqual(record['kind'], 'response', record)
+                                self.assertFalse(record['ok'], record)
+                                self.assertEqual(record['error']['code'], 'INVALID_DOCUMENT', record)
+                                rejected.append(record)
+                                break
+                            self.assertEqual(record['request_id'], 'overlap-run', record)
+                            self.assertEqual(record['kind'], 'phase', record)
+                    finally:
+                        (gate/'release').write_bytes(b'release')
+                reply, _ = session.request({'runtime_version': 1, 'request_id': 'overlap-run',
+                    'operation_id': 'overlap-run-op', 'method': 'run', 'params': {
+                        'asset_token': prepared[1]['result']['asset_token'], 'settings': settings,
+                        'result_path': str(output/'result.json'), 'stop_file': str(output/'stop.marker'),
+                        'start_qpc_ticks': ticks, 'qpc_frequency_hz': frequency}}, overlap)
+                self.assertEqual(len(rejected), 1, reply)
+                self.assertTrue(reply['ok'], reply)
+                saved = json.loads((output/'result.json').read_text())
+                self.assertEqual(saved['validation']['status'], 'valid')
+                self.assertEqual(saved['count'], len(saved['placements']))
+                shutdown, _ = session.request({'runtime_version': 1, 'request_id': 'overlap-shutdown',
+                    'method': 'shutdown', 'params': {}})
+                self.assertTrue(shutdown['ok'], shutdown)
+            finally:
+                (gate/'release').write_bytes(b'release')
+                session.close()
+            self.assertEqual(session.child.returncode, 0, ''.join(session.stderr))
+            stats = json.loads(stats_path.read_text())
+            self.assertGreater(stats['publication_baseline_cpp_bytes'], 0)
+            self.assertGreaterEqual(stats['publication_peak_cpp_bytes'], stats['publication_baseline_cpp_bytes'])
+            self.assertTrue(stats['publication_released_by_fixture'], stats)
+            observation = {'allocations': stats, 'prepared': prepared, 'run_reply': reply,
+                'invalid_reply': rejected[0], 'invalid_value_nodes': 2048, 'invalid_decoded_bytes': 65536,
+                'prepared_reported_heavy_payload_bytes': prepared[1]['retained_native_bytes'],
+                'saved_count': saved['count'], 'saved_result_sha256': hashlib.sha256(
+                    (output/'result.json').read_bytes()).hexdigest()}
+            (root/'observation.json').write_text(json.dumps(observation, indent=2))
+            print(json.dumps({'adapter_overlap': stats, 'saved_count': saved['count']}))
+
     def test_stop_monitor_failure_during_publication(self):
         if MEMORY_HELPER is None:
             self.skipTest("Publication barrier requires the existing CLI test helper")
@@ -496,8 +589,10 @@ if __name__ == "__main__":
     parser.add_argument("--case", default=None)
     parser.add_argument('--practical-report',type=pathlib.Path,default=None)
     parser.add_argument('--memory-helper',type=pathlib.Path,default=None)
+    parser.add_argument('--overlap-evidence',type=pathlib.Path,default=None)
     arguments = parser.parse_args()
     ENGINE = arguments.engine.resolve()
     PRACTICAL_REPORT = arguments.practical_report.resolve() if arguments.practical_report else None
     MEMORY_HELPER = arguments.memory_helper.resolve() if arguments.memory_helper else None
+    OVERLAP_EVIDENCE = arguments.overlap_evidence.resolve() if arguments.overlap_evidence else None
     unittest.main(argv=[sys.argv[0]] + (["RuntimeTests." + arguments.case] if arguments.case else []))

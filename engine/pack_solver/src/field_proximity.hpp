@@ -30,12 +30,16 @@ inline bool proximity_shape_supported(geometry::CellShape shape) noexcept
 // Charge initialization, line reads, site visits, envelope comparisons, output
 // evaluations and final conversion separately; each increment precedes work.
 inline bool build_proximity(geometry::CellShape shape, std::span<const std::uint8_t> occupied, std::span<double> values,
-                            std::uint64_t limit, std::uint64_t& work)
+                            std::uint64_t limit, std::uint64_t& work, const runtime::OperationControl& control = {})
 {
     if (!proximity_shape_supported(shape)) {
         return false;
     }
+    std::uint32_t polls {};
     const auto charge = [&] {
+        if ((++polls & 255U) == 0 && control.poll() != runtime::StopCause::none) {
+            return false;
+        }
         if (work >= limit) {
             return false;
         }

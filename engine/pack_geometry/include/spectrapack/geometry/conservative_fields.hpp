@@ -62,7 +62,8 @@ private:
                                                                        const RepresentationLimits&);
     friend RepresentationOutcome<VoxelGeometry> prepare_voxel_geometry(std::shared_ptr<const AcceptedSolid>,
                                                                        const RepresentationLimits&,
-                                                                       RepresentationAttemptStats&);
+                                                                       RepresentationAttemptStats&,
+                                                                       const runtime::OperationControl&);
 };
 
 class CellField {
@@ -98,22 +99,26 @@ private:
                                                                           const RepresentationLimits& = {});
 [[nodiscard]] RepresentationOutcome<VoxelGeometry> prepare_voxel_geometry(std::shared_ptr<const AcceptedSolid>,
                                                                           const RepresentationLimits&,
-                                                                          RepresentationAttemptStats&);
+                                                                          RepresentationAttemptStats&,
+                                                                          const runtime::OperationControl& = {});
 [[nodiscard]] RepresentationOutcome<CellField> voxelize_object(std::shared_ptr<const VoxelGeometry>, GridLattice,
                                                                Quaternion, const RepresentationLimits& = {});
 [[nodiscard]] RepresentationOutcome<CellField> voxelize_object(std::shared_ptr<const VoxelGeometry>, GridLattice,
                                                                Quaternion, const RepresentationLimits&,
-                                                               RepresentationAttemptStats&);
+                                                               RepresentationAttemptStats&,
+                                                               const runtime::OperationControl& = {});
 [[nodiscard]] RepresentationOutcome<CellField> voxelize_placed(std::shared_ptr<const VoxelGeometry>, GridWindow,
                                                                CopyPose, double, const RepresentationLimits& = {});
 [[nodiscard]] RepresentationOutcome<CellField> voxelize_placed(std::shared_ptr<const VoxelGeometry>, GridWindow,
                                                                const CopyPose&, double, const RepresentationLimits&,
-                                                               RepresentationAttemptStats&);
+                                                               RepresentationAttemptStats&,
+                                                               const runtime::OperationControl& = {});
 [[nodiscard]] RepresentationOutcome<CellField> voxelize_container(Container, GridWindow, double,
                                                                   const RepresentationLimits& = {});
 [[nodiscard]] RepresentationOutcome<CellField> voxelize_container(Container, GridWindow, double,
                                                                   const RepresentationLimits&,
-                                                                  RepresentationAttemptStats&);
+                                                                  RepresentationAttemptStats&,
+                                                                  const runtime::OperationControl& = {});
 
 class BlockedField {
 public:
@@ -126,10 +131,12 @@ public:
                                                            std::shared_ptr<const CellField> placed_blocker);
     [[nodiscard]] std::optional<RepresentationFailure> add(std::string_view copy_id,
                                                            std::shared_ptr<const CellField> placed_blocker,
-                                                           const RepresentationLimits&, RepresentationAttemptStats&);
+                                                           const RepresentationLimits&, RepresentationAttemptStats&,
+                                                           const runtime::OperationControl& = {});
     [[nodiscard]] std::optional<RepresentationFailure> remove(std::string_view copy_id);
     [[nodiscard]] std::optional<RepresentationFailure> remove(std::string_view copy_id, const RepresentationLimits&,
-                                                              RepresentationAttemptStats&);
+                                                              RepresentationAttemptStats&,
+                                                              const runtime::OperationControl& = {});
     [[nodiscard]] bool blocked(CellIndex global_index) const;
     [[nodiscard]] std::uint32_t placed_count(CellIndex global_index) const;
     [[nodiscard]] const GridWindow& window() const noexcept;
@@ -143,11 +150,13 @@ private:
     friend std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_field(
         std::shared_ptr<const CellField>, const RepresentationLimits&);
     friend std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_field(
-        std::shared_ptr<const CellField>, const RepresentationLimits&, RepresentationAttemptStats&);
+        std::shared_ptr<const CellField>, const RepresentationLimits&, RepresentationAttemptStats&,
+        const runtime::OperationControl&);
 };
 [[nodiscard]] std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_field(
     std::shared_ptr<const CellField>, const RepresentationLimits& = {});
 [[nodiscard]] std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_field(
-    std::shared_ptr<const CellField>, const RepresentationLimits&, RepresentationAttemptStats&);
+    std::shared_ptr<const CellField>, const RepresentationLimits&, RepresentationAttemptStats&,
+    const runtime::OperationControl& = {});
 
 }  // namespace spectrapack::geometry

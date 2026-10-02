@@ -233,7 +233,7 @@ int prepare(const std::map<std::string, std::filesystem::path>& options, const A
     }
     else {
         const auto& error = std::get<geo::RepresentationFailure>(lod);
-        warnings.push_back(io::error_json({ std::string(error.code), error.message, Json::object(), true }));
+        warnings.push_back(io::error_json({ std::string(error.code), std::string(error.message), Json::object(), true }));
     }
     if (!write_file(output / "settings.json", settings.dump(2))) {
         return fail("OUTPUT_WRITE_FAILED", "Resolved settings could not be published.", 3);
@@ -441,7 +441,7 @@ std::variant<spectrapack::io::Json, spectrapack::io::Error> resolve_desktop_sett
     }
     auto made = solver::make_orientation_catalog(*input_policy, 24);
     if (const auto* error = std::get_if<solver::CatalogFailure>(&made)) {
-        return io::Error { std::string(error->code), error->message, Json::object(), true };
+        return io::Error { std::string(error->code), std::string(error->message), Json::object(), true };
     }
     const auto& catalog = std::get<solver::OrientationCatalog>(made);
     Json orientation = request.at("orientation");

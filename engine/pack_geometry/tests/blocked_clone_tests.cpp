@@ -13,6 +13,47 @@
 
 namespace geo = spectrapack::geometry;
 namespace ts = geo::test_support;
+
+TEST_CASE("T010 full field operations reject pre-Stop without mutating blocked counts", "[fields][T010][controls]")
+{
+    const auto source = ts::accepted(ts::cuboid({ -.1, -.1, -.1 }, { .1, .1, .1 }), geo::AssetRole::object);
+    std::stop_source stop;
+    stop.request_stop();
+    const spectrapack::runtime::OperationControl control { stop.get_token() };
+    geo::RepresentationAttemptStats attempt;
+    const auto rejected = geo::prepare_voxel_geometry(source, {}, attempt, control);
+    REQUIRE(std::holds_alternative<geo::RepresentationFailure>(rejected));
+    CHECK(std::get<geo::RepresentationFailure>(rejected).code == "OPERATION_CANCELLED");
+    const auto geometry = std::get<std::shared_ptr<const geo::VoxelGeometry>>(geo::prepare_voxel_geometry(source));
+    const geo::GridWindow window {
+        { {}, 1 },
+        {},
+        { 7, 7, 7 }
+    };
+    const auto mask = std::get<std::shared_ptr<const geo::CellField>>(
+        geo::voxelize_container(geo::BoxDimensions { 7, 7, 7 }, window, 0));
+    const geo::CopyPose pose {
+        "a", { 3, 3, 3 },
+         { 0, 0, 0, 1 }
+    };
+    const auto placed =
+        std::get<std::shared_ptr<const geo::CellField>>(geo::voxelize_placed(geometry, window, pose, 1.5));
+    const auto object_stopped =
+        geo::voxelize_object(geometry, window.lattice, pose.rotation_xyzw, {}, attempt, control);
+    REQUIRE(std::holds_alternative<geo::RepresentationFailure>(object_stopped));
+    CHECK(std::get<geo::RepresentationFailure>(object_stopped).code == "OPERATION_CANCELLED");
+    auto blocked = std::get<std::unique_ptr<geo::BlockedField>>(geo::make_blocked_field(mask));
+    const auto add_stopped = blocked->add("a", placed, {}, attempt, control);
+    REQUIRE(add_stopped);
+    CHECK(add_stopped->code == "OPERATION_CANCELLED");
+    CHECK(blocked->placed_count({ 3, 3, 3 }) == 0);
+    REQUIRE_FALSE(blocked->add("a", placed));
+    const auto count = blocked->placed_count({ 3, 3, 3 });
+    const auto remove_stopped = blocked->remove("a", {}, attempt, control);
+    REQUIRE(remove_stopped);
+    CHECK(remove_stopped->code == "OPERATION_CANCELLED");
+    CHECK(blocked->placed_count({ 3, 3, 3 }) == count);
+}
 #if defined(_MSC_VER) && defined(_DEBUG)
 struct CrtReportScope {
     int mode = _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE | _CRTDBG_MODE_DEBUG);

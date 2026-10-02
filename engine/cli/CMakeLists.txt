@@ -23,7 +23,7 @@ if(BUILD_TESTING)
   add_executable(spectrapack_cli_memory_check
     tests/solve_memory_test_main.cpp
     src/solve.cpp src/desktop.cpp src/desktop_session.cpp)
-  target_include_directories(spectrapack_cli_memory_check PRIVATE src)
+  target_include_directories(spectrapack_cli_memory_check PRIVATE src ../pack_io/tests)
   target_link_libraries(spectrapack_cli_memory_check PRIVATE pack_service pack_solver)
   if(WIN32)
     target_link_libraries(spectrapack_cli_memory_check PRIVATE Psapi bcrypt)

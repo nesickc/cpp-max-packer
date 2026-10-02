@@ -210,12 +210,12 @@ BakedPlacementOutcome prepare_baked_world(std::shared_ptr<const AcceptedSolid> s
     {
         const auto prepared = validation_kernel::prepare(std::move(solid), budget.kernel);
         if (!prepared) {
-            failure = unresolved(prepared.failure.code, "The staged STL preparation was unresolved.");
+            failure = unresolved(std::string(prepared.failure.code), "The staged STL preparation was unresolved.");
         }
         else {
             const auto placed = validation_kernel::place(prepared.solid, { 0, 0, 0 }, { 0, 0, 0, 1 }, budget.kernel);
             if (!placed) {
-                failure = unresolved(placed.failure.code, "The staged STL placement was unresolved.");
+                failure = unresolved(std::string(placed.failure.code), "The staged STL placement was unresolved.");
             }
             else {
                 placed_solid = placed.solid;

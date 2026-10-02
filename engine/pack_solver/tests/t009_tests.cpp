@@ -49,12 +49,15 @@ auto ulamok_context()
 }  // namespace
 TEST_CASE("T009 larger fields fit the default serial proximity work cap", "[solver][T009]")
 {
-    const auto value = sol::detail::build_spectral_pipeline(context(),
+    const auto native_context = context();
+    const auto catalog = std::get<sol::OrientationCatalog>(
+        sol::make_orientation_catalog(native_context->constraints().orientations, 24));
+    const auto value = sol::detail::build_spectral_pipeline(native_context,
                                                             {
                                                                 { -.25, .25, -.5 },
                                                                 1
     },
-                                                            {}, {});
+                                                            {}, {}, catalog);
     CAPTURE(value.diagnostic, value.stats.proximity_terms);
     REQUIRE(value.complete);
     REQUIRE(value.stats.proximity_terms < 200'000'000);
@@ -135,10 +138,15 @@ TEST_CASE("T009 nested preparation preserves the resource cause", "[solver][T009
 {
     sol::SpectralLimits limits;
     limits.per_representation.max_input_triangles = 1;
-    const auto value = sol::detail::build_spectral_pipeline(context({
-                                                                10, 8, 6
-    }),
-                                                            { { 0, 0, 0 }, 1 }, limits, {});
+    const auto native_context = context({ 10, 8, 6 });
+    const auto catalog = std::get<sol::OrientationCatalog>(
+        sol::make_orientation_catalog(native_context->constraints().orientations, limits.spectral.max_orientations));
+    const auto value = sol::detail::build_spectral_pipeline(native_context,
+                                                            {
+                                                                { 0, 0, 0 },
+                                                                1
+    },
+                                                            limits, {}, catalog);
     REQUIRE_FALSE(value.complete);
     REQUIRE(value.failure_details);
     CHECK(value.failure_details->reason == sol::TerminationReason::resource_limit);
@@ -318,6 +326,26 @@ TEST_CASE("T010 Ulamok full cube field pass preserves 36", "[solver][T010][quali
     CHECK(value.run.termination_reason != sol::TerminationReason::resource_limit);
     CHECK(value.run.termination_reason != sol::TerminationReason::error);
     CHECK(value.spectral_stats.correlations >= 48);
+    CHECK(value.spectral_stats.representation_kernel_work <= limits.max_representation_kernel_work);
+    REQUIRE(value.field_admission);
+    CHECK(value.field_admission->working_bytes_upper_bound <= limits.max_working_bytes);
+    CHECK(geo::revalidate(retained).validated_solution);
+
+    const auto unsupported = sol::run_cpu_spectral(native_context, { {}, 1 }, limits, {}, {}, baseline.best->solution);
+    REQUIRE(unsupported.run.failure_details);
+    REQUIRE(unsupported.run.failure_details->suggested_pitch_mm);
+    const auto advice = *unsupported.run.failure_details->suggested_pitch_mm;
+    const auto suggested =
+        sol::run_cpu_spectral(native_context, { {}, advice }, limits, {}, {}, baseline.best->solution);
+    const auto suggested_retained = suggested.run.best ? suggested.run.best->solution : suggested.run.retained_solution;
+    CAPTURE(advice, suggested.run.diagnostic_code, suggested.spectral_stats.correlations,
+            suggested.spectral_stats.representation_kernel_work);
+    REQUIRE(suggested_retained);
+    CHECK(suggested_retained->copies().size() >= 36);
+    CHECK(suggested.run.termination_reason != sol::TerminationReason::resource_limit);
+    CHECK(suggested.run.termination_reason != sol::TerminationReason::error);
+    CHECK(suggested.spectral_stats.correlations >= 48);
+    CHECK(geo::revalidate(suggested_retained).validated_solution);
 }
 
 TEST_CASE("T009 full Pryanik solids have valid centered positive witnesses", "[solver][T009][.practical]")
@@ -354,6 +382,43 @@ TEST_CASE("T009 full Pryanik solids have valid centered positive witnesses", "[s
             REQUIRE(checked.validated_solution);
             REQUIRE(checked.validated_solution->copies().size() == 1);
             WARN("source=" << sources[index] << " witness_count=1 validation=" << checked.report.code);
+        }
+    }
+}
+
+TEST_CASE("T010 full Pryanik field profiles preserve two native-valid copies", "[solver][T010][qualification]")
+{
+    for (const auto source : { "rc/items/pryanik_1.STL", "rc/items/pryanik_2.STL" }) {
+        DYNAMIC_SECTION(source)
+        {
+            geo::Constraints constraints;
+            constraints.orientations.mode = geo::OrientationMode::fixed;
+            constraints.pair_clearance_mm = .1;
+            constraints.wall_clearance_mm = 1;
+            const auto made =
+                geo::make_validation_context(imported_object(source), geo::BoxDimensions { 100, 100, 50 }, constraints);
+            const auto native_context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+            const auto baseline = sol::run_aabb_baseline(native_context, {}, {});
+            REQUIRE(baseline.best);
+            REQUIRE(baseline.best->solution->copies().size() >= 2);
+            sol::SpectralLimits limits;
+            limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
+            limits.spectral.max_candidate_evaluations = limits.spectral.max_search_passes = 1;
+            limits.max_refinement_evaluations = 0;
+            const auto value =
+                sol::run_cpu_spectral(native_context, { {}, 4 }, limits, {}, {}, baseline.best->solution);
+            const auto retained = value.run.best ? value.run.best->solution : value.run.retained_solution;
+            CAPTURE(value.run.diagnostic_code, value.spectral_stats.representation_kernel_work,
+                    value.spectral_stats.correlations);
+            REQUIRE(retained);
+            CHECK(retained->copies().size() >= 2);
+            CHECK(value.run.termination_reason != sol::TerminationReason::resource_limit);
+            CHECK(value.run.termination_reason != sol::TerminationReason::error);
+            CHECK(value.spectral_stats.correlations >= 2);
+            CHECK(value.spectral_stats.representation_kernel_work <= limits.max_representation_kernel_work);
+            REQUIRE(value.field_admission);
+            CHECK(value.field_admission->working_bytes_upper_bound <= limits.max_working_bytes);
+            CHECK(geo::revalidate(retained).validated_solution);
         }
     }
 }

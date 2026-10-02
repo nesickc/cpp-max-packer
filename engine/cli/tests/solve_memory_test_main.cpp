@@ -7,15 +7,26 @@
 #include <thread>
 #include <vector>
 
+#include "allocation_probe.hpp"
 #include "desktop.hpp"
 #include "solve.hpp"
 
 int main(int argc, char** argv)
 {
-    if (argc == 3 && std::string_view(argv[1]) == "session-publication-barrier") {
-        auto directory = std::filesystem::u8path(argv[2]);
+    if ((argc == 3 || argc == 4) && std::string_view(argv[1]) == "session-publication-barrier") {
+        struct PublicationMemory {
+            std::filesystem::path directory;
+            bool measured;
+            bool released {};
+            std::size_t earlier_peak {}, baseline {}, held_peak {}, held_live {};
+        } memory { std::filesystem::u8path(argv[2]), argc == 4 };
         spectrapack::cli::test::set_publication_hook([](void* raw, std::stop_token stop) {
-            const auto& directory = *static_cast<const std::filesystem::path*>(raw);
+            auto& memory = *static_cast<PublicationMemory*>(raw);
+            const auto& directory = memory.directory;
+            if (memory.measured) {
+                memory.baseline = live.load();
+                memory.earlier_peak = peak.exchange(memory.baseline);
+            }
             std::ofstream(directory / "ready") << "ready";
             const auto deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(3);
             bool observed {};
@@ -25,13 +36,36 @@ int main(int argc, char** argv)
                     observed = true;
                 }
                 std::error_code cause;
-                if (std::filesystem::exists(directory / "release", cause) || cause) {
+                memory.released = std::filesystem::exists(directory / "release", cause);
+                if (memory.released || cause) {
                     break;
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(10));
             }
-        }, &directory);
-        return run_desktop_session("memory-check", "test-only");
+            if (memory.measured) {
+                memory.held_peak = peak.load();
+                memory.held_live = live.load();
+            }
+        }, &memory);
+        counting = memory.measured;
+        const auto status = run_desktop_session("memory-check", "test-only");
+        counting = false;
+        if (memory.measured) {
+            const auto session_peak = (std::max)({ memory.earlier_peak, memory.held_peak, peak.load() });
+            std::ofstream(argv[3]) << spectrapack::io::Json {
+                { "session_peak_cpp_bytes", session_peak },
+                { "publication_baseline_cpp_bytes", memory.baseline },
+                { "publication_peak_cpp_bytes", memory.held_peak },
+                { "publication_delta_peak_cpp_bytes", memory.held_peak - memory.baseline },
+                { "publication_after_rejection_cpp_bytes", memory.held_live },
+                { "publication_released_by_fixture", memory.released },
+                { "after_session_cpp_bytes", live.load() },
+                { "sizeof_json", sizeof(spectrapack::io::Json) }, { "sizeof_string", sizeof(std::string) },
+                { "sizeof_json_object", sizeof(spectrapack::io::Json::object_t) },
+                { "sizeof_json_array", sizeof(spectrapack::io::Json::array_t) }
+            };
+        }
+        return status;
     }
     if (argc < 5 || std::string_view(argv[3]) != "solve") {
         std::cerr << "usage: spectrapack_cli_memory_check <build-max-bytes> <export-max-bytes> solve <options...>\n";

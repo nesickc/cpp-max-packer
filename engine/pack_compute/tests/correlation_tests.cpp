@@ -16,6 +16,36 @@
 namespace compute = spectrapack::compute;
 namespace oracle = spectrapack::test_support;
 
+TEST_CASE("T010 CPU correlation honors pre-Stop and a deadline during actual transform work",
+          "[compute][T010][controls]")
+{
+    const compute::CorrelationSpec spec {
+        { 11, 7, 5 },
+        { 3, 2, 2 },
+        {},
+        {}
+    };
+    const std::vector<std::uint8_t> environment(385, 1), kernel(12, 1);
+    std::stop_source stop;
+    stop.request_stop();
+    const auto stopped = compute::correlate_binary_cpu(spec, environment, kernel, {}, { stop.get_token() });
+    REQUIRE(std::holds_alternative<compute::CorrelationFailure>(stopped));
+    CHECK(std::get<compute::CorrelationFailure>(stopped).code == "OPERATION_CANCELLED");
+    std::uint64_t polls {};
+    const auto now = [](void* context) noexcept {
+        auto& count = *static_cast<std::uint64_t*>(context);
+        return spectrapack::runtime::Clock::time_point {} + std::chrono::milliseconds(++count);
+    };
+    const spectrapack::runtime::OperationControl control {
+        {}, spectrapack::runtime::Clock::time_point {} + std::chrono::milliseconds(6), now, &polls
+    };
+    const auto expired = compute::correlate_binary_cpu(spec, environment, kernel, {}, control);
+    REQUIRE(std::holds_alternative<compute::CorrelationFailure>(expired));
+    CHECK(std::get<compute::CorrelationFailure>(expired).code == "DEADLINE_EXCEEDED");
+    CHECK(polls >= 6);
+    CHECK(std::holds_alternative<compute::CorrelationResult>(compute::correlate_binary_cpu(spec, environment, kernel)));
+}
+
 namespace {
 
 std::size_t index(compute::Shape3 shape, std::uint32_t x, std::uint32_t y, std::uint32_t z)
@@ -167,11 +197,20 @@ std::vector<std::uint8_t> binary_pattern(compute::Shape3 shape, std::uint32_t sa
     return cells;
 }
 
+constexpr std::uint64_t kExpectedCorrelationMetadataBytes = 2 * sizeof(compute::CorrelationOutcome) +
+                                                            sizeof(std::vector<double>) +
+                                                            sizeof(spectrapack::runtime::OperationControl)
+#if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
+                                                            + 3 * sizeof(std::_Container_proxy)
+#endif
+    ;
+
 std::uint64_t expected_working_bytes(std::uint64_t padded_cells, std::uint64_t longest_axis,
                                      std::uint64_t reserved_bytes = 0)
 {
-    return reserved_bytes + 2 * padded_cells * sizeof(std::complex<double>) + padded_cells * sizeof(double) +
-           64 * longest_axis * sizeof(std::complex<double>) + (64ULL << 10) + sizeof(std::array<std::size_t, 8>);
+    return reserved_bytes + kExpectedCorrelationMetadataBytes + 2 * padded_cells * sizeof(std::complex<double>) +
+           padded_cells * sizeof(double) + 64 * longest_axis * sizeof(std::complex<double>) + (64ULL << 10) +
+           sizeof(std::array<std::size_t, 8>);
 }
 
 void qualify_padded_axis(std::uint32_t environment_length, std::uint32_t kernel_length, std::size_t axis)
@@ -551,7 +590,7 @@ TEST_CASE("AT-12 CPU preflights pinned pocketfft workspace and caller reserve")
     limits.reserved_bytes = 1234;
     const auto outcome = compute::correlate_binary_cpu(spec, one, one, limits);
     REQUIRE(std::holds_alternative<compute::CorrelationResult>(outcome));
-    constexpr std::uint64_t accounted_bytes = 66'664;
+    constexpr std::uint64_t accounted_bytes = 66'664 + kExpectedCorrelationMetadataBytes;
     CHECK(std::get<compute::CorrelationResult>(outcome).stats.working_bytes_peak ==
           limits.reserved_bytes + accounted_bytes);
 

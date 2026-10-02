@@ -48,14 +48,14 @@ enum class TerminationReason {
 };
 
 struct ResourceLimitDetails {
-    std::string resource;
+    std::string_view resource;
     std::uint64_t required {}, limit {};
 };
 
 struct RunFailureDetails {
     TerminationReason reason { TerminationReason::error };
-    std::string phase;
-    std::string cause_code;
+    std::string_view phase;
+    std::string_view cause_code;
     std::optional<ResourceLimitDetails> resource;
     std::optional<double> suggested_pitch_mm;
 };

@@ -170,20 +170,31 @@ int main(int argc, char** argv)
         const geo::BoxDimensions box = analytic ? geo::BoxDimensions { 38, 28, 20 }
                                        : ulamok ? geo::BoxDimensions { 400, 350, 285 }
                                                 : geo::BoxDimensions { 100, 100, 50 };
-        const auto made = geo::make_validation_context(object, box, constraints);
-        if (!std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made)) {
-            throw std::runtime_error("context failed");
-        }
-        const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+        const auto make_context = [&]() {
+            auto made = geo::make_validation_context(object, box, constraints);
+            if (!std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made)) {
+                throw std::runtime_error("context failed");
+            }
+            return std::get<std::shared_ptr<const geo::ValidationContext>>(std::move(made));
+        };
         sol::BaselineLimits baseline_limits;
         if (analytic) {
             baseline_limits.max_candidate_evaluations = 2;
         }
-        const auto baseline_start = Clock::now();
-        const auto baseline = sol::run_aabb_baseline(context, baseline_limits, {});
-        const double baseline_ms = elapsed(baseline_start);
-        if (!baseline.best) {
-            throw std::runtime_error("baseline failed");
+        std::shared_ptr<const geo::ValidationContext> field_context;
+        std::shared_ptr<const geo::ValidatedSolution> field_seed;
+        bench::Json initial_baseline;
+        double baseline_ms {};
+        if (scope == "field") {
+            field_context = make_context();
+            const auto baseline_start = Clock::now();
+            const auto baseline = sol::run_aabb_baseline(field_context, baseline_limits, {});
+            baseline_ms = elapsed(baseline_start);
+            if (!baseline.best) {
+                throw std::runtime_error("baseline failed");
+            }
+            initial_baseline = bench::snapshot_json(baseline.best);
+            field_seed = baseline.best->solution;
         }
         const geo::GridLattice lattice {
             { 0, 0, 0 },
@@ -207,9 +218,11 @@ int main(int argc, char** argv)
             geo::detail::field_profile_sink = &field_sample;
             geo::detail::field_profile_context = &profile;
             const auto start = Clock::now();
-            const auto run = sol::run_cpu_spectral(
-                context, lattice, limits, {}, {},
-                scope == "field" ? baseline.best->solution : std::shared_ptr<const geo::ValidatedSolution> {});
+            // A prepared Start owns a fresh job context and baseline. Only the
+            // accepted input stays fixed; no unrelated reference solution is
+            // retained while observing its cumulative process high-water.
+            const auto context = scope == "field" ? field_context : make_context();
+            const auto run = sol::run_cpu_spectral(context, lattice, limits, {}, {}, field_seed);
             const double solver_ms = elapsed(start);
             sol::detail::pipeline_profile_sink = nullptr;
             geo::detail::field_profile_sink = nullptr;
@@ -231,7 +244,8 @@ int main(int argc, char** argv)
             const bool complete = (run.run.termination_reason == sol::TerminationReason::budget_exhausted ||
                                    run.run.termination_reason == sol::TerminationReason::search_stalled) &&
                                   run.run.diagnostic_code != "PHYSICAL_DEADLINE" &&
-                                  run.spectral_stats.correlations >= (ulamok ? 48 : 2) && checked.validated_solution;
+                                  run.spectral_stats.correlations >= (ulamok ? 48 : 2) && checked.validated_solution &&
+                                  run.run.best->solution->copies().size() >= (ulamok ? 36 : 2);
             passed &= complete;
             records.push_back({
                 { "ordinal",                                 ordinal                                      },
@@ -244,36 +258,50 @@ int main(int argc, char** argv)
                 { "termination",                             static_cast<int>(run.run.termination_reason) },
                 { "diagnostic",                              std::string(run.run.diagnostic_code)         },
                 { "counters",                                counters(run)                                },
+                { "field_admission",
+                 run.field_admission
+                      ? bench::Json { { "working_bytes_upper_bound", run.field_admission->working_bytes_upper_bound },
+                                      { "footprint_copy_count", run.field_admission->footprint_copy_count },
+                                      { "effective_host_cap_bytes", run.field_admission->effective_host_cap_bytes },
+                                      { "cpu_thread_count", run.field_admission->cpu_thread_count },
+                                      { "scheduling_policy", std::string(run.field_admission->scheduling_policy) } }
+                      : bench::Json(nullptr)                                                              },
                 { "profile",                                 profile_json(profile)                        },
                 { "process_lifetime_peak_working_set_bytes", process_peak                                 },
                 { "best_found",                              bench::snapshot_json(run.run.best)           }
             });
         }
-        const char* included_phases =
-            scope == "field" ? "spectral-search" : "initial-baseline,spectral-search,final-independent-validation";
+        const char* included_phases = scope == "field"
+                                          ? "spectral-search"
+                                          : "job-context,initial-baseline,spectral-search,final-independent-validation";
         const char* excluded_phases = scope == "field"
                                           ? "accepted-preparation,initial-baseline,independent-revalidation"
                                           : "accepted-preparation";
         std::cout << bench::Json {
-            { "ticket",                     "T-010"                                                   },
-            { "profile",                    profile_name                                              },
-            { "source",                     source                                                    },
-            { "triangles",                  object->mesh().triangles.size()                           },
-            { "cpu_thread_count",           1                                                         },
-            { "scope",                      scope                                                     },
-            { "field_work_revision",        geo::detail::validation_kernel::kRasterWorkRevision       },
+            { "ticket",                        "T-010"                                                },
+            { "profile",                       profile_name                                           },
+            { "source",                        source                                                 },
+            { "triangles",                     object->mesh().triangles.size()                        },
+            { "cpu_thread_count",              1                                                      },
+            { "cpu_scheduling_policy",         std::string(sol::cpu_scheduling_policy())              },
+            { "accepted_input_resident_bytes", object->resident_buffer_bytes().value()                },
+            { "host_cap_bytes",                limits.max_working_bytes                               },
+            { "representation_work_cap",       limits.max_representation_kernel_work                  },
+            { "scope",                         scope                                                  },
+            { "field_work_revision",           geo::detail::validation_kernel::kRasterWorkRevision    },
             { "preparation_state",
              scope == "field" ? "accepted-input-and-retained-baseline-fixed" : "accepted-input-fixed" },
-            { "included_phases",            included_phases                                           },
-            { "excluded_phases",            excluded_phases                                           },
-            { "cold_native_preparation_ms", preparation_ms                                            },
-            { "initial_baseline_ms",        baseline_ms                                               },
-            { "initial_baseline",           bench::snapshot_json(baseline.best)                       },
-            { "pitch_mm",                   lattice.pitch_mm                                          },
-            { "box_mm",                     { box.width_mm, box.depth_mm, box.height_mm }             },
-            { "warmups",                    warmups                                                   },
-            { "serial_samples",             samples                                                   },
-            { "samples",                    records                                                   }
+            { "included_phases",               included_phases                                        },
+            { "excluded_phases",               excluded_phases                                        },
+            { "cold_native_preparation_ms",    preparation_ms                                         },
+            { "initial_baseline_ms",           baseline_ms                                            },
+            { "initial_baseline",              initial_baseline                                       },
+            { "process_peak_basis",            "cumulative-process-high-water-including-preparation"  },
+            { "pitch_mm",                      lattice.pitch_mm                                       },
+            { "box_mm",                        { box.width_mm, box.depth_mm, box.height_mm }          },
+            { "warmups",                       warmups                                                },
+            { "serial_samples",                samples                                                },
+            { "samples",                       records                                                }
         }.dump(2) << '\n';
         return passed ? 0 : 1;
     }

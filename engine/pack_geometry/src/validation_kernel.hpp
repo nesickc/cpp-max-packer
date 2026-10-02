@@ -31,8 +31,8 @@ enum class BoundaryRelation : std::uint8_t {
 };
 
 struct KernelFailure {
-  std::string code;
-  std::string method;
+    std::string_view code;
+    std::string_view method;
 };
 
 class Budget {

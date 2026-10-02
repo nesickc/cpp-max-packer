@@ -492,7 +492,7 @@ std::variant<Json, io::Error> create_preview(PreparedAsset& prepared, const std:
     if (!prepared.display) {
         const auto made = geo::make_display_lod(prepared.verified->solid(), {}, display_limits, control);
         if (const auto* failure = std::get_if<geo::RepresentationFailure>(&made)) {
-            return error(std::string(failure->code), failure->message);
+            return error(std::string(failure->code), std::string(failure->message));
         }
         prepared.display = std::get<std::shared_ptr<const geo::DisplayLod>>(made);
     }
@@ -991,11 +991,14 @@ int run_desktop_session(std::string engine_version, std::string engine_commit)
                 lock.lock();
             }
             if (request_id == session.last_request_id) {
-                session.send(canonical == session.last_canonical.value()
-                                 ? session.last_response
-                                 : response(request, false,
-                                            io::error_json(error("REQUEST_ID_CONFLICT",
-                                                                 "Repeated request identity has different content."))));
+                if (canonical == session.last_canonical.value()) {
+                    session.send(session.last_response);
+                }
+                else {
+                    session.send(response(request, false,
+                                          io::error_json(error("REQUEST_ID_CONFLICT",
+                                                               "Repeated request identity has different content."))));
+                }
                 continue;
             }
             if (session.expired(request_id)) {

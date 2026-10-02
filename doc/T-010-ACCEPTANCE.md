@@ -41,6 +41,41 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 
 ## Retained evidence and qualification
 
+- Compact computational-failure/workspace checkpoint: the indexed affected native
+  gates pass 277 cases / 23,638 assertions in Debug and 275 / 23,577 in Release.
+  Final ordinary solver specifically passes 130 / 5,854 and 128 / 5,801; it excludes
+  the practical `[qualification]` cases. Focused failure/control checks pass
+  15 / 557 and 14 / 514. Static diagnostic descriptors, throwing catalog/correlation
+  transfers, lazy pages and separate admission/observed peaks preserve exact valid
+  handles and failure causes. Causal catalog allocation, entry-control and peak
+  failures are retained; the critical recheck has no remaining findings.
+  `.local/t011/native-failures/FINAL_INDEX.md` identifies the exact logs, 78 source
+  snapshots and 26 saved binaries/libraries. Primary verified all 182 source/
+  snapshot/binary checks and audited the complete indexed/final short logs after
+  the Luna follow-up hit the tool's thread limit. Retained warnings are D9025 and
+  a passing solver numerical diagnostic; Release's unmatched catalog-peak tag is
+  a Debug-only allocation path. Native benchmark binaries compile/link but have
+  not been measured. Advised 4 mm Ulamok, Debug cleanup and integrated gates remain open.
+- Adapter overlap characterization: real prepare A/B reuse, a real custom-catalog
+  run and a 2,048-node / 65,536-decoded-byte invalid request overlap at publication.
+  Debug observes 6,709,735 peak session C++ payload bytes, with 3,904,487 at the
+  publication boundary and 5,361,429 in the held window; Release observes
+  5,576,815 / 3,333,615 / 4,527,701 respectively. Each saves eight native-valid
+  copies and exits cleanly. Memory checks pass 8 cases / 29 assertions and wire
+  checks 3 / 11 in both builds; monitor, exact replay/conflict and cached-error
+  cases also pass. Debug's initial long-path fixture failed before the barrier;
+  the corrected overlap alone was rerun on the same preserved binaries. Evidence
+  is under `.local/t011/adapter-overlap/{d01,d02,r01}/`. No heavy-owner charge was
+  subtracted from a non-simultaneous peak. These ordinary-path observations exclude
+  allocator bookkeeping, stacks and RSS, and do not prove the full 16 MiB allowance,
+  settings-copy overlap, every error producer, or long-path support.
+- Current unchanged contract/presentation inputs pass 31 schema, 29 desktop and
+  7 retained-runtime fixture checks, generated/header and TypeScript checks, and
+  4 frontend files / 10 tests. After pnpm aborted an automatic install before
+  testing, the exact underlying scripts ran with all 17 pinned installed package
+  versions verified; no dependency reinstall occurred. All 35 input hashes stayed
+  stable. `.local/t011/presentation-contract-checkpoint/log-review.md` records the
+  independent full-log audit. These checks do not establish native or GUI behavior.
 - Typed-solve simplification: the retained session passes a validated in-memory
   request to the shared native solve entrypoint and consumes its structured result.
   The temporary settings file, synthetic argv, terminal text/parse roundtrip, TLS
