@@ -13,15 +13,14 @@
 
 namespace spectrapack::io::detail {
 // Every certification read and the final rename use the same DELETE-capable
-// handle. Denying write sharing pins the bytes; handle-based rename pins identity
-// even if another actor changes a pathname while FILE_SHARE_DELETE is allowed.
+// handle. Denying write/delete sharing pins both certified bytes and the final
+// pathname through JSON commit; the owning DELETE-capable handle can still rename.
 class PinnedStage final : private std::streambuf {
 public:
     static constexpr std::uint64_t kScratchBytes = 64 * 1024 + 64 * 1024;
     explicit PinnedStage(const std::filesystem::path& path, bool read_only_destination = false) :
-        handle_(CreateFileW(path.c_str(), GENERIC_READ | (read_only_destination ? 0 : DELETE),
-                            FILE_SHARE_READ | (read_only_destination ? 0 : FILE_SHARE_DELETE), nullptr, OPEN_EXISTING,
-                            FILE_ATTRIBUTE_NORMAL, nullptr)),
+        handle_(CreateFileW(path.c_str(), GENERIC_READ | (read_only_destination ? 0 : DELETE), FILE_SHARE_READ, nullptr,
+                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)),
         input_(this)
     {
         setg(buffer_.data(), buffer_.data(), buffer_.data());

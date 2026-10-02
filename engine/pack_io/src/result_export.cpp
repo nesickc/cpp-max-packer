@@ -83,6 +83,7 @@ std::atomic_uint64_t export_stage_write_exception_number {};
 std::atomic<test::ClosedStageMutation> export_closed_stage_mutation { test::ClosedStageMutation::none };
 std::atomic_bool export_closed_stage_reader_failure {};
 std::atomic_bool export_fail_pinned_reference_query {};
+std::atomic<test::PostPublicationHook> export_post_publication_hook {};
 thread_local bool export_reference_pin_active {};
 struct PinnedReferenceScope {
     bool previous { export_reference_pin_active };
@@ -669,6 +670,133 @@ std::string utf8_path(const std::filesystem::path& path)
     const auto text = path.u8string();
     return { reinterpret_cast<const char*>(text.data()), text.size() };
 }
+struct GuardedLocation {
+    std::filesystem::path root;
+    std::filesystem::path candidate;
+};
+constexpr std::uint64_t kPathMetadataBytes = 64;
+std::uint64_t export_path_owner_bytes(const std::filesystem::path& path)
+{
+    // Include the terminator and pinned Debug string/path proxy payloads, plus
+    // transfer slack. Stack wrappers and allocator headers follow the existing
+    // portable-payload convention and are not process working-set measurements.
+    return (path.native().capacity() + 1ULL) * sizeof(wchar_t) + kPathMetadataBytes;
+}
+std::variant<std::filesystem::path, Error> admitted_canonical_export_path(const std::filesystem::path& input,
+                                                                          std::uint64_t remaining_bytes)
+{
+    struct CloseFile {
+        HANDLE handle;
+        ~CloseFile()
+        {
+            if (handle != INVALID_HANDLE_VALUE) {
+                CloseHandle(handle);
+            }
+        }
+    } file { CreateFileW(input.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                         nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr) };
+    const auto path_error = [](DWORD cause) {
+        auto problem = failure("EXPORT_PATH_INVALID", "Guarded STL canonical path could not be queried.");
+        problem.details = {
+            { "win32_error", cause }
+        };
+        return problem;
+    };
+    if (file.handle == INVALID_HANDLE_VALUE) {
+        const auto cause = GetLastError();
+        return path_error(cause);
+    }
+    DWORD kind = VOLUME_NAME_DOS;
+    auto needed = GetFinalPathNameByHandleW(file.handle, nullptr, 0, kind);
+    if (!needed && GetLastError() == ERROR_PATH_NOT_FOUND) {
+        // Match pinned MSVC canonical(): an unmounted volume may only have an
+        // NT name. Its Win32 spelling uses the GLOBALROOT namespace prefix.
+        kind = VOLUME_NAME_NT;
+        needed = GetFinalPathNameByHandleW(file.handle, nullptr, 0, kind);
+    }
+    if (!needed) {
+        return path_error(GetLastError());
+    }
+    constexpr std::wstring_view nt_prefix = LR"(\\?\GLOBALROOT)";
+    const auto prefix_size = kind == VOLUME_NAME_NT ? nt_prefix.size() : 0;
+    if (needed > 32768 || prefix_size > 32768 - needed) {
+        return path_error(ERROR_FILENAME_EXCED_RANGE);
+    }
+    const auto characters = needed + prefix_size;
+    // The pinned wchar string constructor rounds by at most 15 characters.
+    // Admit its terminator/proxies and move transfer before either allocation.
+    const auto construction_bytes = (characters + 16ULL) * sizeof(wchar_t) + kPathMetadataBytes;
+    if (construction_bytes > remaining_bytes) {
+        return failure("MEMORY_LIMIT", "Guarded STL path construction exceeds checked residency.");
+    }
+    std::wstring text(characters, L'\0');
+    const auto written = GetFinalPathNameByHandleW(file.handle, text.data() + prefix_size, needed, kind);
+    if (!written || written >= needed) {
+        return path_error(written ? ERROR_INSUFFICIENT_BUFFER : GetLastError());
+    }
+    // Never grow/retry after a pathname length change. The actual fixed buffer
+    // remains admitted even when a concurrent rename makes this query fail.
+    text.resize(prefix_size + written);
+    if (prefix_size) {
+        std::copy(nt_prefix.begin(), nt_prefix.end(), text.begin());
+    }
+    else if (text.starts_with(LR"(\\?\UNC\)")) {
+        text.erase(2, 6);
+    }
+    else if (text.size() >= 6 && text.starts_with(LR"(\\?\)") && text[5] == L':' &&
+             ((text[4] >= L'A' && text[4] <= L'Z') || (text[4] >= L'a' && text[4] <= L'z'))) {
+        text.erase(0, 4);
+    }
+    return std::filesystem::path(std::move(text));
+}
+std::variant<std::filesystem::path, Error> admitted_export_target(const std::filesystem::path& input,
+                                                                  std::uint64_t remaining_bytes)
+{
+    if (input.native().size() > 32768) {
+        return failure("EXPORT_PATH_INVALID", "Guarded STL input exceeds the supported Windows path.");
+    }
+    if (GetFileAttributesW(input.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        return admitted_canonical_export_path(input, remaining_bytes);
+    }
+    const auto cause = GetLastError();
+    if (cause != ERROR_FILE_NOT_FOUND && cause != ERROR_PATH_NOT_FOUND) {
+        return failure("EXPORT_PATH_INVALID", "Guarded STL destination could not be inspected.");
+    }
+    // parent_path()/filename() construct wide owners. Their proxy/capacity
+    // envelope is admitted before those substrings exist; the canonical parent
+    // and new leaf assembly coexist with both until return.
+    const auto derived_scratch = 4ULL * (input.native().size() + 16ULL) * sizeof(wchar_t) + 256;
+    if (derived_scratch > remaining_bytes) {
+        return failure("MEMORY_LIMIT", "Guarded STL parent/leaf construction exceeds checked residency.");
+    }
+    const auto parent = input.parent_path(), filename = input.filename();
+    if (parent.empty() || filename.empty()) {
+        return failure("EXPORT_PATH_INVALID", "Guarded STL destination requires an existing parent and a filename.");
+    }
+    auto canonical_parent = admitted_canonical_export_path(parent, remaining_bytes - derived_scratch);
+    if (auto* problem = std::get_if<Error>(&canonical_parent)) {
+        return std::move(*problem);
+    }
+    const auto& resolved_parent = std::get<std::filesystem::path>(canonical_parent);
+    const auto parent_bytes = export_path_owner_bytes(resolved_parent);
+    const auto separator = resolved_parent.native().back() == L'\\' ? 0ULL : 1ULL;
+    const auto characters = resolved_parent.native().size() + separator + filename.native().size();
+    if (characters >= 32768) {
+        return failure("EXPORT_PATH_INVALID", "Guarded STL parent/leaf exceeds the supported Windows path.");
+    }
+    const auto assembly_bytes = (characters + 16ULL) * sizeof(wchar_t) + kPathMetadataBytes;
+    if (parent_bytes > remaining_bytes - derived_scratch ||
+        assembly_bytes > remaining_bytes - derived_scratch - parent_bytes) {
+        return failure("MEMORY_LIMIT", "Guarded STL parent/leaf assembly exceeds checked residency.");
+    }
+    std::wstring text(characters, L'\0');
+    auto tail = std::copy(resolved_parent.native().begin(), resolved_parent.native().end(), text.begin());
+    if (separator) {
+        *tail++ = L'\\';
+    }
+    std::copy(filename.native().begin(), filename.native().end(), tail);
+    return std::filesystem::path(std::move(text));
+}
 bool contained_location(const std::filesystem::path& root, const std::filesystem::path& candidate)
 {
     std::error_code error;
@@ -705,6 +833,45 @@ bool contained_location(const std::filesystem::path& root, const std::filesystem
         }
     }
     return true;
+}
+std::variant<GuardedLocation, Error> captured_export_location(const std::filesystem::path& root,
+                                                              const std::filesystem::path& candidate,
+                                                              std::uint64_t remaining_bytes)
+{
+    auto canonical_root = admitted_canonical_export_path(root, remaining_bytes);
+    if (auto* problem = std::get_if<Error>(&canonical_root)) {
+        return std::move(*problem);
+    }
+    const auto& root_path = std::get<std::filesystem::path>(canonical_root);
+    const auto root_bytes = export_path_owner_bytes(root_path);
+    if (root_bytes > remaining_bytes) {
+        return failure("MEMORY_LIMIT", "Guarded STL canonical root exceeds checked residency.");
+    }
+    auto canonical_target = admitted_export_target(candidate, remaining_bytes - root_bytes);
+    if (auto* problem = std::get_if<Error>(&canonical_target)) {
+        return std::move(*problem);
+    }
+    const auto& candidate_path = std::get<std::filesystem::path>(canonical_target);
+    const auto candidate_bytes = export_path_owner_bytes(candidate_path);
+    // Each iterator owns its current path component. This envelope covers two
+    // component caches, their old/new MSVC growth, end iterators and Debug proxies.
+    const auto iterator_scratch =
+        4ULL * (root_path.native().size() + candidate_path.native().size() + 64ULL) * sizeof(wchar_t) + 256;
+    if (candidate_bytes > remaining_bytes - root_bytes ||
+        iterator_scratch > remaining_bytes - root_bytes - candidate_bytes) {
+        return failure("MEMORY_LIMIT", "Guarded STL containment components exceed checked residency.");
+    }
+    auto root_part = root_path.begin(), candidate_part = candidate_path.begin();
+    for (; root_part != root_path.end(); ++root_part, ++candidate_part) {
+        if (candidate_part == candidate_path.end() ||
+            CompareStringOrdinal(root_part->native().data(), static_cast<int>(root_part->native().size()),
+                                 candidate_part->native().data(), static_cast<int>(candidate_part->native().size()),
+                                 TRUE) != CSTR_EQUAL) {
+            return failure("EXPORT_PATH_INVALID", "An output path escapes the result directory.");
+        }
+    }
+    return GuardedLocation { std::get<std::filesystem::path>(std::move(canonical_root)),
+                             std::get<std::filesystem::path>(std::move(canonical_target)) };
 }
 bool same_file_bytes(const std::filesystem::path& first, const std::filesystem::path& second) noexcept
 {
@@ -1028,8 +1195,7 @@ std::optional<Error> validate_closed_stl_stage(const std::filesystem::path& path
     return std::nullopt;
 }
 
-std::variant<std::string, Error> portable_relative_path(const std::filesystem::path& root,
-                                                        const std::filesystem::path& path)
+std::variant<std::string, Error> portable_relative_path(const GuardedLocation& guarded)
 {
 #ifdef SPECTRAPACK_ASSET_LOADER_TESTING
     if (export_fail_pinned_reference_query && export_reference_pin_active) {
@@ -1041,10 +1207,22 @@ std::variant<std::string, Error> portable_relative_path(const std::filesystem::p
         return problem;
     }
 #endif
-    // Both paths are admitted absolute spellings, after containment and alias
-    // checks. A portable reference records that spelling, so do not reopen an
-    // absent or certified destination through weakly_canonical/relative.
-    const auto relative = path.lexically_relative(root);
+    // Use the canonical paths actually proved by containment. Windows component
+    // equality is ordinal/case-insensitive; lexical_relative would reject case
+    // variants and parent junctions that the guard has already resolved.
+    auto part = guarded.candidate.begin();
+    for (const auto& root_part : guarded.root) {
+        if (part == guarded.candidate.end() ||
+            CompareStringOrdinal(root_part.native().data(), static_cast<int>(root_part.native().size()),
+                                 part->native().data(), static_cast<int>(part->native().size()), TRUE) != CSTR_EQUAL) {
+            return failure("EXPORT_PATH_INVALID", "STL reference differs from its guarded canonical location.");
+        }
+        ++part;
+    }
+    std::filesystem::path relative;
+    for (; part != guarded.candidate.end(); ++part) {
+        relative /= *part;
+    }
     const auto text = relative.generic_u8string();
     const std::string result(reinterpret_cast<const char*>(text.data()), text.size());
     if (!portable_path(result)) {
@@ -1091,6 +1269,17 @@ std::variant<std::filesystem::path, Error> admitted_absolute_export_path(const s
 namespace test {
 #ifdef SPECTRAPACK_ASSET_LOADER_TESTING
 void fail_pinned_reference_query_for_test(bool enabled) noexcept { export_fail_pinned_reference_query.store(enabled); }
+void set_export_post_publication_hook_for_test(PostPublicationHook hook) noexcept
+{
+    export_post_publication_hook.store(hook);
+}
+std::string guarded_export_path_error_for_test(const std::filesystem::path& root, const std::filesystem::path& target,
+                                               std::uint64_t remaining_bytes)
+{
+    const auto captured = captured_export_location(root, target, remaining_bytes);
+    const auto* problem = std::get_if<Error>(&captured);
+    return problem ? problem->code : "";
+}
 void reset_export_residency_observation_for_test() noexcept
 {
     export_builder_base_before_native_inputs.store(0, std::memory_order_relaxed);
@@ -1713,9 +1902,25 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
             }
             return OwnedStage::create(stage_path);
         };
-        if (!contained_location(parent, request.result_path) ||
-            (request.stl_path && !contained_location(parent, *request.stl_path)) ||
-            (companion_final && !contained_location(parent, *companion_final))) {
+        if (!contained_location(parent, request.result_path)) {
+            return failure("EXPORT_PATH_INVALID", "An output path escapes the result directory.");
+        }
+        std::optional<GuardedLocation> guarded_stl;
+        std::uint64_t guarded_path_bytes {};
+        if (request.stl_path) {
+            auto captured =
+                captured_export_location(parent, *request.stl_path, request.max_working_bytes - writer_live_bytes);
+            if (const auto* problem = std::get_if<Error>(&captured)) {
+                return *problem;
+            }
+            guarded_stl = std::get<GuardedLocation>(std::move(captured));
+            if (!add_bytes(guarded_path_bytes, export_path_owner_bytes(guarded_stl->root)) ||
+                !add_bytes(guarded_path_bytes, export_path_owner_bytes(guarded_stl->candidate)) ||
+                !add_bytes(writer_live_bytes, guarded_path_bytes) || writer_live_bytes > request.max_working_bytes) {
+                return failure("MEMORY_LIMIT", "Guarded STL reference paths exceed checked residency.");
+            }
+        }
+        if (companion_final && !contained_location(parent, *companion_final)) {
             return failure("EXPORT_PATH_INVALID", "An output path escapes the result directory.");
         }
         const auto assets_directory = parent / "assets";
@@ -1736,19 +1941,14 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
                 writer_live_bytes > request.max_working_bytes) {
                 return failure("MEMORY_LIMIT", "STL absolute-path owner exceeds checked residency.");
             }
-            // Guarded absolute spelling and lexical/UTF-8 construction scratch
-            // coexist with retained owners. Admit them before construction.
-            auto absolute_parent = admitted_absolute_export_path(parent, request.max_working_bytes - writer_live_bytes);
-            if (const auto* problem = std::get_if<Error>(&absolute_parent)) {
-                return *problem;
-            }
-            const auto& reference_root = std::get<std::filesystem::path>(absolute_parent);
+            // Captured guard paths coexist with the requested publication path
+            // and component/UTF-8 scratch. Admit scratch before construction.
             const auto reference_scratch =
-                16ULL * (absolute_stl->native().capacity() + reference_root.native().capacity() + 64ULL);
+                16ULL * (guarded_stl->candidate.native().capacity() + guarded_stl->root.native().capacity() + 64ULL);
             if (reference_scratch > request.max_working_bytes - writer_live_bytes) {
                 return failure("MEMORY_LIMIT", "STL portable-reference construction exceeds checked residency.");
             }
-            auto reference = portable_relative_path(reference_root, *absolute_stl);
+            auto reference = portable_relative_path(*guarded_stl);
             if (const auto* problem = std::get_if<Error>(&reference)) {
                 return *problem;
             }
@@ -1758,6 +1958,10 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
                 writer_live_bytes > request.max_working_bytes) {
                 return failure("MEMORY_LIMIT", "STL portable reference exceeds checked residency.");
             }
+            // Only the portable string and original absolute publication spelling
+            // remain live during checked STL writing/certification/publication.
+            guarded_stl.reset();
+            writer_live_bytes -= guarded_path_bytes;
         }
         if (!std::filesystem::exists(assets_directory, error) &&
             !std::filesystem::create_directory(assets_directory, error)) {
@@ -2114,6 +2318,11 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
         else {
             stl_stage.publication_complete();
         }
+#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+        if (const auto hook = export_post_publication_hook.load()) {
+            hook(*absolute_stl);
+        }
+#endif
         Json companion {
             { "schema_version",        1                                                                },
             { "units",                 "mm"                                                             },
