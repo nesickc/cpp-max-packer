@@ -41,6 +41,16 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 
 ## Retained evidence and qualification
 
+- Portable export checkpoint `2292f1a`: captured Windows alias/canonical paths
+  and the certified file-name pin remain valid through final JSON publication.
+  Full I/O Debug/Release suites pass 65 cases / 12,789 assertions each on the
+  preserved pre-format binaries; final equivalent assertion formatting was rebuilt
+  and its affected case passes 18 assertions each. Actual path/mutation and
+  pre-admission reds are retained. Primary verified all 98 prior snapshot entries
+  and preserved final sources/objects/binaries; Luna audited complete indexed logs.
+  Manifest and limits: `.local/t011/portable-held-final/manifest.json` and
+  `log-review.md`. This closes that component checkpoint, not the adapter ledger,
+  integrated runtime, practical journeys or a ticket gate.
 - Old engine: `.local/t009/native/final/bin/spectrapack-engine.exe`, SHA-256
   `a593d750f7a4fd09e324bdb70b8feccc33c47799e001ee171614888a65332b8d`.
   Its embedded build metadata predates merged `b82117a`; the binary hash identifies
