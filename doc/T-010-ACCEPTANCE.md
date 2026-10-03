@@ -32,7 +32,7 @@ later regresses the successful practical workflows delivered by T-011.
 | T011-A3 — tamper resistance | Native authority/pinned-input contract is frozen. | Independent source/PLY/repair/settings/catalog/pose mutations; moved archive restore; failed Open preserves complete state. |
 | T011-A4 — Stop phases | Session availability red and shared cancellation APIs are retained. Real cold-Pryanik and phase-qualified preparation Stop/EOF checks pass at the retained integration checkpoint. | Real loading/fields/FFT/validation/publication Stop; receipt <=250 ms and safe completion <=5 s; UI stopping/result behavior and final integrated repetition. |
 | T011-A5 — lifecycle races | Initial native process checks pass shutdown, Stop followed by a fresh run, exact duplicate replay and conflicting request identity. | Repeated/stale Stop, completion race, marker/transport failure, child failure, active EOF/shutdown, backpressure and late completion using built native code. |
-| T011-A6 — startup measurements | Four-profile series at 86a42db completes 48 operations; three practical Start targets pass. The schema correction's 12-operation analytic rerun passes at 38.3 ms versus 87.6 ms, with frozen work/count/pose and preparation/memory checks. | Final integration mapping and remaining adapter/phase-cleanup evidence; the analytic-only summary correctly does not claim a new four-profile series. |
+| T011-A6 — startup measurements | Four-profile series at 86a42db completes 48 operations; three practical Start targets pass. The schema correction's 12-operation analytic rerun passes at 38.3 ms versus 87.6 ms, with frozen work/count/pose and preparation/memory checks. Pinned Debug/Release adapter payload bounds now fit 16 MiB. | Final integration mapping and remaining phase-cleanup evidence; the analytic-only summary correctly does not claim a new four-profile series. |
 | T011-A7 — compatibility | Optional runtime schemas, shared fixtures and generated types pass their checks. | Legacy and new Save/move/Open, original timing semantics, pending/result association, thread policy, independent JSON/STL export and repaired-geometry invariance. |
 
 The original T009-A2/A3/A6 obligations must pass in T-011, and remain T010-A7
@@ -41,6 +41,18 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 
 ## Retained evidence and qualification
 
+- The former adapter residual term is closed for the pinned MSVC Debug/Release
+  builds. Complete fixed-constructor event ledgers (zero drops, balanced at every
+  event) plus focused source accounting bound the adapter payload by 16,560,714
+  / 15,690,138 bytes, below the unchanged 16 MiB allowance. The bound includes
+  separate two-catalog and late one-catalog filesystem/error peaks; direct
+  exception allocations are accounted analytically. Source/layout dominance
+  permits the conservative Debug variable terms in Release. See
+  `.local/t011/adapter-bound-certificate.md` and
+  `.local/t011/adapter-scratch-trace/{FINDINGS.md,release/FINDINGS.md}` for pins,
+  formulas, failed instrumentation attempt and complete trace evidence. This
+  closes the specific payload inequality without product changes; it is not
+  an RSS, whole-process or cross-toolchain certificate or a full AT-16 gate.
 - Seven public field/FFT phase emissions now connect real pipeline work to the
   existing runtime sink. Intended native red fails only missing/incorrect phases;
   affected Debug passes 29 cases / 774 assertions, Release 28 / 764. Four actual
