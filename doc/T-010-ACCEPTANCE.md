@@ -29,11 +29,11 @@ later regresses the successful practical workflows delivered by T-011.
 | T010-A7 — product regression | Original full-catalog Ulamok and full36 checked-STL failures are reproduced. Native checked exports pass Ulamok36 and both full Pryanik retained2 cases in Debug/Release at `9f4a60f`, within unchanged caps and with identical ordered placements. | Supported full-catalog Ulamok count >=36; both full Pryanik spectral runs; pitch advice; invalid-original rejection; complete product journeys and independently reread exports; timed quality. |
 | T011-A1 — one budget | Native injected-clock red allows work after expiry. The controlled checkpoint now expires before bootstrap without work or a new handle. Real cold-Pryanik preparation expires without a result and retains runtime/cleanup/overrun metadata. | One-budget coverage through planning and validation; no work begins after deadline; final integrated cleanup/overrun measurements. |
 | T011-A2 — real reuse | Exact old preparation and fixed-work Start records are pinned. The first native session process check reuses an immutable cube token and preview after source/report mutation. | Practical replay/LOD work and timing evidence; New/replacement/units/frame/repair/epoch invalidation; fresh job derivatives for changed constraints/pitch/catalog; bounded replacement ownership. |
-| T011-A3 — tamper resistance | Native authority/pinned-input contract is frozen. | Independent source/PLY/repair/settings/catalog/pose mutations; moved archive restore; failed Open preserves complete state. |
-| T011-A4 — Stop phases | Session availability red and shared cancellation APIs are retained. Real cold-Pryanik and phase-qualified preparation Stop/EOF checks pass at the retained integration checkpoint. | Real loading/fields/FFT/validation/publication Stop; receipt <=250 ms and safe completion <=5 s; UI stopping/result behavior and final integrated repetition. |
+| T011-A3 — tamper resistance | Current held Debug/Release restore and repair mutation cases pass, covering malformed poses/metrics, source/accepted bytes and repair provenance. Ulamok/Pryanik 1 moved archives restore; existing Rust failed-Open state-retention case passes. | Complete settings/catalog and active reuse/invalidation mapping; final practical integration after the reproduced search repair. |
+| T011-A4 — Stop phases | Debug/Release real preparation Stop/EOF and analytic fields/FFT Stop pass. Native user Stop during held terminal publication commits only a valid result; artificial barrier time is reported separately. Rust receipt and actual GUI stopping/valid-result behavior have distinct evidence. | Phase-qualified loading and active candidate-validation Stop; practical phase/cleanup coverage and final integration mapping. Barrier and Python marker-write measurements do not independently establish ordinary publication latency or Rust receipt. |
 | T011-A5 — lifecycle races | Initial native process checks pass shutdown, Stop followed by a fresh run, exact duplicate replay and conflicting request identity. | Repeated/stale Stop, completion race, marker/transport failure, child failure, active EOF/shutdown, backpressure and late completion using built native code. |
 | T011-A6 — startup measurements | Four-profile series at 86a42db completes 48 operations; three practical Start targets pass. The schema correction's 12-operation analytic rerun passes at 38.3 ms versus 87.6 ms, with frozen work/count/pose and preparation/memory checks. Pinned Debug/Release adapter payload bounds now fit 16 MiB. | Final integration mapping and remaining phase-cleanup evidence; the analytic-only summary correctly does not claim a new four-profile series. |
-| T011-A7 — compatibility | Optional runtime schemas, shared fixtures and generated types pass their checks. | Legacy and new Save/move/Open, original timing semantics, pending/result association, thread policy, independent JSON/STL export and repaired-geometry invariance. |
+| T011-A7 — compatibility | Optional runtime schemas, shared fixtures and generated types pass. Actual legacy Open displays search-only timing; changing pending pitch preserves original result settings. New Ulamok/Pryanik 1 Save/move/Open and independently reread JSON/STL exports pass. | Full Pryanik 2 journey and final thread-policy/repaired-geometry evidence mapping. |
 
 The original T009-A2/A3/A6 obligations must pass in T-011, and remain T010-A7
 regressions with their concrete full-catalog, pitch-advice and checked-export assertions.
@@ -41,6 +41,23 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 
 ## Retained evidence and qualification
 
+- Actual legacy GUI Open restores two valid copies in 31.8 s and displays
+  `Legacy search only`, original 4 mm pitch and 26.81 s search time. Changing
+  pending pitch to 8 mm preserves the displayed 4 mm result and original 30 s
+  settings. The legacy archive has neither new budget scope nor runtime fields;
+  its historical resource-limit diagnostic remains historical output. Archive
+  identity and screenshots are in `.local/t011/gui-qualification/legacy-input.json`
+  and `screenshots/legacy-{reopened,pending-pitch}.*`.
+- Six selected Debug/Release native checks pass: phase-observed preparation
+  Stop/EOF, ordinary publication Stop, and the affected publication monitor
+  failure regression. Publication Stop reaches the real native token and commits
+  eight valid copies with the already-frozen `search_stalled` reason. Marker to
+  terminal is 126/812 ms Release/Debug, including artificial holds of 40/25 ms;
+  this is not ordinary publication latency or Rust receipt. Exact prior poses
+  were not independently exposed. Publication uses explicitly pinned older
+  compatible helpers; preparation uses the phase-corrected engines. Full logs,
+  source identity mapping and limits are in
+  `.local/t011/remaining-native-controls/PUBLICATION_PREPARATION.md`.
 - Actual held desktop qualification completes Ulamok 36 at advised 4 mm within
   its 60 s budget, with native-valid `budget_exhausted` output; Save, unchanged-hash
   move to a Unicode/space path, New/Open, JSON and checked-STL exports pass.
@@ -56,6 +73,30 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
   do not cover it. A separate actual GUI Stop shows stopping then user-stopped
   completion with two valid copies. UI screenshots do not establish precise
   receipt/safe-completion latency; the original resource failure remains open.
+  The separately user-stopped Pryanik 1 result completes Save/move/New/Open and
+  both GUI exports; its committed reread also passes all 2 x 84,820 triangles'
+  vertices and companion ranges. Its original unrestricted search is still a
+  failing observation. These distinct results are indexed in
+  `.local/t011/gui-qualification/JOURNEY.md` and `artifact-reread.md`.
+- A focused instrumented current-source replay reproduces Pryanik 1's exact
+  retained poses, count two and third-candidate failure, but exposes
+  `KERNEL_BOUNDARY_UNRESOLVED` after only 14,629,609 of 1.3 billion work units and
+  21,901,332 of 526,837,046 available validation bytes. Rounded world vertices
+  make the boundary predicate unresolved; this is not demonstrated exhaustion.
+  Some exhausted paths share that generic code, so the bounded repair must
+  preserve their actual budget flags before rejecting ordinary numerical
+  uncertainty. The replay uses pinned current libraries, not the byte-identical
+  GUI executable; only seven phase emissions separate their native numerical
+  implementations. See `.local/t011/pryanik1-physical-resource/` and the
+  repair checkpoint in T-011. No fix or green result is claimed yet.
+- Four focused restore/repair mutation executions pass on the phase-corrected
+  held Debug/Release engines. Existing cases reject five malformed restored
+  result variants and six independent repair/source/accepted-asset mutations;
+  accepted repair replay, JSON/STL restore and relocation also succeed.
+  `.local/t011/restore-tamper-final/mutation-coverage.md` indexes exact commands,
+  unchanged source/input/PE hashes and full logs/exits. No test or product change
+  was needed, and these cases do not alone close every T011-A3 reuse/invalidation
+  obligation.
 - The existing cold total-Start preparation check on the phase-corrected held
   Release engine passes: native deadline completion 405 ms (55 ms overrun,
   11 ms cleanup), and Stop 85 ms after its marker. Debug correctly expires
