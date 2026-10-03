@@ -41,6 +41,20 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 
 ## Retained evidence and qualification
 
+- The measured boundary-only guard is not a passing repair. Its practical red
+  and attempted green each fail one of 27 assertions: the latter finishes the
+  boundary scan at 17,681,549 work, spends 30,120,970 in a witness ray, then
+  exhausts its remaining 837,047 in clearance leaf rejection without an exact
+  distance call. The 36-line draft and reproducer are archived locally. A bounded
+  clearance census rejects 83,380/84,820 rows, but its two-million-leaf prefix
+  remains incomplete. An existing whole-solid zero-clearance separation proof
+  succeeds in 12 units and could remove boundary/witness work; combining it with
+  clearance-row rejection still needs review and practical proof. No success,
+  cap change or new hierarchy is inferred. Evidence:
+  `.local/t011/pryanik1-physical-resource/row-rejection/`, including
+  `gap-diagnosis/` and `clearance-count/`. Fresh review dispatch is currently
+  refused by the agent service's thread limit; primary mapping in
+  `.local/t011/remaining-native-controls/FINAL_MAPPING.md` is not independent.
 - Full Pryanik 2's actual desktop journey passes on engine `a44743a0...` with
   desktop `df36a1c3...`. Original 30 s Start-origin settings reach real fields,
   FFT and authoritative validation, then return `budget_exhausted` and two valid
