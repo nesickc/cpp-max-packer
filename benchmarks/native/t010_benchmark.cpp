@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iostream>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 
 #include "../../engine/pack_geometry/src/field_kernel.hpp"
@@ -238,9 +239,11 @@ int main(int argc, char** argv)
 #ifdef _WIN32
             PROCESS_MEMORY_COUNTERS process_counters {};
             process_counters.cb = sizeof(process_counters);
-            if (GetProcessMemoryInfo(GetCurrentProcess(), &process_counters, sizeof(process_counters))) {
-                process_peak = process_counters.PeakWorkingSetSize;
+            if (!GetProcessMemoryInfo(GetCurrentProcess(), &process_counters, sizeof(process_counters))) {
+                const auto error = GetLastError();
+                throw std::runtime_error("GetProcessMemoryInfo failed (Win32 error " + std::to_string(error) + ").");
             }
+            process_peak = process_counters.PeakWorkingSetSize;
 #endif
             const bool complete = (run.run.termination_reason == sol::TerminationReason::budget_exhausted ||
                                    run.run.termination_reason == sol::TerminationReason::search_stalled) &&

@@ -1,6 +1,6 @@
 # T-010 / T-011 cross-ticket evidence ledger
 
-Updated: 2026-10-02. Current T-011 branch: `feature/SOL-08-cpu-runtime`.
+Updated: 2026-10-03. Current T-011 branch: `feature/SOL-08-cpu-runtime`.
 Prerequisite: merged T-009, `b82117a` (PR #12).
 
 This ledger records demonstrated scope. **No ticket acceptance gate is complete.**
@@ -41,13 +41,20 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 
 ## Retained evidence and qualification
 
-- Certified placed-support reduction: current-source Release practical checks pass
+- Benchmark memory-query guard: a real invalid Windows process handle previously
+  produced a passing zero-byte peak. The extracted production query now throws
+  an explicit `GetProcessMemoryInfo` / Win32 error 6 diagnostic; the actual current
+  process query remains successful. The causal probe changes from exit 1 to 0;
+  ordinary benchmark Debug/Release builds pass. This is a five-added/two-removed
+  line harness correction, not a runtime performance result. Full probe/build
+  logs and identities are under `.local/t011/benchmark-memory-guard/`.
+- Certified placed-support reduction: current-source Debug/Release practical checks each pass
   2 cases / 54 assertions. Actual advised Ulamok 4 mm completes 48 correlations,
   retains 36 independently revalidated copies, and uses 1,174,267,251 representation
   work units under the unchanged 1.3 billion cap. Separate Ulamok 16 mm uses
   337,270,633 units; full Pryanik 1/2 retain two valid copies with two correlations
-  and use 834,836,776 / 1,289,972,641 units. Debug practical repetition is pending.
-  `.local/t011/placed-support/practical-release/` saves the relinked test PE,
+  and use 834,836,776 / 1,289,972,641 units.
+  `.local/t011/placed-support/PRACTICAL_INDEX.md` indexes both relinked test PEs,
   complete successful-assertion log, command/exit and 128 stable source identities.
   The final field suites pass 38 cases in each build; accounting passes 16 Debug /
   14 Release. Five reached empty-output transfer allocation failures recover,
