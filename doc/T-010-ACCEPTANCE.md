@@ -41,6 +41,30 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 
 ## Retained evidence and qualification
 
+- Actual held desktop qualification completes Ulamok 36 at advised 4 mm within
+  its 60 s budget, with native-valid `budget_exhausted` output; Save, unchanged-hash
+  move to a Unicode/space path, New/Open, JSON and checked-STL exports pass.
+  The committed independent reread verifies both bundles and every float32
+  vertex in all 36 x 768 triangles, plus archive/source/accepted identities and
+  exact saved poses/search/metrics/settings. See
+  `.local/t011/gui-qualification/artifact-reread.md`. Held engine `76d2d9d9...`
+  contains the schema correction but predates field/FFT phase emissions; do not
+  use its phase totals to qualify corrected observability. Its unrestricted
+  Pryanik 1 GUI run fails `PHYSICAL_VALIDATION_RESOURCE` on candidate three after
+  retaining two valid copies. This is a new reproduced practical gap, preserved
+  under `gui-qualification/pryanik1/failure`; earlier bounded profile successes
+  do not cover it. A separate actual GUI Stop shows stopping then user-stopped
+  completion with two valid copies. UI screenshots do not establish precise
+  receipt/safe-completion latency; the original resource failure remains open.
+- The existing cold total-Start preparation check on the phase-corrected held
+  Release engine passes: native deadline completion 405 ms (55 ms overrun,
+  11 ms cleanup), and Stop 85 ms after its marker. Debug correctly expires
+  during loading with no result, but fails the fixture's assumption that a
+  fixed 350 ms budget reaches preparation; its Stop branch does not execute.
+  The unchanged failure and precise remaining loading/validation/publication
+  coverage are in `.local/t011/remaining-native-controls/COVERAGE.md`. Reuse
+  the existing phase-observed preparation case for that Debug gap; do not call
+  the fixed-delay failure a passing test or weaken its phase assertion.
 - The former adapter residual term is closed for the pinned MSVC Debug/Release
   builds. Complete fixed-constructor event ledgers (zero drops, balanced at every
   event) plus focused source accounting bound the adapter payload by 16,560,714
