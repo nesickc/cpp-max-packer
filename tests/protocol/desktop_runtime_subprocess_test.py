@@ -81,6 +81,74 @@ class Session:
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_real_field_and_fft_phase_stop_keeps_valid_baseline(self):
+        """T011-A4: native fields/FFT, real Stop marker, and checked terminal result."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            source, report = root/'cube.stl', root/'object.report.json'
+            fixtures.write_cube_stl(source, extent=40)
+            imported = subprocess.run([str(ENGINE), 'inspect', '--stl', str(source), '--units', 'mm',
+                                       '--report', str(report)], capture_output=True, text=True, timeout=15)
+            self.assertEqual(imported.returncode, 0, imported.stdout+imported.stderr)
+            session = Session()
+            try:
+                preview = root/'preview'; preview.mkdir()
+                prepared, _ = session.request({'runtime_version': 1, 'request_id': 'phase-prepare',
+                    'operation_id': 'phase-prepare-op', 'method': 'prepare', 'params': {
+                        'object_report': str(report), 'output_directory': str(preview)}})
+                self.assertTrue(prepared['ok'], prepared)
+                fixture = fixtures.SolveSubprocessTests()
+                fixture.object_report_path = report
+                settings = fixture.settings(dimensions=(64, 64, 64), candidates=2)
+                settings['search']['work_budget']['max_search_passes'] = 2
+                settings['resolution']['pitch_mm'] = settings['resolved']['pitch_mm'] = 1
+                reference_placements = None
+                for target in ('voxelizing', 'planning_fft'):
+                    with self.subTest(phase=target):
+                        output = root/target; output.mkdir()
+                        marker = output/'stop.marker'
+                        stopped = []
+                        def stop_during_phase(record):
+                            if record['phase'] == target and not stopped:
+                                # Let the real native phase begin before writing Stop.
+                                time.sleep(.02)
+                                began = time.perf_counter()
+                                marker.write_bytes(b'stop')
+                                stopped.append((began, time.perf_counter()-began))
+                        ticks, frequency = qpc()
+                        reply, phases = session.request({'runtime_version': 1, 'request_id': target,
+                            'operation_id': target+'-op', 'method': 'run', 'params': {
+                                'asset_token': prepared['result']['asset_token'], 'settings': settings,
+                                'result_path': str(output/'result.json'), 'stop_file': str(marker),
+                                'start_qpc_ticks': ticks, 'qpc_frequency_hz': frequency}}, stop_during_phase)
+                        finished = time.perf_counter()
+                        self.assertEqual(len(stopped), 1, (reply, phases))
+                        self.assertLessEqual(stopped[0][1], .250)
+                        self.assertLessEqual(finished-stopped[0][0], 5)
+                        self.assertTrue(reply['ok'], reply)
+                        self.assertEqual(reply['result']['termination_reason'], 'user_stopped', reply)
+                        saved = json.loads((output/'result.json').read_text())
+                        self.assertEqual(saved['validation']['status'], 'valid')
+                        self.assertEqual(saved['count'], 1)
+                        if reference_placements is None:
+                            reference_placements = saved['placements']
+                        self.assertEqual(saved['placements'], reference_placements)
+                        observed = next(p['elapsed_seconds'] for p in saved['search']['runtime']['phases']
+                                        if p['phase'] == target)
+                        self.assertGreaterEqual(observed, .02)
+                        print(json.dumps({'case': 'native-phase-stop', 'phase': target,
+                            'marker_write_seconds': stopped[0][1], 'safe_stop_seconds': finished-stopped[0][0],
+                            'observed_phase_seconds': observed, 'reply': reply, 'phases': phases,
+                            'settings': settings, 'count': saved['count'], 'placements': saved['placements'],
+                            'validation': saved['validation'], 'result_sha256': hashlib.sha256(
+                                (output/'result.json').read_bytes()).hexdigest()}), flush=True)
+                shutdown, _ = session.request({'runtime_version': 1, 'request_id': 'phase-shutdown',
+                                               'method': 'shutdown', 'params': {}})
+                self.assertTrue(shutdown['ok'], shutdown)
+                self.assertEqual(session.child.wait(timeout=5), 0)
+            finally:
+                session.close()
+
     def test_allocation_counted_publication_and_invalid_request_overlap(self):
         if MEMORY_HELPER is None:
             self.skipTest("Allocation overlap requires the existing CLI test helper")

@@ -41,6 +41,17 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 
 ## Retained evidence and qualification
 
+- Seven public field/FFT phase emissions now connect real pipeline work to the
+  existing runtime sink. Intended native red fails only missing/incorrect phases;
+  affected Debug passes 29 cases / 774 assertions, Release 28 / 764. Four actual
+  retained-session Stop observations complete in 27.28/102.87 ms Release and
+  299.11/330.88 ms Debug for fields/FFT; marker writes are 0.419–0.572 ms. All
+  preserve the identical validated one-copy baseline and shut down cooperatively.
+  `.local/t011/runtime-phases/README.md` records exact held engines, full logs,
+  fixture/setup failures and limits. These analytic observations do not qualify
+  every practical workload, other phases, Rust receipt or GUI responsiveness.
+  A fresh independent Sol review of this patch plus the schema hint reports no
+  actionable findings (`.local/t011/serial-checkpoint-review.md`).
 - Selective schema compilation preserves default eager construction, cross-kind
   validation, geometry checks and schema semantics. Its affected Release analytic
   series passes at 0.0382987-second retained Start (target 0.0876001), versus the

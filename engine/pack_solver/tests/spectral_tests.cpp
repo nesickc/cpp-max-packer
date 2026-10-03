@@ -1234,6 +1234,130 @@ TEST_CASE("AT-16 spectral wrapper honors an already elapsed deadline before FFT 
     CHECK(outcome.spectral_stats.correlations == 0);
 }
 
+TEST_CASE("T011 spectral runtime phases describe actual fields FFT and candidate work",
+          "[solver][T011][AT-16][runtime-phases]")
+{
+    namespace runtime = spectrapack::runtime;
+    const auto context = default_fixed_context();
+    const auto initial = native_solution(context, {});
+    solver::SpectralLimits limits;
+    limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
+    limits.spectral.max_candidate_evaluations = limits.spectral.max_search_passes = 1;
+    limits.spectral.max_copies = 2;
+    limits.max_refinement_evaluations = 0;
+    limits.per_representation.max_cells = limits.per_correlation.max_padded_cells = 10'000;
+    struct Trace {
+        runtime::Phase current { runtime::Phase::loading };
+        std::array<runtime::Phase, 128> phases {};
+        std::size_t size {};
+        unsigned correlation_entries {};
+        bool fft_phase_at_every_entry { true };
+    } trace;
+    solver::RunControl control;
+    control.phase_context = &trace;
+    control.phase_sink = [](void* state, runtime::Phase phase) noexcept {
+        auto& trace = *static_cast<Trace*>(state);
+        trace.current = phase;
+        if (trace.size < trace.phases.size()) {
+            trace.phases[trace.size++] = phase;
+        }
+    };
+    struct HookReset {
+        ~HookReset() { spectrapack::compute::detail::set_correlation_entry_hook_for_test(nullptr, nullptr); }
+    } reset;
+    spectrapack::compute::detail::set_correlation_entry_hook_for_test(
+        [](const spectrapack::compute::CorrelationSpec&, void* state) noexcept {
+            auto& trace = *static_cast<Trace*>(state);
+            ++trace.correlation_entries;
+            trace.fft_phase_at_every_entry &= trace.current == runtime::Phase::planning_fft;
+        },
+        &trace);
+    const auto outcome = solver::run_cpu_spectral(context, { {}, .5 }, limits, control, {}, initial);
+    spectrapack::compute::detail::set_correlation_entry_hook_for_test(nullptr, nullptr);
+    REQUIRE(outcome.run.best);
+    CHECK(outcome.run.best->solution->report().validity == geo::Validity::valid);
+    CHECK(outcome.spectral_stats.representation_cell_visits > 0);
+    CHECK(outcome.spectral_stats.correlations >= 2);
+    CHECK(trace.correlation_entries == outcome.spectral_stats.correlations);
+    CHECK(trace.fft_phase_at_every_entry);
+    CHECK(outcome.run.stats.candidate_evaluations == 1);
+    const auto begin = trace.phases.begin();
+    const auto end = begin + static_cast<std::ptrdiff_t>(trace.size);
+    const auto fields = std::find(begin, end, runtime::Phase::voxelizing);
+    REQUIRE(fields != end);
+    const auto fft = std::find(fields, end, runtime::Phase::planning_fft);
+    REQUIRE(fft != end);
+    const auto placing = std::find(fft, end, runtime::Phase::placing);
+    REQUIRE(placing != end);
+    CHECK(std::find(placing, end, runtime::Phase::validating) != end);
+}
+
+TEST_CASE("T011 field and FFT phase interruptions retain the validated incumbent",
+          "[solver][T011][AT-16][runtime-phases]")
+{
+    namespace runtime = spectrapack::runtime;
+    const auto context = default_fixed_context();
+    const auto initial = native_solution(context, { { "initial", { 1, 1, 1 }, { 0, 0, 0, 1 } } });
+    solver::SpectralLimits limits;
+    limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
+    limits.spectral.max_candidate_evaluations = 8;
+    limits.spectral.max_search_passes = 1;
+    limits.max_refinement_evaluations = 0;
+    limits.per_representation.max_cells = limits.per_correlation.max_padded_cells = 10'000;
+    for (const auto target : { runtime::Phase::voxelizing, runtime::Phase::planning_fft }) {
+        for (const bool deadline : { false, true }) {
+            struct Interrupt {
+                runtime::Phase target;
+                bool deadline, expired {};
+                unsigned visits {};
+                std::stop_source stop;
+                runtime::Clock::time_point cutoff { runtime::Clock::now() + std::chrono::hours(1) };
+            } interrupt { target, deadline };
+            solver::RunControl control { interrupt.stop.get_token(), interrupt.cutoff };
+            control.now_context = control.phase_context = &interrupt;
+            control.now_fn = [](void* state) noexcept {
+                const auto& interrupt = *static_cast<Interrupt*>(state);
+                return interrupt.expired ? interrupt.cutoff : runtime::Clock::now();
+            };
+            control.phase_sink = [](void* state, runtime::Phase phase) noexcept {
+                auto& interrupt = *static_cast<Interrupt*>(state);
+                // Interrupt a later real boundary, after preparation or binary FFT completed.
+                if (phase == interrupt.target && ++interrupt.visits == 2) {
+                    interrupt.expired = interrupt.deadline;
+                    if (!interrupt.deadline) {
+                        interrupt.stop.request_stop();
+                    }
+                }
+            };
+            std::vector<solver::SnapshotHandle> publications;
+            const auto started = runtime::Clock::now();
+            const auto outcome = solver::run_cpu_spectral(
+                context, { {}, .5 }, limits, control,
+                [&](solver::SnapshotHandle snapshot) { publications.push_back(std::move(snapshot)); }, initial);
+            CAPTURE(static_cast<int>(target), deadline, outcome.run.diagnostic_code);
+            REQUIRE(interrupt.visits == 2);
+            CHECK(runtime::Clock::now() - started < std::chrono::seconds(5));
+            CHECK(outcome.run.termination_reason == (deadline ? solver::TerminationReason::budget_exhausted
+                                                             : solver::TerminationReason::user_stopped));
+            REQUIRE(outcome.run.best);
+            CHECK(outcome.run.best->solution == initial);
+            CHECK(outcome.run.retained_solution == initial);
+            REQUIRE(publications.size() == 1);
+            CHECK(publications.front()->solution == initial);
+            CHECK(outcome.run.stats.candidate_evaluations == 0);
+            CHECK(outcome.spectral_stats.representation_kernel_work > 0);
+            if (target == runtime::Phase::planning_fft) {
+                CHECK(outcome.spectral_stats.correlations == 2);
+                CHECK(outcome.spectral_stats.representation_cell_visits > 0);
+            }
+            else {
+                CHECK(outcome.spectral_stats.correlations == 0);
+            }
+            CHECK(geo::revalidate(outcome.run.best->solution).report.validity == geo::Validity::valid);
+        }
+    }
+}
+
 TEST_CASE("AT-16 spectral wrapper stops after the first central publication", "[solver][T007][AT-16][wrapper]")
 {
     const auto context = default_fixed_context();

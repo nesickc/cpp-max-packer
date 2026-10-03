@@ -1094,6 +1094,7 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
         }
         profile.phase(PipelineProfilePhase::prepare);
         if (!state.geometry) {
+            control.phase(runtime::Phase::voxelizing);
             geometry::RepresentationAttemptStats attempt;
             AttemptRecorder recorder(result, limits, *nested, attempt);
             const auto prepared = geometry::prepare_voxel_geometry(context->object(), *nested, attempt, control);
@@ -1132,6 +1133,7 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             return result;
         }
         if (!state.mask) {
+            control.phase(runtime::Phase::voxelizing);
             geometry::RepresentationAttemptStats attempt;
             AttemptRecorder recorder(result, limits, *nested, attempt);
             const auto mask =
@@ -1189,6 +1191,7 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             return result;
         }
         if (!same_layout) {
+            control.phase(runtime::Phase::voxelizing);
             const auto input =
                 state.blocked ? state.blocked->representation_residency() : state.mask->representation_residency();
             nested = input ? representation_limits(result, limits, owners, std::span { &*input, 1 }) : std::nullopt;
@@ -1437,6 +1440,7 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             owners.kernel = state.kernels[0].field;
         }
         else {
+            control.phase(runtime::Phase::voxelizing);
             state.kernels[1] = {};
             const auto input = owners.geometry->representation_residency();
             nested = input ? representation_limits(result, limits, owners, std::span { &*input, 1 }) : std::nullopt;
@@ -1489,6 +1493,7 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                 return result;
             }
             correlation_limits.reserved_bytes = *live;
+            control.phase(runtime::Phase::planning_fft);
             auto binary =
                 compute::correlate_binary_cpu(spec, occupancy, owners.kernel->cells(), correlation_limits, control);
             ++result.stats.correlations;
@@ -1536,6 +1541,7 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             correlation_limits.max_direct_terms =
                 std::min(limits.per_correlation.max_direct_terms,
                          remaining(limits.max_proximity_terms, result.stats.proximity_terms));
+            control.phase(runtime::Phase::planning_fft);
             auto ranked =
                 compute::correlate_proximity_cpu(spec, proximity, owners.kernel->cells(), correlation_limits, control);
             ++result.stats.correlations;
@@ -1566,6 +1572,7 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                                  owners.binary->translation_first, owners.binary->shape });
         }
         profile.phase(PipelineProfilePhase::ranking);
+        control.phase(runtime::Phase::placing);
         const auto kernel_cells = owners.kernel->cells();
         const auto occupied_kernel = state.kernels[0].occupied;
         if (occupied_kernel == 0) {
