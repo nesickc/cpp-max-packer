@@ -1367,7 +1367,11 @@ ContainmentResult classify_axis_container(const PlacedSolid& object,
   return {Decision::yes,gap,std::move(method),""};
 }
 
-struct BoundaryCheck { BoundaryRelation relation; bool uncertain; };
+struct BoundaryCheck {
+  BoundaryRelation relation;
+  bool uncertain;
+  bool exact_work_exhausted{};
+};
 
 std::array<Vec3,3> triangle_points(const PlacedSolid& solid,const Triangle& face) {
   return {solid.world_vertices[face[0]],solid.world_vertices[face[1]],solid.world_vertices[face[2]]};
@@ -1412,7 +1416,7 @@ BoundaryCheck check_boundaries(const PlacedSolid& first,const PlacedSolid& secon
       }
       if (ab==exact::SegmentTriangleCrossing::uncertain || ba==exact::SegmentTriangleCrossing::uncertain) {
         (void)budget.consume_work(exact_budget.used());
-        return {BoundaryRelation::indeterminate,true};
+        return {BoundaryRelation::indeterminate,true,exact_budget.exhausted()};
       }
       contact |= ab==exact::SegmentTriangleCrossing::boundary ||
                  ba==exact::SegmentTriangleCrossing::boundary;
@@ -1424,7 +1428,7 @@ BoundaryCheck check_boundaries(const PlacedSolid& first,const PlacedSolid& secon
       const auto relation=exact::triangle_relation(at,bt,none,none,0,exact_budget);
       if (relation==exact::TriangleRelation::uncertain) {
         (void)budget.consume_work(exact_budget.used());
-        return {BoundaryRelation::indeterminate,true};
+        return {BoundaryRelation::indeterminate,true,exact_budget.exhausted()};
       }
       if (relation==exact::TriangleRelation::forbidden ||
           relation==exact::TriangleRelation::shared_feature_only) contact=true;
@@ -1434,7 +1438,9 @@ BoundaryCheck check_boundaries(const PlacedSolid& first,const PlacedSolid& secon
   return {contact?BoundaryRelation::contact:BoundaryRelation::disjoint,false};
 }
 
-Decision point_in_material(Vec3 point,const PlacedSolid& target,Budget& budget) {
+Decision point_in_material(Vec3 point,const PlacedSolid& target,Budget& budget,
+                           bool* exact_work_exhausted=nullptr) {
+  if (exact_work_exhausted) *exact_work_exhausted=false;
   if (target.prepared->is_cuboid && target.is_cardinal) {
     bool strict_inside=true;
     for (int axis=0;axis!=3;++axis) {
@@ -1457,6 +1463,7 @@ Decision point_in_material(Vec3 point,const PlacedSolid& target,Budget& budget) 
       {{0.137,0.271}},{{0.223,0.419}},{{0.347,0.163}},{{0.431,0.593}},
       {{0.557,0.317}},{{0.619,0.733}},{{0.709,0.467}},{{0.823,0.197}},
       {{0.911,0.541}},{{0.293,0.887}},{{0.487,0.773}},{{0.677,0.929}}}};
+  bool exhausted_ray=false;
   for (const auto slope:slopes) {
     Vec3 endpoint{{std::max(point[0],target.conservative.bounds_mm.max[0])+2*span+1,
                    point[1]+slope[0]*span,point[2]+slope[1]*span}};
@@ -1468,9 +1475,11 @@ Decision point_in_material(Vec3 point,const PlacedSolid& target,Budget& budget) 
       if (relation==exact::SegmentTriangleCrossing::crossing) ++crossings;
       else if (relation!=exact::SegmentTriangleCrossing::none) { retry=true; break; }
     }
+    exhausted_ray |= exact_budget.exhausted();
     if (!budget.consume_work(exact_budget.used())) return Decision::indeterminate;
     if (!retry) return crossings%2==0 ? Decision::no : Decision::yes;
   }
+  if (exact_work_exhausted) *exact_work_exhausted=exhausted_ray;
   return Decision::indeterminate;
 }
 
@@ -2262,25 +2271,32 @@ PairResult classify_pair(const PlacedSolid& first,const PlacedSolid& second,
   if (boundary.relation==BoundaryRelation::transverse_crossing)
     return {Decision::yes,boundary.relation,Threshold::below,"exact-boundary-crossing",""};
   if (boundary.relation==BoundaryRelation::indeterminate)
-    return {Decision::indeterminate,boundary.relation,Threshold::indeterminate,"boundary-shell","KERNEL_BOUNDARY_UNRESOLVED"};
+    return {Decision::indeterminate,boundary.relation,Threshold::indeterminate,"boundary-shell",
+            boundary.exact_work_exhausted?"KERNEL_EXACT_LIMIT":"KERNEL_BOUNDARY_UNRESOLVED"};
   if (boundary.relation==BoundaryRelation::contact)
     return {Decision::indeterminate,boundary.relation,clearance>0?Threshold::below:Threshold::equal,
             "boundary-shell","KERNEL_CONTACTED_DEGENERACY"};
   Decision overlap=Decision::no;
+  bool witness_work_exhausted=false;
   for (const auto witness:first.prepared->shell_witnesses) {
-    const auto inside=point_in_material(first.world_vertices[witness],second,budget);
+    bool exhausted=false;
+    const auto inside=point_in_material(first.world_vertices[witness],second,budget,&exhausted);
+    witness_work_exhausted |= exhausted;
     if (inside==Decision::indeterminate) overlap=Decision::indeterminate;
     else if (inside==Decision::yes) { overlap=Decision::yes; break; }
   }
   if (overlap!=Decision::yes) for (const auto witness:second.prepared->shell_witnesses) {
-    const auto inside=point_in_material(second.world_vertices[witness],first,budget);
+    bool exhausted=false;
+    const auto inside=point_in_material(second.world_vertices[witness],first,budget,&exhausted);
+    witness_work_exhausted |= exhausted;
     if (inside==Decision::indeterminate) overlap=Decision::indeterminate;
     else if (inside==Decision::yes) { overlap=Decision::yes; break; }
   }
   const auto gap=overlap==Decision::yes?Threshold::below:
                  exact_surface_gap(first,second,clearance,budget);
   return {overlap,BoundaryRelation::disjoint,gap,"boundary-disjoint-shell-witnesses",
-          overlap==Decision::indeterminate||gap==Threshold::indeterminate?"KERNEL_CLASSIFICATION_UNRESOLVED":""};
+          overlap==Decision::indeterminate||gap==Threshold::indeterminate?
+              (witness_work_exhausted?"KERNEL_EXACT_LIMIT":"KERNEL_CLASSIFICATION_UNRESOLVED"):""};
 }
 
 ContainmentResult classify_box(const PlacedSolid& object,BoxDimensions box,
@@ -2314,24 +2330,28 @@ ContainmentResult classify_stl(const PlacedSolid& object,const PlacedSolid& cont
     return {Decision::indeterminate,clearance>0?Threshold::below:Threshold::equal,
             "boundary-shell","KERNEL_CONTACTED_DEGENERACY"};
   if (boundary.relation==BoundaryRelation::indeterminate)
-    return {Decision::indeterminate,Threshold::indeterminate,"boundary-shell","KERNEL_BOUNDARY_UNRESOLVED"};
+    return {Decision::indeterminate,Threshold::indeterminate,"boundary-shell",
+            boundary.exact_work_exhausted?"KERNEL_EXACT_LIMIT":"KERNEL_BOUNDARY_UNRESOLVED"};
   for (const auto witness:object.prepared->shell_witnesses) {
     const Vec3 point=object.world_vertices[witness];
-    const auto inside=point_in_material(point,container,budget);
+    bool exhausted=false;
+    const auto inside=point_in_material(point,container,budget,&exhausted);
     if (inside==Decision::no)
       return {Decision::no,exact_surface_gap(object,container,clearance,budget),
               "boundary-disjoint-shell-witnesses","OUTSIDE_CONTAINER"};
     if (inside==Decision::indeterminate)
       return {Decision::indeterminate,Threshold::indeterminate,
-              "boundary-disjoint-shell-witnesses","KERNEL_OBJECT_WITNESS_UNRESOLVED"};
+              "boundary-disjoint-shell-witnesses",exhausted?"KERNEL_EXACT_LIMIT":"KERNEL_OBJECT_WITNESS_UNRESOLVED"};
   }
   for (const auto witness:container.prepared->shell_witnesses) {
-    const auto inside=point_in_material(container.world_vertices[witness],object,budget);
+    bool exhausted=false;
+    const auto inside=point_in_material(container.world_vertices[witness],object,budget,&exhausted);
     if (inside==Decision::yes)
       return {Decision::no,exact_surface_gap(object,container,clearance,budget),
               "boundary-disjoint-shell-witnesses","EXCLUDED_CAVITY_ENCLOSED"};
     if (inside==Decision::indeterminate)
-      return {Decision::indeterminate,Threshold::indeterminate,"boundary-disjoint-shell-witnesses","KERNEL_CONTAINER_WITNESS_UNRESOLVED"};
+      return {Decision::indeterminate,Threshold::indeterminate,"boundary-disjoint-shell-witnesses",
+              exhausted?"KERNEL_EXACT_LIMIT":"KERNEL_CONTAINER_WITNESS_UNRESOLVED"};
   }
   const auto gap=exact_surface_gap(object,container,clearance,budget);
   return {Decision::yes,gap,"boundary-disjoint-shell-witnesses",

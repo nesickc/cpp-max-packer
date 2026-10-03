@@ -193,6 +193,24 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
     const auto finish = [&](ValidationOutcome result) {
         result.report.kernel_work = budget.work_used();
         result.report.working_bytes_peak = budget.bytes_peak();
+        if (result.report.validity == Validity::indeterminate) {
+            if (budget.memory_exhausted()) {
+                if (result.report.code.find("MEMORY") == std::string::npos &&
+                    result.report.code.find("ALLOCATION") == std::string::npos) {
+                    result.report.code = "VALIDATION_MEMORY_LIMIT";
+                }
+            }
+            else if (budget.work_exhausted()) {
+                if (result.report.code.find("WORK") == std::string::npos) {
+                    result.report.code = "VALIDATION_KERNEL_WORK_LIMIT";
+                }
+            }
+            else if (budget.arithmetic_capacity_exceeded()) {
+                if (result.report.code.find("CAPACITY") == std::string::npos) {
+                    result.report.code = "VALIDATION_ARITHMETIC_CAPACITY";
+                }
+            }
+        }
         if (const auto cause = control.poll(); cause != runtime::StopCause::none) {
             result.report.validity = Validity::indeterminate;
             result.report.code =

@@ -65,6 +65,12 @@ std::uint64_t remaining(std::uint64_t cap, std::uint64_t used) noexcept
     return used >= cap ? std::uint64_t {} : cap - used;
 }
 
+bool validation_resource_code(std::string_view code) noexcept
+{
+    return code.find("LIMIT") != std::string_view::npos || code.find("CAPACITY") != std::string_view::npos ||
+           code.find("ALLOCATION") != std::string_view::npos;
+}
+
 std::optional<std::uint64_t> pose_bytes(const std::vector<geometry::CopyPose>& copies) noexcept
 {
     if (copies.capacity() > std::numeric_limits<std::uint64_t>::max() / sizeof(geometry::CopyPose)) {
@@ -968,6 +974,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 !add(spectral_validation_aabb_pair_tests, checked.report.aabb_pair_tests) ||
                 !add(outcome.run.stats.validation_kernel_work, checked.report.kernel_work) ||
                 !add(outcome.run.stats.validation_aabb_pair_tests, checked.report.aabb_pair_tests)) {
+                if (!honor_boundary()) {
+                    return false;
+                }
                 outcome.run.termination_reason = TerminationReason::resource_limit;
                 outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
                 return false;
@@ -977,12 +986,18 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 !add(validation_peak, wrapper_dynamic_bytes) || !add(validation_peak, *validation_extra) ||
                 !add(validation_peak, checked.report.working_bytes_peak) ||
                 validation_peak > limits.max_working_bytes || validation_peak > limits.spectral.max_working_bytes) {
+                if (!honor_boundary()) {
+                    return false;
+                }
                 outcome.run.termination_reason = TerminationReason::resource_limit;
                 outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
                 return false;
             }
             outcome.run.stats.tracked_working_bytes_peak =
                 std::max(outcome.run.stats.tracked_working_bytes_peak, validation_peak);
+            if (!honor_boundary()) {
+                return false;
+            }
             if (validation_limit_exceeded) {
                 outcome.run.termination_reason = TerminationReason::resource_limit;
                 outcome.run.diagnostic_code = "PHYSICAL_VALIDATION_RESOURCE";
@@ -991,9 +1006,16 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             if (!checked.validated_solution) {
                 if (checked.report.validity == geometry::Validity::indeterminate) {
                     ++outcome.run.stats.indeterminate_candidates;
-                    outcome.run.termination_reason = TerminationReason::resource_limit;
-                    outcome.run.diagnostic_code = "PHYSICAL_VALIDATION_RESOURCE";
-                    return false;
+                    if (validation_resource_code(checked.report.code)) {
+                        outcome.run.termination_reason = TerminationReason::resource_limit;
+                        outcome.run.diagnostic_code = "PHYSICAL_VALIDATION_RESOURCE";
+                        return false;
+                    }
+                    if (checked.report.code == "KERNEL_FLOATING_ENVIRONMENT") {
+                        outcome.run.termination_reason = TerminationReason::error;
+                        outcome.run.diagnostic_code = "PHYSICAL_FLOATING_ENVIRONMENT";
+                        return false;
+                    }
                 }
                 else {
                     ++outcome.run.stats.invalid_candidates;

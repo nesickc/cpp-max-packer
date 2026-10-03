@@ -4,6 +4,7 @@
 #include <bit>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <cfenv>
 #include <cmath>
 #include <cstdlib>
 #include <limits>
@@ -608,6 +609,192 @@ TEST_CASE("AT-12 contacting L-prism layout is independently characterized", "[so
     CHECK(checked.report.code == "KERNEL_CONTACTED_DEGENERACY");
     CHECK(checked.report.kernel_work > 0);
     CHECK_FALSE(checked.validated_solution);
+}
+
+TEST_CASE("T011 numerical refinement uncertainty rejects the trial and continues",
+          "[solver][T011][AT-09][validation-routing]")
+{
+    const auto context = l_context();
+    const auto initial = native_solution(context, { { "initial", { 1, 1, .5 }, { 0, 0, 0, 1 } } });
+    solver::SpectralLimits limits;
+    limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
+    limits.spectral.max_candidate_evaluations = limits.max_refinement_evaluations = 16;
+    limits.spectral.max_search_passes = 1;
+    limits.spectral.max_copies = 2;
+    const auto outcome = solver::run_cpu_spectral(context, { {}, 1 }, limits, {}, {}, initial);
+    CAPTURE(outcome.run.diagnostic_code, outcome.run.stats.candidate_evaluations,
+            outcome.run.stats.indeterminate_candidates);
+    REQUIRE(outcome.run.stats.indeterminate_candidates > 0);
+    CHECK(outcome.run.stats.candidate_evaluations > 2);
+    CHECK(outcome.run.termination_reason != solver::TerminationReason::resource_limit);
+    CHECK(outcome.run.termination_reason != solver::TerminationReason::error);
+    REQUIRE(outcome.run.best);
+    CHECK(outcome.run.best->solution == initial);
+    CHECK(geo::revalidate(outcome.run.best->solution).report.validity == geo::Validity::valid);
+}
+
+TEST_CASE("T011 boundary work exhaustion retains a resource diagnostic",
+          "[solver][T011][AT-16][validation-routing]")
+{
+    const auto context = l_context();
+    const auto reference = validate_layout(context, { 2, 1, .5 });
+    REQUIRE(reference.report.code == "KERNEL_CONTACTED_DEGENERACY");
+    REQUIRE(reference.report.kernel_work > 1);
+    const auto made = geo::make_candidate(context, {
+        { "identity", { 1, 1, .5 }, { 0, 0, 0, 1 } },
+        { "z-180", { 2, 1, .5 }, { 0, 0, 1, 0 } }
+    });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(made));
+    geo::ValidationLimits limits;
+    limits.max_kernel_work = reference.report.kernel_work - 1;
+    const auto checked = geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(made), limits);
+    CAPTURE(reference.report.kernel_work, checked.report.kernel_work, checked.report.code);
+    CHECK(checked.report.validity == geo::Validity::indeterminate);
+    CHECK(checked.report.code.find("LIMIT") != std::string::npos);
+    CHECK_FALSE(checked.validated_solution);
+}
+
+TEST_CASE("T011 candidate validation distinguishes resource FPU and control failures",
+          "[solver][T011][AT-16][validation-routing]")
+{
+    namespace runtime = spectrapack::runtime;
+    const auto context = default_fixed_context();
+    const auto initial = native_solution(context, { { "initial", { 1, 1, 1 }, { 0, 0, 0, 1 } } });
+    for (const int mode : { 0, 1, 2, 3, 4 }) {
+        struct Interrupt {
+            int mode;
+            bool expired {};
+            unsigned visits {};
+            std::stop_source stop;
+            runtime::Clock::time_point cutoff { runtime::Clock::now() + std::chrono::hours(1) };
+        } interrupt { mode };
+        struct RoundingReset {
+            int original { std::fegetround() };
+            ~RoundingReset() { std::fesetround(original); }
+        } rounding_reset;
+        solver::SpectralLimits limits;
+        limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
+        limits.spectral.max_candidate_evaluations = 8;
+        limits.spectral.max_search_passes = 1;
+        limits.max_refinement_evaluations = 1;
+        if (mode == 0) {
+            limits.spectral.per_validation.max_kernel_work = 0;
+        }
+        if (mode == 4) {
+            limits.spectral.per_validation.max_working_bytes = 0;
+        }
+        solver::RunControl control { interrupt.stop.get_token(), interrupt.cutoff };
+        control.now_context = control.phase_context = &interrupt;
+        control.now_fn = [](void* state) noexcept {
+            const auto& interrupt = *static_cast<Interrupt*>(state);
+            return interrupt.expired ? interrupt.cutoff : runtime::Clock::now();
+        };
+        control.phase_sink = [](void* state, runtime::Phase phase) noexcept {
+            auto& interrupt = *static_cast<Interrupt*>(state);
+            if (phase == runtime::Phase::validating) {
+                ++interrupt.visits;
+                if (interrupt.mode == 1) {
+                    interrupt.stop.request_stop();
+                }
+                else if (interrupt.mode == 2) {
+                    interrupt.expired = true;
+                }
+                else if (interrupt.mode == 3) {
+                    std::fesetround(FE_DOWNWARD);
+                }
+            }
+        };
+        const auto outcome = solver::run_cpu_spectral(context, { {}, .5 }, limits, control, {}, initial);
+        std::fesetround(rounding_reset.original);
+        CAPTURE(mode, outcome.run.diagnostic_code);
+        REQUIRE(interrupt.visits == 1);
+        REQUIRE(outcome.run.best);
+        CHECK(outcome.run.best->solution == initial);
+        CHECK(geo::revalidate(outcome.run.best->solution).report.validity == geo::Validity::valid);
+        if (mode == 0 || mode == 4) {
+            CHECK(outcome.run.termination_reason == solver::TerminationReason::resource_limit);
+            CHECK(outcome.run.diagnostic_code == "PHYSICAL_VALIDATION_RESOURCE");
+        }
+        else if (mode == 1) {
+            CHECK(outcome.run.termination_reason == solver::TerminationReason::user_stopped);
+        }
+        else if (mode == 2) {
+            CHECK(outcome.run.termination_reason == solver::TerminationReason::budget_exhausted);
+        }
+        else {
+            CHECK(outcome.run.termination_reason == solver::TerminationReason::error);
+            CHECK(outcome.run.diagnostic_code == "PHYSICAL_FLOATING_ENVIRONMENT");
+        }
+    }
+}
+
+TEST_CASE("T011 containment witness exhaustion retains a resource diagnostic",
+          "[solver][T011][AT-16][validation-review]")
+{
+    const auto object = geo::test_support::accepted(geo::test_support::cuboid({ -.5, -.5, -.5 }, { .5, .5, .5 }),
+                                                    geo::AssetRole::object);
+    const auto container = geo::test_support::accepted(
+        geo::test_support::hollow_cuboid({ 0, 0, 0 }, { 10, 10, 10 }, { 4, 4, 4 }, { 6, 6, 6 }),
+        geo::AssetRole::container);
+    const auto made = geo::make_validation_context(object, container, {});
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+    const auto trial = geo::make_candidate(context, { { "inside-material", { 1.5, 1.5, 1.5 }, { 0, 0, 0, 1 } } });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(trial));
+    const auto candidate = std::get<std::shared_ptr<const geo::Candidate>>(trial);
+    const auto reference = geo::validate(context, candidate);
+    REQUIRE(reference.validated_solution);
+    geo::ValidationLimits limits;
+    limits.max_kernel_work = reference.report.kernel_work / 2;
+    const auto limited = geo::validate(context, candidate, limits);
+    CAPTURE(reference.report.kernel_work, limited.report.kernel_work, limited.report.code);
+    REQUIRE(limited.report.checks[4].method == "boundary-disjoint-shell-witnesses");
+    CHECK(limited.report.validity == geo::Validity::indeterminate);
+    CHECK(limited.report.code.find("LIMIT") != std::string::npos);
+    CHECK_FALSE(limited.validated_solution);
+}
+
+TEST_CASE("T011 interrupted candidate validation accounts for completed work",
+          "[solver][T011][AT-16][validation-review]")
+{
+    namespace runtime = spectrapack::runtime;
+    const auto context = default_fixed_context();
+    const auto initial = native_solution(context, { { "initial", { 1, 1, 1 }, { 0, 0, 0, 1 } } });
+    for (const bool deadline : { false, true }) {
+        struct Interrupt {
+            bool deadline, validating {}, expired {};
+            unsigned validation_polls {};
+            std::stop_source stop;
+            runtime::Clock::time_point cutoff { runtime::Clock::now() + std::chrono::hours(1) };
+        } interrupt { deadline };
+        solver::RunControl control { interrupt.stop.get_token(), interrupt.cutoff };
+        control.now_context = control.phase_context = &interrupt;
+        control.phase_sink = [](void* state, runtime::Phase phase) noexcept {
+            static_cast<Interrupt*>(state)->validating = phase == runtime::Phase::validating;
+        };
+        control.now_fn = [](void* state) noexcept {
+            auto& interrupt = *static_cast<Interrupt*>(state);
+            if (interrupt.validating && ++interrupt.validation_polls == 4) {
+                interrupt.expired = interrupt.deadline;
+                if (!interrupt.deadline) {
+                    interrupt.stop.request_stop();
+                }
+            }
+            return interrupt.expired ? interrupt.cutoff : runtime::Clock::now();
+        };
+        solver::SpectralLimits limits;
+        limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
+        limits.spectral.max_candidate_evaluations = limits.max_refinement_evaluations = 1;
+        limits.spectral.max_search_passes = 1;
+        const auto outcome = solver::run_cpu_spectral(context, { {}, .5 }, limits, control, {}, initial);
+        CAPTURE(deadline, interrupt.validation_polls, outcome.run.stats.validation_kernel_work);
+        REQUIRE(interrupt.validation_polls >= 4);
+        CHECK(outcome.run.termination_reason == (deadline ? solver::TerminationReason::budget_exhausted
+                                                         : solver::TerminationReason::user_stopped));
+        CHECK(outcome.run.stats.validation_kernel_work > 0);
+        REQUIRE(outcome.run.best);
+        CHECK(outcome.run.best->solution == initial);
+    }
 }
 
 TEST_CASE("AT-12 separated L-prism layout is independently native-valid", "[solver][T007][AT-12][fixture]")

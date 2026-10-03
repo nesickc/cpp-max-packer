@@ -81,6 +81,75 @@ class Session:
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_loading_stop_preserves_previous_complete_result(self):
+        """T011-A4: interrupt real cold loading before preparation, retain old authority."""
+        if PRACTICAL_REPORT is None:
+            self.skipTest('practical report supplied by the T011 acceptance harness')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            report = root/'object.report.json'
+            fixtures.write_cube_stl(root/'cube.stl', extent=40)
+            imported = subprocess.run([str(ENGINE), 'inspect', '--stl', str(root/'cube.stl'),
+                '--units', 'mm', '--report', str(report)], capture_output=True, text=True, timeout=15)
+            self.assertEqual(imported.returncode, 0, imported.stdout+imported.stderr)
+            fixture = fixtures.SolveSubprocessTests(); fixture.object_report_path = report
+            settings = fixture.settings(dimensions=(64, 64, 64), candidates=1, passes=1)
+            session = Session()
+            try:
+                preview = root/'preview'; preview.mkdir()
+                prepared, _ = session.request({'runtime_version': 1, 'request_id': 'old-prepare',
+                    'operation_id': 'old-prepare-op', 'method': 'prepare', 'params': {
+                        'object_report': str(report), 'output_directory': str(preview)}})
+                self.assertTrue(prepared['ok'], prepared)
+                def old_run(name):
+                    output = root/name; output.mkdir(); ticks, frequency = qpc()
+                    reply, _ = session.request({'runtime_version': 1, 'request_id': name,
+                        'operation_id': name+'-op', 'method': 'run', 'params': {
+                            'asset_token': prepared['result']['asset_token'], 'settings': settings,
+                            'result_path': str(output/'result.json'), 'stop_file': str(output/'stop.marker'),
+                            'start_qpc_ticks': ticks,
+                            'qpc_frequency_hz': frequency}})
+                    self.assertTrue(reply['ok'], reply)
+                    saved = json.loads((output/'result.json').read_text())
+                    self.assertEqual(saved['validation']['status'], 'valid')
+                    self.assertEqual(saved['count'], 1)
+                    return saved, (output/'result.json').read_bytes()
+                before, complete_bytes = old_run('before-loading')
+                preview_bytes = (preview/'preview.ply').read_bytes()
+                replacement = root/'replacement'; replacement.mkdir()
+                marker = replacement/'stop.marker'; stopped = []
+                def stop_loading(phase):
+                    if phase['phase'] == 'loading' and not stopped:
+                        time.sleep(.02)
+                        began = time.perf_counter(); marker.write_bytes(b'stop')
+                        stopped.append((began, time.perf_counter()-began))
+                reply, phases = session.request({'runtime_version': 1, 'request_id': 'loading-stop',
+                    'operation_id': 'loading-stop-op', 'method': 'prepare', 'params': {
+                        'object_report': str(PRACTICAL_REPORT), 'output_directory': str(replacement),
+                        'stop_file': str(marker)}}, stop_loading)
+                finished = time.perf_counter()
+                self.assertEqual(len(stopped), 1, (reply, phases))
+                self.assertFalse(reply['ok'], reply)
+                self.assertEqual(reply['error']['code'], 'OPERATION_CANCELLED', reply)
+                self.assertTrue(all(p['phase'] == 'loading' for p in phases), phases)
+                self.assertLessEqual(stopped[0][1], .250)
+                self.assertLessEqual(finished-stopped[0][0], 5)
+                self.assertEqual((root/'before-loading'/'result.json').read_bytes(), complete_bytes)
+                self.assertEqual((preview/'preview.ply').read_bytes(), preview_bytes)
+                after, _ = old_run('after-loading')
+                self.assertEqual(after['placements'], before['placements'])
+                print(json.dumps({'case': 'native-loading-stop', 'marker_write_seconds': stopped[0][1],
+                    'safe_stop_seconds': finished-stopped[0][0], 'phase_work_delay_seconds': .02,
+                    'reply': reply, 'phases': phases, 'retained_count': after['count'],
+                    'placements': after['placements'], 'validation': after['validation'],
+                    'previous_result_sha256': hashlib.sha256(complete_bytes).hexdigest()}), flush=True)
+                shutdown, _ = session.request({'runtime_version': 1, 'request_id': 'loading-shutdown',
+                    'method': 'shutdown', 'params': {}})
+                self.assertTrue(shutdown['ok'], shutdown)
+                self.assertEqual(session.child.wait(timeout=5), 0)
+            finally:
+                session.close()
+
     def test_real_field_and_fft_phase_stop_keeps_valid_baseline(self):
         """T011-A4: native fields/FFT, real Stop marker, and checked terminal result."""
         with tempfile.TemporaryDirectory() as temporary:
@@ -242,6 +311,13 @@ class RuntimeTests(unittest.TestCase):
             print(json.dumps({'adapter_overlap': stats, 'saved_count': saved['count']}))
 
     def test_stop_monitor_failure_during_publication(self):
+        self._publication_stop_observation(monitor_failure=True)
+
+    def test_user_stop_during_publication_keeps_valid_incumbent(self):
+        """T011-A4/A5: actual Stop at native commit; barrier dwell is recorded separately."""
+        self._publication_stop_observation(monitor_failure=False)
+
+    def _publication_stop_observation(self, monitor_failure):
         if MEMORY_HELPER is None:
             self.skipTest("Publication barrier requires the existing CLI test helper")
         with tempfile.TemporaryDirectory() as temporary:
@@ -261,23 +337,30 @@ class RuntimeTests(unittest.TestCase):
                 self.assertTrue(prepared['ok'],prepared)
                 output=root/'run';output.mkdir();marker=output/'stop.marker'
                 ticks,frequency=qpc()
-                observed=[]
+                observed=[]; measured={}
                 def during_publication(phase):
-                    if phase['phase'] != 'saving':
+                    if phase['phase'] != 'saving' or observed:
                         return
                     try:
                         until=time.monotonic()+2
                         while not (gate/'ready').exists() and time.monotonic()<until:
                             time.sleep(.01)
                         self.assertTrue((gate/'ready').exists(),'Publication barrier did not become ready')
-                        marker.mkdir()
+                        measured['barrier_observed_at']=time.perf_counter()
+                        measured['marker_started_at']=time.perf_counter()
+                        if monitor_failure:
+                            marker.mkdir()
+                        else:
+                            marker.write_bytes(b'stop')
+                        measured['marker_write_seconds']=time.perf_counter()-measured['marker_started_at']
                         until=time.monotonic()+2
                         while not (gate/'observed').exists() and time.monotonic()<until:
                             time.sleep(.01)
                         observed.append((gate/'observed').exists())
                     finally:
                         (gate/'release').write_bytes(b'release')
-                reply,_=session.request({'runtime_version':1,'request_id':'publication-run',
+                        measured['barrier_released_at']=time.perf_counter()
+                reply,phases=session.request({'runtime_version':1,'request_id':'publication-run',
                     'operation_id':'publication-run-op','method':'run','params':{
                         'asset_token':prepared['result']['asset_token'],
                         'settings':{'desktop_version':1,'box_dimensions_mm':[20,20,20],
@@ -286,11 +369,36 @@ class RuntimeTests(unittest.TestCase):
                             'budget_seconds':10,'seed':'42','thread_count':1,'budget_scope':'total_start'},
                         'result_path':str(output/'result.json'),'stop_file':str(marker),
                         'start_qpc_ticks':ticks,'qpc_frequency_hz':frequency}},during_publication)
+                finished=time.perf_counter()
                 self.assertEqual(observed,[True],f'Stop monitor stopped before publication: {reply}')
-                self.assertFalse(reply['ok'],reply)
-                self.assertEqual(reply['error']['code'],'STOP_MONITOR_FAILED')
                 document=json.loads((output/'result.json').read_text())
                 self.assertEqual(document['validation']['status'],'valid')
+                if monitor_failure:
+                    self.assertFalse(reply['ok'],reply)
+                    self.assertEqual(reply['error']['code'],'STOP_MONITOR_FAILED')
+                else:
+                    self.assertTrue(reply['ok'],reply)
+                    # Search may already have ended when Stop races the final certified commit.
+                    self.assertIn(reply['result']['termination_reason'],
+                                  ('user_stopped','budget_exhausted','search_stalled'))
+                    self.assertEqual(document['metrics']['termination_reason'],reply['result']['termination_reason'])
+                    self.assertGreater(document['count'],0)
+                    self.assertEqual(reply['result']['count'],document['count'])
+                    self.assertEqual(len(document['placements']),document['count'])
+                    self.assertLessEqual(measured['marker_write_seconds'],.250)
+                    self.assertLessEqual(finished-measured['marker_started_at'],5)
+                    print(json.dumps({'case':'native-publication-user-stop',
+                        'marker_write_seconds':measured['marker_write_seconds'],
+                        'artificial_barrier_hold_seconds':measured['barrier_released_at']-measured['barrier_observed_at'],
+                        'marker_to_terminal_seconds':finished-measured['marker_started_at'],
+                        'after_release_to_terminal_seconds':finished-measured['barrier_released_at'],
+                        'reply':reply,'phases':phases,'count':document['count'],
+                        'validation':document['validation'],'placements':document['placements'],
+                        'result_sha256':hashlib.sha256((output/'result.json').read_bytes()).hexdigest()}),flush=True)
+                    shutdown,_=session.request({'runtime_version':1,'request_id':'publication-shutdown',
+                                               'method':'shutdown','params':{}})
+                    self.assertTrue(shutdown['ok'],shutdown)
+                    self.assertEqual(session.child.wait(timeout=5),0)
             finally:
                 (gate/'release').write_bytes(b'release')
                 session.close()

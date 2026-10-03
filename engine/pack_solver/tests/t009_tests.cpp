@@ -419,6 +419,20 @@ TEST_CASE("T010 full Pryanik field profiles preserve two native-valid copies", "
             REQUIRE(value.field_admission);
             CHECK(value.field_admission->working_bytes_upper_bound <= limits.max_working_bytes);
             CHECK(geo::revalidate(retained).validated_solution);
+            if (source == std::string_view { "rc/items/pryanik_1.STL" }) {
+                // The ordinary desktop reaches this physical-face trial after its two baseline copies.
+                limits.max_refinement_evaluations = 1;
+                const auto refined =
+                    sol::run_cpu_spectral(native_context, { {}, 4 }, limits, {}, {}, baseline.best->solution);
+                const auto refined_retained = refined.run.best ? refined.run.best->solution
+                                                               : refined.run.retained_solution;
+                CAPTURE(refined.run.diagnostic_code, refined.run.stats.indeterminate_candidates);
+                CHECK(refined.spectral_stats.refinement_evaluations == 1);
+                CHECK(refined.run.stats.indeterminate_candidates == 1);
+                CHECK(refined.run.termination_reason != sol::TerminationReason::resource_limit);
+                CHECK(refined.run.termination_reason != sol::TerminationReason::error);
+                CHECK(refined_retained == baseline.best->solution);
+            }
         }
     }
 }
