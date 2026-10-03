@@ -2063,7 +2063,7 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
                 !add_bytes(writer_live_bytes, runtime_payload_bytes) || writer_live_bytes > request.max_working_bytes) {
                 return failure("MEMORY_LIMIT", "Commit timing metadata exceeds checked export residency.");
             }
-            ContractValidator timing_validator;
+            ContractValidator timing_validator(ContractKind::results);
             if (!std::holds_alternative<ValidatedDocument>(
                     timing_validator.validate(ContractKind::results, committed_result, request.diagnostic_limits))) {
                 return failure("RESULT_RUNTIME_INVALID", "Final timing metadata does not satisfy the result contract.");

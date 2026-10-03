@@ -50,6 +50,8 @@ struct ContractDiagnosticLimits {
 class ContractValidator {
  public:
   ContractValidator();
+  // Compile this root first; parse/validate still accept every contract kind.
+  explicit ContractValidator(ContractKind initial_kind);
   ~ContractValidator();
   ContractValidator(ContractValidator&&) noexcept;
   ContractValidator& operator=(ContractValidator&&) noexcept;

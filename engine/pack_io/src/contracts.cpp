@@ -9,6 +9,7 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <vector>
@@ -856,25 +857,53 @@ std::vector<ValidationIssue> semantics(ContractKind kind, const Json& value) {
 }  // namespace
 
 class ContractValidator::Impl {
- public:
-  Impl() {
-    for (const auto& [key, text] : detail::kEmbeddedSchemas) catalog.emplace(id_for(key), Json::parse(text));
-    auto loader = [this](const nlohmann::json_uri& uri, Json& target) {
-      const auto found = catalog.find(uri.location());
-      if (found == catalog.end()) throw std::runtime_error("schema reference is not in embedded catalog");
-      target = found->second;
-    };
-    for (const auto& [id, schema] : catalog) validators.emplace(id, nlohmann::json_schema::json_validator(
-        schema, loader, nlohmann::json_schema::default_string_format_check));
-  }
-  std::map<std::string, Json> catalog;
-  std::map<std::string, nlohmann::json_schema::json_validator> validators;
+public:
+    explicit Impl(std::optional<ContractKind> initial_kind = {})
+    {
+        for (const auto& [key, text] : detail::kEmbeddedSchemas) {
+            catalog.emplace(id_for(key), Json::parse(text));
+        }
+        auto loader = [this](const nlohmann::json_uri& uri, Json& target) {
+            const auto found = catalog.find(uri.location());
+            if (found == catalog.end()) {
+                throw std::runtime_error("schema reference is not in embedded catalog");
+            }
+            target = found->second;
+        };
+        for (const auto& [id, schema] : catalog) {
+            if (!initial_kind || id == id_for(name(*initial_kind))) {
+                validators.emplace(id, nlohmann::json_schema::json_validator(
+                                           schema, loader, nlohmann::json_schema::default_string_format_check));
+            }
+        }
+    }
+    nlohmann::json_schema::json_validator& validator(ContractKind kind)
+    {
+        const auto id = id_for(name(kind));
+        if (const auto found = validators.find(id); found != validators.end()) {
+            return found->second;
+        }
+        auto loader = [this](const nlohmann::json_uri& uri, Json& target) {
+            const auto found = catalog.find(uri.location());
+            if (found == catalog.end()) {
+                throw std::runtime_error("schema reference is not in embedded catalog");
+            }
+            target = found->second;
+        };
+        return validators
+            .emplace(id, nlohmann::json_schema::json_validator(catalog.at(id), loader,
+                                                               nlohmann::json_schema::default_string_format_check))
+            .first->second;
+    }
+    std::map<std::string, Json> catalog;
+    std::map<std::string, nlohmann::json_schema::json_validator> validators;
 };
 
 ValidatedDocument::ValidatedDocument(ContractKind kind, Json value) : kind_(kind), value_(std::move(value)) {}
 ContractKind ValidatedDocument::kind() const noexcept { return kind_; }
 const Json& ValidatedDocument::value() const noexcept { return value_; }
 ContractValidator::ContractValidator() : impl_(std::make_unique<Impl>()) {}
+ContractValidator::ContractValidator(ContractKind initial_kind) : impl_(std::make_unique<Impl>(initial_kind)) {}
 ContractValidator::~ContractValidator() = default;
 ContractValidator::ContractValidator(ContractValidator&&) noexcept = default;
 ContractValidator& ContractValidator::operator=(ContractValidator&&) noexcept = default;
@@ -960,7 +989,7 @@ DecodeOutcome ContractValidator::validate(ContractKind kind, const Json& value, 
                              limits);
     }
     Issues handler(limits);
-    impl_->validators.at(id_for(name(kind))).validate(value, handler);
+    impl_->validator(kind).validate(value, handler);
     if (!handler.items.empty()) {
         return ContractFailure { kind, std::move(handler.items) };
     }

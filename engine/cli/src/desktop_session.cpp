@@ -737,7 +737,7 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
             std::optional<io::ValidatedDocument> validated_settings;
             {
                 // Release the compiled validator before shared solve/IO calls.
-                io::ContractValidator validator;
+                io::ContractValidator validator(io::ContractKind::settings);
                 auto decoded = validator.validate(io::ContractKind::settings, settings, { 16, 256 });
                 if (!std::holds_alternative<io::ValidatedDocument>(decoded)) {
                     return response(

@@ -32,7 +32,7 @@ later regresses the successful practical workflows delivered by T-011.
 | T011-A3 — tamper resistance | Native authority/pinned-input contract is frozen. | Independent source/PLY/repair/settings/catalog/pose mutations; moved archive restore; failed Open preserves complete state. |
 | T011-A4 — Stop phases | Session availability red and shared cancellation APIs are retained. Real cold-Pryanik and phase-qualified preparation Stop/EOF checks pass at the retained integration checkpoint. | Real loading/fields/FFT/validation/publication Stop; receipt <=250 ms and safe completion <=5 s; UI stopping/result behavior and final integrated repetition. |
 | T011-A5 — lifecycle races | Initial native process checks pass shutdown, Stop followed by a fresh run, exact duplicate replay and conflicting request identity. | Repeated/stale Stop, completion race, marker/transport failure, child failure, active EOF/shutdown, backpressure and late completion using built native code. |
-| T011-A6 — startup measurements | Four-profile new cold/warm series at 86a42db completes 48 operations with frozen work/count/pose checks. All preparation and measured-memory targets pass; Ulamok and both full Pryanik Start targets pass. | Analytic retained Start misses 87.6 ms target at 115.2 ms; diagnose and correct that specific overhead, then rerun affected evidence. Whole adapter bound and integrated cleanup remain separate. |
+| T011-A6 — startup measurements | Four-profile series at 86a42db completes 48 operations; three practical Start targets pass. The schema correction's 12-operation analytic rerun passes at 38.3 ms versus 87.6 ms, with frozen work/count/pose and preparation/memory checks. | Final integration mapping and remaining adapter/phase-cleanup evidence; the analytic-only summary correctly does not claim a new four-profile series. |
 | T011-A7 — compatibility | Optional runtime schemas, shared fixtures and generated types pass their checks. | Legacy and new Save/move/Open, original timing semantics, pending/result association, thread policy, independent JSON/STL export and repaired-geometry invariance. |
 
 The original T009-A2/A3/A6 obligations must pass in T-011, and remain T010-A7
@@ -41,6 +41,21 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 
 ## Retained evidence and qualification
 
+- Selective schema compilation preserves default eager construction, cross-kind
+  validation, geometry checks and schema semantics. Its affected Release analytic
+  series passes at 0.0382987-second retained Start (target 0.0876001), versus the
+  preserved 0.1151591 failure. Debug contracts pass 35 cases / 1,097 assertions;
+  Release 34 / 1,095; result binding passes 16 / 326 each. Production change is
+  +48/-17 lines and tests +55. `.local/t011/analytic-start-fix/verification.md`
+  and `log-review.md` index complete build/test/measurement logs, held engines,
+  unchanged six-source pins, and the analytic subset's limits. The same held
+  Debug engine passes both unchanged cube64 and Unicode-relocation subprocess
+  gates, including all 64 placements and independently checked STL vertices.
+  `.local/t011/debug-publication-after-schema/` preserves native output and actual
+  artifacts; its initial evidence-wrapper import error happened before product
+  testing and is recorded. The shared five-second allowance remains unchanged.
+  A separate local export probe attributed 468 prior-copy imports, but the actual
+  gates passing after the schema correction removed the need for a geometry edit.
 - Startup series at `86a42db`: all four profiles have one warmup and five cold/
   retained samples. Retained fixed-work Start medians are 0.1151591 / 0.1048717 /
   0.4805324 / 1.1631793 seconds for analytic/Ulamok/Pryanik 1/Pryanik 2. All

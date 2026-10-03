@@ -1562,6 +1562,61 @@ TEST_CASE("shared schema corpus distinguishes structural and semantic contract v
   }
 }
 
+TEST_CASE("T011 initial contract kind preserves cross-kind referenced-schema validation", "[contracts][T-011]")
+{
+    ContractValidator eager;
+    ContractValidator settings_first(ContractKind::settings);
+    ContractValidator results_first(ContractKind::results);
+    const spectrapack::io::ContractDiagnosticLimits limits { 2, 40 };
+    const auto compare = [&](ContractKind kind, const Json& value, bool valid) {
+        const auto expected = eager.validate(kind, value, limits);
+        CHECK(std::holds_alternative<spectrapack::io::ValidatedDocument>(expected) == valid);
+        for (auto* hinted : { &settings_first, &results_first }) {
+            for (const bool parse : { false, true }) {
+                const auto actual =
+                    parse ? hinted->parse(kind, value.dump(), limits) : hinted->validate(kind, value, limits);
+                REQUIRE(actual.index() == expected.index());
+                if (const auto* document = std::get_if<spectrapack::io::ValidatedDocument>(&actual)) {
+                    CHECK(document->kind() == kind);
+                    CHECK(document->value() == value);
+                }
+                else {
+                    const auto& actual_failure = std::get<ContractFailure>(actual);
+                    const auto& expected_failure = std::get<ContractFailure>(expected);
+                    CHECK(actual_failure.kind == expected_failure.kind);
+                    REQUIRE(actual_failure.issues.size() == expected_failure.issues.size());
+                    for (std::size_t i = 0; i < actual_failure.issues.size(); ++i) {
+                        CHECK(actual_failure.issues[i].stage == expected_failure.issues[i].stage);
+                        CHECK(actual_failure.issues[i].path == expected_failure.issues[i].path);
+                        CHECK(actual_failure.issues[i].code == expected_failure.issues[i].code);
+                        CHECK(actual_failure.issues[i].message == expected_failure.issues[i].message);
+                    }
+                }
+            }
+        }
+    };
+    auto settings = shared_fixture_value("settings-requested-positive");
+    settings["orientation"]["quaternion_xyzw"] = Json::array({ 0, 0, 1 });
+    compare(ContractKind::settings, settings, false);
+    auto result = shared_fixture_value("results-one-positive");
+    result["placements"][0]["translation_mm"][1] = "invalid-coordinate";
+    compare(ContractKind::results, result, false);
+    compare(ContractKind::desktop_runtime,
+            {
+                { "runtime_version", 1              },
+                { "request_id",      "cross-kind"   },
+                { "method",          "shutdown"     },
+                { "params",          Json::object() }
+    },
+            true);
+    std::ifstream input(SPECTRAPACK_SHARED_CONTRACT_FIXTURES);
+    for (const auto& fixture : Json::parse(input)) {
+        INFO(fixture.at("name").get<std::string>());
+        compare(fixture_kind(fixture.at("kind").get<std::string>()), fixture.at("value"),
+                fixture.at("schema_valid").get<bool>() && fixture.at("semantic_valid").get<bool>());
+    }
+}
+
 TEST_CASE("AT-14 rejects result records whose cross-field provenance or transforms disagree", "[contracts][results]") {
   ContractValidator validator;
   auto require_failure = [&validator](Json result) { CHECK(failure_of(validator.validate(ContractKind::results, result)) != nullptr); };
