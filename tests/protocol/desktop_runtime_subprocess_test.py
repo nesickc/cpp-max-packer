@@ -1,5 +1,6 @@
 """ADR0013 / T010-A5 / T011-A1-A5: real retained native process boundary."""
 import argparse
+import copy
 import ctypes
 import hashlib
 import json
@@ -18,6 +19,8 @@ ENGINE = None
 PRACTICAL_REPORT = None
 MEMORY_HELPER = None
 OVERLAP_EVIDENCE = None
+REUSE_EVIDENCE = None
+OLDER_ENGINE = None
 
 
 def qpc():
@@ -629,7 +632,8 @@ class RuntimeTests(unittest.TestCase):
 
     def test_pinned_asset_reuse_stop_and_deadline(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = pathlib.Path(temporary)
+            root = REUSE_EVIDENCE or pathlib.Path(temporary)
+            root.mkdir(parents=True, exist_ok=True)
             source, report = root / "cube.stl", root / "object.report.json"
             fixtures.write_cube_stl(source)
             imported = subprocess.run([str(ENGINE), "inspect", "--stl", str(source), "--units", "mm",
@@ -667,23 +671,128 @@ class RuntimeTests(unittest.TestCase):
                        'resolution':{'mode':'manual','pitch_mm':10},'compute':{'backend':'cpu'},
                        'resolved':{'pitch_mm':10,'orientation_catalog_sha256':fixtures.IDENTITY_CATALOG_SHA256,
                                    'orientation_catalog_version':1,'backend':'cpu','thread_count':1}}
-                def fixed_run(name,stl=False,block_settings_path=False):
+                run_observations={}
+                def fixed_run(name,stl=False,block_settings_path=False,options=None,reject_code=None):
                     output=root/name;output.mkdir();ticks,frequency=qpc()
                     if block_settings_path:
                         unrelated=output/'session.settings.json';unrelated.mkdir()
                         (unrelated/'keep.txt').write_bytes(b'unrelated user data')
-                    params={'asset_token':token,'settings':fixed,'result_path':str(output/'result.json'),
+                    params={'asset_token':token,'settings':fixed if options is None else options,'result_path':str(output/'result.json'),
                             'stop_file':str(output/'stop.marker'),'start_qpc_ticks':ticks,'qpc_frequency_hz':frequency}
                     if stl:params['stl_path']=str(output/'packing.stl')
                     reply,_=session.request({'runtime_version':1,'request_id':name,'operation_id':name+'-op','method':'run','params':params})
+                    run_observations[name]=reply
+                    if reject_code:
+                        self.assertFalse(reply['ok'],reply)
+                        self.assertEqual(reply['error']['code'],reject_code,reply)
+                        self.assertFalse((output/'result.json').exists())
+                        print(json.dumps({'case':name,'reply':reply}),flush=True)
+                        return reply,output
                     self.assertTrue(reply['ok'],reply)
                     document=json.loads((output/'result.json').read_text())
                     self.assertGreater(document['count'],0)
                     self.assertEqual(document['validation']['status'],'valid')
                     if block_settings_path:
                         self.assertEqual((unrelated/'keep.txt').read_bytes(),b'unrelated user data')
+                    print(json.dumps({'case':name,'reply':reply,'count':document['count'],
+                        'placements':document['placements'],'validation':document['validation'],
+                        'constraints':document['constraints'],'assets':document['assets'],
+                        'resolved_settings':document['search']['resolved_settings']}),flush=True)
                     return document,output
-                before,_=fixed_run('before-tamper',block_settings_path=True)
+                before,before_output=fixed_run('before-tamper',block_settings_path=True)
+                complete_bytes=(before_output/'result.json').read_bytes()
+                # T011-A2/A3: fresh constraints affect actual validated packing.
+                matrix=copy.deepcopy(fixed)
+                matrix['search']['work_budget']['max_candidate_evaluations']=32
+                base,_=fixed_run('constraints-base',options=matrix);self.assertEqual(base['count'],8)
+                for name,key,value,count in (('pair','pair',2,1),('wall','wall',2,1),('box',None,30,12)):
+                    changed=copy.deepcopy(matrix)
+                    if key:changed['clearance_mm'][key]=value
+                    else:changed['container']['dimensions_mm'][0]=value
+                    saved,_=fixed_run('constraints-'+name,options=changed);self.assertEqual(saved['count'],count)
+                    if name=='wall':self.assertNotEqual(saved['placements'][0]['translation_mm'],base['placements'][0]['translation_mm'])
+                spectral=copy.deepcopy(fixed);spectral['container']['dimensions_mm']=[40,40,40]
+                spectral['search']['work_budget']={'max_candidate_evaluations':2,'max_search_passes':2}
+                coarse,_=fixed_run('pitch-10',options=spectral)
+                spectral['resolution']['pitch_mm']=spectral['resolved']['pitch_mm']=5
+                fine,_=fixed_run('pitch-5',options=spectral)
+                # Real correlations and changed field storage qualify pitch use, not echoed settings alone.
+                pitch_diagnostics=[run_observations[name]['result']['diagnostics'] for name in ('pitch-10','pitch-5')]
+                for observed in pitch_diagnostics:self.assertGreater(observed['work']['spectral_correlations'],0,observed)
+                self.assertGreater(pitch_diagnostics[1]['tracked_working_bytes_peak'],pitch_diagnostics[0]['tracked_working_bytes_peak'])
+                self.assertEqual(fine['metrics']['solid_volume_mm3'],coarse['metrics']['solid_volume_mm3'])
+                custom=copy.deepcopy(fixed)
+                custom['orientation']={'mode':'custom','quaternions_xyzw':[
+                    [fixtures.NEAR_UNIT_COMPONENT]*4,[0,0,0,1]]}
+                custom['resolved']['orientation_catalog_sha256']=fixtures.NEAR_UNIT_CUSTOM_SHA256
+                catalog_result,_=fixed_run('catalog-custom',options=custom)
+                for component in catalog_result['placements'][0]['quaternion_xyzw']:
+                    self.assertAlmostEqual(component,.5,places=12)
+                for mutation,code in (('hash','CATALOG_MISMATCH'),('version','UNSUPPORTED_SETTINGS'),('content','CATALOG_MISMATCH')):
+                    changed=copy.deepcopy(custom)
+                    if mutation=='hash':changed['resolved']['orientation_catalog_sha256']='0'*64
+                    elif mutation=='version':changed['resolved']['orientation_catalog_version']=2
+                    else:changed['orientation']['quaternions_xyzw']=[[0,0,0,1]]
+                    fixed_run('catalog-bad-'+mutation,options=changed,reject_code=code)
+                def prepare_report(name,path):
+                    output=root/name;output.mkdir()
+                    return session.request({'runtime_version':1,'request_id':name,'operation_id':name+'-op',
+                        'method':'prepare','params':{'object_report':str(path),'output_directory':str(output)}})[0]
+                original_report=report.read_bytes();changed=copy.deepcopy(record)
+                changed['frame']['source_to_local'][0][3]+=1;report.write_text(json.dumps(changed))
+                rejected=prepare_report('frame-tamper',report)
+                self.assertFalse(rejected['ok'],rejected);self.assertEqual(rejected['error']['code'],'INVALID_DOCUMENT',rejected)
+                self.assertEqual(rejected['error']['details']['issues'][0]['code'],'SOURCE_FRAME_MISMATCH',rejected)
+                print(json.dumps({'case':'frame-tamper','reply':rejected}),flush=True)
+                report.write_bytes(original_report)
+                repaired=root/'repaired';repaired.mkdir();repair_source=repaired/'cube.stl';repair_report=repaired/'object.report.json'
+                data=bytearray(original_source);point=fixtures.struct.unpack_from('<3f',data,96)
+                fixtures.struct.pack_into('<3f',data,96,point[0]+.05,point[1],point[2]);repair_source.write_bytes(data)
+                command=[str(ENGINE),'inspect','--stl',str(repair_source),'--units','mm','--report',str(repair_report),'--weld-tolerance-mm','.1']
+                proposal=subprocess.run(command,capture_output=True,text=True,timeout=15)
+                self.assertEqual(proposal.returncode,0,proposal.stdout+proposal.stderr)
+                accepted=subprocess.run(command+['--accept-repair',json.loads(proposal.stdout)['proposal_sha256']],capture_output=True,text=True,timeout=15)
+                self.assertEqual(accepted.returncode,0,accepted.stdout+accepted.stderr)
+                changed=json.loads(repair_report.read_text());changed['repair_record']['sha256']='0'*64
+                repair_report.write_text(json.dumps(changed));rejected=prepare_report('repair-tamper',repair_report)
+                self.assertFalse(rejected['ok'],rejected);self.assertEqual(rejected['error']['code'],'ASSET_MISMATCH',rejected)
+                print(json.dumps({'case':'repair-tamper','reply':rejected}),flush=True)
+                restored,_=fixed_run('after-rejected-replacements');self.assertEqual(restored['placements'],before['placements'])
+                inch=root/'inch';inch.mkdir();inch_report=inch/'object.report.json'
+                imported=subprocess.run([str(ENGINE),'inspect','--stl',str(source),'--units','inch','--report',str(inch_report)],capture_output=True,text=True,timeout=15)
+                self.assertEqual(imported.returncode,0,imported.stdout+imported.stderr)
+                inch_record=json.loads(inch_report.read_text());inch_prepared=prepare_report('inch-preview',inch_report)
+                self.assertTrue(inch_prepared['ok'],inch_prepared);self.assertFalse(inch_prepared['result']['preparation_reused'])
+                self.assertEqual(inch_record['source']['sha256'],record['source']['sha256'])
+                self.assertNotEqual(inch_record['accepted_solid']['sha256'],record['accepted_solid']['sha256'])
+                mm_token=token;token=inch_prepared['result']['asset_token'];inch_settings=copy.deepcopy(fixed)
+                inch_settings['object_asset']={key:inch_record[owner]['sha256'] for key,owner in
+                    (('source_sha256','source'),('accepted_solid_sha256','accepted_solid'))}
+                inch_settings['container']['dimensions_mm']=[300,300,300]
+                inch_result,inch_output=fixed_run('inch-result',options=inch_settings)
+                _,vertices,_=fixtures.parse_ply(inch_output/inch_result['assets']['object']['accepted_solid']['path'])
+                for axis in range(3):self.assertAlmostEqual(max(v[axis] for v in vertices)-min(v[axis] for v in vertices),254)
+                self.assertAlmostEqual(inch_result['metrics']['solid_volume_mm3']/before['metrics']['solid_volume_mm3'],25.4**3,places=6)
+                released,_=session.request({'runtime_version':1,'request_id':'release-inch','method':'release','params':{'asset_token':token}})
+                self.assertTrue(released['ok'],released);token=mm_token
+                if OLDER_ENGINE is not None:
+                    self.assertNotEqual(hashlib.sha256(OLDER_ENGINE.read_bytes()).digest(),hashlib.sha256(ENGINE.read_bytes()).digest())
+                    older=Session([str(OLDER_ENGINE),'desktop-session'])
+                    try:
+                        old_preview=root/'older-preview';old_preview.mkdir()
+                        old,_=older.request({'runtime_version':1,'request_id':'older-prepare','operation_id':'older-prepare-op',
+                            'method':'prepare','params':{'object_report':str(report),'output_directory':str(old_preview)}})
+                        self.assertTrue(old['ok'],old);foreign_token=old['result']['asset_token']
+                        token=foreign_token;fixed_run('older-token-rejected',reject_code='ASSET_TOKEN_EXPIRED');token=mm_token
+                        new=prepare_report('new-epoch-prepare',report);self.assertTrue(new['ok'],new)
+                        token=new['result']['asset_token'];self.assertNotEqual(token,foreign_token)
+                        session.request({'runtime_version':1,'request_id':'release-mm-prior','method':'release','params':{'asset_token':mm_token}})
+                        current,_=fixed_run('new-epoch-result');self.assertEqual(current['placements'],before['placements'])
+                        shutdown,_=older.request({'runtime_version':1,'request_id':'older-shutdown','method':'shutdown','params':{}})
+                        self.assertTrue(shutdown['ok'],shutdown);self.assertEqual(older.child.wait(timeout=5),0)
+                    finally:older.close()
+                self.assertEqual((before_output/'result.json').read_bytes(),complete_bytes)
+                self.assertEqual((preview2/'preview.ply').read_bytes(),initial_preview)
                 alias_output=root/'marker-output-alias';alias_output.mkdir();ticks,frequency=qpc()
                 alias_path=alias_output/'result.json'
                 alias_path.write_bytes(b'previous complete result')
@@ -766,9 +875,13 @@ if __name__ == "__main__":
     parser.add_argument('--practical-report',type=pathlib.Path,default=None)
     parser.add_argument('--memory-helper',type=pathlib.Path,default=None)
     parser.add_argument('--overlap-evidence',type=pathlib.Path,default=None)
+    parser.add_argument('--reuse-evidence',type=pathlib.Path,default=None)
+    parser.add_argument('--older-engine',type=pathlib.Path,default=None)
     arguments = parser.parse_args()
     ENGINE = arguments.engine.resolve()
     PRACTICAL_REPORT = arguments.practical_report.resolve() if arguments.practical_report else None
     MEMORY_HELPER = arguments.memory_helper.resolve() if arguments.memory_helper else None
     OVERLAP_EVIDENCE = arguments.overlap_evidence.resolve() if arguments.overlap_evidence else None
+    REUSE_EVIDENCE = arguments.reuse_evidence.resolve() if arguments.reuse_evidence else None
+    OLDER_ENGINE = arguments.older_engine.resolve() if arguments.older_engine else None
     unittest.main(argv=[sys.argv[0]] + (["RuntimeTests." + arguments.case] if arguments.case else []))

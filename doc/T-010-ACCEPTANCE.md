@@ -27,13 +27,13 @@ later regresses the successful practical workflows delivered by T-011.
 | T010-A5 — Stop and races | Shared control and fresh-operation ownership contract are frozen. | Real parallel-phase Stop acknowledgement within 250 ms and safe completion within 5 s; failure/shutdown joins; no late publication. |
 | T010-A6 — measured speed | Failed practical phase profiles identify raster work; these are not a successful speed baseline. | Successful serial revision, frozen phase/end-to-end/memory targets, one warmup plus five Release samples at 1/2/4/8 threads, preparation held fixed. |
 | T010-A7 — product regression | Original full-catalog Ulamok and full36 checked-STL failures are reproduced. Native checked exports pass Ulamok36 and both full Pryanik retained2 cases in Debug/Release at `9f4a60f`, within unchanged caps and with identical ordered placements. | Supported full-catalog Ulamok count >=36; both full Pryanik spectral runs; pitch advice; invalid-original rejection; complete product journeys and independently reread exports; timed quality. |
-| T011-A1 — one budget | Native injected-clock red allows work after expiry. The controlled checkpoint now expires before bootstrap without work or a new handle. Real cold-Pryanik preparation expires without a result and retains runtime/cleanup/overrun metadata. | One-budget coverage through planning and validation; no work begins after deadline; final integrated cleanup/overrun measurements. |
-| T011-A2 — real reuse | Exact old preparation and fixed-work Start records are pinned. The first native session process check reuses an immutable cube token and preview after source/report mutation. | Practical replay/LOD work and timing evidence; New/replacement/units/frame/repair/epoch invalidation; fresh job derivatives for changed constraints/pitch/catalog; bounded replacement ownership. |
-| T011-A3 — tamper resistance | Current held Debug/Release restore and repair mutation cases pass, covering malformed poses/metrics, source/accepted bytes and repair provenance. Ulamok/Pryanik 1 moved archives restore; existing Rust failed-Open state-retention case passes. | Complete settings/catalog and active reuse/invalidation mapping; final practical integration after the reproduced search repair. |
+| T011-A1 — one budget | Native injected-clock red allows work after expiry. The controlled checkpoint now expires before bootstrap without work or a new handle. Real cold-Pryanik preparation expires without a result. Full Pryanik 2 desktop Start reaches fields/FFT/validation and ends budget-exhausted, with separate 3.168 s overrun and 0.000257 s cleanup. | Final integrated evidence mapping and Pryanik 1 practical repair; no work-after-deadline claim from wall timing alone. |
+| T011-A2 — real reuse | Exact old preparation and fixed-work Start records are pinned. Debug/Release native transition checks verify real constraint/pitch/catalog effects, units authority changes, frame/repair rejection, old-token preservation and cross-build session-token rejection. | Final mapping of practical preparation/LOD timing, supported New/replacement paths and bounded ownership; final practical integration. |
+| T011-A3 — tamper resistance | Current held Debug/Release restore/repair mutation and active reuse cases pass, including settings/catalog and rejected replacement preservation. Ulamok/Pryanik 1 moved archives restore; existing Rust failed-Open state-retention case passes. | Final practical integration after the reproduced search repair and evidence mapping. |
 | T011-A4 — Stop phases | Final Debug/Release loading Stop passes in 19/436 ms and preserves previous result/preview/token authority. Preparation Stop/EOF, analytic fields/FFT Stop, late-validation control/usage regressions and valid terminal-publication Stop pass. Rust receipt and GUI stopping have distinct evidence. | Practical phase/cleanup coverage and final integration mapping. Artificial-barrier and Python marker-write measurements do not independently establish ordinary publication latency or Rust receipt. |
 | T011-A5 — lifecycle races | Passed native/Rust evidence covers repeated/stale/finished Stop, marker and transport failure, child loss, shutdown, active EOF, backpressure and pre-registration New. Shared mutex guards serialize completion/Stop; active New/replacement is rejected as `JOB_BUSY`. | Final evidence mapping; do not invent an in-flight completion after successful active New, which the supported workflow forbids. No exhaustive scheduler claim. |
 | T011-A6 — startup measurements | Four-profile series at 86a42db completes 48 operations; three practical Start targets pass. The schema correction's 12-operation analytic rerun passes at 38.3 ms versus 87.6 ms, with frozen work/count/pose and preparation/memory checks. Pinned Debug/Release adapter payload bounds now fit 16 MiB. | Final integration mapping and remaining phase-cleanup evidence; the analytic-only summary correctly does not claim a new four-profile series. |
-| T011-A7 — compatibility | Optional runtime schemas, shared fixtures and generated types pass. Actual legacy Open displays search-only timing; changing pending pitch preserves original result settings. New Ulamok/Pryanik 1 Save/move/Open and independently reread JSON/STL exports pass. | Full Pryanik 2 journey and final thread-policy/repaired-geometry evidence mapping. |
+| T011-A7 — compatibility | Optional runtime schemas, shared fixtures and generated types pass. Actual legacy Open displays search-only timing; changing pending pitch preserves original result settings. New Ulamok and both full Pryanik Save/move/Open and independently reread JSON/STL exports pass. | Final thread-policy/repaired-geometry evidence mapping and final integration after the Pryanik 1 repair. |
 
 The original T009-A2/A3/A6 obligations must pass in T-011, and remain T010-A7
 regressions with their concrete full-catalog, pitch-advice and checked-export assertions.
@@ -41,6 +41,20 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 
 ## Retained evidence and qualification
 
+- Full Pryanik 2's actual desktop journey passes on engine `a44743a0...` with
+  desktop `df36a1c3...`. Original 30 s Start-origin settings reach real fields,
+  FFT and authoritative validation, then return `budget_exhausted` and two valid
+  copies. Saved precommit total is 33.1675743 s, overrun 3.167574301 s and cleanup
+  0.0002568 s; fields/FFT/validation are 7.2414913/0.0146414/25.7708694 s.
+  Save (1.3 s), unchanged-hash Unicode/space relocation, New/Open (81.5 s), JSON
+  (34.7 s) and checked-STL export (78.4 s) finish. Independent committed reread
+  exits zero: five archive entries, original settings/result/source/accepted
+  authority, both untouched export bundles, companion mapping and every float32
+  vertex occurrence across 278,424 packed triangles match. The archive hash is
+  `aff6314741056a4d50edd72ba5689e8a4c1828a22e10b1bb82c43aafdc40f2a8`.
+  Evidence: `.local/t011/gui-qualification/JOURNEY.md`, `artifact-reread.md` and
+  `pryanik2/artifact-verification/`. Import time is not a qualified performance
+  sample because diagnostic compilation overlapped. Pryanik 1 remains separate.
 - The bounded numerical/resource routing correction passes final Debug/Release
   geometry 45 cases / 2,673 assertions and affected solver 46 / 551 each.
   A fresh critical recheck reports no actionable findings after both review
@@ -51,8 +65,26 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
   The actual final-engine retained-session 30 s run nevertheless stops at
   25.603 s with `PHYSICAL_VALIDATION_RESOURCE`, after eleven candidates and two
   correlations, retaining two valid copies. Fields/FFT/validation take
-  2.536/0.0096/23.031 s. Its exact later limit remains under diagnosis; the earlier
-  slower instrumented deadline result does not qualify this integrated run.
+  2.536/0.0096/23.031 s. The focused diagnosis identifies actual global validation
+  work exhaustion: candidate eleven consumes its remaining 48,639,566 units in
+  the exhaustive boundary triangle-pair scan. Memory, arithmetic and interruption
+  flags are clear. See `final-diagnosis/FINDINGS.md` under the same evidence root.
+  A bounded architecture review recommends measuring constant-scratch conservative
+  row rejection before implementation. The earlier slower instrumented deadline
+  result does not qualify the integrated run.
+- Focused final-engine Debug/Release A2/A3 reuse transitions pass eighteen
+  observable rows each. Constraint changes produce counts 8 to 1/1/12; finer
+  pitch performs real correlations with larger tracked field storage; custom
+  catalog changes actual poses and malformed hash/version/content is rejected.
+  Frame/real repair tampering rejects replacement while the original token,
+  complete result and preview remain usable. The identical source imported as
+  inches changes accepted authority, yields 254 mm geometry and scales volume
+  by 25.4 cubed. An actual older-build token is rejected by the final process,
+  and verified re-preparation succeeds. One initial fixture expected the wrong
+  stage's error for frame tampering; that failure is retained and the corrected
+  assertion passes both builds. No product changes. Commands, full logs, source
+  and executable pins: `.local/t011/reuse-transitions/README.md`. These analytic
+  cases do not replace practical timing or prove every future version migration.
 - Final-engine loading Stop passes in Release/Debug after one fixture repair
   adds the schema-required baseline marker path. Initial `INVALID_DOCUMENT`
   failures are preserved as setup failures. Corrected cases cancel before any
