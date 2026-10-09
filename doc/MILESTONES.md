@@ -1,8 +1,9 @@
 # Delivery milestones after T-008
 
-Status: updated 2026-10-02. T-008 merged through PR #10 at `a05fa2c`;
+Status: updated 2026-10-09. T-008 merged through PR #10 at `a05fa2c`;
 T-009 merged through PR #12 at `b82117a` under its recorded scope revision.
-T-011 foundations are in progress; T-010 threading waits for that user merge.
+T-011 foundations pass local acceptance and await PR/user review; T-010 threading
+waits for that user merge.
 Later tickets below remain specifications without implementation claims.
 The first four specification IDs are delivered T-009, T-011, T-010, then T-012
 under [ADR 0014](../spec/decisions/0014-runtime-delivery-split.md). No acceptance IDs are retired.

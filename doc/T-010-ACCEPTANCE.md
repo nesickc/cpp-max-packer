@@ -3,9 +3,9 @@
 Updated: 2026-10-09. Current T-011 branch: `feature/SOL-08-cpu-runtime`.
 Prerequisite: merged T-009, `b82117a` (PR #12).
 
-This ledger records demonstrated scope. **No ticket acceptance gate is complete.**
-Final native source/PE pins and the rebuilt desktop bundle are recorded below;
-the final actual desktop observation and ticket handoff remain pending.
+This ledger records demonstrated scope. **T-011 local acceptance is complete**;
+user review/merge remains pending. T-010 threading gates remain open. Final native
+source/PE pins and actual desktop evidence are recorded below.
 [T-010](T-010.md), [T-011](T-011.md) and [ADR 0013](../spec/decisions/0013-cpu-runtime.md)
 define the acceptance criteria and compatibility contract. A schema check, a
 successful build, or a retained valid result after a resource failure does not
@@ -17,7 +17,47 @@ T-010 then owns T010-A1–A7 after the T-011 user merge. Keep historical evidenc
 and frozen targets here; changing the delivery order closes no gate. T010-A7
 later regresses the successful practical workflows delivered by T-011.
 
-## Gate evidence
+## Final T-011 local acceptance (2026-10-09)
+
+The final critical integration review reports no actionable findings and confirms
+retained evidence applicability. Its remaining normal Pryanik 1 desktop check
+passes after the Codex restart restored Computer Use. No source change or broad
+native rerun followed the reviewed checkpoint `373334a`.
+
+| Gate | Final local disposition |
+| --- | --- |
+| T011-A1 | Pass: retained injected/real preparation expiry and work cutoff, truthful publication-expiry regression, both final native profiles and actual normal Pryanik 1 GUI completion. |
+| T011-A2 | Pass: retained preparation/LOD performance and eighteen-row Debug/Release reuse/invalidation matrix, supported New/replacement paths and pinned ownership bounds. |
+| T011-A3 | Pass: retained source/accepted/repair/settings/catalog/pose mutation checks, failed-Open preservation, moved archives and final affected IO/export reruns. |
+| T011-A4 | Pass: composed phase-observed native Stop, Rust receipt/completion and actual GUI evidence; current validation/publication controls and bounded practical deadline tails. Artificial holds remain labeled, not ordinary-latency measurements. |
+| T011-A5 | Pass: retained repeated/stale Stop, marker/transport/child/shutdown/EOF/backpressure and guarded state-transition evidence. No exhaustive scheduler claim. |
+| T011-A6 | Pass: retained frozen startup/preparation/memory targets and corrected analytic samples; final review confirms applicability. No new full benchmark series or comparative GUI speedup claim. |
+| T011-A7 | Pass: earlier actual Save/move/Open/legacy/pending-result/checked-export journeys remain applicable; final GUI normal Start and independently reread archive complete integration. |
+| Carried T009-A2/A3/A6 | Pass for the recorded serial slice: Ulamok36/full48 correlations, resource/pitch advice, both full Pryanik normal spectral runs and practical desktop/export journeys. Simplified-source repair remains a later ticket. |
+
+Final actual GUI evidence uses desktop `378548c8...ca8fb` and engine
+`f3121d9d...720f`. Original full Pryanik 1 settings are unchanged: 84,820 triangles,
+box 100 x 100 x 50 mm, pair/wall 0.1/1 mm, identity orientation, pitch 4 mm,
+CPU 1, seed 0, total_start 30 s. The GUI shows `solve · finished`, two valid
+copies and `budget exhausted`, with 32.5 s operation elapsed. No Stop was issued.
+Saved precommit total is 32.2136227 s, overrun 2.213622701 s and cleanup
+0.0001869 s. Save completes in 0.8 s. Independent ZIP reread verifies all five
+manifest files, unchanged source/accepted bytes, original settings and exact
+prior placements. This reread verifies archive integrity/association; the
+recorded native validator and separately completed checked exports establish
+their respective validity/export evidence.
+
+Archive SHA256: `1597edeafccb06aeae681c64c0d0e11492f1b68102eebdd2eba1c27971199dd1`.
+Artifacts: `.local/t011/gui-qualification/final-20261009/normal-start-result.png`,
+`normal-start-result.txt`, `gui-observation.json`, `normal-start.spectrapack`,
+`archive-verification.json`. Original bundles and failed observations remain.
+The ready PR/user review and merge are delivery steps, not permission to begin
+dependent T-010 early. Full AT/M milestones are not closed by this slice.
+
+## Gate evidence accumulated before final closure
+
+The T-011 outstanding column below describes pre-closure evidence needs, now
+resolved by the final mapping above. T-010 requirements remain outstanding.
 
 | Gate | Evidence retained so far | Evidence still required |
 | --- | --- | --- |
