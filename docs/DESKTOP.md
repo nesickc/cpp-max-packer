@@ -10,8 +10,9 @@ packing, placement validation and export; the desktop presents those results.
    Invalid geometry cannot start a packing job. Import does not alter the file.
 2. Enter the box's internal width, depth and height in millimeters. Pair and
    wall clearances are independent; both default to 1 mm and can be zero.
-3. Choose fixed or cube rotations, pitch and search budget. This first journey
-   runs on the CPU with one thread. Pitch controls the search representation;
+3. Choose fixed or cube rotations, pitch, budget and CPU thread count from the
+   engine's supported range (up to eight on Windows). New drafts default to at
+   most four threads. Pitch controls the search representation;
    it never changes the object's physical size.
 4. Start the job. Stop requests a safe termination and keeps the engine's
    validated result. Completion can follow the acknowledgement because a
@@ -19,8 +20,10 @@ packing, placement validation and export; the desktop presents those results.
 5. Inspect the complete result in the viewer. Selection, hiding and clipping
    affect the view only. The displayed count always belongs to the full result.
 
-The budget currently applies to native search. Import and desktop preparation
-are separate; this slice does not implement the full application budget policy.
+New drafts measure the budget from Start, including runtime preparation and
+search; initial import, Open and export are separate operations. Restored results
+retain their original budget scope and thread settings. [T-010](../doc/T-010.md)
+records measured CPU scaling and the supported limits.
 Results are **best found**, including valid empty results. They do not prove
 optimality or that a larger packing is impossible.
 

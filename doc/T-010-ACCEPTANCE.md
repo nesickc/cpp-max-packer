@@ -1,10 +1,11 @@
 # T-010 / T-011 cross-ticket evidence ledger
 
-Updated: 2026-10-09. T-011 merged at `977c27c` (PR #13), following T-009
+Updated: 2026-10-10. T-011 merged at `977c27c` (PR #13), following T-009
 `b82117a` (PR #12). Current delivery: `feature/SOL-08-cpu-threading`.
 
 This ledger records demonstrated scope. **T-011 local acceptance is complete**;
-its user merge is complete. T-010 threading gates remain open. Final native
+its user merge is complete. **T-010 local acceptance is complete** on `6235d1c`;
+hosted CI and the user merge remain separate delivery steps. Final native
 source/PE pins and actual desktop evidence are recorded below.
 [T-010](T-010.md), [T-011](T-011.md) and [ADR 0013](../spec/decisions/0013-cpu-runtime.md)
 define the acceptance criteria and compatibility contract. A schema check, a
@@ -54,6 +55,53 @@ Artifacts: `.local/t011/gui-qualification/final-20261009/normal-start-result.png
 The ready PR/user review and merge are delivery steps, not permission to begin
 dependent T-010 early. Full AT/M milestones are not closed by this slice.
 
+## Final T-010 local acceptance (2026-10-10)
+
+Source `6235d1c28d93cc1554783d8cc84decd5d5572b8f` implements only boundary
+raster parallelism. Focused critical review closes both identified corrections
+with no remaining actionable finding. Windows resolves 1 through
+`min(8, hardware_concurrency)`; other platforms retain one pending qualification.
+Legacy count-one `serial-v1` results remain executable/loadable; counts above one
+use `raster-rows256-v1`. Existing desktop capability handling supplies the range
+and a new-draft default of at most four, without a second configuration path.
+
+| Gate | Final local disposition |
+| --- | --- |
+| T010-A1 | Pass: real overlapping workers, distinct IDs and useful work on every requested lane; supported/unsupported counts, two-thread CLI execution/restore and legacy serial regression. |
+| T010-A2 | Pass: independent conservative-field expected outcomes and every-translation binary/proximity oracles at 1/2/4/8; all 96 practical/analytic fixed-work observations independently native-valid. |
+| T010-A3 | Pass: one warmup plus five timed samples for each of sixteen configurations; exact counters and ordered poses match repetitions and retained serial. Native fixed-work has no RNG input; product journeys use seed 0. |
+| T010-A4 | Pass on the qualified host: below/exact admission, partial startup, active allocation/worker failure, precise quota refund/resume, measured 1 MiB worker stacks and retained memory observations. OS margin limits are stated below. |
+| T010-A5 | Pass by composed evidence: actual-worker Stop/join/deadline tests at dispatch, active row, barrier and parked boundaries; fresh operation and retained incumbent checks; corrected 256-primitive bound. Unchanged Rust Stop receipt evidence is reused (0.6873 ms); ordinary practical deadline tails below remain within five seconds. No exhaustive race or universal latency claim. |
+| T010-A6 | Pass: all frozen speed, one-thread regression and process-memory thresholds in the complete Release matrix below. |
+| T010-A7 | Pass: full Ulamok36/48-correlation and Pryanik fixed-work profiles, three new four-thread Rust Save/move/Open/export journeys and independent STL rereads. Unaffected original-invalid, pitch advice, legacy/pending-result and actual GUI evidence from final T-011 remains applicable. |
+
+Three product runs use the original practical requests with explicit four threads,
+seed 0 and `total_start`. Each Rust journey passes one test, with zero failures or
+ignored cases and thirteen unrelated tests filtered out. Each independent reread
+verifies exported float32 vertices, copy ranges and unchanged source identity.
+
+| Product profile | Valid copies | Start-to-observed-completion | Native precommit total | Deadline overrun | Candidates / passes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Ulamok, 60 s budget | 36 | 16.800 s | 16.592 s | 0 s | 824 / 24 |
+| Full Pryanik 1, 30 s budget | 2 | 30.563 s | 30.343 s | 0.343 s | 14 / 1 |
+| Full Pryanik 2, 30 s budget | 2 | 30.814 s | 30.690 s | 0.690 s | 27 / 1 |
+
+All three report `budget_exhausted`: Ulamok reaches bounded work before its wall
+deadline; Pryanik runs reach their time budget. Counts remain best-found results,
+not optimality claims. These observations report time-budget quality separately
+from fixed-work speed. No comparative GUI speed claim is made. Product artifacts,
+requests, logs, moved archives and rereads are in
+`.local/t010/threading-product-6235d1c/` (engine SHA256
+`e9e6a0514670c334d724b5dbee92ecf494756dcd7539569858af122b044946fa`).
+
+Final threading C++ delta is +703/-122 (net +581), including benchmark/support
+headers and extracted existing code, excluding tests and CMake. New raster
+header/internal/source files total 411 lines. Cleanup separately removes a net
+sixteen lines; the larger estimated consolidations remain excluded. There is no
+second kernel, generic scheduler, GPU/SIMD change or speculative cache. Full
+AT/M milestones remain open. Hosted run `37995333831` is pending; local acceptance
+does not claim a hosted pass.
+
 ## Current T-010 delivery (2026-10-09)
 
 Base: merged T-011 `977c27c`; branch `feature/SOL-08-cpu-threading`.
@@ -61,6 +109,25 @@ Minimal compile repair `2fa15da` reproduces the current-main C2676/C2512 and pas
 the same representation-benchmark target in Debug and Release. It does not claim
 native test-suite completion. Complete logs and terminal records are in
 `.local/t010/intake/` and `.local/t010/ci-repair/`.
+
+Hosted run `37988936772` at `2fa15da` confirms native compilation, then reports
+518/525 Debug tests passed and seven 30-second watchdog aborts, with no CTest
+skips; Release and downstream qualification did not run. Configuration repair
+`005169e` assigns finite watchdogs only to those seven named tests. Six practical
+cases receive 1,200 s, supported by retained successful Debug qualification
+(the Ulamok/Pryanik field pair took 547.683 s, individual export phases exceeded
+33 s). The 468-rasterization matrix receives 120 s: its held pre-threading Debug
+binary passes one case/3,747 assertions in 39.032 s wall time (34.518 s Catch time).
+The held source matches `43f3864`; the exact named test body remains unchanged,
+although later added tests change the containing file's hash. This is watchdog
+evidence, not current-threading-build qualification.
+
+Independent configuration review and CTest discovery verify exactly seven added
+TIMEOUT properties, preserving fifteen existing explicit timeouts and the ordinary
+30-second default. An initial `if(TEST)` guard was ineffective in CTest's
+interpreter; Catch discovery-list membership fixes it. Before/after discovery,
+matrix commands/hashes and source applicability are retained in
+`.local/t010/ci-repair/`. No hosted pass is claimed before the completed branch runs.
 
 Cleanup `46d4bf3` removes R-3/S1 only (+4/-20, net -16). Independent source review
 and focused Debug 12/618, Release 11/599 solver cases/assertions plus two desktop
@@ -99,13 +166,93 @@ Raster is the sole selected parallel kernel. Pryanik 2 uses 1,289,972,641 of
 1,300,000,000 representation-work units, so duplicated geometric preparation
 cannot be hidden or admitted by raising the cap. Raw samples, complete commands,
 host/build metadata and source/binary identity are in
-`.local/t010/threading-baseline-20261009/`. All T010-A1–A7 remain open pending
-parallel implementation and qualification; the table is not speedup evidence.
+`.local/t010/threading-baseline-20261009/`. At this baseline checkpoint all
+T010-A1–A7 remained open; this serial table alone is not speedup evidence.
+
+Current native TDD red: `T010 two-thread CPU request completes real spectral work`
+builds and links successfully in Debug, then fails its first assertion with
+`CPU_THREAD_COUNT_UNSUPPORTED` (one case/one failed assertion, CTest exit 8).
+The intended missing-support failure is independently confirmed from the complete
+`.local/t010/threading-implementation/windows-ninja-debug-red.log`; later work
+assertions are not claimed as executed after that fatal assertion. This red alone
+does not establish parallel execution; subsequent checks are recorded below.
+
+The first stable implementation passes thirteen selected geometry tests and four
+solver tests in both Debug and Release, plus real two-thread CLI execution/restore
+and omitted-count legacy checks. CTest's passing logs do not expose assertion
+totals; none are inferred. Production delta at that checkpoint is +700/-123 C++
+lines (net +577), including extracted existing code. The source manifest and
+complete attempted/final checks are in
+`.local/t010/threading-implementation/HANDOFF.md`.
+
+Focused critical review found two corrections before acceptance: restore the
+existing coordinator-side allocation-failure hook on cell-visit exhaustion, and
+bound Stop checks by 256 primitive attempts rather than 256 two-primitive cell
+iterations. Both reproduce before repair: three existing allocation regressions
+observe missing hook calls, and the new long-row test observes 510 primitives
+after Stop at two and four threads. The bounded repair changes five production
+lines and removes one; 117 test lines check coordinator affinity, settlement,
+original failure preservation and the real-worker primitive bound. Debug and
+Release each pass eleven focused cases, with full logs and setup failures in
+`.local/t010/threading-review-fix/HANDOFF.md`. The existing hook is `noexcept`;
+its interface is unchanged. Independent closure review verifies the final manifest
+with no mismatches and closes both findings, with no actionable issue in the
+repair delta. Final source is committed as `6235d1c`; Release engine and benchmark
+are rebuilt against that revision. Hosted run `37995333831` is in progress;
+the completed local matrix and product journeys are mapped above. The initial
+single-sample probes remain diagnostic only.
+
+### Frozen Release matrix completed on `6235d1c`
+
+All sixteen profile/count configurations complete one warmup and five timed
+samples (96 observations). Every sample is independently native-valid and has
+the same geometric-work counters and ordered placements as the retained serial
+baseline. All frozen numerical targets pass. Reproduction commands,
+source/build/host identities and raw samples remain under
+`.local/t010/threading-qualified-6235d1c/`; `summary.json` records all comparisons.
+
+| Profile | Threads | Fixed-work Start median, ms | Raster median, ms | Start speedup vs retained serial |
+| --- | ---: | ---: | ---: | ---: |
+| Analytic | 1 | 27.012 | 3.037 | 0.957x |
+| Analytic | 2 | 26.327 | 1.812 | 0.982x |
+| Analytic | 4 | 26.034 | 1.379 | 0.993x |
+| Analytic | 8 | 26.706 | 1.624 | 0.968x |
+| Ulamok | 1 | 9,258.785 | 942.718 | 0.981x |
+| Ulamok | 2 | 8,867.969 | 518.378 | 1.024x |
+| Ulamok | 4 | 8,816.750 | 327.013 | 1.030x |
+| Ulamok | 8 | 8,531.075 | 290.627 | 1.064x |
+| Full Pryanik 1 | 1 | 3,093.716 | 1,811.307 | 0.966x |
+| Full Pryanik 1 | 2 | 2,410.859 | 1,090.876 | 1.240x |
+| Full Pryanik 1 | 4 | 1,994.687 | 682.340 | 1.499x |
+| Full Pryanik 1 | 8 | 1,793.196 | 539.829 | 1.667x |
+| Full Pryanik 2 | 1 | 6,052.512 | 2,379.169 | 0.973x |
+| Full Pryanik 2 | 2 | 5,096.479 | 1,453.285 | 1.155x |
+| Full Pryanik 2 | 4 | 4,796.941 | 990.199 | 1.227x |
+| Full Pryanik 2 | 8 | 4,401.158 | 731.312 | 1.338x |
+
+The qualifying four-thread Pryanik 1 result achieves 1.499x Start / 2.556x raster
+versus retained serial and 1.551x / 2.655x versus same-build count one. Both exceed
+the frozen 1.15x / 1.5x thresholds. One-thread Start regressions are 4.46%, 1.96%,
+3.48% and 2.80% respectively, all below 10%. Small analytic jobs gain no overall
+speed versus the old serial build; Ulamok's serial work limits total scaling.
+These are fixed-work results, not time-budget quality claims.
+
+`worker-memory-evidence.json` verifies distinct actual worker IDs and nonzero
+primitive counts for every requested lane in all 96 observations. Each background
+worker's measured virtual stack extent is 1 MiB. Team admission is 2.25 / 6.25 /
+14.25 MiB at 2 / 4 / 8 threads, including a 256 KiB fixed allocation and 1 MiB
+runtime/OS margin per worker beyond its stack reservation. The largest process
+peak increase is 573,440 B (0.547 MiB), below the frozen 32 MiB limit; practical
+process peaks stay about 8 / 50.4 / 80.1 MiB. Raw records retain field admission,
+tracked peak and accepted-input residency separately. Process peak includes
+preparation and earlier samples; it is not a virtual reservation or heap cap.
+The margin is qualified for this Windows host and these profiles, not asserted
+as a universal OS guarantee. Existing 512 MiB and 1.3-billion-work caps are unchanged.
 
 ## Gate evidence accumulated before final closure
 
-The T-011 outstanding column below describes pre-closure evidence needs, now
-resolved by the final mapping above. T-010 requirements remain outstanding.
+The outstanding columns below describe historical pre-closure evidence needs,
+now resolved for the local delivery by the final T-011 and T-010 mappings above.
 
 | Gate | Evidence retained so far | Evidence still required |
 | --- | --- | --- |

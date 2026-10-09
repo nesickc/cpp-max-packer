@@ -32,7 +32,8 @@
     "timed_quality": "Report time-budget search count/quality separately; do not interpret less search as fixed-work speed."
   },
   "common_settings": {
-    "seed": "0",
+    "seed": null,
+    "seed_policy": "Native fixed-work benchmark has no RNG/seed input; separate product time-budget profiles use seed 0.",
     "grid_origin_mm": [0, 0, 0],
     "spectral_candidate_evaluations": 1,
     "spectral_search_passes": 1,
