@@ -1,10 +1,10 @@
 # T-010 / T-011 cross-ticket evidence ledger
 
-Updated: 2026-10-09. Current T-011 branch: `feature/SOL-08-cpu-runtime`.
-Prerequisite: merged T-009, `b82117a` (PR #12).
+Updated: 2026-10-09. T-011 merged at `977c27c` (PR #13), following T-009
+`b82117a` (PR #12). Current delivery: `feature/SOL-08-cpu-threading`.
 
 This ledger records demonstrated scope. **T-011 local acceptance is complete**;
-user review/merge remains pending. T-010 threading gates remain open. Final native
+its user merge is complete. T-010 threading gates remain open. Final native
 source/PE pins and actual desktop evidence are recorded below.
 [T-010](T-010.md), [T-011](T-011.md) and [ADR 0013](../spec/decisions/0013-cpu-runtime.md)
 define the acceptance criteria and compatibility contract. A schema check, a
@@ -53,6 +53,54 @@ Artifacts: `.local/t011/gui-qualification/final-20261009/normal-start-result.png
 `archive-verification.json`. Original bundles and failed observations remain.
 The ready PR/user review and merge are delivery steps, not permission to begin
 dependent T-010 early. Full AT/M milestones are not closed by this slice.
+
+## Current T-010 delivery (2026-10-09)
+
+Base: merged T-011 `977c27c`; branch `feature/SOL-08-cpu-threading`.
+Minimal compile repair `2fa15da` reproduces the current-main C2676/C2512 and passes
+the same representation-benchmark target in Debug and Release. It does not claim
+native test-suite completion. Complete logs and terminal records are in
+`.local/t010/intake/` and `.local/t010/ci-repair/`.
+
+Cleanup `46d4bf3` removes R-3/S1 only (+4/-20, net -16). Independent source review
+and focused Debug 12/618, Release 11/599 solver cases/assertions plus two desktop
+cases each pass. Configuration-specific Debug allocation cases explain counts;
+no skips are treated as passes. `.local/t010/cleanup/evidence.txt` records the
+path-dependent residency comparison, its bounded equal-length-path check and
+unchanged preview/prepare outcomes. Larger consolidation proposals remain excluded.
+
+Serial threading baseline at `46d4bf3` passes with the existing `spectrapack_t010_benchmark`
+`--scope prepared-start --samples 5 --warmups 1` for analytic, Ulamok, full Pryanik 1
+and full Pryanik 2 profiles. Accepted preparation is fixed/excluded; fresh job
+context, baseline, spectral work and final independent validation are included.
+All four profiles complete the full recorded work with identical repetition
+counters/ordered poses and unchanged 512 MiB/1.3-billion-work caps. The process memory high-water includes
+accepted preparation and earlier samples; it is not a per-sample allocation measure.
+Do not substitute the T-011 one-copy/zero-correlation preparation series.
+
+The host inventory in `.local/t010/intake/host.json` records i5-12450H, eight
+exposed cores/logical processors, Windows 11 build 26200, about 32 GiB RAM and
+Balanced power. Compare 1/2/4/8 threads with serial host sampling. The
+[threading targets](../tests/fixtures/t010/threading-targets.json) are frozen before
+implementation: at four threads, Pryanik 1 raster must reach at least 1.5x and
+fixed-work Start at least 1.15x against both retained serial and same-build
+one-thread measurements. Every profile's one-thread Start median may regress by
+at most 10%; process peak may increase by at most 32 MiB at every qualified count.
+These limits do not raise the managed host or geometric-work caps.
+
+| Serial profile | Fixed-work Start median | Raster median | Process peak |
+| --- | ---: | ---: | ---: |
+| Analytic | 25.860 ms | 2.661 ms | 7,073,792 B |
+| Ulamok | 9,081.144 ms | 922.714 ms | 7,827,456 B |
+| Full Pryanik 1 | 2,989.635 ms | 1,744.193 ms | 52,826,112 B |
+| Full Pryanik 2 | 5,887.429 ms | 2,274.538 ms | 83,939,328 B |
+
+Raster is the sole selected parallel kernel. Pryanik 2 uses 1,289,972,641 of
+1,300,000,000 representation-work units, so duplicated geometric preparation
+cannot be hidden or admitted by raising the cap. Raw samples, complete commands,
+host/build metadata and source/binary identity are in
+`.local/t010/threading-baseline-20261009/`. All T010-A1–A7 remain open pending
+parallel implementation and qualification; the table is not speedup evidence.
 
 ## Gate evidence accumulated before final closure
 
