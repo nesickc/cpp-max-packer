@@ -1,4 +1,5 @@
 #include "spectral_pipeline.hpp"
+#include "spectrapack/geometry/raster_execution.hpp"
 
 #include <algorithm>
 #include <array>
@@ -243,6 +244,7 @@ struct WorkspaceState {
     std::optional<compute::CorrelationResult> binary;
     std::optional<compute::CorrelationResult> ranked;
     std::optional<CpuFieldAdmissionEstimate> admission;
+    std::unique_ptr<geometry::RasterExecution> raster;
     WorkspaceState(std::uint64_t allowance, std::uint64_t external, SpectralPipelineResult& attempt) :
         memory(allowance, external, attempt),
         poses(std::initializer_list<PoseIdentity> {}, &memory),
@@ -344,7 +346,9 @@ std::optional<std::uint64_t> owner_bytes(const PipelineOwners& owners) noexcept
     if (owners.workspace) {
         // Staged PMR vectors share the same bounded resource; its live bytes
         // include old+replacement capacity, IDs and all in-flight growth.
-        if (!add(bytes, sizeof(WorkspaceState) + owners.workspace->memory.bytes +
+        const auto team_bytes = owners.workspace->raster ? owners.workspace->raster->reserved_bytes() : 0;
+        if (!add(bytes, sizeof(WorkspaceState) + team_bytes +
+                            owners.workspace->memory.bytes +
                             3 * sizeof(std::pmr::vector<PoseIdentity>) + 2 * sizeof(compute::CorrelationOutcome))) {
             return {};
         }
@@ -478,7 +482,8 @@ public:
                          std::uint64_t copies) noexcept :
         result_(result),
         state_(state),
-        basis_ { 0, copies, limits.max_working_bytes, limits.cpu_thread_count, cpu_scheduling_policy() }
+        basis_ { 0, copies, limits.max_working_bytes, limits.cpu_thread_count,
+                 cpu_scheduling_policy(limits.cpu_thread_count) }
     {
     }
     ~AdmissionPublication()
@@ -628,7 +633,7 @@ std::optional<std::uint64_t> SpectralWorkspace::resident_bytes() const noexcept
         return 0;
     }
     const auto& state = *storage_;
-    std::uint64_t bytes = sizeof(Storage) + state.memory.bytes;
+    std::uint64_t bytes = sizeof(Storage) + state.memory.bytes + (state.raster ? state.raster->reserved_bytes() : 0);
     ResidencyLedger ledger;
     const auto include = [&](const auto& owner, std::uint64_t wrapper) {
         if (!owner) {
@@ -834,7 +839,9 @@ std::optional<RunFailureDetails> spectral_admission(const std::shared_ptr<const 
     if (stencil) {
         stencil = product(*stencil, stencil_width);
     }
-    if (!bytes || !geometry_bytes || !expanded_cells || !footprints || !stencil || !add(*bytes, *geometry_bytes) ||
+    const auto team_bytes = geometry::estimate_raster_execution_bytes(limits.cpu_thread_count);
+    if (!bytes || !team_bytes || !add(*bytes, *team_bytes) ||
+        !geometry_bytes || !expanded_cells || !footprints || !stencil || !add(*bytes, *geometry_bytes) ||
         !add_optional(*bytes, product(*footprints, sizeof(std::size_t))) ||
         (retained && (!add_optional(*bytes, pose_bytes(retained->copies())) ||
                       !add_optional(*bytes, product(copy_count, 2 * sizeof(void*))))) ||
@@ -1080,6 +1087,22 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             };
             return result;
         }
+        if (!state.raster && limits.cpu_thread_count > 1) {
+            const auto live = current_bytes(owners, limits);
+            const auto cap = std::min(limits.max_working_bytes, limits.per_representation.max_working_bytes);
+            auto team = geometry::make_raster_execution(limits.cpu_thread_count,
+                                                         live && *live <= cap ? cap - *live : 0);
+            if (const auto* failure = std::get_if<geometry::RepresentationFailure>(&team)) {
+                record_field_failure(result, "raster-team", failure);
+                return result;
+            }
+            state.raster = std::get<std::unique_ptr<geometry::RasterExecution>>(std::move(team));
+            nested = representation_limits(result, limits, owners, std::span { &*source, 1 });
+            if (!nested || !admit()) {
+                result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
+                return result;
+            }
+        }
         profile.phase(PipelineProfilePhase::prepare);
         if (!state.geometry) {
             control.phase(runtime::Phase::voxelizing);
@@ -1126,7 +1149,8 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             AttemptRecorder recorder(result, limits, *nested, attempt);
             const auto mask =
                 geometry::voxelize_container(context->container(), *environment,
-                                             context->constraints().wall_clearance_mm, *nested, attempt, control);
+                                             context->constraints().wall_clearance_mm, *nested, attempt, control,
+                                             state.raster.get());
             if (!recorder.finish() || !attempt.input_accounting_complete ||
                 !std::holds_alternative<std::shared_ptr<const geometry::CellField>>(mask)) {
                 result.diagnostic = "SPECTRAL_PIPELINE_MASK";
@@ -1271,7 +1295,8 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                     AttemptRecorder recorder(result, limits, *nested, attempt);
                     const auto placed =
                         geometry::voxelize_placed(owners.geometry, *environment, pose,
-                                                  context->constraints().pair_clearance_mm, *nested, attempt, control);
+                                                  context->constraints().pair_clearance_mm, *nested, attempt, control,
+                                                  state.raster.get());
                     if (!recorder.finish() || !attempt.input_accounting_complete ||
                         !std::holds_alternative<std::shared_ptr<const geometry::CellField>>(placed)) {
                         result.diagnostic = "SPECTRAL_PIPELINE_PLACED";
@@ -1440,7 +1465,8 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                 geometry::RepresentationAttemptStats attempt;
                 AttemptRecorder recorder(result, limits, *nested, attempt);
                 const auto object =
-                    geometry::voxelize_object(owners.geometry, lattice, rotation, *nested, attempt, control);
+                    geometry::voxelize_object(owners.geometry, lattice, rotation, *nested, attempt, control,
+                                              state.raster.get());
                 if (!recorder.finish() || !attempt.input_accounting_complete ||
                     !std::holds_alternative<std::shared_ptr<const geometry::CellField>>(object)) {
                     result.diagnostic = "SPECTRAL_PIPELINE_OBJECT";

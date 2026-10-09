@@ -1,4 +1,5 @@
 #include "spectrapack/solver/spectral.hpp"
+#include <thread>
 
 #include <algorithm>
 #include <array>
@@ -1564,8 +1565,16 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
 
 }  // namespace
 
-std::uint32_t cpu_supported_thread_count() noexcept { return 1; }
-std::string_view cpu_scheduling_policy() noexcept { return "serial-v1"; }
+std::uint32_t cpu_supported_thread_count() noexcept {
+#ifdef _WIN32
+  return std::clamp(std::thread::hardware_concurrency(), 1U, 8U);
+#else
+  return 1;
+#endif
+}
+std::string_view cpu_scheduling_policy(std::uint32_t count) noexcept {
+  return count == 1 ? "serial-v1" : "raster-rows256-v1";
+}
 
 SpectralOutcome run_cpu_spectral(std::shared_ptr<const geometry::ValidationContext> context,
                                  geometry::GridLattice lattice, const SpectralLimits& limits, const RunControl& control,

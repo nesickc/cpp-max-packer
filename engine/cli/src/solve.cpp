@@ -705,9 +705,14 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
                     3);
     }
     if (settings["resolved"].contains("cpu_runtime") &&
-        settings["resolved"]["cpu_runtime"]["scheduling_policy"] != std::string(solver::cpu_scheduling_policy()) &&
-        !(thread_count == 1 && settings["resolved"]["cpu_runtime"]["scheduling_policy"] == "serial-v1")) {
-        return fail("CPU_RUNTIME_UNSUPPORTED", "CPU scheduling policy is unsupported by this build.", 3);
+        settings["resolved"]["cpu_runtime"]["scheduling_policy"] !=
+            std::string(solver::cpu_scheduling_policy(
+                static_cast<std::uint32_t>(thread_count))) &&
+        !(thread_count == 1 &&
+          settings["resolved"]["cpu_runtime"]["scheduling_policy"] ==
+              "serial-v1")) {
+      return fail("CPU_RUNTIME_UNSUPPORTED",
+                  "CPU scheduling policy is unsupported by this build.", 3);
     }
     if (settings["compute"].contains("thread_count") && settings["compute"]["thread_count"] != thread_count) {
         return fail("THREAD_COUNT_MISMATCH", "Explicit request must equal actual resolved CPU count.", 3);

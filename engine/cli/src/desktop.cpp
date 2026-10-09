@@ -493,9 +493,8 @@ std::variant<spectrapack::io::Json, spectrapack::io::Error> resolve_desktop_sett
     settings["compute"]["thread_count"] = threads;
     settings["resolved"]["thread_count"] = threads;
     settings["resolved"]["cpu_runtime"] = {
-        { "version",           1                               },
-        { "scheduling_policy", solver::cpu_scheduling_policy() }
-    };
+        {"version", 1},
+        {"scheduling_policy", solver::cpu_scheduling_policy(threads)}};
     if (!std::holds_alternative<io::ValidatedDocument>(
             validator.validate(io::ContractKind::settings, settings, { 16, 256 }))) {
         return io::Error { "INVALID_SETTINGS", "Resolved settings are not valid; check the quaternion and uint64 seed.",

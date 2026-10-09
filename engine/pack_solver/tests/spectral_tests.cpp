@@ -4,6 +4,7 @@
 #include <bit>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <cfenv>
 #include <cmath>
 #include <cstdlib>
@@ -2684,6 +2685,7 @@ TEST_CASE("AT-12 stage A binary correlation matches every actual scene translati
     const auto initial = validate_layout(context, { 2.25, 1.25, .5 }).validated_solution;
     REQUIRE(initial);
     solver::SpectralLimits limits;
+    limits.cpu_thread_count = GENERATE(1U, 2U, 4U, 8U);
     limits.per_representation.max_cells = 100'000;
     limits.per_correlation.max_padded_cells = 100'000;
     BinaryOracleCapture capture;

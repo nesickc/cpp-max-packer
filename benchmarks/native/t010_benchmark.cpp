@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "../../engine/pack_geometry/src/field_kernel.hpp"
+#include "../../engine/pack_geometry/src/raster_execution_internal.hpp"
 #include "../../engine/pack_geometry/src/field_profile.hpp"
 #include "../../engine/pack_geometry/src/placed_field_test_support.hpp"
 #include "../../engine/pack_geometry/tests/validation_fixtures.hpp"
@@ -36,6 +37,7 @@ struct Profile {
     std::array<double, 3> field_ms {};
     std::array<std::uint64_t, 3> field_work {}, field_visits {}, field_calls {};
     std::uint64_t pages {};
+    geo::detail::RasterEvidence raster;
 };
 void pipeline_sample(void* context, const sol::detail::PipelineProfileSample& sample) noexcept
 {
@@ -122,6 +124,7 @@ int main(int argc, char** argv)
     try {
         std::string profile_name = "analytic";
         int samples = 5, warmups = 1;
+        std::uint32_t threads = 1;
         std::string scope = "field";
         for (int index = 1; index < argc; index += 2) {
             if (index + 1 == argc) {
@@ -136,6 +139,13 @@ int main(int argc, char** argv)
             }
             else if (option == "--warmups") {
                 warmups = std::stoi(argv[index + 1]);
+            }
+            else if (option == "--threads") {
+                const auto value = std::stoll(argv[index + 1]);
+                if (value < 1 || value > sol::cpu_supported_thread_count()) {
+                    throw std::runtime_error("unsupported thread count");
+                }
+                threads = static_cast<std::uint32_t>(value);
             }
             else if (option == "--scope") {
                 scope = argv[index + 1];
@@ -205,6 +215,7 @@ int main(int argc, char** argv)
                      : 4.
         };
         sol::SpectralLimits limits;
+        limits.cpu_thread_count = threads;
         limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
         if (scope == "prepared-start") {
             limits.baseline = baseline_limits;
@@ -215,6 +226,10 @@ int main(int argc, char** argv)
         bench::Json records = bench::Json::array();
         for (int ordinal = -warmups; ordinal != samples; ++ordinal) {
             Profile profile;
+            geo::detail::set_raster_evidence_sink(
+                [](void* context, const geo::detail::RasterEvidence& evidence) noexcept {
+                static_cast<Profile*>(context)->raster = evidence;
+            }, &profile);
             sol::detail::pipeline_profile_sink = &pipeline_sample;
             sol::detail::pipeline_profile_context = &profile;
             geo::detail::field_profile_sink = &field_sample;
@@ -270,11 +285,21 @@ int main(int argc, char** argv)
                                       { "cpu_thread_count", run.field_admission->cpu_thread_count },
                                       { "scheduling_policy", std::string(run.field_admission->scheduling_policy) } }
                       : bench::Json(nullptr)                                                              },
+                { "parallel_raster_evidence", { { "batches", profile.raster.batches },
+                                               { "descriptor_inspections", profile.raster.inspections },
+                                               { "grants", profile.raster.grants },
+                                               { "refunded_work_units", profile.raster.refunds },
+                                               { "thread_ids", profile.raster.thread_ids },
+                                               { "primitive_attempts", profile.raster.primitive_attempts },
+                                               { "actual_worker_stack_bytes", profile.raster.actual_stack_bytes },
+                                               { "background_stack_reservation_bytes",
+                                                 profile.raster.stack_reservation_bytes } } },
                 { "profile",                                 profile_json(profile)                        },
                 { "process_lifetime_peak_working_set_bytes", process_peak                                 },
                 { "best_found",                              bench::snapshot_json(run.run.best)           }
             });
         }
+        geo::detail::set_raster_evidence_sink(nullptr, nullptr);
         const char* included_phases = scope == "field"
                                           ? "spectral-search"
                                           : "job-context,initial-baseline,spectral-search,final-independent-validation";
@@ -282,12 +307,14 @@ int main(int argc, char** argv)
                                           ? "accepted-preparation,initial-baseline,independent-revalidation"
                                           : "accepted-preparation";
         std::cout << bench::Json {
+            { "seed", nullptr },
+            { "seed_note", "Fixed-work native API has no RNG seed; catalog entries are deterministic." },
             { "ticket",                        "T-010"                                                },
             { "profile",                       profile_name                                           },
             { "source",                        source                                                 },
             { "triangles",                     object->mesh().triangles.size()                        },
-            { "cpu_thread_count",              1                                                      },
-            { "cpu_scheduling_policy",         std::string(sol::cpu_scheduling_policy())              },
+            { "cpu_thread_count",              threads                                                },
+            { "cpu_scheduling_policy",         std::string(sol::cpu_scheduling_policy(threads))              },
             { "accepted_input_resident_bytes", object->resident_buffer_bytes().value()                },
             { "host_cap_bytes",                limits.max_working_bytes                               },
             { "representation_work_cap",       limits.max_representation_kernel_work                  },

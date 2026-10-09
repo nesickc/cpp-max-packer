@@ -1,5 +1,6 @@
 #include "validation_kernel.hpp"
 #include "field_profile.hpp"
+#include "raster_execution_internal.hpp"
 
 #include "exact_predicates.hpp"
 #include "field_kernel.hpp"
@@ -286,11 +287,7 @@ ExactOrder compare_gap(const AxisCoordinate& high, const AxisCoordinate& low,
   return sign_order(sum_terms(terms, exponent, context));
 }
 
-struct Interval {
-  double low{};
-  double high{};
-  bool valid{};
-};
+using Interval = spectrapack::geometry::detail::RasterInterval;
 
 Interval point_interval(double value) noexcept {
   return {value, value, std::isfinite(value)};
@@ -665,6 +662,16 @@ bool Budget::consume_work(std::uint64_t units) noexcept
     if (work_used_ > max_work_ || units > max_work_ - work_used_) {
         exhausted_ = true;
         work_exhausted_ = true;
+        return false;
+    }
+    work_used_ += units;
+    return true;
+}
+
+bool Budget::commit_completed_work(std::uint64_t units) noexcept
+{
+    if (units > work_remaining()) {
+        exhausted_ = work_exhausted_ = true;
         return false;
     }
     work_used_ += units;
@@ -2090,9 +2097,19 @@ std::optional<std::uint64_t> estimate_unclipped_raster_work(const AcceptedSolid&
 std::optional<KernelFailure> rasterize_boundary(const PlacedSolid& solid, const GridWindow& window,
                                                 std::span<std::uint8_t> boundary, Budget& budget,
                                                 std::uint64_t& cell_visits, std::uint64_t max_cell_visits,
-                                                bool skip_existing_boundary)
+                                                bool skip_existing_boundary, RasterExecution* execution)
 {
     detail::FieldProfileTimer profile(detail::FieldProfilePhase::raster, budget, cell_visits);
+    struct FailureJoin {
+        RasterExecution* execution;
+        bool complete {};
+        ~FailureJoin()
+        {
+            if (!complete) {
+                detail::RasterAccess::join(execution);
+            }
+        }
+    } guard { execution };
     std::uint64_t cell_count = 1;
     for (const auto extent : window.shape) {
         if (extent == 0 || cell_count > std::numeric_limits<std::uint64_t>::max() / extent) {
@@ -2112,83 +2129,63 @@ std::optional<KernelFailure> rasterize_boundary(const PlacedSolid& solid, const 
         }
         window_last[axis] = window.first[axis] + extent;
     }
+    detail::RasterBatch serial;
+    auto& batch = execution ? detail::RasterAccess::batch(*execution) : serial;
+    batch.window = window;
+    batch.boundary = boundary;
+    batch.skip_existing = skip_existing_boundary;
     const auto mesh = solid.prepared->asset->mesh();
-    for (const auto& face : mesh.triangles) {
-        if (!budget.consume_work(kRasterFaceWork)) {
-            return KernelFailure { "FIELD_KERNEL_WORK_LIMIT", "rasterize-boundary" };
-        }
-        std::array<IntervalVec3, 3> triangle {
-            { solid.vertex_intervals[face[0]], solid.vertex_intervals[face[1]], solid.vertex_intervals[face[2]] }
-        };
-        CellIndex first {}, last {};
-        bool outside = false;
-        for (int axis = 0; axis != 3; ++axis) {
-            double low = triangle[0][axis].low, high = triangle[0][axis].high;
-            for (int vertex = 1; vertex != 3; ++vertex) {
-                low = std::min(low, triangle[vertex][axis].low);
-                high = std::max(high, triangle[vertex][axis].high);
+    for (std::size_t begin = 0; begin < mesh.triangles.size(); begin += batch.faces.size()) {
+        batch.size = std::min(batch.faces.size(), mesh.triangles.size() - begin);
+        for (std::size_t offset = 0; offset != batch.size; ++offset) {
+            if (!budget.consume_work(kRasterFaceWork)) {
+                return KernelFailure { "FIELD_KERNEL_WORK_LIMIT", "rasterize-boundary" };
             }
-            const long double lo =
-                (static_cast<long double>(low) - window.lattice.origin_mm[axis]) / window.lattice.pitch_mm;
-            const long double hi =
-                (static_cast<long double>(high) - window.lattice.origin_mm[axis]) / window.lattice.pitch_mm;
-            if (!std::isfinite(lo) || !std::isfinite(hi) ||
-                lo <= static_cast<long double>(std::numeric_limits<std::int64_t>::min() + 1) ||
-                hi >= static_cast<long double>(std::numeric_limits<std::int64_t>::max())) {
-                return KernelFailure { "FIELD_INDEX_OVERFLOW", "rasterize-boundary" };
-            }
-            // Include the cell below a lower grid plane because geometric queries use
-            // closed cells and exact surface contact may occupy both neighbours.
-            first[axis] = static_cast<std::int64_t>(std::floor(lo)) - 1;
-            last[axis] = static_cast<std::int64_t>(std::floor(hi)) + 1;
-            if (last[axis] < window.first[axis] || first[axis] > window_last[axis]) {
-                outside = true;
-            }
-            first[axis] = std::max(first[axis], window.first[axis]);
-            last[axis] = std::min(last[axis], window_last[axis]);
-        }
-        if (outside) {
-            continue;
-        }
-        for (std::int64_t z = first[2]; z <= last[2]; ++z) {
-            for (std::int64_t y = first[1]; y <= last[1]; ++y) {
-                for (std::int64_t x = first[0]; x <= last[0]; ++x) {
-                    if (cell_visits == max_cell_visits) {
-                        if (field_failure_allocation_hook) {
-                            field_failure_allocation_hook();
-                        }
-                        return KernelFailure { "FIELD_CELL_VISIT_LIMIT", "rasterize-boundary" };
-                    }
-                    ++cell_visits;
-                    const auto lx = static_cast<std::uint64_t>(x - window.first[0]);
-                    const auto ly = static_cast<std::uint64_t>(y - window.first[1]);
-                    const auto lz = static_cast<std::uint64_t>(z - window.first[2]);
-                    const auto flat = lx + window.shape[0] * (ly + std::uint64_t { window.shape[1] } * lz);
-                    if (skip_existing_boundary) {
-                        if (!budget.consume_work(kRasterLookupWork)) {
-                            return KernelFailure { "FIELD_KERNEL_WORK_LIMIT", "rasterize-boundary" };
-                        }
-                        // The tag is monotone for this raster generation: more triangles
-                        // cannot make an already-conservative closed cell unoccupied.
-                        if (boundary[static_cast<std::size_t>(flat)] == 2) {
-                            continue;
-                        }
-                    }
-                    if (!budget.consume_work(kRasterCellWork)) {
-                        return KernelFailure { "FIELD_KERNEL_WORK_LIMIT", "rasterize-boundary" };
-                    }
-                    const CellIndex index { x, y, z };
-                    const auto cell = grid_cell_interval(window, index);
-                    if (!cell) {
-                        return KernelFailure { "FIELD_INDEX_OVERFLOW", "rasterize-boundary" };
-                    }
-                    if (!triangle_box_disjoint(triangle, *cell)) {
-                        boundary[static_cast<std::size_t>(flat)] = 2;
-                    }
+            const auto& face = mesh.triangles[begin + offset];
+            auto& descriptor = batch.faces[offset];
+            auto& triangle = descriptor.triangle;
+            triangle = std::array<IntervalVec3, 3> {
+                { solid.vertex_intervals[face[0]], solid.vertex_intervals[face[1]], solid.vertex_intervals[face[2]] }
+            };
+            auto& first = descriptor.first;
+            auto& last = descriptor.last;
+            auto& outside = descriptor.outside;
+            outside = false;
+            for (int axis = 0; axis != 3; ++axis) {
+                double low = triangle[0][axis].low, high = triangle[0][axis].high;
+                for (int vertex = 1; vertex != 3; ++vertex) {
+                    low = std::min(low, triangle[vertex][axis].low);
+                    high = std::max(high, triangle[vertex][axis].high);
                 }
+                const long double lo =
+                    (static_cast<long double>(low) - window.lattice.origin_mm[axis]) / window.lattice.pitch_mm;
+                const long double hi =
+                    (static_cast<long double>(high) - window.lattice.origin_mm[axis]) / window.lattice.pitch_mm;
+                if (!std::isfinite(lo) || !std::isfinite(hi) ||
+                    lo <= static_cast<long double>(std::numeric_limits<std::int64_t>::min() + 1) ||
+                    hi >= static_cast<long double>(std::numeric_limits<std::int64_t>::max())) {
+                    return KernelFailure { "FIELD_INDEX_OVERFLOW", "rasterize-boundary" };
+                }
+                // Include the cell below a lower grid plane because geometric queries
+                // use closed cells and exact surface contact may occupy both
+                // neighbours.
+                first[axis] = static_cast<std::int64_t>(std::floor(lo)) - 1;
+                last[axis] = static_cast<std::int64_t>(std::floor(hi)) + 1;
+                if (last[axis] < window.first[axis] || first[axis] > window_last[axis]) {
+                    outside = true;
+                }
+                first[axis] = std::max(first[axis], window.first[axis]);
+                last[axis] = std::min(last[axis], window_last[axis]);
             }
+        }
+        if (auto failure = detail::RasterAccess::run(execution, batch, budget, cell_visits, max_cell_visits)) {
+            if (failure->code == "FIELD_CELL_VISIT_LIMIT" && field_failure_allocation_hook) {
+                field_failure_allocation_hook();
+            }
+            return failure;
         }
     }
+    guard.complete = true;
     return std::nullopt;
 }
 
@@ -2455,3 +2452,100 @@ ContainmentResult classify_stl(const PlacedSolid& object,const PlacedSolid& cont
 }
 
 }  // namespace spectrapack::geometry::detail::validation_kernel
+
+namespace spectrapack::geometry::detail {
+void run_raster_cursor(RasterBatch& batch, std::uint32_t worker) noexcept
+{
+    namespace kernel = validation_kernel;
+    auto& cursor = batch.cursors[worker];
+    if (!kernel::field_floating_environment_supported()) {
+        cursor.failure = { "KERNEL_FLOATING_ENVIRONMENT", "rasterize-boundary" };
+        batch.abort.store(true, std::memory_order_relaxed);
+        return;
+    }
+    std::uint32_t polls {};
+    const auto interrupted = [&] {
+        // One owned-cell iteration can fund both a lookup and a SAT primitive.
+        if ((polls++ & 127U) != 0) {
+            return false;
+        }
+        if (worker == 0 && batch.coordinator_control->poll() != runtime::StopCause::none) {
+            batch.abort.store(true, std::memory_order_relaxed);
+        }
+        return batch.abort.load(std::memory_order_relaxed) || batch.stop.stop_requested();
+    };
+    const auto fund = [&](std::uint64_t work, std::uint64_t visits) {
+        cursor.next_work = work;
+        cursor.next_visit = visits;
+        if (work > cursor.work_grant - cursor.work || visits > cursor.visit_grant - cursor.visits) {
+            return false;
+        }
+        cursor.work += work;
+        cursor.visits += visits;
+        ++batch.evidence.primitive_attempts[worker];
+        return true;
+    };
+    while (cursor.face != batch.size) {
+        if (interrupted()) {
+            return;
+        }
+        const auto& face = batch.faces[cursor.face];
+        if (!cursor.initialized) {
+            ++cursor.inspections;
+            cursor.cell = face.first;
+            cursor.initialized = true;
+        }
+        auto& cell = cursor.cell;
+        if (face.outside || cell[2] > face.last[2]) {
+            ++cursor.face;
+            cursor.initialized = false;
+            continue;
+        }
+        const auto row =
+            static_cast<std::uint64_t>(cell[1] - batch.window.first[1]) +
+            std::uint64_t { batch.window.shape[1] } * static_cast<std::uint64_t>(cell[2] - batch.window.first[2]);
+        if (row % batch.count != worker || cell[0] > face.last[0]) {
+            cell[0] = face.first[0];
+            if (++cell[1] > face.last[1]) {
+                cell[1] = face.first[1];
+                ++cell[2];
+            }
+            continue;
+        }
+        if (batch.options.hook) {
+            batch.options.hook(batch.options.context, RasterPoint::active_row, worker);
+        }
+        if (worker == batch.options.fail_worker) {
+            cursor.failure = { "RASTER_WORKER_FAILURE", "rasterize-boundary" };
+            batch.abort.store(true, std::memory_order_relaxed);
+            return;
+        }
+        const auto flat = static_cast<std::uint64_t>(cell[0] - batch.window.first[0]) + batch.window.shape[0] * row;
+        if (!cursor.pending_sat) {
+            if (!fund(batch.skip_existing ? 10 : 0, 1)) {
+                return;
+            }
+            if (batch.skip_existing && batch.boundary[static_cast<std::size_t>(flat)] == 2) {
+                ++cell[0];
+                continue;
+            }
+            cursor.pending_sat = true;
+        }
+        if (!fund(180, 0)) {
+            return;
+        }
+        const auto interval = kernel::grid_cell_interval(batch.window, cell);
+        if (!interval) {
+            cursor.failure = { "FIELD_INDEX_OVERFLOW", "rasterize-boundary" };
+            batch.abort.store(true, std::memory_order_relaxed);
+            return;
+        }
+        if (!kernel::triangle_box_disjoint(face.triangle, *interval)) {
+            batch.boundary[static_cast<std::size_t>(flat)] = 2;
+        }
+        cursor.pending_sat = false;
+        ++cell[0];
+    }
+    cursor.done = true;
+}
+}  // namespace spectrapack::geometry::detail

@@ -7,6 +7,7 @@
 
 #include "../../pack_geometry/src/export_validation_internal.hpp"
 #include "../../pack_geometry/src/import_profile.hpp"
+#include "../../pack_geometry/src/raster_execution_internal.hpp"
 #include "../../pack_geometry/tests/validation_fixtures.hpp"
 #include "spectrapack/geometry/display_lod.hpp"
 #include "spectrapack/geometry/export_validation.hpp"
@@ -104,6 +105,65 @@ TEST_CASE("T010 native unsupported thread requests fail before work", "[solver][
         CHECK(result.run.stats.candidate_evaluations == 0);
         CHECK_FALSE(result.run.best);
     }
+}
+
+TEST_CASE("T010 two-thread CPU request completes real spectral work",
+          "[solver][T010][threading]") {
+  sol::SpectralLimits limits;
+  limits.cpu_thread_count = 2;
+  limits.baseline.max_candidate_evaluations = 1;
+  limits.spectral.max_candidate_evaluations = 1;
+  limits.max_refinement_evaluations = 0;
+  const auto result =
+      sol::run_cpu_spectral(context(), {{0, 0, 0}, 1}, limits, {});
+  CAPTURE(result.run.diagnostic_code);
+  REQUIRE(result.run.termination_reason != sol::TerminationReason::error);
+  REQUIRE(result.run.best);
+  CHECK(result.spectral_stats.correlations > 0);
+}
+
+TEST_CASE("T010 Stop during a real raster worker retains native incumbent", "[solver][T010][threading]")
+{
+    const auto native_context = context();
+    sol::BaselineLimits initial_limits;
+    initial_limits.max_candidate_evaluations = 1;
+    const auto initial = sol::run_aabb_baseline(native_context, initial_limits, {});
+    REQUIRE(initial.best);
+    std::stop_source stop;
+    struct State {
+        std::stop_source& stop;
+        std::atomic<unsigned> active {}, joins {};
+    } state { stop };
+    struct Reset {
+        ~Reset() { geo::detail::set_raster_test_options({}); }
+    } reset;
+    geo::detail::set_raster_test_options({
+        [](void* context, geo::detail::RasterPoint point, std::uint32_t worker) noexcept {
+            auto& state = *static_cast<State*>(context);
+            if (point == geo::detail::RasterPoint::joined) {
+                ++state.joins;
+            }
+            if (point == geo::detail::RasterPoint::active_row && worker != 0) {
+                ++state.active;
+                state.stop.request_stop();
+            }
+        }, &state
+    });
+    sol::SpectralLimits limits;
+    limits.cpu_thread_count = 4;
+    limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
+    limits.spectral.max_candidate_evaluations = 1;
+    limits.max_refinement_evaluations = 0;
+    const auto result = sol::run_cpu_spectral(native_context, { { 0, 0, 0 }, 1 }, limits,
+                                              { stop.get_token() }, {}, initial.best->solution);
+    REQUIRE(state.active > 0);
+    CHECK(state.joins == 3);
+    CHECK(result.run.termination_reason == sol::TerminationReason::user_stopped);
+    REQUIRE(result.run.best);
+    CHECK(result.run.best->solution->copies().size() == initial.best->solution->copies().size());
+    const auto candidate = geo::make_candidate(native_context, result.run.best->solution->copies());
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(candidate));
+    CHECK(geo::validate(native_context, std::get<std::shared_ptr<const geo::Candidate>>(candidate)).validated_solution);
 }
 
 TEST_CASE("T011 native injected Start deadline forbids baseline work", "[solver][T011]")

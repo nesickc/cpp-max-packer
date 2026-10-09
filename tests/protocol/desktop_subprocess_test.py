@@ -138,6 +138,21 @@ class DesktopTests(unittest.TestCase):
         self.assertFalse(json.loads(completed.stdout)["ok"])
         self.assertEqual(list(output.iterdir()), [])
 
+    def test_t010_parallel_policy_executes_and_restores_without_rewriting_provenance(self):
+        self.request["thread_count"] = 2
+        self.request["budget_seconds"] = 1.0
+        result_path, result = self.solved()
+        resolved = result["search"]["resolved_settings"]["resolved"]
+        self.assertEqual(resolved["thread_count"], 2)
+        self.assertEqual(resolved["cpu_runtime"]["scheduling_policy"], "raster-rows256-v1")
+        self.assertEqual(result["validation"]["status"], "valid")
+        completed, _ = self.restore(result_path)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        restored_path = pathlib.Path(json.loads(completed.stdout)["result"]["result_path"])
+        restored = json.loads(restored_path.read_text(encoding="utf-8"))
+        self.assertEqual(restored["search"], result["search"])
+        self.assertEqual(restored["placements"], result["placements"])
+
     def test_restore_without_search_preserves_history_and_checked_export(self):
         result_path, result = self.solved()
         completed, output = self.restore(result_path, stl=True)

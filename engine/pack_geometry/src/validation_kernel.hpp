@@ -41,6 +41,7 @@ class Budget {
             const runtime::OperationControl& control = {}) noexcept;
 
      [[nodiscard]] bool consume_work(std::uint64_t units) noexcept;
+     [[nodiscard]] bool commit_completed_work(std::uint64_t units) noexcept;
      [[nodiscard]] bool reserve_bytes(std::uint64_t bytes) noexcept;
      void release_bytes(std::uint64_t bytes) noexcept;
      [[nodiscard]] std::uint64_t work_used() const noexcept;
