@@ -7,6 +7,7 @@
 #include "repair_replay.hpp"
 #include "result_builder_accounting.hpp"
 #include "result_export_test_seam.hpp"
+#include "result_publication.hpp"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -1701,7 +1702,22 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path, c
     }
 }
 
-ExportOutcome export_result(const ExportRequest& request, const runtime::OperationControl& control)
+class ResultPublisher {
+public:
+    static ExportOutcome supplied(const ExportRequest& request, const runtime::OperationControl& control)
+    {
+        return publish(request, control, nullptr);
+    }
+    static ExportOutcome constructed(ResultPublicationRequest& request, const runtime::OperationControl& control);
+
+private:
+    static ExportOutcome publish(const ExportRequest&, const runtime::OperationControl&,
+                                 const geometry::ValidationReport*, std::uint64_t binding_payload_bytes = 0);
+};
+
+ExportOutcome ResultPublisher::publish(const ExportRequest& request, const runtime::OperationControl& control,
+                                       const geometry::ValidationReport* fresh_report,
+                                       std::uint64_t binding_payload_bytes)
 {
     const detail::OperationGuard operation(control);
     bool primary_published {};
@@ -1748,91 +1764,97 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
             admission_bytes > request.max_working_bytes) {
             return failure("MEMORY_LIMIT", "Checked export admission exceeds the configured working-memory limit.");
         }
-        const std::array<std::string_view, 7> metadata_keys { "schema_version", "job_id", "solution_revision",
-                                                              "created_at",     "engine", "search",
-                                                              "metrics" };
-        Json metadata = Json::object();
-        for (const auto key : metadata_keys) {
-            if (!supplied.contains(key)) {
-                return failure("EXPORT_RESULT_MISMATCH", "Result is missing rebuild metadata.");
-            }
-            metadata[std::string(key)] = supplied.at(std::string(key));
-        }
-        const std::array<std::string_view, 4> measured_metric_keys { "time_to_best_seconds", "peak_host_bytes",
-                                                                     "peak_device_bytes", "termination_reason" };
-        metadata["metrics"] = Json::object();
-        for (const auto key : measured_metric_keys) {
-            if (!supplied.at("metrics").contains(std::string(key))) {
-                return failure("EXPORT_RESULT_MISMATCH", "Result is missing a measured metric.");
-            }
-            metadata["metrics"][std::string(key)] = supplied.at("metrics").at(std::string(key));
-        }
-        std::uint64_t metadata_payload_bytes {};
-        std::uint64_t builder_live_bytes = admission_bytes;
-        if (!json_payload_bytes(metadata, metadata_payload_bytes) ||
-            !add_bytes(builder_live_bytes, metadata_payload_bytes) ||
-            // The rebuilt document is live with the supplied document during its exact binding check.
-            !add_bytes(builder_live_bytes, supplied_payload_bytes) || builder_live_bytes > request.max_working_bytes) {
-            return failure("MEMORY_LIMIT", "Checked export cannot retain rebuild payload residency.");
-        }
-        if (!supplied.is_object() || supplied.size() != 14 || !supplied.contains("label") ||
-            !supplied.contains("assets") || !supplied.contains("container") || !supplied.contains("constraints") ||
-            !supplied.contains("count") || !supplied.contains("placements") || !supplied.contains("validation")) {
-            return failure("EXPORT_RESULT_MISMATCH", "Result has unsupported pre-publication fields.");
-        }
-#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
-        export_builder_base_before_native_inputs.store(builder_live_bytes, std::memory_order_relaxed);
-#endif
+        std::uint64_t metadata_payload_bytes {}, rebuilt_payload_bytes {};
         const auto native_resident_bytes = solution_resident_bytes(*request.solution);
-        std::uint64_t builder_validation_live_bytes = builder_live_bytes;
-        if (!native_resident_bytes || !add_bytes(builder_validation_live_bytes, *native_resident_bytes) ||
-            builder_validation_live_bytes > request.max_working_bytes) {
-            return failure("MEMORY_LIMIT", "Checked export native residency exceeds the working-memory limit.");
-        }
-        auto builder_limits = request.validation_limits;
-        builder_limits.max_working_bytes =
-            std::min(builder_limits.max_working_bytes, request.max_working_bytes - builder_validation_live_bytes);
-        const auto rebuilt = detail::build_result_with_report(
-            { request.solution, request.object_asset, request.container_asset, request.catalog, std::move(metadata),
-              builder_limits, request.diagnostic_limits },
-            control);
-        detail::poll_operation();
-        if (!std::holds_alternative<ValidatedDocument>(rebuilt.result) ||
-            !exact_json_equal(std::get<ValidatedDocument>(rebuilt.result).value(), supplied)) {
-            if (const auto* error = std::get_if<Error>(&rebuilt.result);
-                error && error->code == "RESULT_VALIDATION_FAILED" && rebuilt.validation_attempted &&
-                rebuilt.validation_report.validity != geometry::Validity::valid) {
-                return validation_failure(rebuilt.validation_report, false);
+        if (!fresh_report) {
+            const std::array<std::string_view, 7> metadata_keys { "schema_version", "job_id", "solution_revision",
+                                                                  "created_at",     "engine", "search",
+                                                                  "metrics" };
+            Json metadata = Json::object();
+            for (const auto key : metadata_keys) {
+                if (!supplied.contains(key)) {
+                    return failure("EXPORT_RESULT_MISMATCH", "Result is missing rebuild metadata.");
+                }
+                metadata[std::string(key)] = supplied.at(std::string(key));
             }
-            if (const auto* error = std::get_if<Error>(&rebuilt.result); error && error->code == "MEMORY_LIMIT") {
-                Error resource = failure(error->code, error->message);
-                resource.details = {
-                    { "rebuild_code",    error->code    },
-                    { "rebuild_message", error->message },
-                    { "rebuild_details", error->details }
-                };
-                return resource;
+            const std::array<std::string_view, 4> measured_metric_keys { "time_to_best_seconds", "peak_host_bytes",
+                                                                         "peak_device_bytes", "termination_reason" };
+            metadata["metrics"] = Json::object();
+            for (const auto key : measured_metric_keys) {
+                if (!supplied.at("metrics").contains(std::string(key))) {
+                    return failure("EXPORT_RESULT_MISMATCH", "Result is missing a measured metric.");
+                }
+                metadata["metrics"][std::string(key)] = supplied.at("metrics").at(std::string(key));
             }
-            Error mismatch = failure("EXPORT_RESULT_MISMATCH",
-                                     "Result does not bind to the supplied native solution and provenance.");
-            if (std::holds_alternative<Error>(rebuilt.result)) {
-                const auto& error = std::get<Error>(rebuilt.result);
-                mismatch.details = {
-                    { "rebuild_code",    error.code    },
-                    { "rebuild_message", error.message },
-                    { "rebuild_details", error.details }
-                };
+            std::uint64_t builder_live_bytes = admission_bytes;
+            if (!json_payload_bytes(metadata, metadata_payload_bytes) ||
+                !add_bytes(builder_live_bytes, metadata_payload_bytes) ||
+                // The rebuilt document is live with the supplied document during its exact binding check.
+                !add_bytes(builder_live_bytes, supplied_payload_bytes) ||
+                builder_live_bytes > request.max_working_bytes) {
+                return failure("MEMORY_LIMIT", "Checked export cannot retain rebuild payload residency.");
             }
-            return mismatch;
-        }
-        std::uint64_t rebuilt_payload_bytes {};
-        if (!json_payload_bytes(std::get<ValidatedDocument>(rebuilt.result).value(), rebuilt_payload_bytes) ||
-            rebuilt_payload_bytes > supplied_payload_bytes) {
-            return failure("MEMORY_LIMIT", "Rebuilt result payload exceeds its checked reservation.");
+            if (!supplied.is_object() || supplied.size() != 14 || !supplied.contains("label") ||
+                !supplied.contains("assets") || !supplied.contains("container") || !supplied.contains("constraints") ||
+                !supplied.contains("count") || !supplied.contains("placements") || !supplied.contains("validation")) {
+                return failure("EXPORT_RESULT_MISMATCH", "Result has unsupported pre-publication fields.");
+            }
+#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+            export_builder_base_before_native_inputs.store(builder_live_bytes, std::memory_order_relaxed);
+#endif
+            std::uint64_t builder_validation_live_bytes = builder_live_bytes;
+            if (!native_resident_bytes || !add_bytes(builder_validation_live_bytes, *native_resident_bytes) ||
+                builder_validation_live_bytes > request.max_working_bytes) {
+                return failure("MEMORY_LIMIT", "Checked export native residency exceeds the working-memory limit.");
+            }
+            auto builder_limits = request.validation_limits;
+            builder_limits.max_working_bytes =
+                std::min(builder_limits.max_working_bytes, request.max_working_bytes - builder_validation_live_bytes);
+            const auto rebuilt = detail::build_result_with_report(
+                { request.solution, request.object_asset, request.container_asset, request.catalog, std::move(metadata),
+                  builder_limits, request.diagnostic_limits },
+                control);
+            detail::poll_operation();
+            if (!std::holds_alternative<ValidatedDocument>(rebuilt.result) ||
+                !exact_json_equal(std::get<ValidatedDocument>(rebuilt.result).value(), supplied)) {
+                if (const auto* error = std::get_if<Error>(&rebuilt.result);
+                    error && error->code == "RESULT_VALIDATION_FAILED" && rebuilt.validation_attempted &&
+                    rebuilt.validation_report.validity != geometry::Validity::valid) {
+                    return validation_failure(rebuilt.validation_report, false);
+                }
+                if (const auto* error = std::get_if<Error>(&rebuilt.result); error && error->code == "MEMORY_LIMIT") {
+                    Error resource = failure(error->code, error->message);
+                    resource.details = {
+                        { "rebuild_code",    error->code    },
+                        { "rebuild_message", error->message },
+                        { "rebuild_details", error->details }
+                    };
+                    return resource;
+                }
+                Error mismatch = failure("EXPORT_RESULT_MISMATCH",
+                                         "Result does not bind to the supplied native solution and provenance.");
+                if (std::holds_alternative<Error>(rebuilt.result)) {
+                    const auto& error = std::get<Error>(rebuilt.result);
+                    mismatch.details = {
+                        { "rebuild_code",    error.code    },
+                        { "rebuild_message", error.message },
+                        { "rebuild_details", error.details }
+                    };
+                }
+                return mismatch;
+            }
+            if (!json_payload_bytes(std::get<ValidatedDocument>(rebuilt.result).value(), rebuilt_payload_bytes) ||
+                rebuilt_payload_bytes > supplied_payload_bytes) {
+                return failure("MEMORY_LIMIT", "Rebuilt result payload exceeds its checked reservation.");
+            }
+            if (!add_bytes(metadata_payload_bytes, rebuilt_payload_bytes)) {
+                return failure("MEMORY_LIMIT", "Checked export payload accounting overflowed.");
+            }
+            // Keep both binding payloads alive and charged during the shared writer.
+            return publish(request, control, &rebuilt.validation_report, metadata_payload_bytes);
         }
         std::uint64_t persistent_writer_bytes = admission_bytes;
-        if (!add_bytes(persistent_writer_bytes, metadata_payload_bytes) ||
-            !add_bytes(persistent_writer_bytes, rebuilt_payload_bytes)) {
+        if (!add_bytes(persistent_writer_bytes, binding_payload_bytes)) {
             return failure("MEMORY_LIMIT", "Checked export payload accounting overflowed.");
         }
         std::uint64_t writer_live_bytes = persistent_writer_bytes;
@@ -2239,8 +2261,8 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
             return bytes;
         };
         auto remaining_validation_limits = request.validation_limits;
-        remaining_validation_limits.max_kernel_work -= rebuilt.validation_report.kernel_work;
-        remaining_validation_limits.max_aabb_pair_tests -= rebuilt.validation_report.aabb_pair_tests;
+        remaining_validation_limits.max_kernel_work -= fresh_report->kernel_work;
+        remaining_validation_limits.max_aabb_pair_tests -= fresh_report->aabb_pair_tests;
         remaining_validation_limits.max_working_bytes = std::min(remaining_validation_limits.max_working_bytes,
                                                                  request.max_working_bytes - stl_validation_live_bytes);
         const auto quantized =
@@ -2250,7 +2272,7 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
                                                 control);
         detail::poll_operation();
         if (quantized.validity != geometry::Validity::valid) {
-            return post_primary_error(validation_failure(quantized, true, &rebuilt.validation_report));
+            return post_primary_error(validation_failure(quantized, true, fresh_report));
         }
 #ifdef SPECTRAPACK_ASSET_LOADER_TESTING
         export_base_before_hash.store(stl_writer_live_bytes, std::memory_order_relaxed);
@@ -2427,5 +2449,77 @@ ExportOutcome export_result(const ExportRequest& request, const runtime::Operati
     catch (const std::exception&) {
         return post_primary_error(failure("EXPORT_FAILED", "Checked export failed."));
     }
+}
+ExportOutcome ResultPublisher::constructed(ResultPublicationRequest& request, const runtime::OperationControl& control)
+{
+    const detail::OperationGuard operation(control);
+    try {
+        detail::poll_operation();
+        auto& result = request.result;
+        if (!result.solution || !result.object_asset) {
+            return failure("RESULT_INPUT_INVALID", "Solution and verified object asset are required.");
+        }
+        std::uint64_t live_bytes {};
+        const auto native_bytes = solution_resident_bytes(*result.solution);
+        const auto object_bytes = result.object_asset->resident_buffer_bytes();
+        const auto container_bytes = result.container_asset && result.container_asset != result.object_asset
+                                         ? result.container_asset->resident_buffer_bytes()
+                                         : std::optional<std::uint64_t>(0);
+        if (!native_bytes || !object_bytes || !container_bytes || !json_payload_bytes(result.metadata, live_bytes) ||
+            !add_bytes(live_bytes, *native_bytes) || !add_bytes(live_bytes, *object_bytes) ||
+            !add_bytes(live_bytes, *container_bytes) ||
+            !add_repeated_bytes(live_bytes, result.catalog.quaternions.capacity(), sizeof(geometry::Quaternion)) ||
+            !add_repeated_bytes(live_bytes, request.result_path.native().capacity(),
+                                sizeof(std::filesystem::path::value_type)) ||
+            (request.stl_path && !add_repeated_bytes(live_bytes, request.stl_path->native().capacity(),
+                                                     sizeof(std::filesystem::path::value_type))) ||
+            live_bytes > request.max_working_bytes) {
+            return failure("MEMORY_LIMIT", "Result publication inputs exceed the checked working-memory limit.");
+        }
+        const auto validation_limits = result.validation_limits;
+        result.validation_limits.max_working_bytes =
+            std::min(result.validation_limits.max_working_bytes, request.max_working_bytes - live_bytes);
+        auto built = detail::build_result_with_report(result, control);
+        if (const auto* error = std::get_if<Error>(&built.result)) {
+            return *error;
+        }
+        // Transfer the document and release construction metadata before writer admission.
+        // No second document or independently reusable validation report escapes this call.
+        result.metadata = Json();
+        ExportRequest publication { std::move(result.solution),
+                                    std::move(result.object_asset),
+                                    std::move(result.container_asset),
+                                    std::move(result.catalog),
+                                    std::get<ValidatedDocument>(std::move(built.result)),
+                                    std::move(request.result_path),
+                                    std::move(request.stl_path) };
+        publication.validation_limits = validation_limits;
+        publication.per_copy_import_limits = request.per_copy_import_limits;
+        publication.max_working_bytes = request.max_working_bytes;
+        publication.max_output_bytes = request.max_output_bytes;
+        publication.runtime_before_commit = request.runtime_before_commit;
+        publication.runtime_context = request.runtime_context;
+        publication.diagnostic_limits = result.diagnostic_limits;
+        return publish(publication, control, &built.validation_report);
+    }
+    catch (const detail::Interrupted& interruption) {
+        return detail::interrupted_error(interruption);
+    }
+    catch (const std::bad_alloc&) {
+        return failure("MEMORY_LIMIT", "Result publication exhausted memory.");
+    }
+    catch (const std::exception&) {
+        return failure("EXPORT_FAILED", "Result publication failed.");
+    }
+}
+
+ExportOutcome export_result(const ExportRequest& request, const runtime::OperationControl& control)
+{
+    return ResultPublisher::supplied(request, control);
+}
+
+ExportOutcome build_and_export_result(ResultPublicationRequest&& request, const runtime::OperationControl& control)
+{
+    return ResultPublisher::constructed(request, control);
 }
 }  // namespace spectrapack::io

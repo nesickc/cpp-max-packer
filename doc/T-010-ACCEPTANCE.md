@@ -1,10 +1,11 @@
 # T-010 / T-011 cross-ticket evidence ledger
 
-Updated: 2026-10-03. Current T-011 branch: `feature/SOL-08-cpu-runtime`.
+Updated: 2026-10-09. Current T-011 branch: `feature/SOL-08-cpu-runtime`.
 Prerequisite: merged T-009, `b82117a` (PR #12).
 
 This ledger records demonstrated scope. **No ticket acceptance gate is complete.**
-The final integrated source revision and executable hashes remain pending.
+Final native source/PE pins and the rebuilt desktop bundle are recorded below;
+the final actual desktop observation and ticket handoff remain pending.
 [T-010](T-010.md), [T-011](T-011.md) and [ADR 0013](../spec/decisions/0013-cpu-runtime.md)
 define the acceptance criteria and compatibility contract. A schema check, a
 successful build, or a retained valid result after a resource failure does not
@@ -27,13 +28,13 @@ later regresses the successful practical workflows delivered by T-011.
 | T010-A5 — Stop and races | Shared control and fresh-operation ownership contract are frozen. | Real parallel-phase Stop acknowledgement within 250 ms and safe completion within 5 s; failure/shutdown joins; no late publication. |
 | T010-A6 — measured speed | Failed practical phase profiles identify raster work; these are not a successful speed baseline. | Successful serial revision, frozen phase/end-to-end/memory targets, one warmup plus five Release samples at 1/2/4/8 threads, preparation held fixed. |
 | T010-A7 — product regression | Original full-catalog Ulamok and full36 checked-STL failures are reproduced. Native checked exports pass Ulamok36 and both full Pryanik retained2 cases in Debug/Release at `9f4a60f`, within unchanged caps and with identical ordered placements. | Supported full-catalog Ulamok count >=36; both full Pryanik spectral runs; pitch advice; invalid-original rejection; complete product journeys and independently reread exports; timed quality. |
-| T011-A1 — one budget | Native injected-clock red allows work after expiry. The controlled checkpoint now expires before bootstrap without work or a new handle. Real cold-Pryanik preparation expires without a result. Full Pryanik 2 desktop Start reaches fields/FFT/validation and ends budget-exhausted, with separate 3.168 s overrun and 0.000257 s cleanup. | Final integrated evidence mapping and Pryanik 1 practical repair; no work-after-deadline claim from wall timing alone. |
+| T011-A1 — one budget | Controlled native expiry rejects new bootstrap work/handles; cold preparation expires without a result. Final Release Pryanik 1/2 each publish two valid copies under the original 30 s profile, with 0.4524/0.7815 s precommit overrun. Deterministic finalization expiry reports failure and preserves native/disk authority. Earlier actual Pryanik 2 desktop timing remains recorded. | Final integration mapping and actual final Pryanik 1 desktop observation; no work-after-deadline proof from wall timing alone. |
 | T011-A2 — real reuse | Exact old preparation and fixed-work Start records are pinned. Debug/Release native transition checks verify real constraint/pitch/catalog effects, units authority changes, frame/repair rejection, old-token preservation and cross-build session-token rejection. | Final mapping of practical preparation/LOD timing, supported New/replacement paths and bounded ownership; final practical integration. |
-| T011-A3 — tamper resistance | Current held Debug/Release restore/repair mutation and active reuse cases pass, including settings/catalog and rejected replacement preservation. Ulamok/Pryanik 1 moved archives restore; existing Rust failed-Open state-retention case passes. | Final practical integration after the reproduced search repair and evidence mapping. |
+| T011-A3 — tamper resistance | Held Debug/Release restore/repair mutation and active reuse cases pass, including settings/catalog and rejected replacement preservation. All three moved practical archives restore; Rust failed-Open preserves state. Final IO binding/checked-STL gates and both independent practical rereads pass. | Final evidence mapping; final actual desktop practical observation remains separate. |
 | T011-A4 — Stop phases | Final Debug/Release loading Stop passes in 19/436 ms and preserves previous result/preview/token authority. Preparation Stop/EOF, analytic fields/FFT Stop, late-validation control/usage regressions and valid terminal-publication Stop pass. Rust receipt and GUI stopping have distinct evidence. | Practical phase/cleanup coverage and final integration mapping. Artificial-barrier and Python marker-write measurements do not independently establish ordinary publication latency or Rust receipt. |
 | T011-A5 — lifecycle races | Passed native/Rust evidence covers repeated/stale/finished Stop, marker and transport failure, child loss, shutdown, active EOF, backpressure and pre-registration New. Shared mutex guards serialize completion/Stop; active New/replacement is rejected as `JOB_BUSY`. | Final evidence mapping; do not invent an in-flight completion after successful active New, which the supported workflow forbids. No exhaustive scheduler claim. |
 | T011-A6 — startup measurements | Four-profile series at 86a42db completes 48 operations; three practical Start targets pass. The schema correction's 12-operation analytic rerun passes at 38.3 ms versus 87.6 ms, with frozen work/count/pose and preparation/memory checks. Pinned Debug/Release adapter payload bounds now fit 16 MiB. | Final integration mapping and remaining phase-cleanup evidence; the analytic-only summary correctly does not claim a new four-profile series. |
-| T011-A7 — compatibility | Optional runtime schemas, shared fixtures and generated types pass. Actual legacy Open displays search-only timing; changing pending pitch preserves original result settings. New Ulamok and both full Pryanik Save/move/Open and independently reread JSON/STL exports pass. | Final thread-policy/repaired-geometry evidence mapping and final integration after the Pryanik 1 repair. |
+| T011-A7 — compatibility | Optional runtime schemas, shared fixtures and generated types pass. Actual legacy Open displays search-only timing; changing pending pitch preserves original result settings. Ulamok and both full Pryanik Save/move/Open and independently reread JSON/STL exports pass on their recorded bundles. Final native Pryanik 1/2 restore/export/rereads preserve both pose fingerprints. | Final applicability mapping and actual final Pryanik 1 normal Start/result; earlier GUI journeys are not relabeled as current-bundle observations. |
 
 The original T009-A2/A3/A6 obligations must pass in T-011, and remain T010-A7
 regressions with their concrete full-catalog, pitch-advice and checked-export assertions.
@@ -41,6 +42,44 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 
 ## Retained evidence and qualification
 
+- Final publication correction (2026-10-09) passes its deterministic expiry
+  red/green: a current-run nonempty incumbent no longer becomes successful empty
+  completion when publication expires, and previous disk bytes remain intact.
+  The admitted CLI path uses one source-private fresh-validation/shared-writer
+  operation. Supplied-document binding, checked float32 STL, resource limits and
+  the five-second cleanup allowance remain. Final Debug/Release each pass 67 IO
+  cases / 12,854 assertions and 13/13 registered CLI CTests. Critical source and
+  ownership review reports no actionable findings; the separate field-transfer
+  review is closed. Exact sources, full gate logs and final engines are pinned in
+  `.local/t011/publication-finalization-20261009/evidence-summary.json`.
+  Release engine: `f3121d9d67d343ee18c7f03c8e9af960c4fac4c6f158c1f4b81dc1fcba80720f`.
+  Debug engine: `c1a64d71f4e98c9bcd5b08a7c312e150bf00df27a664c9cbdc8f2fd75725c0da`.
+- Both final original 30 s Release profiles pass in one run each: Pryanik 1 at
+  30.4524016 s and Pryanik 2 at 30.7815421 s before commit, each with two valid
+  copies, explicit result paths and consistent nonempty flags. Both prior pose
+  fingerprints are unchanged. Fresh authoritative restore, checked STL export
+  and complete independent JSON/STL/source/companion/every-vertex reread pass.
+  These are native integration observations, not comparative speed measurements
+  or actual GUI runs. Intermediate failures and the geometry-only engines remain.
+- Final desktop build exits zero. The new preserved bundle and 169 file hashes
+  are at `.local/t011/gui-qualification/final-20261009/`; desktop SHA256 is
+  `378548c8b72f683acea6f78822d6fa2e83bb5db84d7b7459f161c063001ca8fb`, with the
+  final Release engine above. All 50 desktop/contract/tool source pins match the
+  earlier GUI qualification; the frontend is reused unchanged. The remaining
+  actual final Pryanik 1 normal Start/result check is blocked before app access:
+  Computer Use runtime initialization exits with `windows sandbox failed:
+  helper_unknown_error: setup refresh had errors`. No new focus/lock/approval
+  conclusion or GUI success follows from that tool failure.
+- Final independent critical integration review reports no actionable findings.
+  It verifies 22 source/log/engine entries, ten practical input pins, all 169
+  bundle files and 50 unchanged desktop sources. A2/A3/A5 evidence and A6
+  measurements remain applicable; A1/A4 compose existing budget/Stop observations
+  with current validation controls and publication-expiry evidence. Earlier A7
+  journeys remain applicable alongside affected native export reruns. Optional
+  runtime skips carry prior evidence, not new observations. The only remaining
+  acceptance observation is normal 30 s Pryanik 1 in the final actual desktop,
+  followed by ledger update. Review: `.local/t011/remaining-native-controls/`
+  `final-integration-review-20261009.md`; no blanket rerun is justified.
 - The 2026-10-09 combined constant-scratch geometry repair passes Debug/Release
   validation (48 cases / 2,782 assertions each), ordinary solver/control gates
   (137 / 5,995 Debug; 135 / 5,942 Release) and the full saved practical case
@@ -53,7 +92,7 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
   vertex/source/companion reread pass; physical poses remain unchanged. Evidence:
   `.local/t011/validation-path-fix-20261009/FINDINGS.md` and
   `completed-evidence-summary.json`. This is native evidence, not a new GUI pass.
-- Affected Pryanik 2 reaches a retained nonempty incumbent but fails publication
+- Historical geometry-only Pryanik 2 reaches a retained nonempty incumbent but fails publication
   at 35.0072032 s. The unchanged session mapper reports `ok:true` and top-level
   `no_nonempty_incumbent:true`, contradicting native runtime `false`; no result
   file is committed. Exact settings and source/accepted hashes match the earlier
@@ -66,7 +105,7 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
   unchanged ownership, memory limits, supplied-document binding and checked STL.
   The deferred field-transfer review is independently closed against its original
   source/pins and allocation-failure logs, without repeating the field runs.
-  Full integration and actual GUI qualification remain open.
+  The later native integration pass is recorded above; final actual GUI qualification remains open.
 - The measured boundary-only guard is not a passing repair. Its practical red
   and attempted green each fail one of 27 assertions: the latter finishes the
   boundary scan at 17,681,549 work, spends 30,120,970 in a witness ray, then

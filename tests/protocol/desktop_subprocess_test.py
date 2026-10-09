@@ -115,7 +115,8 @@ class DesktopTests(unittest.TestCase):
         self.assertEqual(settings["container"]["dimensions_mm"], [40, 40, 40])
         self.assertEqual(settings["resolved"]["orientation_catalog_sha256"], fixtures.IDENTITY_CATALOG_SHA256)
         self.assertEqual(settings["search"]["budget_seconds"], 0.2)
-        self.assertEqual(settings["compute"], {"backend": "cpu"})
+        self.assertEqual(settings["compute"], {"backend": "cpu", "thread_count": 1})
+        self.assertEqual(settings["resolved"]["thread_count"], 1)
         preview_bytes, vertices, faces = fixtures.parse_ply(pathlib.Path(data["preview_path"]))
         self.assertEqual(data["preview"]["sha256"], fixtures.sha256_bytes(preview_bytes))
         self.assertEqual(data["preview"]["coordinate_frame"], "object_local_mm")
@@ -175,18 +176,30 @@ class DesktopTests(unittest.TestCase):
             self.assertFalse(json.loads(completed.stdout)["ok"])
             self.assertEqual(list(output.iterdir()), [], mutation)
 
-    def test_stop_file_preexisting_retains_valid_empty(self):
+    def test_stop_file_preexisting_preserves_previous_result_without_new_authority(self):
         settings, _ = self.prepared()
         result = self.root / "stopped" / "result.json"
         result.parent.mkdir()
+        completed = run("solve", "--object-report", self.report, "--settings", settings,
+                        "--result", result)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        previous = result.read_bytes()
+        document = json.loads(previous)
+        self.assertEqual(document["validation"]["status"], "valid")
+        self.assertGreater(document["count"], 0)
         marker = self.root / "stop.marker"
         marker.touch()
-        completed = run("solve", "--object-report", self.report, "--settings", settings,
-                        "--result", result, "--stop-file", marker)
-        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-        document = json.loads(result.read_text())
-        self.assertEqual(document["metrics"]["termination_reason"], "user_stopped")
-        self.assertEqual(document["validation"]["status"], "valid")
+        fresh = result.parent / "no-new-result.json"
+        for destination in (result, fresh):
+            completed = run("solve", "--object-report", self.report, "--settings", settings,
+                            "--result", destination, "--stop-file", marker)
+            self.assertEqual(completed.returncode, 3, completed.stdout + completed.stderr)
+            failure = json.loads(completed.stdout)["error"]
+            self.assertEqual(failure["code"], "OPERATION_CANCELLED")
+            self.assertTrue(failure["details"]["no_nonempty_incumbent"])
+            self.assertTrue(failure["details"]["runtime"]["no_nonempty_incumbent"])
+            self.assertEqual(result.read_bytes(), previous)
+            self.assertFalse(fresh.exists())
 
     def test_restore_stl_quantization_failure_retains_valid_json_and_source(self):
         original_path, _ = self.solved()
@@ -215,9 +228,8 @@ class DesktopTests(unittest.TestCase):
                         "--result", output / "result.json", "--stop-file", self.source / "marker")
         self.assertNotEqual(completed.returncode, 0, completed.stdout)
         self.assertEqual(json.loads(completed.stdout)["error"]["code"], "STOP_MONITOR_FAILED")
-        retained = json.loads((output / "result.json").read_text())
-        self.assertEqual(retained["validation"]["status"], "valid")
-        self.assertEqual(retained["metrics"]["termination_reason"], "error")
+        self.assertFalse((output / "result.json").exists())
+        self.assertEqual(list(output.iterdir()), [])
 
     def test_stop_file_parent_disappearing_midrun_retains_operational_failure(self):
         self.request.update(box_dimensions_mm=[20, 20, 20], pitch_mm=1, budget_seconds=30)

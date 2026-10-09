@@ -33,7 +33,7 @@ public:
 private:
     friend AssetLoadOutcome load_accepted_asset(const std::filesystem::path&, const runtime::OperationControl&,
                                                 const AssetLoadLimits&, std::shared_ptr<const VerifiedAsset>);
-    friend ExportOutcome export_result(const ExportRequest&, const runtime::OperationControl&);
+    friend class ResultPublisher;
     struct Storage;
     std::shared_ptr<const Storage> storage_;
     explicit VerifiedAsset(std::shared_ptr<const Storage>) noexcept;

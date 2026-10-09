@@ -25,6 +25,7 @@
 #endif
 
 #include "../src/result_builder_accounting.hpp"
+#include "../src/result_publication.hpp"
 #include "allocation_probe.hpp"
 #include "result_export_test_seam.hpp"
 
@@ -546,6 +547,93 @@ TEST_CASE_METHOD(ResultBuilderFixture, "T008 repaired replay retains accounted d
     CHECK(std::filesystem::file_size(output / "assets" / before_path.filename()) == before_bytes);
 }
 
+TEST_CASE_METHOD(ResultBuilderFixture, "T011 publication completes within one fresh validation allowance",
+                 "[result_builder][writer][T-011][control]")
+{
+    namespace io = spectrapack::io;
+    namespace runtime = spectrapack::runtime;
+    struct Allowance {
+        std::size_t validations {}, permitted {};
+    } allowance;
+    runtime::OperationControl control;
+    control.phase_context = &allowance;
+    control.phase_sink = [](void* raw, runtime::Phase phase) noexcept {
+        auto& allowance = *static_cast<Allowance*>(raw);
+        allowance.validations += phase == runtime::Phase::validating;
+    };
+    const auto independently_built = io::build_result(request, control);
+    REQUIRE(std::holds_alternative<io::ValidatedDocument>(independently_built));
+    REQUIRE(allowance.validations > 0);
+    allowance.permitted = allowance.validations;
+    allowance.validations = 0;
+    control.deadline = (runtime::Clock::time_point::min)() + std::chrono::seconds(1);
+    control.now_context = &allowance;
+    control.now_fn = [](void* raw) noexcept {
+        const auto& allowance = *static_cast<Allowance*>(raw);
+        return allowance.validations > allowance.permitted ? (runtime::Clock::time_point::max)()
+                                                           : (runtime::Clock::time_point::min)();
+    };
+    const auto published = io::build_and_export_result({ request, root / "result.json" }, control);
+    if (const auto* error = std::get_if<io::Error>(&published)) {
+        INFO(io::error_json(*error).dump());
+    }
+    REQUIRE(std::holds_alternative<io::ExportSuccess>(published));
+    CHECK(allowance.validations == allowance.permitted);
+    const auto saved = io::Json::parse(std::ifstream(root / "result.json"));
+    const auto& expected = std::get<io::ValidatedDocument>(independently_built).value();
+    CHECK(saved.at("placements") == expected.at("placements"));
+    CHECK(saved.at("validation") == expected.at("validation"));
+    CHECK(saved.at("count") == 3);
+    CHECK(saved.at("assets") == expected.at("assets"));
+}
+
+TEST_CASE_METHOD(ResultBuilderFixture, "T011 fresh publication refuses control and residency before replacing bytes",
+                 "[result_builder][writer][T-011][control][resources]")
+{
+    namespace io = spectrapack::io;
+    namespace runtime = spectrapack::runtime;
+    const auto path = root / "previous.json";
+    const std::string previous = "previous complete bytes";
+    std::ofstream(path) << previous;
+    io::ResultPublicationRequest publication { request, path };
+    runtime::OperationControl control;
+    std::stop_source stop;
+    std::string expected;
+    SECTION("expired cleanup clock")
+    {
+        control.deadline = (runtime::Clock::time_point::min)();
+        expected = "DEADLINE_EXCEEDED";
+    }
+    SECTION("cancelled operation")
+    {
+        stop.request_stop();
+        control.stop = stop.get_token();
+        expected = "OPERATION_CANCELLED";
+    }
+    SECTION("input admission refusal")
+    {
+        publication.max_working_bytes = 1;
+        expected = "MEMORY_LIMIT";
+    }
+    SECTION("post-validation construction allocation refusal")
+    {
+        io::test::fail_result_build_post_validation_allocation_for_test(true);
+        expected = "MEMORY_LIMIT";
+    }
+    SECTION("different immutable asset owner")
+    {
+        const auto independent = io::load_accepted_asset(report);
+        REQUIRE(std::holds_alternative<std::shared_ptr<const io::VerifiedAsset>>(independent));
+        publication.result.object_asset = std::get<std::shared_ptr<const io::VerifiedAsset>>(independent);
+        expected = "RESULT_ASSET_MISMATCH";
+    }
+    const auto rejected = io::build_and_export_result(std::move(publication), control);
+    REQUIRE(std::holds_alternative<io::Error>(rejected));
+    CHECK(std::get<io::Error>(rejected).code == expected);
+    std::ifstream preserved(path);
+    CHECK(std::string(std::istreambuf_iterator<char>(preserved), {}) == previous);
+}
+
 TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 result builder accepts real loaded assets and a fresh native solution",
                  "[result_builder][AT-14]")
 {
@@ -657,6 +745,15 @@ TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 writer rejects float32-collapsed p
     REQUIRE(std::holds_alternative<io::ValidatedDocument>(validator.validate(io::ContractKind::results, retained)));
     REQUIRE_FALSE(retained.contains("artifacts"));
     REQUIRE_FALSE(std::filesystem::exists(output / "packed.stl"));
+    const auto fresh_output = root / "float32-gap-fresh";
+    REQUIRE(std::filesystem::create_directory(fresh_output));
+    io::ResultRequest fresh_request { checked.validated_solution, asset, {}, request.catalog, metadata };
+    const auto fresh_export =
+        io::build_and_export_result({ fresh_request, fresh_output / "result.json", fresh_output / "packed.stl" });
+    REQUIRE(std::holds_alternative<io::Error>(fresh_export));
+    CHECK(std::get<io::Error>(fresh_export).code == "EXPORT_QUANTIZATION_FAILED");
+    CHECK(std::get<io::Error>(fresh_export).details.at("validation_code") == "EXPORT_QUANTIZED_PAIR");
+    CHECK_FALSE(std::filesystem::exists(fresh_output / "packed.stl"));
 }
 TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 writer classifies rebuild resource refusal before publication",
                  "[writer][AT-14][resources]")

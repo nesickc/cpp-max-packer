@@ -5,6 +5,7 @@
 #include <spectrapack/solver/spectral.hpp>
 
 #include "host_admission.hpp"
+#include "result_publication.hpp"
 #include "settings_reader.hpp"
 #include "timeline.hpp"
 
@@ -50,6 +51,8 @@ std::atomic_uint64_t result_build_max_working_bytes_for_test {};
 std::atomic_uint64_t result_export_max_working_bytes_for_test {};
 std::atomic<spectrapack::cli::test::PublicationHook> publication_hook_for_test {};
 std::atomic<void*> publication_hook_context_for_test {};
+std::atomic<spectrapack::cli::test::FinalizationHook> finalization_hook_for_test {};
+std::atomic<void*> finalization_hook_context_for_test {};
 #endif
 
 spectrapack::cli::SolveOutcome failure_outcome(FailureTiming& timing, std::string code, std::string message,
@@ -569,6 +572,11 @@ void set_publication_hook(PublicationHook hook, void* context) noexcept
     publication_hook_context_for_test.store(context);
     publication_hook_for_test.store(hook);
 }
+void set_finalization_hook(FinalizationHook hook, void* context) noexcept
+{
+    finalization_hook_context_for_test.store(context);
+    finalization_hook_for_test.store(hook);
+}
 void set_result_build_max_working_bytes(std::uint64_t bytes) noexcept
 {
     result_build_max_working_bytes_for_test.store(bytes, std::memory_order_relaxed);
@@ -938,14 +946,13 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     auto cleanup_control = control;
     cleanup_control.stop = {};
     cleanup_control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(5);
-    control.phase(spectrapack::runtime::Phase::cleanup);
-    auto document = io::build_result(result_request, cleanup_control);
-    if (!std::holds_alternative<io::ValidatedDocument>(document)) {
-        const auto& error = std::get<io::Error>(document);
-        return fail(error.code, error.message, 3, error.details);
+#ifdef SPECTRAPACK_CLI_TESTING
+    if (const auto hook = finalization_hook_for_test.load()) {
+        hook(finalization_hook_context_for_test.load(), cleanup_control, run_runtime);
     }
+#endif
+    control.phase(spectrapack::runtime::Phase::cleanup);
     settings_owner.reset();
-    result_request.metadata = Json();
     const auto export_reserve = export_residual_bytes(request, run_runtime.adapter_reserve_bytes, diagnostics,
                                                       retained_diagnostics, *retained_solution);
     const auto export_limit = result_export_max_working_bytes(limits.max_working_bytes);
@@ -958,14 +965,7 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
                     export_reserve ? export_admission_details(export_limit, export_live_bytes, *export_reserve)
                                    : Json::object());
     }
-    io::ExportRequest export_request { retained_solution,
-                                       object,
-                                       container_asset,
-                                       std::move(result_request.catalog),
-                                       std::get<io::ValidatedDocument>(std::move(document)),
-                                       result_path,
-                                       stl_path };
-    export_request.diagnostic_limits = run_runtime.diagnostic_limits;
+    io::ResultPublicationRequest export_request { result_request, result_path, stl_path };
     export_request.max_working_bytes = export_limit - export_live_bytes;
     struct FinalRuntime {
         spectrapack::cli::Timeline& timeline;
@@ -990,10 +990,15 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
 #endif
         return value.timeline.record(value.scope, value.budget, value.reused, value.empty);
     };
-    auto published = io::export_result(export_request, cleanup_control);
+    auto published = io::build_and_export_result(std::move(export_request), cleanup_control);
     if (!std::holds_alternative<io::ExportSuccess>(published)) {
         const auto& error = std::get<io::Error>(published);
-        return fail(error.code, error.message, 3, error.details);
+        auto details = error.details;
+        if (!details.contains("phase")) {
+            details["phase"] = "result_publication";
+        }
+        details["diagnostics"] = diagnostics;
+        return fail(error.code, error.message, 3, std::move(details));
     }
     const auto& success = std::get<io::ExportSuccess>(published);
     if (stop_monitor_error.failed) {

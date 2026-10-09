@@ -13,6 +13,26 @@
 
 int main(int argc, char** argv)
 {
+    if (argc == 3 && std::string_view(argv[1]) == "session-finalization-expiry") {
+        auto directory = std::filesystem::u8path(argv[2]);
+        spectrapack::cli::test::set_finalization_hook(
+            [](void* raw, spectrapack::runtime::OperationControl& control,
+               const spectrapack::cli::SolveRuntime& runtime) {
+            const auto& directory = *static_cast<std::filesystem::path*>(raw);
+            if (std::filesystem::exists(directory / "expire-finalization")) {
+                const auto retained = runtime.last_validated ? *runtime.last_validated : nullptr;
+                std::ofstream(directory / "retained.json") << spectrapack::io::Json {
+                    { "native_handle_retained", static_cast<bool>(retained)              },
+                    { "count",                  retained ? retained->copies().size() : 0 }
+                };
+                control.now_fn = [](void*) noexcept {
+                    return spectrapack::runtime::Clock::time_point::max();
+                };
+            }
+        },
+            &directory);
+        return run_desktop_session("finalization-check", "test-only");
+    }
     if ((argc == 3 || argc == 4) && std::string_view(argv[1]) == "session-publication-barrier") {
         struct PublicationMemory {
             std::filesystem::path directory;

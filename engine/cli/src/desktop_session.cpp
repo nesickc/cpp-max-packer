@@ -809,7 +809,8 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
             validated_settings.reset();
             if (const auto* native_error = std::get_if<io::Error>(&native.terminal)) {
                 const auto& code = native_error->code;
-                if (code == "OPERATION_CANCELLED" || code == "DEADLINE_EXCEEDED") {
+                if ((code == "OPERATION_CANCELLED" || code == "DEADLINE_EXCEEDED") &&
+                    native_error->details.value("no_nonempty_incumbent", true)) {
                     result = {
                         { "termination_reason",    code == "OPERATION_CANCELLED" ? "user_stopped" : "budget_exhausted" },
                         { "no_nonempty_incumbent", true                                                                },

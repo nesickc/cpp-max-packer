@@ -84,6 +84,57 @@ class Session:
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_finalization_deadline_preserves_nonempty_authority_and_previous_result(self):
+        """GEO-06 / UI-03 / DATA-01 / T011-A4: cleanup failure cannot become empty success."""
+        if MEMORY_HELPER is None:
+            self.skipTest('test-only finalization clock supplied by the native acceptance harness')
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            source, report = root/'cube.stl', root/'object.report.json'
+            fixtures.write_cube_stl(source, extent=40)
+            imported = subprocess.run([str(ENGINE), 'inspect', '--stl', str(source), '--units', 'mm',
+                                       '--report', str(report)], capture_output=True, text=True, timeout=15)
+            self.assertEqual(imported.returncode, 0, imported.stdout+imported.stderr)
+            fixture = fixtures.SolveSubprocessTests(); fixture.object_report_path = report
+            settings = fixture.settings(dimensions=(64, 64, 64), candidates=1, passes=1)
+            session = Session([str(MEMORY_HELPER), 'session-finalization-expiry', str(root)])
+            try:
+                preview = root/'preview'; preview.mkdir()
+                prepared, _ = session.request({'runtime_version': 1, 'request_id': 'prepare',
+                    'operation_id': 'prepare-op', 'method': 'prepare', 'params': {
+                        'object_report': str(report), 'output_directory': str(preview)}})
+                self.assertTrue(prepared['ok'], prepared)
+                output = root/'result.json'
+                def run(name):
+                    ticks, frequency = qpc()
+                    return session.request({'runtime_version': 1, 'request_id': name,
+                        'operation_id': name+'-op', 'method': 'run', 'params': {
+                            'asset_token': prepared['result']['asset_token'], 'settings': settings,
+                            'result_path': str(output), 'stop_file': str(root/'stop.marker'),
+                            'start_qpc_ticks': ticks, 'qpc_frequency_hz': frequency}})
+                before, _ = run('before')
+                self.assertTrue(before['ok'], before)
+                previous = output.read_bytes()
+                self.assertGreater(json.loads(previous)['count'], 0)
+                (root/'expire-finalization').write_bytes(b'expire')
+                failed, phases = run('expired-finalization')
+                retained = json.loads((root/'retained.json').read_text())
+                self.assertTrue(retained['native_handle_retained'], retained)
+                self.assertGreater(retained['count'], 0)
+                self.assertEqual(output.read_bytes(), previous)
+                print(json.dumps({'case': 'finalization-deadline', 'reply': failed, 'phases': phases,
+                    'retained': retained, 'previous_result_sha256': hashlib.sha256(previous).hexdigest(),
+                    'previous_bytes_preserved': output.read_bytes() == previous}), flush=True)
+                self.assertFalse(failed['ok'], failed)
+                error = failed['error']
+                self.assertEqual(error['code'], 'DEADLINE_EXCEEDED', error)
+                self.assertFalse(error['details']['no_nonempty_incumbent'], error)
+                self.assertFalse(error['details']['runtime']['no_nonempty_incumbent'], error)
+                self.assertEqual(error['details']['phase'], 'result_publication', error)
+                self.assertIn('diagnostics', error['details'])
+            finally:
+                session.close()
+
     def test_loading_stop_preserves_previous_complete_result(self):
         """T011-A4: interrupt real cold loading before preparation, retain old authority."""
         if PRACTICAL_REPORT is None:

@@ -385,7 +385,10 @@ the native last validated handle and previous complete disk/UI result, and repor
 publication failure explicitly; do not fabricate a new valid result.
 
 Final native solve publication may combine result construction and publication in
-one IO-owned call. It performs one complete independent final revalidation, builds
+one IO-owned call declared in a source-private header for the existing admitted
+CLI path. It is not a new public arbitrary-caller interface; retain the CLI's
+existing bounded-input construction admission and prove that moved ownership adds
+no simultaneous DOM copy. It performs one complete independent final revalidation, builds
 the document from the same immutable validated-solution and verified-asset owners,
 and consumes that document/report immediately through the shared writer. This
 internal composition does not create a reusable certificate or public validation

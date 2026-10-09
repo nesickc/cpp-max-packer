@@ -55,6 +55,8 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
 namespace spectrapack::cli::test {
 using PublicationHook = void (*)(void*, std::stop_token);
 void set_publication_hook(PublicationHook hook, void* context) noexcept;
+using FinalizationHook = void (*)(void*, runtime::OperationControl&, const SolveRuntime&);
+void set_finalization_hook(FinalizationHook hook, void* context) noexcept;
 void set_result_build_max_working_bytes(std::uint64_t bytes) noexcept;
 void set_result_export_max_working_bytes(std::uint64_t bytes) noexcept;
 }  // namespace spectrapack::cli::test
