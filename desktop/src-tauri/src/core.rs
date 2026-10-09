@@ -48,6 +48,28 @@ struct ObjectFiles {
     id: String,
     report: PathBuf,
     preview: Option<Value>,
+    native_token: Option<String>,
+    native_epoch: Option<String>,
+    cpu_runtime: Option<Value>,
+}
+struct PreparedRollback {
+    core: Core,
+    token: Option<String>,
+    epoch: Option<String>,
+    preview_id: Option<String>,
+    committed: bool,
+}
+impl Drop for PreparedRollback {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = self
+                .core
+                .release_native(self.token.take(), self.epoch.as_deref());
+            if let Some(preview) = self.preview_id.take() {
+                self.core.inner.lock().unwrap().previews.remove(&preview);
+            }
+        }
+    }
 }
 #[derive(Clone)]
 struct ResultFiles {
@@ -69,6 +91,8 @@ struct Inner {
     previews: HashMap<String, PreviewFile>,
     stop_file: Option<PathBuf>,
     protected_sources: Vec<PathBuf>,
+    operation_started: Option<std::time::Instant>,
+    transitioning: bool,
 }
 
 #[derive(Clone)]
@@ -76,6 +100,7 @@ pub struct Core {
     engine: PathBuf,
     root: PathBuf,
     inner: Arc<Mutex<Inner>>,
+    native: Arc<Mutex<Option<crate::native_session::NativeSession>>>,
     #[cfg(test)]
     before_begin: Arc<Mutex<Option<Box<dyn FnOnce() + Send>>>>,
     #[cfg(test)]
@@ -166,10 +191,12 @@ impl Core {
             result: None,
             operation: None,
             last_error: None,
+            cpu_runtime: None,
         };
         let core = Self {
             engine,
             root,
+            native: Arc::new(Mutex::new(None)),
             #[cfg(test)]
             before_begin: Arc::new(Mutex::new(None)),
             #[cfg(test)]
@@ -181,6 +208,8 @@ impl Core {
                 previews: HashMap::new(),
                 stop_file: None,
                 protected_sources: Vec::new(),
+                operation_started: None,
+                transitioning: false,
             })),
         };
         core.run(&arguments(&["capabilities", "--json"]), &core.root)?;
@@ -216,6 +245,10 @@ impl Core {
                 "Wait for the active operation to finish.",
             ));
         }
+        if inner.transitioning {
+            return Err(error("JOB_BUSY", "Project transition is active."));
+        }
+        let operation_started = std::time::Instant::now();
         let captured = snapshot(&inner)?;
         let operation_id = id("operation");
         let directory = self.root.join(&operation_id);
@@ -225,6 +258,7 @@ impl Core {
         } else {
             None
         };
+        inner.operation_started = Some(operation_started);
         inner.state.operation = Some(Operation {
             id: operation_id.clone(),
             kind: kind.into(),
@@ -233,6 +267,9 @@ impl Core {
             finished_at: None,
             result_id: None,
             detail: None,
+            sequence: None,
+            completion_elapsed_seconds: None,
+            native_completion_elapsed_seconds: None,
         });
         if let Some(settings) = settings {
             inner.state.draft_settings = Some(settings);
@@ -278,7 +315,11 @@ impl Core {
                     Ok(()) => ("finished", None),
                     Err(e) => ("failed", Some(e)),
                 };
+                let completion = inner
+                    .operation_started
+                    .map(|start| start.elapsed().as_secs_f64());
                 let op = inner.state.operation.as_mut().unwrap();
+                op.completion_elapsed_seconds = completion;
                 op.phase = phase.into();
                 op.finished_at = Some(now());
                 if let Some(e) = &failure {
@@ -293,9 +334,24 @@ impl Core {
     fn run(&self, args: &[OsString], cwd: &Path) -> Outcome<Value> {
         security::directory(cwd)?;
         security::regular_file(&self.engine)?;
+        let mut bounded_args = args.to_vec();
+        if args.first().is_some_and(|command| {
+            ["inspect", "desktop-prepare", "desktop-restore"]
+                .iter()
+                .any(|x| command == *x)
+        }) {
+            if args.iter().any(|arg| arg == "--available-host-bytes") {
+                return Err(error(
+                    "INVALID_REQUEST",
+                    "Helper memory allowance is owned by the desktop coordinator.",
+                ));
+            }
+            bounded_args.push("--available-host-bytes".into());
+            bounded_args.push(self.auxiliary_host_allowance()?.to_string().into());
+        }
         let mut command = Command::new(&self.engine);
         command
-            .args(args)
+            .args(&bounded_args)
             .current_dir(cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -467,31 +523,174 @@ impl Core {
         );
         Ok(Some(value))
     }
+    fn auxiliary_host_allowance(&self) -> Outcome<u64> {
+        const CAP: u64 = 512 << 20;
+        const ADAPTER: u64 = 16 << 20;
+        let (retained, session_live) = {
+            let mut native = self.native.lock().unwrap();
+            if let Some(child) = native.as_mut() {
+                if child.is_alive()? {
+                    (child.retained_native_bytes.filter(|bytes|*bytes<=CAP)
+                        .ok_or_else(||error("MEMORY_LIMIT","Retained native residency is unavailable; helper admission cannot proceed."))?,true)
+                } else {
+                    native.take();
+                    (0, false)
+                }
+            } else {
+                (0, false)
+            }
+        };
+        let inner = self.inner.lock().unwrap();
+        let viewer = if inner.state.object.is_some() || inner.state.result.is_some() {
+            64 << 20
+        } else {
+            0
+        };
+        let live = retained
+            .checked_add(viewer)
+            .and_then(|bytes| bytes.checked_add(ADAPTER))
+            .and_then(|bytes| bytes.checked_add(if session_live { ADAPTER } else { 0 }))
+            .ok_or_else(|| error("MEMORY_LIMIT", "Helper retained-owner admission overflows."))?;
+        CAP.checked_sub(live)
+            .filter(|bytes| *bytes > 0)
+            .ok_or_else(|| {
+                error(
+                    "MEMORY_LIMIT",
+                    "Retained native owners, viewer and adapters exhaust the helper allowance.",
+                )
+            })
+    }
+    fn native_request(
+        &self,
+        method: &str,
+        operation: Option<&str>,
+        params: Value,
+        allow_spawn: bool,
+    ) -> Outcome<Value> {
+        let mut native = self.native.lock().unwrap();
+        if native
+            .as_mut()
+            .is_some_and(|child| child.is_alive().is_ok_and(|alive| !alive))
+        {
+            native.take();
+        }
+        if native.is_none() {
+            if !allow_spawn {
+                return Err(error("ENGINE_SESSION_LOST", "Prepared native session is unavailable; import or Open verified geometry again."));
+            }
+            *native = Some(crate::native_session::NativeSession::spawn(
+                &self.engine,
+                &self.root,
+            )?);
+        }
+        let result =
+            native
+                .as_mut()
+                .unwrap()
+                .request(method, operation, params, |sequence, phase, _| {
+                    if let Some(operation_id) = operation {
+                        let mut inner = self.inner.lock().unwrap();
+                        if let Some(active) = inner.state.operation.as_mut() {
+                            if active.id == operation_id
+                                && active.finished_at.is_none()
+                                && active.sequence.unwrap_or(0) < sequence
+                            {
+                                active.sequence = Some(sequence);
+                                if active.phase != "stopping" {
+                                    active.phase = phase.into();
+                                }
+                                inner.state.revision += 1;
+                            }
+                        }
+                    }
+                });
+        if result.as_ref().err().is_some_and(|failure| {
+            [
+                "ENGINE_TRANSPORT",
+                "ENGINE_TERMINATED",
+                "ENGINE_IDENTITY",
+                "ENGINE_TRANSPORT_TIMEOUT",
+            ]
+            .contains(&failure.code.as_str())
+        }) {
+            native.take();
+        }
+        result
+    }
     fn prepare(
         &self,
-        object: &ObjectFiles,
+        object: &mut ObjectFiles,
         settings: &Value,
         root: &Path,
     ) -> Outcome<(PathBuf, Option<Value>)> {
         validate_settings(settings)?;
-        let request = root.join("desktop.request.json");
-        write_json(&request, settings)?;
         let output = root.join("prepared");
         fs::create_dir(&output).map_err(|e| error("FILE_ACCESS", e.to_string()))?;
-        let mut args = arguments(&["desktop-prepare"]);
-        pair(&mut args, "--object-report", &object.report);
-        pair(&mut args, "--request", &request);
-        pair(&mut args, "--output", &output);
-        let response = self.run(&args, root)?;
-        let path = reported_path(
-            response["settings_path"]
+        let operation = self
+            .inner
+            .lock()
+            .unwrap()
+            .state
+            .operation
+            .as_ref()
+            .map(|op| op.id.clone())
+            .ok_or_else(|| error("INTERNAL_ERROR", "Preparation has no operation."))?;
+        let response = self.native_request(
+            "prepare",
+            Some(&operation),
+            json!({"object_report":object.report,"output_directory":output}),
+            true,
+        )?;
+        object.native_token = Some(
+            response["asset_token"]
                 .as_str()
-                .ok_or_else(|| error("ENGINE_TRANSPORT", "Settings path missing."))?,
+                .ok_or_else(|| error("ENGINE_TRANSPORT", "Prepared native token missing."))?
+                .into(),
         );
-        Ok((
-            security::scoped(&output, &path)?,
-            self.register_preview(&output, &response)?,
-        ))
+        object.native_epoch = self
+            .native
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|native| native.epoch.clone());
+        let mut rollback = PreparedRollback {
+            core: self.clone(),
+            token: object.native_token.clone(),
+            epoch: object.native_epoch.clone(),
+            preview_id: None,
+            committed: false,
+        };
+        let maximum = response["supported_thread_count_max"]
+            .as_u64()
+            .ok_or_else(|| error("ENGINE_TRANSPORT", "CPU support missing."))?;
+        if !(1..=8).contains(&maximum) {
+            return Err(error("ENGINE_TRANSPORT", "CPU support range invalid."));
+        }
+        object.cpu_runtime = Some(
+            json!({"version":1,"supported_min":1,"supported_max":maximum,
+            "default_thread_count":maximum.min(4),"working_set_estimate_bytes":response["working_set_estimate_bytes"]}),
+        );
+        let preview = self.register_preview(&output, &response)?;
+        rollback.committed = true;
+        Ok((output, preview))
+    }
+    fn release_native(&self, token: Option<String>, epoch: Option<&str>) -> Outcome<()> {
+        let Some(token) = token else {
+            return Ok(());
+        };
+        let mut native = self.native.lock().unwrap();
+        let Some(child) = native.as_mut() else {
+            return Ok(());
+        };
+        if epoch != Some(child.epoch.as_str()) {
+            return Ok(());
+        }
+        if !child.is_alive()? {
+            native.take();
+            return Ok(());
+        }
+        child.request("release", None, json!({"asset_token":token}), |_, _, _| {})?;
+        Ok(())
     }
     // Public path adapters are called only after Rust dialogs or by native integration tests.
     pub fn import_path(&self, source: &Path, request: ImportRequest) -> Outcome<Receipt> {
@@ -511,27 +710,34 @@ impl Core {
             if let Some(scale) = request.scale_mm { args.extend(["--scale-mm".into(), scale.to_string().into()]); }
             core.run(&args, &root)?;
             let report = security::json(&report_path, REPORT_LIMIT)?; let object_id = id("object");
-            let mut object = ObjectFiles { id: object_id.clone(), report: report_path, preview: None };
+            let mut object = ObjectFiles { id: object_id.clone(), report: report_path, preview: None, native_token: None, native_epoch: None, cpu_runtime: None };
             let longest = report["dimensions_mm"].as_array()
                 .map(|v| v.iter().filter_map(Value::as_f64).fold(1.0_f64, f64::max)).unwrap_or(10.0);
-            let settings = json!({"desktop_version":1,"box_dimensions_mm":[100.0,100.0,100.0],
+            let mut settings = json!({"desktop_version":1,"box_dimensions_mm":[100.0,100.0,100.0],
                 "clearance_mm":{"pair":1.0,"wall":1.0},"orientation":{"mode":"fixed","quaternion_xyzw":[0,0,0,1]},
-                "pitch_mm":longest/64.0,"budget_seconds":60.0,"seed":"42"});
+                "pitch_mm":longest/64.0,"budget_seconds":60.0,"seed":"42","budget_scope":"total_start","thread_count":1});
             if report["state"] == "accepted" && report["diagnostics"]["status"] == "valid" {
-                let (_, preview) = core.prepare(&object, &settings, &root)?; object.preview = preview;
+                let (_, preview) = core.prepare(&mut object, &settings, &root)?; object.preview = preview;
+                if let Some(runtime)=&object.cpu_runtime {settings["thread_count"]=runtime["default_thread_count"].clone();}
             }
-            let mut inner = core.inner.lock().unwrap(); inner.object = Some(object.clone());
+            let mut prepared_guard=PreparedRollback {core:core.clone(),token:object.native_token.clone(),epoch:object.native_epoch.clone(),preview_id:object.preview.as_ref().and_then(|value|value["preview_id"].as_str().map(str::to_owned)),committed:false};
+            let old_object=core.inner.lock().unwrap().object.clone();
+            if let Some(old)=old_object {core.release_native(old.native_token,old.native_epoch.as_deref())?;}
+            let mut inner = core.inner.lock().unwrap(); inner.state.cpu_runtime=object.cpu_runtime.clone(); inner.object = Some(object.clone());
+            prepared_guard.committed=true;
             inner.protected_sources.push(source.clone());
             inner.state.object = Some(json!({"id":object_id,"display_name":name,"report":report,"preview":object.preview}));
             inner.state.draft_settings = Some(settings); inner.state.revision += 1; drop(inner);
+            core.prune_previews();
             core.phase(&op, "validating"); Ok(())
         });
         Ok(receipt)
     }
 
-    pub fn start(&self, settings: Value) -> Outcome<Receipt> {
+    pub fn start(&self, mut settings: Value) -> Outcome<Receipt> {
+        settings["budget_scope"] = json!("total_start");
         validate_settings(&settings)?;
-        let (receipt, root, object) =
+        let (receipt, root, (object,clock)) =
             self.begin_with("solve", Some(settings.clone()), |inner| {
                 let record =
                     inner.state.object.as_ref().ok_or_else(|| {
@@ -545,47 +751,52 @@ impl Core {
                         "Current object is not accepted native geometry.",
                     ));
                 }
-                inner
-                    .object
-                    .clone()
-                    .ok_or_else(|| error("ASSET_REQUIRED", "Current object files are unavailable."))
+                let object=inner.object.clone().ok_or_else(||error("ASSET_REQUIRED","Current object files are unavailable."))?;
+                if object.native_token.is_none() { return Err(error("ENGINE_SESSION_LOST","Current geometry has no pinned native authority.")); }
+                if let Some(runtime)=&inner.state.cpu_runtime {
+                    let maximum=runtime["supported_max"].as_u64().unwrap_or(1);
+                    if settings.get("thread_count").and_then(Value::as_u64).unwrap_or(1)>maximum {
+                        let mut failure=error("UNSUPPORTED_THREAD_COUNT","Explicit CPU count exceeds actual native support.");
+                        failure.details=json!({"supported_min":1,"supported_max":maximum,"requested":settings["thread_count"]});
+                        return Err(failure);
+                    }
+                }
+                Ok((object,crate::native_session::qpc()?))
             })?;
         self.spawn(&receipt, move |core, op| {
-            let (resolved, preview) = core.prepare(&object, &settings, &root)?;
-            let marker = root.join("stop.marker");
-            if marker.exists() {
-                core.inner
-                    .lock()
-                    .unwrap()
-                    .state
-                    .operation
-                    .as_mut()
-                    .unwrap()
-                    .detail =
-                    Some("Stopped during preparation; previous complete result retained.".into());
-                return Ok(());
+            let preview=object.preview.clone();
+            let marker=root.join("stop.marker");
+            let output=root.join("solution");
+            fs::create_dir(&output).map_err(|e|error("FILE_ACCESS",e.to_string()))?;
+            let current_epoch=core.native.lock().unwrap().as_ref().map(|native|native.epoch.clone());
+            if object.native_epoch!=current_epoch { return Err(error("ENGINE_SESSION_LOST","Prepared token belongs to an expired native epoch.")); }
+            let solve_outcome=core.native_request("run",Some(&op),json!({"asset_token":object.native_token,"settings":settings,
+                "result_path":output.join("result.json"),"stop_file":marker,"start_qpc_ticks":clock.0.to_string(),"qpc_frequency_hz":clock.1.to_string()}),false);
+            if let Err(failure)=&solve_outcome {
+                let mut inner=core.inner.lock().unwrap();
+                if let Some(operation)=&mut inner.state.operation {
+                    if operation.id==op {operation.native_completion_elapsed_seconds=failure.details["native_completion_elapsed_seconds"].as_f64();}
+                }
             }
-            let output = root.join("solution");
-            fs::create_dir(&output).map_err(|e| error("FILE_ACCESS", e.to_string()))?;
-            core.phase(&op, "running");
-            let mut args = arguments(&["solve"]);
-            pair(&mut args, "--settings", &resolved);
-            pair(&mut args, "--object-report", &object.report);
-            pair(&mut args, "--result", &output.join("result.json"));
-            pair(&mut args, "--stop-file", &marker);
-            let solve_outcome = core.run(&args, &root);
+            if let Ok(response)=&solve_outcome {
+                let mut inner=core.inner.lock().unwrap();
+                if let Some(operation)=&mut inner.state.operation {
+                    if operation.id==op {
+                        operation.native_completion_elapsed_seconds=response["native_completion_elapsed_seconds"].as_f64();
+                        if response["no_nonempty_incumbent"]==true {operation.detail=Some("No nonempty incumbent; previous complete result retained.".into());}
+                    }
+                }
+                if let Some(runtime)=inner.state.cpu_runtime.as_mut() {runtime["requested_thread_count"]=settings.get("thread_count").cloned().unwrap_or(json!(1));runtime["resolved_thread_count"]=response["resolved_thread_count"].clone();}
+            }
             core.phase(&op, "validating");
             if output.join("result.json").is_file() {
                 let document = security::json(&output.join("result.json"), RESULT_LIMIT)?;
                 if document["validation"]["status"] != "valid" {
                     return Err(error("INVALID_RESULT", "Native result is not validated."));
                 }
-                security::copy(
-                    &object.report,
-                    &output.join("object.report.json"),
-                    REPORT_LIMIT,
-                )?;
-                core.copy_report_dependencies(&object.report, &output)?;
+                let result_report=output.join("object.report.json");
+                write_json(&result_report,&document["assets"]["object"])?;
+                core.copy_report_dependencies(&result_report, &output)?;
                 write_json(
                     &output.join("settings.json"),
                     &document["search"]["resolved_settings"],
@@ -595,6 +806,9 @@ impl Core {
                     id: object.id.clone(),
                     report: output.join("object.report.json"),
                     preview: preview.clone(),
+                    native_token: object.native_token.clone(),
+                    native_epoch: object.native_epoch.clone(),
+                    cpu_runtime: object.cpu_runtime.clone(),
                 };
                 let mut inner = core.inner.lock().unwrap();
                 inner.result = Some(ResultFiles {
@@ -607,6 +821,7 @@ impl Core {
                 );
                 inner.state.operation.as_mut().unwrap().result_id = Some(result_id);
                 inner.state.revision += 1;
+                drop(inner);core.prune_previews();
             }
             solve_outcome.map(|_| ())
         });
@@ -691,6 +906,18 @@ impl Core {
                 "Wait for the active operation before starting a new project.",
             ));
         }
+        if inner.transitioning {
+            return Err(error("JOB_BUSY", "Project transition is active."));
+        }
+        inner.transitioning = true;
+        let object = inner.object.clone();
+        drop(inner);
+        let outcome = object.map_or(Ok(()), |old| {
+            self.release_native(old.native_token, old.native_epoch.as_deref())
+        });
+        let mut inner = self.inner.lock().unwrap();
+        inner.transitioning = false;
+        outcome?;
         inner.object = None;
         inner.result = None;
         inner.previews.clear();
@@ -698,10 +925,32 @@ impl Core {
         inner.state.object = None;
         inner.state.result = None;
         inner.state.draft_settings = None;
+        inner.state.cpu_runtime = None;
         inner.state.last_error = None;
         inner.state.operation = None;
         inner.state.revision += 1;
         Ok(inner.state.clone())
+    }
+
+    fn prune_previews(&self) {
+        let mut inner = self.inner.lock().unwrap();
+        let ids = [
+            inner
+                .object
+                .as_ref()
+                .and_then(|object| object.preview.as_ref())
+                .and_then(|preview| preview["preview_id"].as_str())
+                .map(str::to_owned),
+            inner
+                .state
+                .result
+                .as_ref()
+                .and_then(|result| result["preview"]["preview_id"].as_str())
+                .map(str::to_owned),
+        ];
+        inner
+            .previews
+            .retain(|key, _| ids.iter().any(|id| id.as_ref() == Some(key)));
     }
 
     fn copy_report_dependencies(&self, report_path: &Path, target: &Path) -> Outcome<()> {
@@ -896,8 +1145,9 @@ impl Core {
             let draft = manifest["draft_settings"].clone(); validate_settings(&draft)?;
             let report_path = extracted.join("object.report.json"); let report = security::json(&report_path, REPORT_LIMIT)?;
             let object_id = id("object");
-            let mut object = ObjectFiles { id: object_id.clone(), report: report_path, preview: None };
-            let (_, preview) = core.prepare(&object, &draft, &root)?; object.preview = preview.clone();
+            let mut object = ObjectFiles { id: object_id.clone(), report: report_path, preview: None, native_token: None, native_epoch: None, cpu_runtime: None };
+            let (_, preview) = core.prepare(&mut object, &draft, &root)?; object.preview = preview.clone();
+            let mut prepared_guard=PreparedRollback {core:core.clone(),token:object.native_token.clone(),epoch:object.native_epoch.clone(),preview_id:object.preview.as_ref().and_then(|value|value["preview_id"].as_str().map(str::to_owned)),committed:false};
             let mut result_files = None; let mut result_snapshot = None;
             if !manifest["best_result"].is_null() {
                 core.phase(&op, "validating");
@@ -910,18 +1160,23 @@ impl Core {
                 let mut args = arguments(&["desktop-restore"]); pair(&mut args, "--object-report", &object.report);
                 pair(&mut args, "--result", &extracted.join("result.json")); pair(&mut args, "--output", &output);
                 core.run(&args, &root)?; let restored = security::json(&output.join("result.json"), RESULT_LIMIT)?;
-                security::copy(&object.report, &output.join("object.report.json"), REPORT_LIMIT)?;
-                core.copy_report_dependencies(&object.report, &output)?;
+                let result_report=output.join("object.report.json");
+                write_json(&result_report,&restored["assets"]["object"])?;
+                core.copy_report_dependencies(&result_report, &output)?;
                 write_json(&output.join("settings.json"), &restored["search"]["resolved_settings"])?;
                 let result_id = id("result");
                 result_files = Some(ResultFiles { id: result_id.clone(), root: output, object: object.clone() });
                 result_snapshot = Some(json!({"id":result_id,"document":restored,"preview":preview,"origin":"project"}));
             }
-            let mut inner = core.inner.lock().unwrap(); inner.object = Some(object.clone()); inner.result = result_files;
+            let old_object=core.inner.lock().unwrap().object.clone();
+            if let Some(old)=old_object {core.release_native(old.native_token,old.native_epoch.as_deref())?;}
+            let mut inner = core.inner.lock().unwrap(); inner.state.cpu_runtime=object.cpu_runtime.clone(); inner.object = Some(object.clone()); inner.result = result_files;
+            prepared_guard.committed=true;
             inner.state.object = Some(json!({"id":object_id,"display_name":name,"report":report,"preview":object.preview}));
             inner.state.result = result_snapshot; inner.state.draft_settings = Some(draft);
             let result_id = inner.result.as_ref().map(|r| r.id.clone());
-            inner.state.operation.as_mut().unwrap().result_id = result_id; inner.state.revision += 1; Ok(())
+            inner.state.operation.as_mut().unwrap().result_id = result_id; inner.state.revision += 1;
+            drop(inner);core.prune_previews();Ok(())
         });
         Ok(receipt)
     }
@@ -1048,6 +1303,105 @@ mod tests {
         json!({"desktop_version":1,"box_dimensions_mm":[40,40,40],"clearance_mm":{"pair":0,"wall":0},
             "orientation":{"mode":"fixed","quaternion_xyzw":[0,0,0,1]},"pitch_mm":10,"budget_seconds":1,"seed":"42"})
     }
+    fn complete(core: &Core) -> State {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            let state = core.state();
+            if state
+                .operation
+                .as_ref()
+                .is_some_and(|operation| operation.finished_at.is_some())
+            {
+                return state;
+            }
+            assert!(
+                std::time::Instant::now() < until,
+                "operation failed to finish: {state:?}"
+            );
+            thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+    fn import_fixture(core: &Core) {
+        let source = PathBuf::from(
+            std::env::var_os("SPECTRAPACK_TEST_STL").expect("real analytic fixture required"),
+        );
+        core.import_path(
+            &source,
+            ImportRequest {
+                units: "mm".into(),
+                scale_mm: None,
+            },
+        )
+        .unwrap();
+        let state = complete(core);
+        assert!(state.last_error.is_none(), "{state:?}");
+    }
+    #[test]
+    fn child_death_allows_new_and_verified_reimport_without_releasing_foreign_epoch() {
+        let (_root, core) = fixture();
+        import_fixture(&core);
+        // T011-A5 / SOL-06: characterize recovery with a complete nonempty result.
+        core.start(settings()).unwrap();
+        let previous = complete(&core);
+        assert!(previous.last_error.is_none(), "{previous:?}");
+        let document = &previous.result.as_ref().unwrap()["document"];
+        assert_eq!(document["validation"]["status"], "valid");
+        let count = document["count"].as_u64().unwrap();
+        assert!(count > 0);
+        assert_eq!(
+            document["placements"].as_array().unwrap().len() as u64,
+            count
+        );
+        let preview_id = previous.result.as_ref().unwrap()["preview"]["preview_id"]
+            .as_str()
+            .unwrap();
+        let preview_bytes = core.read_preview(preview_id).unwrap();
+        core.native
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .kill_for_test();
+        core.start(settings()).unwrap();
+        let failed = complete(&core);
+        assert_eq!(failed.last_error.as_ref().unwrap().code, "ENGINE_SESSION_LOST");
+        assert_eq!(failed.object, previous.object);
+        assert_eq!(failed.result, previous.result);
+        assert_eq!(core.read_preview(preview_id).unwrap(), preview_bytes);
+        eprintln!("native child death: prior_valid_count={count}, result_and_preview_retained=true");
+        core.new_project().unwrap();
+        assert!(core.state().object.is_none());
+        assert!(core.state().result.is_none());
+        assert!(core.read_preview(preview_id).is_err());
+        import_fixture(&core);
+        let old_epoch = core
+            .inner
+            .lock()
+            .unwrap()
+            .object
+            .as_ref()
+            .unwrap()
+            .native_epoch
+            .clone();
+        core.native
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .kill_for_test();
+        import_fixture(&core);
+        assert_ne!(
+            core.inner
+                .lock()
+                .unwrap()
+                .object
+                .as_ref()
+                .unwrap()
+                .native_epoch,
+            old_epoch
+        );
+        assert_eq!(core.inner.lock().unwrap().previews.len(), 1);
+    }
     #[test]
     fn failed_stop_marker_does_not_publish_accepted_cancellation() {
         let (_root, core) = fixture();
@@ -1071,6 +1425,9 @@ mod tests {
                 id: "old-object".into(),
                 report: root.path().join("report.json"),
                 preview: None,
+                native_token: None,
+                native_epoch: None,
+                cpu_runtime: None,
             };
             {
                 let mut inner = core.inner.lock().unwrap();

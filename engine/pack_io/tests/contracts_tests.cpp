@@ -17,8 +17,64 @@
 
 #include "result_export_test_seam.hpp"
 
+TEST_CASE("T011 auxiliary diagnostics retain bounded UTF-8 and cannot suppress rejection", "[contracts][T-011]")
+{
+    namespace io = spectrapack::io;
+    io::ContractValidator validator;
+    io::Json invalid = {
+        { "runtime_version", 1                  },
+        { "request_id",      "diagnostic-bound" },
+        { "method",          "shutdown"         },
+        { "params",          io::Json::object() }
+    };
+    for (int i = 0; i < 20; ++i) {
+        invalid["unknown-\xf0\x9f\x99\x82-" + std::to_string(i)] = nullptr;
+    }
+    const auto parsed = validator.parse(io::ContractKind::desktop_runtime, invalid.dump(), { 2, 10 });
+    REQUIRE(std::holds_alternative<io::ContractFailure>(parsed));
+    const auto& failure = std::get<io::ContractFailure>(parsed);
+    REQUIRE(failure.issues.size() <= 2);
+    for (const auto& issue : failure.issues) {
+        CHECK(issue.path.size() <= 10);
+        CHECK(issue.message.size() <= 10);
+        // Dump performs strict UTF-8 validation and detects a split code point.
+        CHECK_NOTHROW(io::Json({
+                                   { "path",    issue.path    },
+                                   { "message", issue.message }
+        })
+                          .dump());
+    }
+    const auto zero = validator.validate(io::ContractKind::desktop_runtime, invalid, { 0, 0 });
+    REQUIRE(std::holds_alternative<io::ContractFailure>(zero));
+    REQUIRE_FALSE(std::get<io::ContractFailure>(zero).issues.empty());
+    CHECK(std::get<io::ContractFailure>(zero).issues.front().path.empty());
+    CHECK(std::get<io::ContractFailure>(zero).issues.front().message.empty());
+}
+
 #ifdef _WIN32
 #include <windows.h>
+#ifdef _DEBUG
+#include <crtdbg.h>
+#endif
+#endif
+
+#if defined(_WIN32) && defined(_DEBUG)
+TEST_CASE("T011 tracks two compiled contract catalog owners inside adapter headroom", "[contracts][T-011]")
+{
+    _CrtMemState before {}, after {};
+    _CrtMemCheckpoint(&before);
+    std::array<std::unique_ptr<spectrapack::io::ContractValidator>, 2> validators;
+    for (auto& validator : validators) {
+        validator = std::make_unique<spectrapack::io::ContractValidator>();
+    }
+    _CrtMemCheckpoint(&after);
+    const auto baseline = before.lSizes[_NORMAL_BLOCK] + before.lSizes[_CLIENT_BLOCK];
+    const auto retained = after.lSizes[_NORMAL_BLOCK] + after.lSizes[_CLIENT_BLOCK];
+    REQUIRE(retained >= baseline);
+    const auto tracked = retained - baseline;
+    INFO("two compiled catalog/validator owners, Debug CRT retained payload bytes=" << tracked);
+    CHECK(tracked <= 7ULL << 20);
+}
 #endif
 
 namespace {
@@ -1504,6 +1560,61 @@ TEST_CASE("shared schema corpus distinguishes structural and semantic contract v
       CHECK(has_stage(*failure, ValidationStage::schema));
     }
   }
+}
+
+TEST_CASE("T011 initial contract kind preserves cross-kind referenced-schema validation", "[contracts][T-011]")
+{
+    ContractValidator eager;
+    ContractValidator settings_first(ContractKind::settings);
+    ContractValidator results_first(ContractKind::results);
+    const spectrapack::io::ContractDiagnosticLimits limits { 2, 40 };
+    const auto compare = [&](ContractKind kind, const Json& value, bool valid) {
+        const auto expected = eager.validate(kind, value, limits);
+        CHECK(std::holds_alternative<spectrapack::io::ValidatedDocument>(expected) == valid);
+        for (auto* hinted : { &settings_first, &results_first }) {
+            for (const bool parse : { false, true }) {
+                const auto actual =
+                    parse ? hinted->parse(kind, value.dump(), limits) : hinted->validate(kind, value, limits);
+                REQUIRE(actual.index() == expected.index());
+                if (const auto* document = std::get_if<spectrapack::io::ValidatedDocument>(&actual)) {
+                    CHECK(document->kind() == kind);
+                    CHECK(document->value() == value);
+                }
+                else {
+                    const auto& actual_failure = std::get<ContractFailure>(actual);
+                    const auto& expected_failure = std::get<ContractFailure>(expected);
+                    CHECK(actual_failure.kind == expected_failure.kind);
+                    REQUIRE(actual_failure.issues.size() == expected_failure.issues.size());
+                    for (std::size_t i = 0; i < actual_failure.issues.size(); ++i) {
+                        CHECK(actual_failure.issues[i].stage == expected_failure.issues[i].stage);
+                        CHECK(actual_failure.issues[i].path == expected_failure.issues[i].path);
+                        CHECK(actual_failure.issues[i].code == expected_failure.issues[i].code);
+                        CHECK(actual_failure.issues[i].message == expected_failure.issues[i].message);
+                    }
+                }
+            }
+        }
+    };
+    auto settings = shared_fixture_value("settings-requested-positive");
+    settings["orientation"]["quaternion_xyzw"] = Json::array({ 0, 0, 1 });
+    compare(ContractKind::settings, settings, false);
+    auto result = shared_fixture_value("results-one-positive");
+    result["placements"][0]["translation_mm"][1] = "invalid-coordinate";
+    compare(ContractKind::results, result, false);
+    compare(ContractKind::desktop_runtime,
+            {
+                { "runtime_version", 1              },
+                { "request_id",      "cross-kind"   },
+                { "method",          "shutdown"     },
+                { "params",          Json::object() }
+    },
+            true);
+    std::ifstream input(SPECTRAPACK_SHARED_CONTRACT_FIXTURES);
+    for (const auto& fixture : Json::parse(input)) {
+        INFO(fixture.at("name").get<std::string>());
+        compare(fixture_kind(fixture.at("kind").get<std::string>()), fixture.at("value"),
+                fixture.at("schema_valid").get<bool>() && fixture.at("semantic_valid").get<bool>());
+    }
 }
 
 TEST_CASE("AT-14 rejects result records whose cross-field provenance or transforms disagree", "[contracts][results]") {

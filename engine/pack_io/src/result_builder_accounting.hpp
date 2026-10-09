@@ -10,6 +10,7 @@ struct ResultBuildAttempt {
     bool validation_attempted {};
 };
 
-[[nodiscard]] ResultBuildAttempt build_result_with_report(const ResultRequest& request);
+[[nodiscard]] ResultBuildAttempt build_result_with_report(const ResultRequest& request,
+                                                          const runtime::OperationControl& control = {});
 
 }  // namespace spectrapack::io::detail

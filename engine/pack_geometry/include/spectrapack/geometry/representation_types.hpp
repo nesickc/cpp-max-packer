@@ -3,7 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <memory>
-#include <string>
+#include <string_view>
 #include <variant>
 
 namespace spectrapack::geometry {
@@ -33,11 +33,16 @@ struct RepresentationAttemptStats {
     std::uint64_t working_bytes_peak {};
     std::uint64_t additional_bytes_peak {};
     bool input_accounting_complete {};
+    // Successful pre-allocation planned-live bound, excluding caller reserve.
+    // Zero means no complete admitted bound; rejected requests cannot raise it.
+    std::uint64_t admitted_bytes_upper_bound {};
 };
 
 struct RepresentationFailure {
-    std::string code;
-    std::string message;
+    // Computational descriptors always refer to static storage (ADR 0015).
+    std::string_view code;
+    std::string_view message;
+    std::string_view method {};
 };
 
 template <class T>

@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "baseline_internal.hpp"
+#include "orientation_cube.hpp"
 #include "spectral_pipeline.hpp"
 #include "storage_accounting.hpp"
 
@@ -20,6 +21,15 @@ namespace spectrapack::solver {
 namespace {
 
 enum class Boundary { none, stopped, deadline };
+
+// Public fallback, coordinator source and non-elided destination can coexist.
+constexpr std::uint64_t kSpectralMetadataBytes = 3 * sizeof(SpectralOutcome) + sizeof(RunControl) +
+                                                 sizeof(std::optional<RunFailureDetails>) +
+                                                 sizeof(std::vector<geometry::Quaternion>) + sizeof(CatalogOutcome)
+#if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
+                                                 + 2 * sizeof(std::_Container_proxy)
+#endif
+    ;
 
 bool add(std::uint64_t& total, std::uint64_t value) noexcept
 {
@@ -30,9 +40,35 @@ bool add(std::uint64_t& total, std::uint64_t value) noexcept
     return true;
 }
 
+bool admit_metadata(SpectralOutcome& out, const SpectralLimits& limits) noexcept
+{
+    std::uint64_t bytes = limits.reserved_bytes;
+    const auto cap = std::min(limits.max_working_bytes, limits.spectral.max_working_bytes);
+    if (!add(bytes, limits.spectral.reserved_bytes) || !add(bytes, kSpectralMetadataBytes) || bytes > cap) {
+        out.run.termination_reason = TerminationReason::resource_limit;
+        out.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
+        out.run.failure_details = RunFailureDetails {
+            TerminationReason::resource_limit,
+            "preflight",
+            "SPECTRAL_RESOURCE_LIMIT",
+            ResourceLimitDetails { "fixed_metadata", bytes, cap },
+            {}
+        };
+        return false;
+    }
+    out.run.stats.tracked_working_bytes_peak = bytes;
+    return true;
+}
+
 std::uint64_t remaining(std::uint64_t cap, std::uint64_t used) noexcept
 {
     return used >= cap ? std::uint64_t {} : cap - used;
+}
+
+bool validation_resource_code(std::string_view code) noexcept
+{
+    return code.find("LIMIT") != std::string_view::npos || code.find("CAPACITY") != std::string_view::npos ||
+           code.find("ALLOCATION") != std::string_view::npos;
 }
 
 std::optional<std::uint64_t> pose_bytes(const std::vector<geometry::CopyPose>& copies) noexcept
@@ -191,7 +227,7 @@ std::optional<std::uint64_t> vector_bytes(const std::vector<T>& values) noexcept
 }
 
 std::optional<std::uint64_t> page_state_bytes(
-    const std::vector<std::vector<detail::SpectralPipelineResult::RankedCandidate>>& pages,
+    const std::vector<std::unique_ptr<detail::SpectralPipelineResult::RankedPage>>& pages,
     const std::vector<std::size_t>& indices,
     const std::vector<std::optional<detail::SpectralPipelineResult::RankedCandidate>>* cursors = nullptr,
     const std::vector<bool>* exhausted = nullptr) noexcept
@@ -202,8 +238,15 @@ std::optional<std::uint64_t> page_state_bytes(
         return {};
     }
     for (const auto& page : pages) {
-        const auto current = vector_bytes(page);
-        if (!current || !add(*bytes, *current)) {
+        if (!page) {
+            continue;
+        }
+        const auto current = vector_bytes(*page);
+        if (!current || !add(*bytes, sizeof(*page)) ||
+#if defined(_MSC_VER) && defined(_DEBUG)
+            !add(*bytes, sizeof(std::_Container_proxy)) ||
+#endif
+            !add(*bytes, *current)) {
             return {};
         }
     }
@@ -233,10 +276,11 @@ std::optional<std::uint64_t> axis_bytes(const std::array<std::vector<double>, 3>
 
 Boundary boundary(const RunControl& control) noexcept
 {
-    if (control.stop.stop_requested()) {
+    const auto cause = control.poll();
+    if (cause == runtime::StopCause::user_stopped) {
         return Boundary::stopped;
     }
-    if (control.deadline && std::chrono::steady_clock::now() >= *control.deadline) {
+    if (cause == runtime::StopCause::deadline) {
         return Boundary::deadline;
     }
     return Boundary::none;
@@ -295,21 +339,6 @@ std::optional<geometry::Bounds> container_bounds(const geometry::ValidationConte
         return (*solid)->bounds_mm();
     }
     return {};
-}
-
-bool same_catalog(const OrientationCatalog& first, const OrientationCatalog& second) noexcept
-{
-    if (first.version != 1 || second.version != 1 || first.quaternions.size() != second.quaternions.size()) {
-        return false;
-    }
-    for (std::size_t row = 0; row != first.quaternions.size(); ++row) {
-        for (std::size_t col = 0; col != 4; ++col) {
-            if (!same_bits(first.quaternions[row][col], second.quaternions[row][col])) {
-                return false;
-            }
-        }
-    }
-    return true;
 }
 
 bool canonical_representative(const geometry::Quaternion& value) noexcept
@@ -379,21 +408,15 @@ CatalogValidity resolved_catalog_validity(const geometry::ValidationContext& con
     if (policy.mode != geometry::OrientationMode::cube || catalog.quaternions.size() != 24 || maximum < 24) {
         return CatalogValidity::invalid;
     }
-    try {
-        const auto expected = make_orientation_catalog(policy, 24);
-        if (const auto* failure = std::get_if<CatalogFailure>(&expected)) {
-            return failure->code == "ORIENTATION_ALLOCATION_FAILURE" ? CatalogValidity::allocation_failure
-                                                                     : CatalogValidity::invalid;
+    const auto expected = detail::cube_seed_array();
+    for (std::size_t row = 0; row != expected.size(); ++row) {
+        for (std::size_t col = 0; col != 4; ++col) {
+            if (!same_bits(catalog.quaternions[row][col], expected[row][col])) {
+                return CatalogValidity::invalid;
+            }
         }
-        return same_catalog(catalog, std::get<OrientationCatalog>(expected)) ? CatalogValidity::valid
-                                                                             : CatalogValidity::invalid;
     }
-    catch (const std::bad_alloc&) {
-        return CatalogValidity::allocation_failure;
-    }
-    catch (...) {
-        return CatalogValidity::invalid;
-    }
+    return CatalogValidity::valid;
 }
 
 SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationContext> context,
@@ -431,18 +454,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
     }
 
     std::optional<RunFailureDetails> admission_failure;
-    try {
-        const auto& admission_limits = limits;
-        if (auto failure = detail::spectral_admission(context, lattice, admission_limits, initial)) {
-            admission_failure = std::move(failure);
-        }
-    }
-    catch (const std::bad_alloc&) {
-        outcome.run.retained_solution = std::move(initial);
-        outcome.run.termination_reason = TerminationReason::resource_limit;
-        outcome.run.diagnostic_code = "SPECTRAL_ALLOCATION_FAILURE";
-        return outcome;
-    }
+    admission_failure = detail::spectral_admission(context, lattice, limits, initial, &catalog);
     // Baseline is deliberately silent: the central incumbent owns every visible revision.
     // Its phase cap remains independent, while the wrapper cap/reserve applies
     // to every phase that the wrapper retains.
@@ -455,6 +467,12 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         return outcome;
     }
     baseline_limits.reserved_bytes += limits.reserved_bytes;
+    if (!add(baseline_limits.reserved_bytes, kSpectralMetadataBytes)) {
+        outcome.run.retained_solution = std::move(initial);
+        outcome.run.termination_reason = TerminationReason::resource_limit;
+        outcome.run.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
+        return outcome;
+    }
     outcome.run = detail::run_aabb_baseline_with_seeds(context, baseline_limits, control, catalog.quaternions, {},
                                                        std::move(initial));
     outcome.baseline_stats = outcome.run.stats;
@@ -470,15 +488,8 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         return outcome;
     }
 
-    try {
-        if (!admission_failure) {
-            admission_failure = detail::spectral_admission(context, lattice, limits, retained);
-        }
-    }
-    catch (const std::bad_alloc&) {
-        outcome.run.termination_reason = TerminationReason::resource_limit;
-        outcome.run.diagnostic_code = "SPECTRAL_ALLOCATION_FAILURE";
-        return outcome;
+    if (!admission_failure) {
+        admission_failure = detail::spectral_admission(context, lattice, limits, retained, &catalog);
     }
     if (admission_failure) {
         bool retained_work_impossible = false;
@@ -491,21 +502,16 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                                                                         catalog.quaternions.size());
             retained_work_impossible = !floor || *floor > limits.max_representation_kernel_work;
         }
-        try {
-            auto suggestion = lattice;
-            for (int attempt = 0; attempt != 64 && !retained_work_impossible; ++attempt) {
-                suggestion.pitch_mm *= 2;
-                if (!std::isfinite(suggestion.pitch_mm)) {
-                    break;
-                }
-                if (!detail::spectral_admission(context, suggestion, limits, retained)) {
-                    admission_failure->suggested_pitch_mm = suggestion.pitch_mm;
-                    break;
-                }
+        auto suggestion = lattice;
+        for (int attempt = 0; attempt != 64 && !retained_work_impossible; ++attempt) {
+            suggestion.pitch_mm *= 2;
+            if (!std::isfinite(suggestion.pitch_mm)) {
+                break;
             }
-        }
-        catch (const std::bad_alloc&) {
-            admission_failure->suggested_pitch_mm.reset();
+            if (!detail::spectral_admission(context, suggestion, limits, retained, &catalog)) {
+                admission_failure->suggested_pitch_mm = suggestion.pitch_mm;
+                break;
+            }
         }
         outcome.run.termination_reason = admission_failure->reason;
         outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
@@ -526,6 +532,11 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
     std::shared_ptr<const geometry::ValidatedSolution> latest = retained;
     try {
         std::uint64_t wrapper_live = limits.reserved_bytes;
+        if (!add(wrapper_live, kSpectralMetadataBytes)) {
+            outcome.run.termination_reason = TerminationReason::resource_limit;
+            outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
+            return outcome;
+        }
         const auto object = context->object();
         const auto object_resident = object->resident_buffer_bytes();
         if (!object_resident || !add(wrapper_live, limits.spectral.reserved_bytes) ||
@@ -570,9 +581,14 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         outcome.run.stats.tracked_working_bytes_peak =
             std::max(outcome.run.stats.tracked_working_bytes_peak, wrapper_live);
 
+        detail::SpectralWorkspace workspace;
         Incumbent incumbent(context);
         std::uint64_t incumbent_dynamic_bytes {};
         std::uint64_t wrapper_dynamic_bytes {};
+        const auto include_workspace = [&](std::uint64_t& bytes) {
+            const auto resident = workspace.resident_bytes();
+            return resident && add(bytes, *resident);
+        };
         const auto honor_boundary = [&] {
             const auto current = boundary(control);
             if (current == Boundary::none) {
@@ -608,7 +624,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 remaining(limits.spectral.max_geometry_vertex_visits,
                           outcome.run.stats.geometry_vertex_visits - outcome.baseline_stats.geometry_vertex_visits));
             std::uint64_t live = wrapper_live;
-            if (!add(live, incumbent_dynamic_bytes) || !add(live, wrapper_dynamic_bytes)) {
+            if (!include_workspace(live) || !add(live, incumbent_dynamic_bytes) || !add(live, wrapper_dynamic_bytes)) {
                 outcome.run.termination_reason = TerminationReason::resource_limit;
                 outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
                 return false;
@@ -645,10 +661,10 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 outcome.run.retained_solution = latest;
                 std::uint64_t retained_live = wrapper_live;
                 SolutionOwnerLedger retained_owners;
-                if (!add(retained_live, incumbent_dynamic_bytes) || !add(retained_live, wrapper_dynamic_bytes) ||
-                    !retained_owners.include(retained, true) || !retained_owners.include(latest) ||
-                    !add(retained_live, retained_owners.bytes()) || retained_live > limits.max_working_bytes ||
-                    retained_live > limits.spectral.max_working_bytes) {
+                if (!include_workspace(retained_live) || !add(retained_live, incumbent_dynamic_bytes) ||
+                    !add(retained_live, wrapper_dynamic_bytes) || !retained_owners.include(retained, true) ||
+                    !retained_owners.include(latest) || !add(retained_live, retained_owners.bytes()) ||
+                    retained_live > limits.max_working_bytes || retained_live > limits.spectral.max_working_bytes) {
                     outcome.run.termination_reason = TerminationReason::resource_limit;
                     outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
                     return false;
@@ -717,8 +733,8 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 nested.max_aabb_pair_tests,
                 remaining(limits.spectral.max_validation_aabb_pair_tests, spectral_validation_aabb_pair_tests));
             std::uint64_t outside = wrapper_live;
-            if (!add(outside, incumbent_dynamic_bytes) || !add(outside, wrapper_dynamic_bytes) ||
-                !add(outside, additional_live)) {
+            if (!include_workspace(outside) || !add(outside, incumbent_dynamic_bytes) ||
+                !add(outside, wrapper_dynamic_bytes) || !add(outside, additional_live)) {
                 nested.max_working_bytes = 0;
             }
             else {
@@ -782,6 +798,11 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             }
             outcome.run.stats.tracked_working_bytes_peak =
                 std::max(outcome.run.stats.tracked_working_bytes_peak, pipeline.working_bytes_peak);
+            if (pipeline.field_admission &&
+                (!outcome.field_admission || pipeline.field_admission->working_bytes_upper_bound >
+                                                 outcome.field_admission->working_bytes_upper_bound)) {
+                outcome.field_admission = pipeline.field_admission;
+            }
             return true;
         };
         const auto observe_wrapper_dynamic =
@@ -794,7 +815,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             }
             wrapper_dynamic_bytes = *bytes;
             std::uint64_t live = wrapper_live;
-            if (!add(live, incumbent_dynamic_bytes) || !add(live, wrapper_dynamic_bytes)) {
+            if (!include_workspace(live) || !add(live, incumbent_dynamic_bytes) || !add(live, wrapper_dynamic_bytes)) {
                 outcome.run.termination_reason = TerminationReason::resource_limit;
                 outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
                 return false;
@@ -826,7 +847,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 remaining(limits.spectral.max_geometry_vertex_visits,
                           outcome.run.stats.geometry_vertex_visits - outcome.baseline_stats.geometry_vertex_visits));
             std::uint64_t live = wrapper_live;
-            if (!add(live, incumbent_dynamic_bytes) || !add(live, wrapper_dynamic_bytes)) {
+            if (!include_workspace(live) || !add(live, incumbent_dynamic_bytes) || !add(live, wrapper_dynamic_bytes)) {
                 outcome.run.termination_reason = TerminationReason::resource_limit;
                 outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
                 return {};
@@ -893,8 +914,8 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             const auto& source_copies = working ? working->copies() : empty_copies;
             const auto proposed_bytes = proposed_pose_bytes(source_copies, pose);
             std::uint64_t construction_live = wrapper_live;
-            if (!proposed_bytes || !add(construction_live, incumbent_dynamic_bytes) ||
-                !add(construction_live, wrapper_dynamic_bytes) ||
+            if (!proposed_bytes || !include_workspace(construction_live) ||
+                !add(construction_live, incumbent_dynamic_bytes) || !add(construction_live, wrapper_dynamic_bytes) ||
                 !add(construction_live, sizeof(geometry::Candidate) + 2 * detail::kSharedOwnerControlBytes) ||
                 !add(construction_live, *proposed_bytes) || !add(construction_live, *proposed_bytes)) {
                 outcome.run.termination_reason = TerminationReason::resource_limit;
@@ -943,7 +964,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
                 return false;
             }
-            const auto checked = geometry::validate(context, candidate, validation_limits(*validation_extra));
+            const auto checked = geometry::validate(context, candidate, validation_limits(*validation_extra), control);
             const bool validation_limit_exceeded =
                 checked.report.kernel_work >
                     remaining(limits.spectral.max_validation_kernel_work, spectral_validation_kernel_work) ||
@@ -953,20 +974,30 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 !add(spectral_validation_aabb_pair_tests, checked.report.aabb_pair_tests) ||
                 !add(outcome.run.stats.validation_kernel_work, checked.report.kernel_work) ||
                 !add(outcome.run.stats.validation_aabb_pair_tests, checked.report.aabb_pair_tests)) {
+                if (!honor_boundary()) {
+                    return false;
+                }
                 outcome.run.termination_reason = TerminationReason::resource_limit;
                 outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
                 return false;
             }
             std::uint64_t validation_peak = wrapper_live;
-            if (!add(validation_peak, incumbent_dynamic_bytes) || !add(validation_peak, wrapper_dynamic_bytes) ||
-                !add(validation_peak, *validation_extra) || !add(validation_peak, checked.report.working_bytes_peak) ||
+            if (!include_workspace(validation_peak) || !add(validation_peak, incumbent_dynamic_bytes) ||
+                !add(validation_peak, wrapper_dynamic_bytes) || !add(validation_peak, *validation_extra) ||
+                !add(validation_peak, checked.report.working_bytes_peak) ||
                 validation_peak > limits.max_working_bytes || validation_peak > limits.spectral.max_working_bytes) {
+                if (!honor_boundary()) {
+                    return false;
+                }
                 outcome.run.termination_reason = TerminationReason::resource_limit;
                 outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
                 return false;
             }
             outcome.run.stats.tracked_working_bytes_peak =
                 std::max(outcome.run.stats.tracked_working_bytes_peak, validation_peak);
+            if (!honor_boundary()) {
+                return false;
+            }
             if (validation_limit_exceeded) {
                 outcome.run.termination_reason = TerminationReason::resource_limit;
                 outcome.run.diagnostic_code = "PHYSICAL_VALIDATION_RESOURCE";
@@ -975,9 +1006,16 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             if (!checked.validated_solution) {
                 if (checked.report.validity == geometry::Validity::indeterminate) {
                     ++outcome.run.stats.indeterminate_candidates;
-                    outcome.run.termination_reason = TerminationReason::resource_limit;
-                    outcome.run.diagnostic_code = "PHYSICAL_VALIDATION_RESOURCE";
-                    return false;
+                    if (validation_resource_code(checked.report.code)) {
+                        outcome.run.termination_reason = TerminationReason::resource_limit;
+                        outcome.run.diagnostic_code = "PHYSICAL_VALIDATION_RESOURCE";
+                        return false;
+                    }
+                    if (checked.report.code == "KERNEL_FLOATING_ENVIRONMENT") {
+                        outcome.run.termination_reason = TerminationReason::error;
+                        outcome.run.diagnostic_code = "PHYSICAL_FLOATING_ENVIRONMENT";
+                        return false;
+                    }
                 }
                 else {
                     ++outcome.run.stats.invalid_candidates;
@@ -1001,9 +1039,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 return false;
             }
             std::uint64_t retained_peak = wrapper_live;
-            if (!add(retained_peak, incumbent_dynamic_bytes) || !add(retained_peak, wrapper_dynamic_bytes) ||
-                !add(retained_peak, post_validation_live) || retained_peak > limits.max_working_bytes ||
-                retained_peak > limits.spectral.max_working_bytes) {
+            if (!include_workspace(retained_peak) || !add(retained_peak, incumbent_dynamic_bytes) ||
+                !add(retained_peak, wrapper_dynamic_bytes) || !add(retained_peak, post_validation_live) ||
+                retained_peak > limits.max_working_bytes || retained_peak > limits.spectral.max_working_bytes) {
                 outcome.run.termination_reason = TerminationReason::resource_limit;
                 outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
                 return false;
@@ -1071,7 +1109,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 return interrupt_trial("SPECTRAL_COPY_LIMIT");
             }
             for (;;) {
-                std::vector<std::vector<detail::SpectralPipelineResult::RankedCandidate>> ordinary_pages(
+                std::vector<std::unique_ptr<detail::SpectralPipelineResult::RankedPage>> ordinary_pages(
                     catalog.quaternions.size());
                 std::vector<std::size_t> ordinary_indices(catalog.quaternions.size());
                 std::vector<std::optional<detail::SpectralPipelineResult::RankedCandidate>> cursors(
@@ -1088,7 +1126,8 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                     }
                     for (std::size_t orientation = 0; orientation != catalog.quaternions.size(); ++orientation) {
                         if (ordinary_exhausted[orientation] ||
-                            ordinary_indices[orientation] != ordinary_pages[orientation].size()) {
+                            ordinary_indices[orientation] !=
+                                (ordinary_pages[orientation] ? ordinary_pages[orientation]->size() : 0)) {
                             continue;
                         }
                         const detail::CandidatePageQuery query { orientation, cursors[orientation],
@@ -1096,8 +1135,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                         if (!honor_boundary()) {
                             return TrialStatus::failed;
                         }
-                        auto pipeline = detail::build_spectral_pipeline(context, lattice, phase_limits(working),
-                                                                        working, catalog, query);
+                        auto pipeline =
+                            detail::build_spectral_pipeline(workspace, context, lattice, phase_limits(working), working,
+                                                            catalog, query, nullptr, control);
                         if (!add_pipeline_stats(pipeline)) {
                             return TrialStatus::failed;
                         }
@@ -1119,25 +1159,26 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                                 working)) {
                             return TrialStatus::failed;
                         }
-                        if (ordinary_pages[orientation].empty()) {
+                        if (!ordinary_pages[orientation] || ordinary_pages[orientation]->empty()) {
                             ordinary_exhausted[orientation] = true;
                         }
                     }
                     std::optional<std::size_t> chosen_orientation;
                     for (std::size_t orientation = 0; orientation != ordinary_pages.size(); ++orientation) {
-                        if (ordinary_indices[orientation] == ordinary_pages[orientation].size()) {
+                        if (ordinary_indices[orientation] ==
+                            (ordinary_pages[orientation] ? ordinary_pages[orientation]->size() : 0)) {
                             continue;
                         }
                         if (!chosen_orientation ||
-                            rank_less(ordinary_pages[orientation][ordinary_indices[orientation]],
-                                      ordinary_pages[*chosen_orientation][ordinary_indices[*chosen_orientation]])) {
+                            rank_less((*ordinary_pages[orientation])[ordinary_indices[orientation]],
+                                      (*ordinary_pages[*chosen_orientation])[ordinary_indices[*chosen_orientation]])) {
                             chosen_orientation = orientation;
                         }
                     }
                     if (!chosen_orientation) {
                         break;
                     }
-                    const auto chosen = ordinary_pages[*chosen_orientation][ordinary_indices[*chosen_orientation]++];
+                    const auto chosen = (*ordinary_pages[*chosen_orientation])[ordinary_indices[*chosen_orientation]++];
                     cursors[*chosen_orientation] = chosen;
                     if (!chosen.direct_zero_overlap) {
                         continue;
@@ -1281,7 +1322,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                     continue;
                 }
 
-                std::vector<std::vector<detail::SpectralPipelineResult::RankedCandidate>> refinement_pages(
+                std::vector<std::unique_ptr<detail::SpectralPipelineResult::RankedPage>> refinement_pages(
                     catalog.quaternions.size());
                 std::vector<std::size_t> refinement_indices(catalog.quaternions.size());
                 const auto ordinary_state =
@@ -1302,8 +1343,8 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                     if (!honor_boundary()) {
                         return TrialStatus::failed;
                     }
-                    auto pipeline = detail::build_spectral_pipeline(context, lattice, phase_limits(working), working,
-                                                                    catalog, query);
+                    auto pipeline = detail::build_spectral_pipeline(workspace, context, lattice, phase_limits(working),
+                                                                    working, catalog, query, nullptr, control);
                     if (!add_pipeline_stats(pipeline)) {
                         return TrialStatus::failed;
                     }
@@ -1325,13 +1366,14 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 for (;;) {
                     std::optional<std::size_t> chosen_orientation;
                     for (std::size_t orientation = 0; orientation != refinement_pages.size(); ++orientation) {
-                        if (refinement_indices[orientation] == refinement_pages[orientation].size()) {
+                        if (refinement_indices[orientation] ==
+                            (refinement_pages[orientation] ? refinement_pages[orientation]->size() : 0)) {
                             continue;
                         }
                         if (!chosen_orientation ||
                             refinement_less(
-                                refinement_pages[orientation][refinement_indices[orientation]],
-                                refinement_pages[*chosen_orientation][refinement_indices[*chosen_orientation]])) {
+                                (*refinement_pages[orientation])[refinement_indices[orientation]],
+                                (*refinement_pages[*chosen_orientation])[refinement_indices[*chosen_orientation]])) {
                             chosen_orientation = orientation;
                         }
                     }
@@ -1347,7 +1389,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                         return interrupt_trial("SPECTRAL_REFINEMENT_LIMIT");
                     }
                     const auto& chosen =
-                        refinement_pages[*chosen_orientation][refinement_indices[*chosen_orientation]++];
+                        (*refinement_pages[*chosen_orientation])[refinement_indices[*chosen_orientation]++];
                     const geometry::CopyPose pose {
                         make_id(working),
                         { lattice.origin_mm[0] + lattice.pitch_mm * chosen.translation[0],
@@ -1413,7 +1455,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                     outcome.run.retained_solution = outcome.run.best ? outcome.run.best->solution : latest;
                     return outcome;
                 }
-                auto empty_checked = geometry::validate(context, candidate, validation_limits(*empty_extra));
+                auto empty_checked = geometry::validate(context, candidate, validation_limits(*empty_extra), control);
                 const bool empty_validation_limit_exceeded =
                     empty_checked.report.kernel_work >
                         remaining(limits.spectral.max_validation_kernel_work, spectral_validation_kernel_work) ||
@@ -1430,7 +1472,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                     return outcome;
                 }
                 std::uint64_t empty_validation_peak = wrapper_live;
-                if (!add(empty_validation_peak, incumbent_dynamic_bytes) ||
+                if (!include_workspace(empty_validation_peak) || !add(empty_validation_peak, incumbent_dynamic_bytes) ||
                     !add(empty_validation_peak, wrapper_dynamic_bytes) || !add(empty_validation_peak, *empty_extra) ||
                     !add(empty_validation_peak, empty_checked.report.working_bytes_peak) ||
                     empty_validation_peak > limits.max_working_bytes ||
@@ -1473,8 +1515,8 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                     return outcome;
                 }
                 std::uint64_t empty_retained_peak = wrapper_live;
-                if (!add(empty_retained_peak, incumbent_dynamic_bytes) || !add(empty_retained_peak, retained_bytes) ||
-                    empty_retained_peak > limits.max_working_bytes ||
+                if (!include_workspace(empty_retained_peak) || !add(empty_retained_peak, incumbent_dynamic_bytes) ||
+                    !add(empty_retained_peak, retained_bytes) || empty_retained_peak > limits.max_working_bytes ||
                     empty_retained_peak > limits.spectral.max_working_bytes) {
                     outcome.run.termination_reason = TerminationReason::resource_limit;
                     outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
@@ -1522,6 +1564,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
 
 }  // namespace
 
+std::uint32_t cpu_supported_thread_count() noexcept { return 1; }
+std::string_view cpu_scheduling_policy() noexcept { return "serial-v1"; }
+
 SpectralOutcome run_cpu_spectral(std::shared_ptr<const geometry::ValidationContext> context,
                                  geometry::GridLattice lattice, const SpectralLimits& limits, const RunControl& control,
                                  SnapshotSink sink, std::shared_ptr<const geometry::ValidatedSolution> initial)
@@ -1530,27 +1575,70 @@ SpectralOutcome run_cpu_spectral(std::shared_ptr<const geometry::ValidationConte
     if (initial && initial->context() == context) {
         allocation_failure.run.retained_solution = initial;
     }
+    if (limits.cpu_thread_count == 0 || limits.cpu_thread_count > cpu_supported_thread_count()) {
+        allocation_failure.run.termination_reason = TerminationReason::error;
+        allocation_failure.run.diagnostic_code = "CPU_THREAD_COUNT_UNSUPPORTED";
+        return allocation_failure;
+    }
     if (!context) {
         allocation_failure.run.termination_reason = TerminationReason::error;
         allocation_failure.run.diagnostic_code = "SPECTRAL_CATALOG_INVALID";
         return allocation_failure;
     }
-    std::optional<CatalogOutcome> made;
-    try {
-        made.emplace(make_orientation_catalog(context->constraints().orientations, limits.spectral.max_orientations));
+    if (!admit_metadata(allocation_failure, limits)) {
+        return allocation_failure;
     }
-    catch (const std::bad_alloc&) {
+    const auto& policy = context->constraints().orientations;
+    const auto raw_count = policy.mode == geometry::OrientationMode::fixed  ? std::uint64_t { 1 }
+                           : policy.mode == geometry::OrientationMode::cube ? std::uint64_t { 24 }
+                                                                            : policy.catalog_xyzw.size();
+    std::uint64_t existing = allocation_failure.run.stats.tracked_working_bytes_peak;
+    const auto cap = std::min(limits.max_working_bytes, limits.spectral.max_working_bytes);
+    const auto context_bytes = context->resident_buffer_bytes();
+    const auto initial_bytes = solution_bytes(allocation_failure.run.retained_solution);
+    const auto object_bytes = context->object()->resident_buffer_bytes();
+    bool known = context_bytes && initial_bytes && object_bytes && add(existing, *context_bytes) &&
+                 add(existing, *initial_bytes) && add(existing, *object_bytes) &&
+                 add(existing, sizeof(geometry::AcceptedSolid) + 3 * detail::kSharedOwnerControlBytes);
+    if (const auto* container = std::get_if<std::shared_ptr<const geometry::AcceptedSolid>>(&context->container());
+        known && container && container->get() != context->object().get()) {
+        const auto bytes = (*container)->resident_buffer_bytes();
+        known = bytes && add(existing, *bytes) &&
+                add(existing, sizeof(geometry::AcceptedSolid) + detail::kSharedOwnerControlBytes);
+    }
+    if (known) {
+        allocation_failure.run.stats.tracked_working_bytes_peak = existing;
+    }
+    auto required = existing;
+    known = known && raw_count <= std::numeric_limits<std::uint64_t>::max() / sizeof(geometry::Quaternion) &&
+            add(required, raw_count * sizeof(geometry::Quaternion));
+    if (!known || required > cap) {
         allocation_failure.run.termination_reason = TerminationReason::resource_limit;
-        allocation_failure.run.diagnostic_code = "SPECTRAL_CATALOG_ALLOCATION";
+        allocation_failure.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
+        allocation_failure.run.failure_details =
+            RunFailureDetails { TerminationReason::resource_limit, "preflight", "SPECTRAL_RESOURCE_LIMIT", {}, {} };
+        if (known) {
+            allocation_failure.run.failure_details->resource =
+                ResourceLimitDetails { "orientation_catalog", required, cap };
+        }
         return allocation_failure;
     }
-    catch (...) {
-        allocation_failure.run.termination_reason = TerminationReason::error;
-        allocation_failure.run.diagnostic_code = "SPECTRAL_CATALOG_INVALID";
+    if (const auto stopped = boundary(control); stopped != Boundary::none) {
+        apply_boundary(allocation_failure.run, stopped);
         return allocation_failure;
     }
-    if (!std::holds_alternative<OrientationCatalog>(*made)) {
-        const auto& failure = std::get<CatalogFailure>(*made);
+    const auto made = make_orientation_catalog(policy, limits.spectral.max_orientations);
+    const auto* catalog = std::get_if<OrientationCatalog>(&made);
+    auto observed = existing;
+    if (!add(observed, catalog ? catalog->quaternions.capacity() * sizeof(geometry::Quaternion)
+                               : std::get<CatalogFailure>(made).raw_capacity_bytes_peak)) {
+        allocation_failure.run.termination_reason = TerminationReason::resource_limit;
+        allocation_failure.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
+        return allocation_failure;
+    }
+    allocation_failure.run.stats.tracked_working_bytes_peak = observed;
+    if (!catalog) {
+        const auto& failure = std::get<CatalogFailure>(made);
         allocation_failure.run.termination_reason = failure.code == "ORIENTATION_ALLOCATION_FAILURE"
                                                         ? TerminationReason::resource_limit
                                                         : TerminationReason::error;
@@ -1559,8 +1647,10 @@ SpectralOutcome run_cpu_spectral(std::shared_ptr<const geometry::ValidationConte
                                                      : "SPECTRAL_CATALOG_INVALID";
         return allocation_failure;
     }
-    return run_with_catalog(std::move(context), lattice, std::get<OrientationCatalog>(*made), limits, control,
-                            std::move(sink), std::move(initial));
+    auto out =
+        run_with_catalog(std::move(context), lattice, *catalog, limits, control, std::move(sink), std::move(initial));
+    out.run.stats.tracked_working_bytes_peak = std::max(out.run.stats.tracked_working_bytes_peak, observed);
+    return out;
 }
 
 SpectralOutcome run_cpu_spectral(std::shared_ptr<const geometry::ValidationContext> context,
@@ -1568,6 +1658,26 @@ SpectralOutcome run_cpu_spectral(std::shared_ptr<const geometry::ValidationConte
                                  const SpectralLimits& limits, const RunControl& control, SnapshotSink sink,
                                  std::shared_ptr<const geometry::ValidatedSolution> initial)
 {
+    if (limits.cpu_thread_count == 0 || limits.cpu_thread_count > cpu_supported_thread_count()) {
+        SpectralOutcome out;
+        if (initial && initial->context() == context) {
+            out.run.retained_solution = std::move(initial);
+        }
+        out.run.termination_reason = TerminationReason::error;
+        out.run.diagnostic_code = "CPU_THREAD_COUNT_UNSUPPORTED";
+        return out;
+    }
+    SpectralOutcome early;
+    if (initial && initial->context() == context) {
+        early.run.retained_solution = initial;
+    }
+    if (!admit_metadata(early, limits)) {
+        return early;
+    }
+    if (const auto stopped = boundary(control); stopped != Boundary::none) {
+        apply_boundary(early.run, stopped);
+        return early;
+    }
     const auto validity = context ? resolved_catalog_validity(*context, catalog, limits.spectral.max_orientations)
                                   : CatalogValidity::invalid;
     if (validity != CatalogValidity::valid) {

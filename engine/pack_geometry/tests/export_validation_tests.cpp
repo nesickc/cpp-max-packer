@@ -145,15 +145,38 @@ TEST_CASE("AT-10 export accepts touching separate quantized copies")
 {
     const auto left = cube_bytes(3, 5);
     const auto right = cube_bytes(5, 7);
+    std::size_t reads {};
     const auto result = geo::validate_quantized_export(
         solution({
             { "a", { 3, 5, 5 }, { 0, 0, 0, 1 } },
             { "b", { 5, 5, 5 }, { 0, 0, 0, 1 } }
     }),
         [&](std::size_t index) -> geo::ExportCopyRead {
+        ++reads;
         return index == 0 ? left : right;
     });
     CHECK(result.validity == geo::Validity::valid);
+    CHECK(reads == 3);
+}
+
+TEST_CASE("T010 strictly separated reread quantized bounds avoid prior-copy import", "[T010]")
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .5;
+    const auto source = solution_in(
+        {
+            { "a", { 3, 5, 5 }, { 0, 0, 0, 1 } },
+            { "b", { 7, 5, 5 }, { 0, 0, 0, 1 } }
+    },
+        geo::BoxDimensions { 10, 10, 10 }, constraints);
+    std::size_t reads {};
+    const auto result = geo::validate_quantized_export(source, [&](std::size_t index) -> geo::ExportCopyRead {
+        ++reads;
+        return index == 0 ? cube_bytes(2, 4) : cube_bytes(6, 8);
+    });
+    CHECK(result.validity == geo::Validity::valid);
+    CHECK(reads == 2);
+    CHECK(result.aabb_pair_tests == source->report().aabb_pair_tests + 1);
 }
 
 TEST_CASE("AT-10 export rejects identical quantized copies")
@@ -469,7 +492,9 @@ TEST_CASE("AT-10 export accounts for retained reader capacity")
     REQUIRE(baseline.validity == geo::Validity::valid);
 
     auto reserved = bytes;
-    reserved.reserve(bytes.capacity() + 4096);
+    // The audited import bound can make a later kernel phase determine the
+    // peak. Cross the complete allowance with reader capacity itself.
+    reserved.reserve(bytes.capacity() + baseline.working_bytes_peak);
     REQUIRE(reserved.capacity() > bytes.capacity());
     auto retained = std::make_shared<std::vector<std::byte>>(std::move(reserved));
     geo::ExportValidationLimits limits;
@@ -494,10 +519,11 @@ TEST_CASE("AT-10 private memory cap covers source reader scratch and accepted re
     const auto accepted = geo::accept_asset(std::get<std::shared_ptr<const geo::AssetDraft>>(inspected));
     REQUIRE(std::holds_alternative<std::shared_ptr<const geo::AcceptedSolid>>(accepted));
     const auto accepted_bytes = std::get<std::shared_ptr<const geo::AcceptedSolid>>(accepted)->resident_buffer_bytes();
-    const auto scratch_bytes = geo::detail::baked_import_scratch_bound(bytes.size());
+    const auto admission = geo::estimate_import_admission(bytes);
     REQUIRE(accepted_bytes);
-    REQUIRE(scratch_bytes);
-    const auto required = *source_bytes + bytes.size() + *scratch_bytes + *accepted_bytes;
+    REQUIRE(std::holds_alternative<geo::ImportAdmission>(admission));
+    const auto scratch_bytes = std::get<geo::ImportAdmission>(admission).working_bytes_upper_bound;
+    const auto required = *source_bytes + bytes.size() + scratch_bytes + *accepted_bytes;
     REQUIRE(required > 0);
 
     geo::detail::ExportBudget budget(1'300'000'000, required - 1);

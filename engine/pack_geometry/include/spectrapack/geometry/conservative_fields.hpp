@@ -34,6 +34,9 @@ enum class FieldPurpose { object_kernel, placed_pair_blocker, container_blocker 
 // Conservative native prepare/place scratch and field-owner metadata bound.
 // Excludes accepted input, grid arrays, per-copy footprints/IDs and caller reserve.
 [[nodiscard]] std::optional<std::uint64_t> estimate_field_geometry_bytes(const AcceptedSolid&) noexcept;
+// Allocation-free enclosure of the actual object field window at this lattice.
+// Uses the field transform/trim arithmetic; unsupported inputs fail closed.
+[[nodiscard]] std::optional<GridWindow> estimate_object_window(const AcceptedSolid&, GridLattice, Quaternion) noexcept;
 // Necessary raster work only when every retained triangle's candidate-cell range
 // is unclipped. The caller must establish that condition; this is not total work.
 [[nodiscard]] std::optional<std::uint64_t> estimate_unclipped_raster_work(const AcceptedSolid&, std::uint64_t copies,
@@ -59,7 +62,8 @@ private:
                                                                        const RepresentationLimits&);
     friend RepresentationOutcome<VoxelGeometry> prepare_voxel_geometry(std::shared_ptr<const AcceptedSolid>,
                                                                        const RepresentationLimits&,
-                                                                       RepresentationAttemptStats&);
+                                                                       RepresentationAttemptStats&,
+                                                                       const runtime::OperationControl&);
 };
 
 class CellField {
@@ -95,34 +99,44 @@ private:
                                                                           const RepresentationLimits& = {});
 [[nodiscard]] RepresentationOutcome<VoxelGeometry> prepare_voxel_geometry(std::shared_ptr<const AcceptedSolid>,
                                                                           const RepresentationLimits&,
-                                                                          RepresentationAttemptStats&);
+                                                                          RepresentationAttemptStats&,
+                                                                          const runtime::OperationControl& = {});
 [[nodiscard]] RepresentationOutcome<CellField> voxelize_object(std::shared_ptr<const VoxelGeometry>, GridLattice,
                                                                Quaternion, const RepresentationLimits& = {});
 [[nodiscard]] RepresentationOutcome<CellField> voxelize_object(std::shared_ptr<const VoxelGeometry>, GridLattice,
                                                                Quaternion, const RepresentationLimits&,
-                                                               RepresentationAttemptStats&);
+                                                               RepresentationAttemptStats&,
+                                                               const runtime::OperationControl& = {});
 [[nodiscard]] RepresentationOutcome<CellField> voxelize_placed(std::shared_ptr<const VoxelGeometry>, GridWindow,
                                                                CopyPose, double, const RepresentationLimits& = {});
 [[nodiscard]] RepresentationOutcome<CellField> voxelize_placed(std::shared_ptr<const VoxelGeometry>, GridWindow,
                                                                const CopyPose&, double, const RepresentationLimits&,
-                                                               RepresentationAttemptStats&);
+                                                               RepresentationAttemptStats&,
+                                                               const runtime::OperationControl& = {});
 [[nodiscard]] RepresentationOutcome<CellField> voxelize_container(Container, GridWindow, double,
                                                                   const RepresentationLimits& = {});
 [[nodiscard]] RepresentationOutcome<CellField> voxelize_container(Container, GridWindow, double,
                                                                   const RepresentationLimits&,
-                                                                  RepresentationAttemptStats&);
+                                                                  RepresentationAttemptStats&,
+                                                                  const runtime::OperationControl& = {});
 
 class BlockedField {
 public:
     ~BlockedField();
+    // Shares the immutable mask only; independently owns counts and footprints.
+    // The caller reserve includes source wrappers and other live owners.
+    [[nodiscard]] std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> clone(
+        const RepresentationLimits&, RepresentationAttemptStats&, const runtime::OperationControl& = {}) const;
     [[nodiscard]] std::optional<RepresentationFailure> add(std::string copy_id,
                                                            std::shared_ptr<const CellField> placed_blocker);
     [[nodiscard]] std::optional<RepresentationFailure> add(std::string_view copy_id,
                                                            std::shared_ptr<const CellField> placed_blocker,
-                                                           const RepresentationLimits&, RepresentationAttemptStats&);
+                                                           const RepresentationLimits&, RepresentationAttemptStats&,
+                                                           const runtime::OperationControl& = {});
     [[nodiscard]] std::optional<RepresentationFailure> remove(std::string_view copy_id);
     [[nodiscard]] std::optional<RepresentationFailure> remove(std::string_view copy_id, const RepresentationLimits&,
-                                                              RepresentationAttemptStats&);
+                                                              RepresentationAttemptStats&,
+                                                              const runtime::OperationControl& = {});
     [[nodiscard]] bool blocked(CellIndex global_index) const;
     [[nodiscard]] std::uint32_t placed_count(CellIndex global_index) const;
     [[nodiscard]] const GridWindow& window() const noexcept;
@@ -136,11 +150,13 @@ private:
     friend std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_field(
         std::shared_ptr<const CellField>, const RepresentationLimits&);
     friend std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_field(
-        std::shared_ptr<const CellField>, const RepresentationLimits&, RepresentationAttemptStats&);
+        std::shared_ptr<const CellField>, const RepresentationLimits&, RepresentationAttemptStats&,
+        const runtime::OperationControl&);
 };
 [[nodiscard]] std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_field(
     std::shared_ptr<const CellField>, const RepresentationLimits& = {});
 [[nodiscard]] std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_field(
-    std::shared_ptr<const CellField>, const RepresentationLimits&, RepresentationAttemptStats&);
+    std::shared_ptr<const CellField>, const RepresentationLimits&, RepresentationAttemptStats&,
+    const runtime::OperationControl& = {});
 
 }  // namespace spectrapack::geometry

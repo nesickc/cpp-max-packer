@@ -12,6 +12,10 @@ add_test(NAME spectrapack_desktop_subprocess
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/desktop_subprocess_test.py"
     "$<TARGET_FILE:spectrapack-engine>")
 set_tests_properties(spectrapack_desktop_subprocess PROPERTIES TIMEOUT 300)
+add_test(NAME spectrapack_desktop_runtime_subprocess
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/desktop_runtime_subprocess_test.py"
+    "$<TARGET_FILE:spectrapack-engine>")
+set_tests_properties(spectrapack_desktop_runtime_subprocess PROPERTIES TIMEOUT 60)
 
 if(BUILD_TESTING)
   add_executable(spectrapack_result_contract_check result_contract_check.cpp)

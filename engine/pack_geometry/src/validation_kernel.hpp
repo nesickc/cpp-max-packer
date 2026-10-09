@@ -31,26 +31,29 @@ enum class BoundaryRelation : std::uint8_t {
 };
 
 struct KernelFailure {
-  std::string code;
-  std::string method;
+    std::string_view code;
+    std::string_view method;
 };
 
 class Budget {
  public:
-  Budget(std::uint64_t max_work, std::uint64_t max_working_bytes) noexcept;
+     Budget(std::uint64_t max_work, std::uint64_t max_working_bytes,
+            const runtime::OperationControl& control = {}) noexcept;
 
-  [[nodiscard]] bool consume_work(std::uint64_t units) noexcept;
-  [[nodiscard]] bool reserve_bytes(std::uint64_t bytes) noexcept;
-  void release_bytes(std::uint64_t bytes) noexcept;
-  [[nodiscard]] std::uint64_t work_used() const noexcept;
-  [[nodiscard]] std::uint64_t work_remaining() const noexcept;
-  [[nodiscard]] std::uint64_t bytes_live() const noexcept;
-  [[nodiscard]] std::uint64_t bytes_peak() const noexcept;
-  [[nodiscard]] bool exhausted() const noexcept;
-  [[nodiscard]] bool work_exhausted() const noexcept;
-  [[nodiscard]] bool memory_exhausted() const noexcept;
-  [[nodiscard]] bool arithmetic_capacity_exceeded() const noexcept;
-  void note_arithmetic_capacity() noexcept;
+     [[nodiscard]] bool consume_work(std::uint64_t units) noexcept;
+     [[nodiscard]] bool reserve_bytes(std::uint64_t bytes) noexcept;
+     void release_bytes(std::uint64_t bytes) noexcept;
+     [[nodiscard]] std::uint64_t work_used() const noexcept;
+     [[nodiscard]] std::uint64_t work_remaining() const noexcept;
+     [[nodiscard]] std::uint64_t bytes_live() const noexcept;
+     [[nodiscard]] std::uint64_t bytes_peak() const noexcept;
+     [[nodiscard]] bool exhausted() const noexcept;
+     [[nodiscard]] bool work_exhausted() const noexcept;
+     [[nodiscard]] bool memory_exhausted() const noexcept;
+     [[nodiscard]] bool arithmetic_capacity_exceeded() const noexcept;
+     void note_arithmetic_capacity() noexcept;
+     [[nodiscard]] runtime::StopCause interruption() const noexcept;
+     [[nodiscard]] const runtime::OperationControl& control() const noexcept;
 
  private:
   std::uint64_t max_work_{};
@@ -62,6 +65,10 @@ class Budget {
   bool work_exhausted_{};
   bool memory_exhausted_{};
   bool arithmetic_capacity_exceeded_{};
+  runtime::OperationControl control_ {};
+  runtime::StopCause interruption_ { runtime::StopCause::none };
+  std::uint32_t poll_calls_ {};
+  bool controlled_ {};
 };
 
 class PreparedSolid;

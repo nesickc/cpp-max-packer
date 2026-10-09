@@ -684,14 +684,27 @@ TEST_CASE("T006 final safe boundaries distinguish deadline and explicit stop", "
     CHECK(completed.stats.search_passes == 1);
     CHECK(completed.termination_reason == solver::TerminationReason::budget_exhausted);
 
-    const auto deadline = solver::run_aabb_baseline(context, {}, { {}, std::chrono::steady_clock::now() });
-    REQUIRE(deadline.best);
+    const auto expired = std::chrono::steady_clock::now() - std::chrono::seconds(1);
+    const auto deadline = solver::run_aabb_baseline(context, {}, { {}, expired }, {}, completed.best->solution);
+    // T011 supersedes creation of a fresh empty baseline after an already-expired
+    // Start. Preserve only the already-valid same-context seed, without new work.
+    CHECK_FALSE(deadline.best);
+    REQUIRE(deadline.retained_solution == completed.best->solution);
+    CHECK(deadline.stats.candidate_evaluations == 0);
+    CHECK(deadline.stats.geometry_vertex_visits == 0);
+    CHECK(deadline.stats.validation_kernel_work == 0);
     CHECK(deadline.termination_reason == solver::TerminationReason::budget_exhausted);
+    CHECK(deadline.diagnostic_code == "PHYSICAL_DEADLINE");
 
     std::stop_source source;
     source.request_stop();
     const auto stopped =
-        solver::run_aabb_baseline(context, {}, { source.get_token(), std::chrono::steady_clock::now() });
-    REQUIRE(stopped.best);
+        solver::run_aabb_baseline(context, {}, { source.get_token(), expired }, {}, completed.best->solution);
+    CHECK_FALSE(stopped.best);
+    REQUIRE(stopped.retained_solution == completed.best->solution);
+    CHECK(stopped.stats.candidate_evaluations == 0);
+    CHECK(stopped.stats.geometry_vertex_visits == 0);
+    CHECK(stopped.stats.validation_kernel_work == 0);
     CHECK(stopped.termination_reason == solver::TerminationReason::user_stopped);
+    CHECK(stopped.diagnostic_code == "PHYSICAL_USER_STOPPED");
 }

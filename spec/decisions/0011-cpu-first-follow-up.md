@@ -45,17 +45,13 @@ has independently confirmed self-intersections. See
    Basic phase/error feedback and usable Stop remain earlier requirements.
    Keep job lifecycle, durable recovery and live viewer delivery separately
    reviewable. The full-v1 requirement for live validated state is not removed.
-6. Group the first four specification IDs into three delivery tickets: T-009,
-   T-010 including the T-011 preparation/deadline work package, then T-012. Keep
-   every acceptance ID and the T-011 sheet; it has no separate branch or PR.
-   T-009 supplies the corrected serial baseline that selects useful parallel
-   work. T-010/T-011 share worker lifetime, memory, cancellation and asset ownership
-   decisions, so deliver them together with native and product-integration workers.
-   Repair research can precede CPU completion as isolated optional discovery;
-   T-012 product integration follows the merged runtime/Stop contract. The
-   three-ticket sequence is an integration choice, not a claim that reconstruction
-   algorithms require multithreading. One primary, two leaf workers and one
-   branch per delivery ticket remain the limits; user merges are unchanged.
+6. Revised by user-approved [ADR 0014](0014-runtime-delivery-split.md) on 2026-10-02:
+   deliver T-009, T-011 serial runtime foundations, T-010 measured threading, then
+   T-012. The former combined T-010/T-011 delivery is split; every acceptance ID
+   and performance target remains. T-011 carries the remaining T-009 practical
+   obligations and supplies the successful serial baseline. Dependent branches
+   wait for user merges. One primary, at most two leaf workers and one branch/PR
+   per delivery remain the limits; no automatic merge or stacked branch.
 
 The [delivery milestones](../../doc/MILESTONES.md) and individual T-009–T-023
 tickets define order, technical prerequisites and observable acceptance. Existing
@@ -67,7 +63,7 @@ M0–M6 and AT-01–AT-17 identities remain unchanged.
   settings, project files, result semantics and capability claims remain as-is.
 - T-009 preserves nested failure codes and retained valid results. Freeze any
   public diagnostic extension before changing schema/adapter behavior.
-- T-010 and its T-011 work package jointly design thread ownership, scratch
+- T-011 and subsequent T-010 preserve a shared design for thread ownership, scratch
   accounting, deterministic admission, immutable prepared assets and Start-origin
   deadlines before parallel implementation. Cached unverified files cannot
   authorize geometry. Shared CLI/I/O/desktop adapters have one integration owner.

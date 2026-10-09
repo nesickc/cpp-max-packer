@@ -24,10 +24,16 @@ enum class FilterPath : std::uint8_t {
 
 class WorkBudget {
  public:
-  explicit WorkBudget(std::uint64_t limit) noexcept : limit_(limit) {}
+     explicit WorkBudget(std::uint64_t limit, const runtime::OperationControl& control = {}) noexcept :
+         limit_(limit),
+         control_(control),
+         controlled_(control.stop.stop_possible() || control.deadline.has_value())
+     {
+     }
   [[nodiscard]] bool consume(std::uint64_t units) noexcept;
   [[nodiscard]] std::uint64_t used() const noexcept { return used_; }
   [[nodiscard]] bool exhausted() const noexcept { return exhausted_; }
+  [[nodiscard]] const runtime::OperationControl& control() const noexcept { return control_; }
   void record_orientation(bool orient3, FilterPath path) noexcept;
   [[nodiscard]] std::uint64_t orient2_calls() const noexcept { return orient2_calls_; }
   [[nodiscard]] std::uint64_t orient3_calls() const noexcept { return orient3_calls_; }
@@ -42,6 +48,9 @@ class WorkBudget {
   std::uint64_t limit_{};
   std::uint64_t used_{};
   bool exhausted_{};
+  runtime::OperationControl control_;
+  bool controlled_ {};
+  std::uint32_t poll_calls_ {};
   std::uint64_t orient2_calls_{};
   std::uint64_t orient3_calls_{};
   std::uint64_t interval_hits_{};
@@ -74,6 +83,14 @@ enum class TriangleRelation : std::uint8_t {
   uncertain,
 };
 
+// Only baked-world export imports select the certificate. Legacy callers keep
+// their original classifier and exact work counters, including repair replay.
+enum class TriangleRelationPolicy : std::uint8_t { legacy, projected_separation_v1 };
+struct ProjectedSeparationStats {
+    std::uint64_t attempts {}, certificates {}, fallbacks {}, uncertain {};
+    std::uint64_t attempt_work {}, certified_work {}, failed_attempt_work {}, fallback_work {};
+};
+
 enum class SegmentTriangleCrossing : std::uint8_t {
   none,
   crossing,
@@ -82,11 +99,12 @@ enum class SegmentTriangleCrossing : std::uint8_t {
   uncertain,
 };
 
-[[nodiscard]] TriangleRelation triangle_relation(
-    const std::array<Vec3, 3>& first, const std::array<Vec3, 3>& second,
-    const std::array<int, 3>& shared_first,
-    const std::array<int, 3>& shared_second, std::size_t shared_count,
-    WorkBudget& budget) noexcept;
+[[nodiscard]] TriangleRelation triangle_relation(const std::array<Vec3, 3>& first, const std::array<Vec3, 3>& second,
+                                                 const std::array<int, 3>& shared_first,
+                                                 const std::array<int, 3>& shared_second, std::size_t shared_count,
+                                                 WorkBudget& budget,
+                                                 TriangleRelationPolicy policy = TriangleRelationPolicy::legacy,
+                                                 ProjectedSeparationStats* stats = nullptr) noexcept;
 [[nodiscard]] SegmentTriangleCrossing segment_triangle_crossing(
     const Vec3& first, const Vec3& second,
     const std::array<Vec3, 3>& triangle, WorkBudget& budget) noexcept;

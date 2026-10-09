@@ -108,13 +108,13 @@ clearances and full-resolution validation/export throughout this work.
 The formal [delivery milestones](MILESTONES.md) replace the earlier provisional
 scope list. All tickets below are planned; source changes, red/green tests and
 performance/repair qualification remain future work.
-The first four specification IDs now form three delivery tickets: T-009,
-T-010 including T-011, then T-012. See the milestone execution rules for two
-worker lanes per delivery; T-011 is an acceptance sheet, not a separate PR.
+The user-approved delivery split is T-009, T-011 foundations, T-010 threading,
+then T-012. See [ADR 0014](../spec/decisions/0014-runtime-delivery-split.md) and
+the milestone execution rules for separate PRs and prerequisite user merges.
 
 | Priority | Specifications |
 | --- | --- |
-| CPU correctness and speed | [T-009 practical CPU scalability](T-009.md), then [T-010 CPU runtime](T-010.md) including [T-011 preparation/deadlines](T-011.md) |
+| CPU correctness and speed | [T-009 practical CPU scalability](T-009.md), then [T-011 runtime foundations](T-011.md), then [T-010 threading](T-010.md) |
 | Geometry workflows | [T-012 explicit library repair](T-012.md), [T-013 STL containers](T-013.md) |
 | Packing quality and controls | [T-014 orientations/refinement](T-014.md), [T-015 count search](T-015.md), [T-016 presets/resources](T-016.md) |
 | Durable jobs | [T-017 CLI/service/Continue](T-017.md), [T-018 checkpoints/recovery](T-018.md) |

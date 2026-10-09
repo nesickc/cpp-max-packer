@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Desktop } from '../src/generated/contracts';
 import fixtures from '../../tests/contracts/schema-fixtures.json';
-import { defaultSettings } from '../src/state';
+import { defaultSettings, snapshotSettings } from '../src/state';
 
 const native = vi.hoisted(() => ({ state: vi.fn(), save: vi.fn(), start: vi.fn(), newProject: vi.fn() }));
 vi.mock('../src/bridge', () => ({ nativeAvailable: () => true, bridge: native }));
@@ -11,6 +11,30 @@ import { App } from '../src/App';
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
+  it('normalizes new Start scope after legacy Open without a false pending-settings notice', async () => {
+    const fixture=fixtures.find(f=>f.kind==='results'&&f.schema_valid&&f.semantic_valid)!;
+    const document=structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];
+    delete document.search.resolved_settings.search.budget_scope;
+    const previous:Desktop.ResultSnapshot={id:'legacy-result',document,preview:null,origin:'project'};
+    const initial:Desktop.State={desktop_version:1,session_id:'legacy-start',revision:1,
+      object:{id:'legacy-object',display_name:'Object.stl',report:document.assets.object,preview:null},
+      draft_settings:snapshotSettings(previous),result:previous,operation:null,last_error:null};
+    native.state.mockResolvedValue(initial);
+    const next=structuredClone(initial);
+    next.revision=2;
+    next.result!.id='new-result';
+    next.result!.document.search.resolved_settings.search.budget_scope='total_start';
+    native.start.mockImplementation(async()=>{native.state.mockResolvedValue(next);return {operation_id:'new-start'};});
+    render(<App/>);
+    await waitFor(()=>expect(screen.getByRole('button',{name:'▶ Start packing'}).hasAttribute('disabled')).toBe(false));
+    expect(screen.queryByText(/Pending settings for the next run/)).toBeNull();
+    fireEvent.click(screen.getByRole('button',{name:'▶ Start packing'}));
+    await waitFor(()=>expect(native.start).toHaveBeenCalledOnce());
+    await waitFor(()=>expect(screen.getByText('From Start')).toBeDefined());
+    await waitFor(()=>expect(screen.queryByText(/Pending settings for the next run/)).toBeNull());
+    expect(native.start.mock.calls[0][0].settings.budget_scope).toBe('total_start');
+    expect(document.search.resolved_settings.search.budget_scope).toBeUndefined();
+  });
   it('shows the retained native cause and a pitch suggestion without changing settings', async () => {
     const initial: Desktop.State = { desktop_version: 1, session_id: 'session-failure', revision: 1, object: null, draft_settings: structuredClone(defaultSettings), result: null, operation: null, last_error: { code: 'RESOURCE_LIMIT', message: 'Search stopped; the valid result was retained.', recoverable: true, details: { failure: { phase: 'spectral_preflight', cause_code: 'GRID_CELL_LIMIT', resource: { name: 'grid_cells', required: '40611648', limit: '16777216' }, suggested_pitch_mm: 5 } } } };
     native.state.mockResolvedValue(initial);

@@ -3,14 +3,16 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
-#include <list>
 #include <limits>
+#include <list>
 #include <memory_resource>
 #include <new>
 #include <utility>
 #include <vector>
 
 #include "field_kernel.hpp"
+#include "field_profile.hpp"
+#include "placed_field_test_support.hpp"
 
 namespace spectrapack::geometry {
 namespace kernel = detail::validation_kernel;
@@ -40,14 +42,38 @@ struct CellField::Storage {
   double clearance_mm{};
   std::uint64_t resident_bytes{};
   RepresentationResidency residency;
+
+  Storage(GridWindow window_in, FieldPurpose purpose_in, RepresentationStats stats_in,
+          std::shared_ptr<const VoxelGeometry> geometry_in, std::shared_ptr<const kernel::PlacedSolid> placed_in,
+          Container container_in, const CopyPose& pose_in, double clearance_in, std::uint64_t resident_in) :
+      window(window_in),
+      purpose(purpose_in),
+      stats(stats_in),
+      cells(0),
+      geometry(std::move(geometry_in)),
+      placed(std::move(placed_in)),
+      container(std::move(container_in)),
+      pose(pose_in),
+      clearance_mm(clearance_in),
+      resident_bytes(resident_in)
+  {
+  }
 };
 
 namespace {
 
 constexpr std::int64_t kLargestExactGridIndex = std::int64_t{1} << 53;
 
-RepresentationFailure fail(std::string code, std::string message) {
-  return {std::move(code), std::move(message)};
+RepresentationFailure fail(std::string_view code, std::string_view message) { return { code, message }; }
+
+std::optional<RepresentationFailure> interruption_failure(const runtime::OperationControl& control)
+{
+    const auto cause = control.poll();
+    if (cause == runtime::StopCause::none) {
+        return {};
+    }
+    return fail(cause == runtime::StopCause::user_stopped ? "OPERATION_CANCELLED" : "DEADLINE_EXCEEDED",
+                "conservative field operation interrupted");
 }
 
 bool finite(Vec3 value) noexcept {
@@ -179,9 +205,8 @@ std::optional<std::uint64_t> clearance_halo(double clearance, double pitch,
 }
 
 RepresentationFailure kernel_failure(const kernel::KernelFailure& value) {
-  const std::string code =
-      value.code.empty() ? "FIELD_KERNEL_FAILURE" : value.code;
-  return fail(code, "conservative field kernel failed in " + value.method);
+    const std::string_view code = value.code.empty() ? "FIELD_KERNEL_FAILURE" : value.code;
+    return { code, "conservative field kernel failed", value.method };
 }
 
 struct RawField {
@@ -204,21 +229,35 @@ class CellVisitCapture {
   std::uint64_t& output_;
 };
 
-std::optional<RepresentationFailure> reserve_array(kernel::Budget& budget,
-                                                   std::uint64_t count,
-                                                   std::uint64_t width,
-                                                   std::string method) {
-  std::uint64_t bytes{};
-  if (!checked_bytes(bytes, count, width))
-    return fail("FIELD_MEMORY_LIMIT", method + " byte count overflowed");
-  if (!budget.reserve_bytes(bytes))
-    return fail("FIELD_MEMORY_LIMIT",
-                method + " exceeds the working byte limit");
-  return std::nullopt;
+std::optional<RepresentationFailure> reserve_array(kernel::Budget& budget, std::uint64_t count, std::uint64_t width,
+                                                   std::string_view method)
+{
+    std::uint64_t bytes {};
+    if (!checked_bytes(bytes, count, width)) {
+        return RepresentationFailure { "FIELD_MEMORY_LIMIT", "array byte count overflowed", method };
+    }
+    if (!budget.reserve_bytes(bytes)) {
+        return RepresentationFailure { "FIELD_MEMORY_LIMIT", "array exceeds the working byte limit", method };
+    }
+    return std::nullopt;
+}
+
+bool initialize_cells(std::vector<std::uint8_t>& cells, std::size_t count, kernel::Budget& budget)
+{
+    cells.reserve(count);
+    while (cells.size() != count) {
+        const auto chunk = std::min<std::size_t>(1024, count - cells.size());
+        if (!budget.consume_work(chunk)) {
+            return false;
+        }
+        cells.resize(cells.size() + chunk, 0);
+    }
+    return true;
 }
 
 std::optional<RepresentationFailure> fill_components(
     RawField& raw, kernel::Budget& budget, const RepresentationLimits& limits) {
+  detail::FieldProfileTimer profile(detail::FieldProfilePhase::fill, budget, raw.cell_visits);
   const auto count = raw.cells.size();
   std::uint64_t scratch{};
   if (!checked_bytes(scratch, count, sizeof(std::uint8_t)) ||
@@ -228,12 +267,18 @@ std::optional<RepresentationFailure> fill_components(
         "FIELD_MEMORY_LIMIT",
         "component labels and flood queue exceed the working byte limit");
   try {
-    std::vector<std::uint8_t> seen(count);
+      std::vector<std::uint8_t> seen(0);
+      if (!initialize_cells(seen, count, budget)) {
+          return fail("FIELD_KERNEL_WORK_LIMIT", "component initialization exhausted its global budget");
+      }
     std::vector<std::size_t> queue;
     queue.reserve(count);
     for (std::uint32_t z = 0; z < raw.window.shape[2]; ++z)
       for (std::uint32_t y = 0; y < raw.window.shape[1]; ++y)
         for (std::uint32_t x = 0; x < raw.window.shape[0]; ++x) {
+            if (!budget.consume_work(1)) {
+                return fail("FIELD_KERNEL_WORK_LIMIT", "component scan exhausted its global budget");
+            }
           const auto start = flat(raw.window.shape, x, y, z);
           if (raw.cells[start] == 2 || seen[start]) continue;
           const auto component_begin = queue.size();
@@ -300,11 +345,12 @@ std::optional<RepresentationFailure> fill_components(
           const bool occupied = decision != kernel::Decision::no;
           if (decision == kernel::Decision::indeterminate)
             raw.uncertain_cells += queue.size() - component_begin;
-          for (std::size_t at = component_begin; at < queue.size(); ++at)
-            raw.cells[queue[at]] = decision == kernel::Decision::indeterminate
-                                       ? 3
-                                   : occupied ? 1
-                                              : 0;
+          for (std::size_t at = component_begin; at < queue.size(); ++at) {
+              if (!budget.consume_work(1)) {
+                  return fail("FIELD_KERNEL_WORK_LIMIT", "component writes exhausted their global budget");
+              }
+              raw.cells[queue[at]] = decision == kernel::Decision::indeterminate ? 3 : occupied ? 1 : 0;
+          }
         }
     budget.release_bytes(scratch);
     return std::nullopt;
@@ -315,9 +361,9 @@ std::optional<RepresentationFailure> fill_components(
   }
 }
 
-std::variant<RawField, RepresentationFailure> make_raw(std::shared_ptr<const kernel::PreparedSolid> prepared,
-                                                       GridWindow window, Vec3 translation, Quaternion rotation,
-                                                       kernel::Budget& budget, const RepresentationLimits& limits,
+std::variant<RawField, RepresentationFailure> make_raw(std::shared_ptr<const kernel::PlacedSolid> placed,
+                                                       GridWindow window, kernel::Budget& budget,
+                                                       const RepresentationLimits& limits,
                                                        std::uint64_t& attempt_cell_visits)
 {
     RepresentationFailure error;
@@ -325,15 +371,14 @@ std::variant<RawField, RepresentationFailure> make_raw(std::shared_ptr<const ker
     if (!count) {
         return error;
     }
-    auto placed = kernel::place(std::move(prepared), translation, rotation, budget);
-    if (!placed) {
-        return kernel_failure(placed.failure);
-    }
     if (auto admission = reserve_array(budget, *count, sizeof(std::uint8_t), "field cells")) {
         return *admission;
     }
     try {
-        RawField raw { window, std::vector<std::uint8_t>(static_cast<std::size_t>(*count)), std::move(placed.solid) };
+        RawField raw { window, std::vector<std::uint8_t>(0), std::move(placed) };
+        if (!initialize_cells(raw.cells, static_cast<std::size_t>(*count), budget)) {
+            return fail("FIELD_KERNEL_WORK_LIMIT", "field initialization exhausted its global budget");
+        }
         CellVisitCapture capture(raw, attempt_cell_visits);
         if (auto failure = kernel::rasterize_boundary(*raw.placed, window, raw.cells, budget, raw.cell_visits,
                                                       limits.max_cell_visits)) {
@@ -395,6 +440,7 @@ std::variant<std::vector<std::uint8_t>, RepresentationFailure> dilate_and_crop(
     std::span<const CellIndex> stencil, bool invert_material,
     kernel::Budget& budget, const RepresentationLimits& limits,
     std::uint64_t& cell_visits) {
+  detail::FieldProfileTimer profile(detail::FieldProfilePhase::clearance, budget, cell_visits);
   RepresentationFailure error;
   const auto count = window_cells(requested, limits, error);
   if (!count) return error;
@@ -402,10 +448,16 @@ std::variant<std::vector<std::uint8_t>, RepresentationFailure> dilate_and_crop(
           reserve_array(budget, *count, sizeof(std::uint8_t), "cropped output"))
     return *admission;
   try {
-    std::vector<std::uint8_t> output(static_cast<std::size_t>(*count));
+      std::vector<std::uint8_t> output(0);
+      if (!initialize_cells(output, static_cast<std::size_t>(*count), budget)) {
+          return fail("FIELD_KERNEL_WORK_LIMIT", "output initialization exhausted its global budget");
+      }
     for (std::uint32_t z = 0; z < raw.window.shape[2]; ++z)
       for (std::uint32_t y = 0; y < raw.window.shape[1]; ++y)
         for (std::uint32_t x = 0; x < raw.window.shape[0]; ++x) {
+            if (!budget.consume_work(1)) {
+                return fail("FIELD_KERNEL_WORK_LIMIT", "clearance scan exhausted its global budget");
+            }
           const auto value = raw.cells[flat(raw.window.shape, x, y, z)];
           const bool seed = invert_material ? value != 1 : value != 0;
           if (!seed) continue;
@@ -478,6 +530,128 @@ bool same_lattice(const GridLattice& first,
 
 }  // namespace
 
+std::variant<detail::PlacedRawWindowPlan, RepresentationFailure> detail::plan_placed_raw_window(
+    const kernel::PlacedSolid& placed, const GridWindow& whole, kernel::Budget& budget)
+{
+    const PlacedRawWindowPlan fallback { PlacedRawDomain::full_window, whole };
+    const auto work_failure = [] {
+        return fail("FIELD_KERNEL_WORK_LIMIT", "placed support planning exhausted work");
+    };
+    if (!budget.consume_work(1)) {
+        return work_failure();
+    }
+    const auto plan = [&]() -> std::variant<PlacedRawWindowPlan, RepresentationFailure> {
+        const auto bounds = kernel::conservative_bounds(placed);
+        if (!bounds.finite) {
+            return fallback;
+        }
+        CellIndex whole_last {}, candidate_last {};
+        GridWindow candidate = whole;
+        bool empty = false;
+        for (int axis = 0; axis != 3; ++axis) {
+            if (!budget.consume_work(12)) {
+                return work_failure();
+            }
+            if (!whole.shape[axis] || whole.first[axis] < -kLargestExactGridIndex ||
+                whole.first[axis] > kLargestExactGridIndex - static_cast<std::int64_t>(whole.shape[axis])) {
+                return fallback;
+            }
+            whole_last[axis] = whole.first[axis] + whole.shape[axis] - 1;
+            const auto first =
+                trim_index(bounds.bounds_mm.min[axis], whole.lattice.origin_mm[axis], whole.lattice.pitch_mm, true);
+            const auto last =
+                trim_index(bounds.bounds_mm.max[axis], whole.lattice.origin_mm[axis], whole.lattice.pitch_mm, false);
+            if (!first || !last || *first > *last) {
+                return fallback;
+            }
+            candidate.first[axis] = std::max(whole.first[axis], *first);
+            candidate_last[axis] = std::min(whole_last[axis], *last);
+            empty |= candidate.first[axis] > candidate_last[axis];
+        }
+        if (!budget.consume_work(36)) {
+            return work_failure();
+        }
+        const auto first_cell = kernel::outward_grid_cell(whole, whole.first);
+        const auto last_cell = kernel::outward_grid_cell(whole, whole_last);
+        if (!first_cell || !last_cell) {
+            return fallback;
+        }
+        if (empty) {
+            for (int axis = 0; axis != 3; ++axis) {
+                if (!budget.consume_work(1)) {
+                    return work_failure();
+                }
+                if (last_cell->max[axis] < bounds.bounds_mm.min[axis] ||
+                    first_cell->min[axis] > bounds.bounds_mm.max[axis]) {
+                    return PlacedRawWindowPlan { PlacedRawDomain::certified_empty, whole };
+                }
+            }
+            return fallback;
+        }
+        for (int axis = 0; axis != 3; ++axis) {
+            candidate.shape[axis] = static_cast<std::uint32_t>(candidate_last[axis] - candidate.first[axis] + 1);
+            // Nearest omitted closed cells must be strictly separated. Monotone outward
+            // arithmetic with positive pitch extends each certificate across its slab.
+            for (const bool lower : { true, false }) {
+                if (lower ? candidate.first[axis] == whole.first[axis] : candidate_last[axis] == whole_last[axis]) {
+                    continue;
+                }
+                if (!budget.consume_work(18)) {
+                    return work_failure();
+                }
+                CellIndex index = whole.first;
+                index[axis] = lower ? candidate.first[axis] - 1 : candidate_last[axis] + 1;
+                const auto cell = kernel::outward_grid_cell(whole, index);
+                if (!cell || !(lower ? cell->max[axis] < bounds.bounds_mm.min[axis]
+                                     : cell->min[axis] > bounds.bounds_mm.max[axis])) {
+                    return fallback;
+                }
+            }
+        }
+        return PlacedRawWindowPlan { candidate.first == whole.first && candidate.shape == whole.shape
+                                         ? PlacedRawDomain::full_window
+                                         : PlacedRawDomain::cropped_window,
+                                     candidate };
+    }();
+    if (!budget.consume_work(1)) {
+        return work_failure();
+    }
+    return plan;
+}
+
+std::optional<GridWindow> estimate_object_window(const AcceptedSolid& source, GridLattice lattice,
+                                                 Quaternion rotation) noexcept
+{
+    if (!valid_lattice(lattice) || !canonical_unit_quaternion(rotation) ||
+        !kernel::field_floating_environment_supported()) {
+        return {};
+    }
+    const auto bounds = kernel::transformed_source_box(source.bounds_mm(), lattice.origin_mm, rotation);
+    if (!bounds) {
+        return {};
+    }
+    GridWindow result { lattice, {}, {} };
+    std::uint64_t cells = 1;
+    for (int axis = 0; axis != 3; ++axis) {
+        const auto first = trim_index(bounds->min[axis], lattice.origin_mm[axis], lattice.pitch_mm, true);
+        const auto last = trim_index(bounds->max[axis], lattice.origin_mm[axis], lattice.pitch_mm, false);
+        if (!first || !last || *last < *first || static_cast<std::uint64_t>(*last - *first) + 1 > UINT32_MAX) {
+            return {};
+        }
+        result.first[axis] = *first;
+        result.shape[axis] = static_cast<std::uint32_t>(*last - *first + 1);
+        // Match window_cells' exact-index and aggregate shape overflow rules;
+        // configured cell/byte caps are applied by the caller's admission.
+        if (*first < -kLargestExactGridIndex ||
+            *first > kLargestExactGridIndex - static_cast<std::int64_t>(result.shape[axis]) ||
+            cells > UINT64_MAX / result.shape[axis]) {
+            return {};
+        }
+        cells *= result.shape[axis];
+    }
+    return result;
+}
+
 bool append_block(RepresentationResidency&, RepresentationResidentBlock) noexcept;
 bool append_residency(RepresentationResidency&, const RepresentationResidency&) noexcept;
 
@@ -489,21 +663,28 @@ struct FieldBuilder {
     }
     static std::uint64_t resident(const VoxelGeometry& geometry) noexcept { return geometry.storage_->resident_bytes; }
     static std::uint64_t resident(const CellField& field) noexcept { return field.storage_->resident_bytes; }
-    static RepresentationOutcome<CellField> finish(RawField raw, FieldPurpose purpose,
+    static RepresentationOutcome<CellField> finish(RawField&& raw, FieldPurpose purpose,
                                                    std::shared_ptr<const VoxelGeometry> geometry, Container container,
-                                                   CopyPose pose, double clearance, kernel::Budget& budget,
+                                                   const CopyPose& pose, double clearance, kernel::Budget& budget,
                                                    std::uint64_t caller_reserved)
     {
         if (!budget.reserve_bytes(sizeof(CellField::Storage))) {
             return fail("FIELD_MEMORY_LIMIT", "field metadata exceeds the working byte limit");
         }
         RepresentationStats stats {};
+        if (!budget.consume_work(pose.copy_id.size() + 1)) {
+            return fail("FIELD_KERNEL_WORK_LIMIT", "field identifier publication exhausted its global budget");
+        }
         stats.kernel_work = budget.work_used();
         stats.cell_visits = raw.cell_visits;
         stats.uncertain_cells = raw.uncertain_cells;
         for (const auto cell : raw.cells) {
+            if (!budget.consume_work(1)) {
+                return fail("FIELD_KERNEL_WORK_LIMIT", "field publication scan exhausted its global budget");
+            }
             stats.occupied_cells += cell != 0;
         }
+        stats.kernel_work = budget.work_used();
         const auto resident = budget.bytes_live() >= caller_reserved ? budget.bytes_live() - caller_reserved : 0;
         stats.working_bytes_peak = std::max(budget.bytes_peak(), resident);
         std::uint64_t owned = sizeof(CellField::Storage);
@@ -534,17 +715,10 @@ struct FieldBuilder {
             }
         }
         try {
-            auto storage = std::make_shared<CellField::Storage>(CellField::Storage { raw.window,
-                                                                                     purpose,
-                                                                                     stats,
-                                                                                     std::move(raw.cells),
-                                                                                     std::move(geometry),
-                                                                                     std::move(raw.placed),
-                                                                                     std::move(container),
-                                                                                     std::move(pose),
-                                                                                     clearance,
-                                                                                     resident,
-                                                                                     {} });
+            auto storage = std::make_shared<CellField::Storage>(raw.window, purpose, stats, std::move(geometry),
+                                                                std::move(raw.placed), std::move(container), pose,
+                                                                clearance, resident);
+            storage->cells.swap(raw.cells);
             if (!append_block(residency, { RepresentationResidentKind::cell_field_owned, storage.get(), owned })) {
                 return fail("FIELD_MEMORY_LIMIT", "field residency exceeds its block bound");
             }
@@ -640,6 +814,7 @@ public:
             budget_.bytes_peak() >= limits_.reserved_bytes ? budget_.bytes_peak() - limits_.reserved_bytes : 0;
         output_.working_bytes_peak = std::max({ output_.input_resident_bytes, operation_peak, observed_peak_ });
         output_.additional_bytes_peak = output_.working_bytes_peak - output_.input_resident_bytes;
+        output_.admitted_bytes_upper_bound = std::max(operation_peak, admitted_peak_);
     }
     bool set_input(const RepresentationResidency& residency) noexcept
     {
@@ -653,6 +828,7 @@ public:
     }
     void set_empty_input() noexcept { output_.input_accounting_complete = true; }
     void observe_working_bytes(std::uint64_t bytes) noexcept { observed_peak_ = std::max(observed_peak_, bytes); }
+    void observe_admitted_bytes(std::uint64_t bytes) noexcept { admitted_peak_ = std::max(admitted_peak_, bytes); }
 
 private:
     RepresentationAttemptStats& output_;
@@ -660,6 +836,7 @@ private:
     kernel::Budget& budget_;
     std::uint64_t& cell_visits_;
     std::uint64_t observed_peak_ {};
+    std::uint64_t admitted_peak_ {};
 };
 const RepresentationStats& VoxelGeometry::stats() const noexcept { return storage_->stats; }
 std::optional<RepresentationResidency> VoxelGeometry::representation_residency() const noexcept
@@ -678,342 +855,455 @@ std::optional<RepresentationResidency> CellField::representation_residency() con
 
 RepresentationOutcome<VoxelGeometry> prepare_voxel_geometry(std::shared_ptr<const AcceptedSolid> source,
                                                             const RepresentationLimits& limits,
-                                                            RepresentationAttemptStats& attempt)
+                                                            RepresentationAttemptStats& attempt,
+                                                            const runtime::OperationControl& control)
 {
-    kernel::Budget budget(limits.max_kernel_work, limits.max_working_bytes);
-    std::uint64_t cell_visits {};
-    AttemptScope attempt_scope(attempt, limits, budget, cell_visits);
-    if (!source || source->role() != AssetRole::object) {
-        return fail("FIELD_INPUT", "an accepted object solid is required");
+    if (auto failure = interruption_failure(control)) {
+        attempt = {};
+        return *failure;
     }
-    if (source->mesh().triangles.size() > limits.max_input_triangles) {
-        return fail("FIELD_INPUT_TRIANGLE_LIMIT", "accepted solid exceeds the triangle limit");
-    }
-    const auto input_residency = source->representation_residency();
-    if (!input_residency || !attempt_scope.set_input(*input_residency) ||
-        limits.reserved_bytes > limits.max_working_bytes) {
-        return fail("FIELD_MEMORY_LIMIT", "prepared input size is unrepresentable");
-    }
-    if (!budget.reserve_bytes(limits.reserved_bytes) || !budget.reserve_bytes(attempt.input_resident_bytes)) {
-        return fail("FIELD_MEMORY_LIMIT", "accepted input exceeds the working byte limit");
-    }
-    auto prepared = kernel::prepare(source, budget);
-    if (!prepared) {
-        return kernel_failure(prepared.failure);
-    }
-    if (!budget.reserve_bytes(sizeof(VoxelGeometry::Storage))) {
-        return fail("FIELD_MEMORY_LIMIT", "prepared geometry metadata exceeds byte limit");
-    }
-    try {
-        RepresentationStats stats {};
-        stats.working_bytes_peak = budget.bytes_peak();
-        stats.kernel_work = budget.work_used();
-        const auto resident = budget.bytes_live() - limits.reserved_bytes;
-        const auto source_residency = source->representation_residency();
-        const auto prepared_bytes = kernel::prepared_owned_bytes(*prepared.solid);
-        if (!source_residency || !prepared_bytes ||
-            *prepared_bytes > std::numeric_limits<std::uint64_t>::max() - sizeof(VoxelGeometry::Storage)) {
-            return fail("FIELD_MEMORY_LIMIT", "prepared residency is unrepresentable");
+    auto operation = [&]() -> RepresentationOutcome<VoxelGeometry> {
+        kernel::Budget budget(limits.max_kernel_work, limits.max_working_bytes, control);
+        std::uint64_t cell_visits {};
+        AttemptScope attempt_scope(attempt, limits, budget, cell_visits);
+        if (!source || source->role() != AssetRole::object) {
+            return fail("FIELD_INPUT", "an accepted object solid is required");
         }
-        auto storage = std::make_shared<VoxelGeometry::Storage>(
-            VoxelGeometry::Storage { std::move(source), std::move(prepared.solid), resident, stats, {} });
-        auto residency = *source_residency;
-        if (!append_block(residency, { RepresentationResidentKind::voxel_geometry_owned, storage.get(),
-                                       sizeof(VoxelGeometry::Storage) + *prepared_bytes })) {
-            return fail("FIELD_MEMORY_LIMIT", "prepared residency exceeds its block bound");
+        if (source->mesh().triangles.size() > limits.max_input_triangles) {
+            return fail("FIELD_INPUT_TRIANGLE_LIMIT", "accepted solid exceeds the triangle limit");
         }
-        storage->residency = residency;
-        return std::shared_ptr<const VoxelGeometry>(new VoxelGeometry(std::move(storage)));
+        const auto input_residency = source->representation_residency();
+        if (!input_residency || !attempt_scope.set_input(*input_residency) ||
+            limits.reserved_bytes > limits.max_working_bytes) {
+            return fail("FIELD_MEMORY_LIMIT", "prepared input size is unrepresentable");
+        }
+        if (!budget.reserve_bytes(limits.reserved_bytes) || !budget.reserve_bytes(attempt.input_resident_bytes)) {
+            return fail("FIELD_MEMORY_LIMIT", "accepted input exceeds the working byte limit");
+        }
+        auto prepared = kernel::prepare(source, budget);
+        if (!prepared) {
+            return kernel_failure(prepared.failure);
+        }
+        if (!budget.reserve_bytes(sizeof(VoxelGeometry::Storage))) {
+            return fail("FIELD_MEMORY_LIMIT", "prepared geometry metadata exceeds byte limit");
+        }
+        try {
+            RepresentationStats stats {};
+            stats.working_bytes_peak = budget.bytes_peak();
+            stats.kernel_work = budget.work_used();
+            const auto resident = budget.bytes_live() - limits.reserved_bytes;
+            const auto source_residency = source->representation_residency();
+            const auto prepared_bytes = kernel::prepared_owned_bytes(*prepared.solid);
+            if (!source_residency || !prepared_bytes ||
+                *prepared_bytes > std::numeric_limits<std::uint64_t>::max() - sizeof(VoxelGeometry::Storage)) {
+                return fail("FIELD_MEMORY_LIMIT", "prepared residency is unrepresentable");
+            }
+            auto storage = std::make_shared<VoxelGeometry::Storage>(
+                VoxelGeometry::Storage { std::move(source), std::move(prepared.solid), resident, stats, {} });
+            auto residency = *source_residency;
+            if (!append_block(residency, { RepresentationResidentKind::voxel_geometry_owned, storage.get(),
+                                           sizeof(VoxelGeometry::Storage) + *prepared_bytes })) {
+                return fail("FIELD_MEMORY_LIMIT", "prepared residency exceeds its block bound");
+            }
+            storage->residency = residency;
+            return std::shared_ptr<const VoxelGeometry>(new VoxelGeometry(std::move(storage)));
+        }
+        catch (const std::bad_alloc&) {
+            return fail("FIELD_ALLOCATION_FAILURE", "prepared geometry allocation failed");
+        }
+    };
+    auto output = operation();
+    if (auto failure = interruption_failure(control)) {
+        return *failure;
     }
-    catch (const std::bad_alloc&) {
-        return fail("FIELD_ALLOCATION_FAILURE", "prepared geometry allocation failed");
-    }
+    return output;
 }
 
 RepresentationOutcome<CellField> voxelize_object(std::shared_ptr<const VoxelGeometry> geometry, GridLattice lattice,
                                                  Quaternion rotation, const RepresentationLimits& limits,
-                                                 RepresentationAttemptStats& attempt)
+                                                 RepresentationAttemptStats& attempt,
+                                                 const runtime::OperationControl& control)
 {
-    kernel::Budget budget(limits.max_kernel_work, limits.max_working_bytes);
-    std::uint64_t cell_visits {};
-    AttemptScope attempt_scope(attempt, limits, budget, cell_visits);
-    if (!geometry || !valid_lattice(lattice) || !canonical_unit_quaternion(rotation)) {
-        return fail("FIELD_INPUT", "invalid object geometry, lattice, or canonical rotation");
+    if (auto failure = interruption_failure(control)) {
+        attempt = {};
+        return *failure;
     }
-    const auto input_residency = geometry->representation_residency();
-    if (!input_residency || !attempt_scope.set_input(*input_residency)) {
-        return fail("FIELD_MEMORY_LIMIT", "prepared geometry residency is unrepresentable");
-    }
-    if (!budget.reserve_bytes(limits.reserved_bytes) || !budget.reserve_bytes(attempt.input_resident_bytes)) {
-        return fail("FIELD_MEMORY_LIMIT", "resident prepared geometry exceeds the working byte limit");
-    }
-    auto placed = kernel::place(detail::FieldBuilder::prepared(*geometry), lattice.origin_mm, rotation, budget);
-    if (!placed) {
-        return kernel_failure(placed.failure);
-    }
-    const auto bounds = kernel::conservative_bounds(*placed.solid);
-    if (!bounds.finite) {
-        return fail("FIELD_INDEX_OVERFLOW", "rotated bounds are unrepresentable");
-    }
-    GridWindow window { lattice, {}, {} };
-    for (int axis = 0; axis != 3; ++axis) {
-        const auto first = trim_index(bounds.bounds_mm.min[axis], lattice.origin_mm[axis], lattice.pitch_mm, true);
-        const auto last = trim_index(bounds.bounds_mm.max[axis], lattice.origin_mm[axis], lattice.pitch_mm, false);
-        if (!first || !last || *last < *first ||
-            static_cast<std::uint64_t>(*last - *first) + 1 > std::numeric_limits<std::uint32_t>::max()) {
-            return fail("FIELD_INDEX_OVERFLOW", "trimmed object grid is unrepresentable");
+    auto operation = [&]() -> RepresentationOutcome<CellField> {
+        kernel::Budget budget(limits.max_kernel_work, limits.max_working_bytes, control);
+        std::uint64_t cell_visits {};
+        AttemptScope attempt_scope(attempt, limits, budget, cell_visits);
+        if (!geometry || !valid_lattice(lattice) || !canonical_unit_quaternion(rotation)) {
+            return fail("FIELD_INPUT", "invalid object geometry, lattice, or canonical rotation");
         }
-        window.first[axis] = *first;
-        window.shape[axis] = static_cast<std::uint32_t>(*last - *first + 1);
-    }
-    RepresentationFailure error;
-    const auto count = window_cells(window, limits, error);
-    if (!count) {
-        return error;
-    }
-    if (auto admission = reserve_array(budget, *count, 1, "object field cells")) {
-        return *admission;
-    }
-    try {
-        RawField raw { window, std::vector<std::uint8_t>(static_cast<std::size_t>(*count)), std::move(placed.solid) };
-        CellVisitCapture capture(raw, cell_visits);
-        if (auto failure = kernel::rasterize_boundary(*raw.placed, window, raw.cells, budget, raw.cell_visits,
-                                                      limits.max_cell_visits)) {
+        const auto input_residency = geometry->representation_residency();
+        if (!input_residency || !attempt_scope.set_input(*input_residency)) {
+            return fail("FIELD_MEMORY_LIMIT", "prepared geometry residency is unrepresentable");
+        }
+        if (!budget.reserve_bytes(limits.reserved_bytes) || !budget.reserve_bytes(attempt.input_resident_bytes)) {
+            return fail("FIELD_MEMORY_LIMIT", "resident prepared geometry exceeds the working byte limit");
+        }
+        auto placed = kernel::place(detail::FieldBuilder::prepared(*geometry), lattice.origin_mm, rotation, budget);
+        if (!placed) {
+            return kernel_failure(placed.failure);
+        }
+        const auto bounds = kernel::conservative_bounds(*placed.solid);
+        if (!bounds.finite) {
+            return fail("FIELD_INDEX_OVERFLOW", "rotated bounds are unrepresentable");
+        }
+        GridWindow window { lattice, {}, {} };
+        for (int axis = 0; axis != 3; ++axis) {
+            const auto first = trim_index(bounds.bounds_mm.min[axis], lattice.origin_mm[axis], lattice.pitch_mm, true);
+            const auto last = trim_index(bounds.bounds_mm.max[axis], lattice.origin_mm[axis], lattice.pitch_mm, false);
+            if (!first || !last || *last < *first ||
+                static_cast<std::uint64_t>(*last - *first) + 1 > std::numeric_limits<std::uint32_t>::max()) {
+                return fail("FIELD_INDEX_OVERFLOW", "trimmed object grid is unrepresentable");
+            }
+            window.first[axis] = *first;
+            window.shape[axis] = static_cast<std::uint32_t>(*last - *first + 1);
+        }
+        RepresentationFailure error;
+        const auto count = window_cells(window, limits, error);
+        if (!count) {
+            return error;
+        }
+        if (auto admission = reserve_array(budget, *count, 1, "object field cells")) {
+            return *admission;
+        }
+        try {
+            RawField raw { window, std::vector<std::uint8_t>(0), std::move(placed.solid) };
+            if (!initialize_cells(raw.cells, static_cast<std::size_t>(*count), budget)) {
+                return fail("FIELD_KERNEL_WORK_LIMIT", "object initialization exhausted its global budget");
+            }
+            CellVisitCapture capture(raw, cell_visits);
+            if (auto failure = kernel::rasterize_boundary(*raw.placed, window, raw.cells, budget, raw.cell_visits,
+                                                          limits.max_cell_visits)) {
+                cell_visits = raw.cell_visits;
+                return kernel_failure(*failure);
+            }
+            if (auto failure = fill_components(raw, budget, limits)) {
+                cell_visits = raw.cell_visits;
+                return *failure;
+            }
             cell_visits = raw.cell_visits;
-            return kernel_failure(*failure);
+            for (auto& cell : raw.cells) {
+                if (!budget.consume_work(1)) {
+                    return fail("FIELD_KERNEL_WORK_LIMIT", "object normalization exhausted its global budget");
+                }
+                cell = cell == 0 ? 0 : 1;
+            }
+            return detail::FieldBuilder::finish(std::move(raw), FieldPurpose::object_kernel, std::move(geometry), {},
+                                                {}, 0, budget, limits.reserved_bytes);
         }
-        if (auto failure = fill_components(raw, budget, limits)) {
-            cell_visits = raw.cell_visits;
-            return *failure;
+        catch (const std::bad_alloc&) {
+            return fail("FIELD_ALLOCATION_FAILURE", "object field allocation failed");
         }
-        cell_visits = raw.cell_visits;
-        kernel::normalize_public_object_cells(raw.cells);
-        return detail::FieldBuilder::finish(std::move(raw), FieldPurpose::object_kernel, std::move(geometry), {}, {}, 0,
-                                            budget, limits.reserved_bytes);
+    };
+    auto output = operation();
+    if (auto failure = interruption_failure(control)) {
+        return *failure;
     }
-    catch (const std::bad_alloc&) {
-        return fail("FIELD_ALLOCATION_FAILURE", "object field allocation failed");
-    }
+    return output;
 }
 
 RepresentationOutcome<CellField> voxelize_placed(std::shared_ptr<const VoxelGeometry> geometry, GridWindow requested,
                                                  const CopyPose& pose, double clearance,
                                                  const RepresentationLimits& limits,
-                                                 RepresentationAttemptStats& attempt)
+                                                 RepresentationAttemptStats& attempt,
+                                                 const runtime::OperationControl& control)
 {
-    kernel::Budget budget(limits.max_kernel_work, limits.max_working_bytes);
-    std::uint64_t cell_visits {};
-    AttemptScope attempt_scope(attempt, limits, budget, cell_visits);
-    if (!geometry) {
-        return fail("FIELD_INPUT", "invalid placed geometry or physical pose");
-    }
-    const auto input_residency = geometry->representation_residency();
-    if (!input_residency || !attempt_scope.set_input(*input_residency)) {
-        return fail("FIELD_MEMORY_LIMIT", "prepared geometry residency is unrepresentable");
-    }
-    if (!canonical_unit_quaternion(pose.rotation_xyzw) || !finite(pose.translation_mm)) {
-        return fail("FIELD_INPUT", "invalid placed geometry or physical pose");
-    }
-    const auto pose_string_bytes = external_string_bytes(pose.copy_id);
-    if (!pose_string_bytes) {
-        return fail("FIELD_MEMORY_LIMIT", "copy id storage is unrepresentable");
-    }
-    RepresentationFailure error;
-    if (!window_cells(requested, limits, error)) {
-        return error;
-    }
-    const auto halo = clearance_halo(clearance, requested.lattice.pitch_mm, error);
-    if (!halo) {
-        return error;
-    }
-    const auto work_window = expanded(requested, *halo, error);
-    if (!work_window || !window_cells(*work_window, limits, error)) {
-        return error;
-    }
-    if (!budget.reserve_bytes(limits.reserved_bytes) || !budget.reserve_bytes(attempt.input_resident_bytes) ||
-        !budget.reserve_bytes(*pose_string_bytes)) {
-        return fail("FIELD_MEMORY_LIMIT", "resident prepared geometry and copy id exceed the working byte limit");
-    }
-    auto raw = make_raw(detail::FieldBuilder::prepared(*geometry), *work_window, pose.translation_mm,
-                        pose.rotation_xyzw, budget, limits, cell_visits);
-    if (std::holds_alternative<RepresentationFailure>(raw)) {
-        return std::get<RepresentationFailure>(std::move(raw));
-    }
-    auto value = std::get<RawField>(std::move(raw));
-    CellVisitCapture capture(value, cell_visits);
-    auto stencil = make_stencil(*halo, requested.lattice.pitch_mm, clearance, budget);
-    if (std::holds_alternative<RepresentationFailure>(stencil)) {
-        return std::get<RepresentationFailure>(std::move(stencil));
-    }
-    auto offsets = std::get<std::vector<CellIndex>>(std::move(stencil));
-    auto cropped = dilate_and_crop(value, requested, offsets, false, budget, limits, value.cell_visits);
-    cell_visits = value.cell_visits;
-    if (std::holds_alternative<RepresentationFailure>(cropped)) {
-        return std::get<RepresentationFailure>(std::move(cropped));
-    }
-    const auto old_cell_bytes = static_cast<std::uint64_t>(value.cells.size());
-    value.window = requested;
-    value.cells = std::get<std::vector<std::uint8_t>>(std::move(cropped));
-    budget.release_bytes(old_cell_bytes);
-    const auto stencil_bytes = static_cast<std::uint64_t>(offsets.capacity()) * sizeof(CellIndex);
-    std::vector<CellIndex>().swap(offsets);
-    budget.release_bytes(stencil_bytes);
-    return detail::FieldBuilder::finish(std::move(value), FieldPurpose::placed_pair_blocker, std::move(geometry), {},
-                                        CopyPose(pose), clearance, budget, limits.reserved_bytes);
+    return detail::voxelize_placed_with_policy(std::move(geometry), requested, pose, clearance, limits, attempt,
+                                               control, detail::PlacedFieldPolicy::certified_support);
 }
 
-RepresentationOutcome<CellField> voxelize_container(Container container, GridWindow requested, double clearance,
-                                                    const RepresentationLimits& limits,
-                                                    RepresentationAttemptStats& attempt)
+RepresentationOutcome<CellField> detail::voxelize_placed_with_policy(
+    std::shared_ptr<const VoxelGeometry> geometry, GridWindow requested, const CopyPose& pose, double clearance,
+    const RepresentationLimits& limits, RepresentationAttemptStats& attempt, const runtime::OperationControl& control,
+    PlacedFieldPolicy policy)
 {
-    kernel::Budget budget(limits.max_kernel_work, limits.max_working_bytes);
-    std::uint64_t cell_visits {};
-    AttemptScope attempt_scope(attempt, limits, budget, cell_visits);
-    RepresentationFailure error;
-    const auto requested_count = window_cells(requested, limits, error);
-    if (!requested_count) {
-        return error;
+    if (auto failure = interruption_failure(control)) {
+        attempt = {};
+        return *failure;
     }
-    if (!std::isfinite(clearance) || clearance < 0.0) {
-        return fail("FIELD_INPUT", "wall clearance must be finite and nonnegative");
-    }
-    if (const auto box = std::get_if<BoxDimensions>(&container)) {
-        attempt_scope.set_empty_input();
-        if (!(box->width_mm > 0 && box->depth_mm > 0 && box->height_mm > 0) || !std::isfinite(box->width_mm) ||
-            !std::isfinite(box->depth_mm) || !std::isfinite(box->height_mm)) {
-            return fail("FIELD_INPUT", "analytic container dimensions must be finite and positive");
+    auto operation = [&]() -> RepresentationOutcome<CellField> {
+        kernel::Budget budget(limits.max_kernel_work, limits.max_working_bytes, control);
+        std::uint64_t cell_visits {};
+        AttemptScope attempt_scope(attempt, limits, budget, cell_visits);
+        if (!geometry) {
+            return fail("FIELD_INPUT", "invalid placed geometry or physical pose");
         }
-        if (!kernel::field_floating_environment_supported()) {
-            return fail("FIELD_FLOATING_ENVIRONMENT",
-                        "analytic fields require round-to-nearest without flushed "
-                        "subnormals");
+        const auto input_residency = geometry->representation_residency();
+        if (!input_residency || !attempt_scope.set_input(*input_residency)) {
+            return fail("FIELD_MEMORY_LIMIT", "prepared geometry residency is unrepresentable");
         }
-        if (!budget.reserve_bytes(limits.reserved_bytes) || !budget.reserve_bytes(*requested_count)) {
-            return fail("FIELD_MEMORY_LIMIT", "analytic container output exceeds byte limit");
+        if (!canonical_unit_quaternion(pose.rotation_xyzw) || !finite(pose.translation_mm)) {
+            return fail("FIELD_INPUT", "invalid placed geometry or physical pose");
         }
-        try {
-            RawField raw { requested, std::vector<std::uint8_t>(static_cast<std::size_t>(*requested_count)) };
-            CellVisitCapture capture(raw, cell_visits);
-            for (std::uint32_t z = 0; z < requested.shape[2]; ++z) {
-                for (std::uint32_t y = 0; y < requested.shape[1]; ++y) {
-                    for (std::uint32_t x = 0; x < requested.shape[0]; ++x) {
-                        if (raw.cell_visits == limits.max_cell_visits) {
-                            cell_visits = raw.cell_visits;
-                            return fail("FIELD_CELL_VISIT_LIMIT",
-                                        "analytic container classification exhausted its budget");
-                        }
-                        ++raw.cell_visits;
-                        cell_visits = raw.cell_visits;
-                        const std::uint32_t local[3] = { x, y, z };
-                        CellIndex index {};
-                        for (int axis = 0; axis != 3; ++axis) {
-                            index[axis] = requested.first[axis] + local[axis];
-                        }
-                        const auto certified =
-                            kernel::classify_analytic_box_cell(requested, index, *box, clearance, budget);
-                        if (certified == kernel::Decision::indeterminate) {
-                            return fail(budget.memory_exhausted() ? "FIELD_MEMORY_LIMIT" : "FIELD_KERNEL_WORK_LIMIT",
-                                        "analytic container classification exhausted its budget");
-                        }
-                        raw.cells[flat(requested.shape, x, y, z)] = certified == kernel::Decision::yes ? 0 : 1;
-                    }
-                }
+        const auto pose_string_bytes = external_string_bytes(pose.copy_id);
+        if (!pose_string_bytes) {
+            return fail("FIELD_MEMORY_LIMIT", "copy id storage is unrepresentable");
+        }
+        RepresentationFailure error;
+        if (!window_cells(requested, limits, error)) {
+            return error;
+        }
+        const auto halo = clearance_halo(clearance, requested.lattice.pitch_mm, error);
+        if (!halo) {
+            return error;
+        }
+        const auto work_window = expanded(requested, *halo, error);
+        if (!work_window || !window_cells(*work_window, limits, error)) {
+            return error;
+        }
+        if (!budget.reserve_bytes(limits.reserved_bytes) || !budget.reserve_bytes(attempt.input_resident_bytes) ||
+            !budget.reserve_bytes(*pose_string_bytes)) {
+            return fail("FIELD_MEMORY_LIMIT", "resident prepared geometry and copy id exceed the working byte limit");
+        }
+        auto placed =
+            kernel::place(detail::FieldBuilder::prepared(*geometry), pose.translation_mm, pose.rotation_xyzw, budget);
+        if (!placed) {
+            return kernel_failure(placed.failure);
+        }
+        PlacedRawWindowPlan plan { PlacedRawDomain::full_window, *work_window };
+        if (policy == PlacedFieldPolicy::certified_support) {
+            if (!budget.reserve_bytes(sizeof(plan))) {
+                return fail("FIELD_MEMORY_LIMIT", "placed support metadata exceeds the working byte limit");
             }
-            return detail::FieldBuilder::finish(std::move(raw), FieldPurpose::container_blocker, {},
-                                                std::move(container), {}, clearance, budget, limits.reserved_bytes);
+            const auto planned = plan_placed_raw_window(*placed.solid, *work_window, budget);
+            if (const auto* failure = std::get_if<RepresentationFailure>(&planned)) {
+                return *failure;
+            }
+            plan = std::get<PlacedRawWindowPlan>(planned);
         }
-        catch (const std::bad_alloc&) {
-            return fail("FIELD_ALLOCATION_FAILURE", "analytic container allocation failed");
+        if (plan.kind == PlacedRawDomain::certified_empty) {
+            const auto count = window_cells(requested, limits, error);
+            if (auto failure = reserve_array(budget, *count, sizeof(std::uint8_t), "empty output")) {
+                return *failure;
+            }
+            try {
+                RawField empty { requested, std::vector<std::uint8_t>(0), std::move(placed.solid) };
+                if (!initialize_cells(empty.cells, static_cast<std::size_t>(*count), budget)) {
+                    return fail("FIELD_KERNEL_WORK_LIMIT", "empty output initialization exhausted work");
+                }
+                return FieldBuilder::finish(std::move(empty), FieldPurpose::placed_pair_blocker, std::move(geometry),
+                                            {}, pose, clearance, budget, limits.reserved_bytes);
+            }
+            catch (const std::bad_alloc&) {
+                return fail("FIELD_ALLOCATION_FAILURE", "empty placed field allocation failed");
+            }
         }
-    }
-
-    auto source = std::get<std::shared_ptr<const AcceptedSolid>>(container);
-    if (!source || source->role() != AssetRole::container) {
-        return fail("FIELD_INPUT", "an accepted container solid is required");
-    }
-    const auto input_residency = source->representation_residency();
-    if (!input_residency || !attempt_scope.set_input(*input_residency)) {
-        return fail("FIELD_MEMORY_LIMIT", "container residency is unrepresentable");
-    }
-    const auto halo = clearance_halo(clearance, requested.lattice.pitch_mm, error);
-    if (!halo) {
-        return error;
-    }
-    const auto work_window = expanded(requested, *halo, error);
-    if (!work_window || !window_cells(*work_window, limits, error)) {
-        return error;
-    }
-    if (source->mesh().triangles.size() > limits.max_input_triangles) {
-        return fail("FIELD_INPUT_TRIANGLE_LIMIT", "container exceeds the triangle limit");
-    }
-    if (!budget.reserve_bytes(limits.reserved_bytes) || !budget.reserve_bytes(attempt.input_resident_bytes)) {
-        return fail("FIELD_MEMORY_LIMIT", "resident container input exceeds byte limit");
-    }
-    auto prepared = kernel::prepare(source, budget);
-    if (!prepared) {
-        return kernel_failure(prepared.failure);
-    }
-    auto placed = kernel::place(prepared.solid, { 0, 0, 0 }, { 0, 0, 0, 1 }, budget);
-    if (!placed) {
-        return kernel_failure(placed.failure);
-    }
-    const auto count = window_cells(*work_window, limits, error);
-    if (!count) {
-        return error;
-    }
-    if (auto admission = reserve_array(budget, *count, 1, "STL container field cells")) {
-        return *admission;
-    }
-    try {
-        RawField raw { *work_window, std::vector<std::uint8_t>(static_cast<std::size_t>(*count)),
-                       std::move(placed.solid) };
-        CellVisitCapture capture(raw, cell_visits);
-        if (auto failure = kernel::rasterize_boundary(*raw.placed, *work_window, raw.cells, budget, raw.cell_visits,
-                                                      limits.max_cell_visits)) {
-            cell_visits = raw.cell_visits;
-            return kernel_failure(*failure);
+        auto raw = make_raw(std::move(placed.solid), plan.window, budget, limits, cell_visits);
+        if (std::holds_alternative<RepresentationFailure>(raw)) {
+            return std::get<RepresentationFailure>(std::move(raw));
         }
-        if (auto failure = fill_components(raw, budget, limits)) {
-            cell_visits = raw.cell_visits;
-            return *failure;
-        }
-        cell_visits = raw.cell_visits;
+        auto value = std::get<RawField>(std::move(raw));
+        CellVisitCapture capture(value, cell_visits);
         auto stencil = make_stencil(*halo, requested.lattice.pitch_mm, clearance, budget);
         if (std::holds_alternative<RepresentationFailure>(stencil)) {
             return std::get<RepresentationFailure>(std::move(stencil));
         }
         auto offsets = std::get<std::vector<CellIndex>>(std::move(stencil));
-        auto cropped = dilate_and_crop(raw, requested, offsets, true, budget, limits, raw.cell_visits);
-        cell_visits = raw.cell_visits;
+        auto cropped = dilate_and_crop(value, requested, offsets, false, budget, limits, value.cell_visits);
+        cell_visits = value.cell_visits;
         if (std::holds_alternative<RepresentationFailure>(cropped)) {
             return std::get<RepresentationFailure>(std::move(cropped));
         }
-        const auto old_cell_bytes = static_cast<std::uint64_t>(raw.cells.size());
-        raw.window = requested;
-        raw.cells = std::get<std::vector<std::uint8_t>>(std::move(cropped));
+        const auto old_cell_bytes = static_cast<std::uint64_t>(value.cells.size());
+        value.window = requested;
+        value.cells = std::get<std::vector<std::uint8_t>>(std::move(cropped));
         budget.release_bytes(old_cell_bytes);
         const auto stencil_bytes = static_cast<std::uint64_t>(offsets.capacity()) * sizeof(CellIndex);
         std::vector<CellIndex>().swap(offsets);
         budget.release_bytes(stencil_bytes);
-        return detail::FieldBuilder::finish(std::move(raw), FieldPurpose::container_blocker, {}, std::move(container),
-                                            {}, clearance, budget, limits.reserved_bytes);
+        return detail::FieldBuilder::finish(std::move(value), FieldPurpose::placed_pair_blocker, std::move(geometry),
+                                            {}, pose, clearance, budget, limits.reserved_bytes);
+    };
+    auto output = operation();
+    if (auto failure = interruption_failure(control)) {
+        return *failure;
     }
-    catch (const std::bad_alloc&) {
-        return fail("FIELD_ALLOCATION_FAILURE", "STL container field allocation failed");
+    return output;
+}
+
+RepresentationOutcome<CellField> voxelize_container(Container container, GridWindow requested, double clearance,
+                                                    const RepresentationLimits& limits,
+                                                    RepresentationAttemptStats& attempt,
+                                                    const runtime::OperationControl& control)
+{
+    if (auto failure = interruption_failure(control)) {
+        attempt = {};
+        return *failure;
     }
+    auto operation = [&]() -> RepresentationOutcome<CellField> {
+        kernel::Budget budget(limits.max_kernel_work, limits.max_working_bytes, control);
+        std::uint64_t cell_visits {};
+        AttemptScope attempt_scope(attempt, limits, budget, cell_visits);
+        RepresentationFailure error;
+        const auto requested_count = window_cells(requested, limits, error);
+        if (!requested_count) {
+            return error;
+        }
+        if (!std::isfinite(clearance) || clearance < 0.0) {
+            return fail("FIELD_INPUT", "wall clearance must be finite and nonnegative");
+        }
+        if (const auto box = std::get_if<BoxDimensions>(&container)) {
+            attempt_scope.set_empty_input();
+            if (!(box->width_mm > 0 && box->depth_mm > 0 && box->height_mm > 0) || !std::isfinite(box->width_mm) ||
+                !std::isfinite(box->depth_mm) || !std::isfinite(box->height_mm)) {
+                return fail("FIELD_INPUT", "analytic container dimensions must be finite and positive");
+            }
+            if (!kernel::field_floating_environment_supported()) {
+                return fail("FIELD_FLOATING_ENVIRONMENT",
+                            "analytic fields require round-to-nearest without flushed "
+                            "subnormals");
+            }
+            if (!budget.reserve_bytes(limits.reserved_bytes) || !budget.reserve_bytes(*requested_count)) {
+                return fail("FIELD_MEMORY_LIMIT", "analytic container output exceeds byte limit");
+            }
+            try {
+                RawField raw { requested, std::vector<std::uint8_t>(0) };
+                if (!initialize_cells(raw.cells, static_cast<std::size_t>(*requested_count), budget)) {
+                    return fail("FIELD_KERNEL_WORK_LIMIT", "container initialization exhausted its global budget");
+                }
+                CellVisitCapture capture(raw, cell_visits);
+                for (std::uint32_t z = 0; z < requested.shape[2]; ++z) {
+                    for (std::uint32_t y = 0; y < requested.shape[1]; ++y) {
+                        for (std::uint32_t x = 0; x < requested.shape[0]; ++x) {
+                            if (raw.cell_visits == limits.max_cell_visits) {
+                                cell_visits = raw.cell_visits;
+                                return fail("FIELD_CELL_VISIT_LIMIT",
+                                            "analytic container classification exhausted its budget");
+                            }
+                            ++raw.cell_visits;
+                            cell_visits = raw.cell_visits;
+                            const std::uint32_t local[3] = { x, y, z };
+                            CellIndex index {};
+                            for (int axis = 0; axis != 3; ++axis) {
+                                index[axis] = requested.first[axis] + local[axis];
+                            }
+                            const auto certified =
+                                kernel::classify_analytic_box_cell(requested, index, *box, clearance, budget);
+                            if (certified == kernel::Decision::indeterminate) {
+                                return fail(
+                                    budget.memory_exhausted() ? "FIELD_MEMORY_LIMIT" : "FIELD_KERNEL_WORK_LIMIT",
+                                    "analytic container classification exhausted its budget");
+                            }
+                            raw.cells[flat(requested.shape, x, y, z)] = certified == kernel::Decision::yes ? 0 : 1;
+                        }
+                    }
+                }
+                return detail::FieldBuilder::finish(std::move(raw), FieldPurpose::container_blocker, {},
+                                                    std::move(container), {}, clearance, budget, limits.reserved_bytes);
+            }
+            catch (const std::bad_alloc&) {
+                return fail("FIELD_ALLOCATION_FAILURE", "analytic container allocation failed");
+            }
+        }
+
+        auto source = std::get<std::shared_ptr<const AcceptedSolid>>(container);
+        if (!source || source->role() != AssetRole::container) {
+            return fail("FIELD_INPUT", "an accepted container solid is required");
+        }
+        const auto input_residency = source->representation_residency();
+        if (!input_residency || !attempt_scope.set_input(*input_residency)) {
+            return fail("FIELD_MEMORY_LIMIT", "container residency is unrepresentable");
+        }
+        const auto halo = clearance_halo(clearance, requested.lattice.pitch_mm, error);
+        if (!halo) {
+            return error;
+        }
+        const auto work_window = expanded(requested, *halo, error);
+        if (!work_window || !window_cells(*work_window, limits, error)) {
+            return error;
+        }
+        if (source->mesh().triangles.size() > limits.max_input_triangles) {
+            return fail("FIELD_INPUT_TRIANGLE_LIMIT", "container exceeds the triangle limit");
+        }
+        if (!budget.reserve_bytes(limits.reserved_bytes) || !budget.reserve_bytes(attempt.input_resident_bytes)) {
+            return fail("FIELD_MEMORY_LIMIT", "resident container input exceeds byte limit");
+        }
+        auto prepared = kernel::prepare(source, budget);
+        if (!prepared) {
+            return kernel_failure(prepared.failure);
+        }
+        auto placed = kernel::place(prepared.solid, { 0, 0, 0 }, { 0, 0, 0, 1 }, budget);
+        if (!placed) {
+            return kernel_failure(placed.failure);
+        }
+        const auto count = window_cells(*work_window, limits, error);
+        if (!count) {
+            return error;
+        }
+        if (auto admission = reserve_array(budget, *count, 1, "STL container field cells")) {
+            return *admission;
+        }
+        try {
+            RawField raw { *work_window, std::vector<std::uint8_t>(0), std::move(placed.solid) };
+            if (!initialize_cells(raw.cells, static_cast<std::size_t>(*count), budget)) {
+                return fail("FIELD_KERNEL_WORK_LIMIT", "container initialization exhausted its global budget");
+            }
+            CellVisitCapture capture(raw, cell_visits);
+            if (auto failure = kernel::rasterize_boundary(*raw.placed, *work_window, raw.cells, budget, raw.cell_visits,
+                                                          limits.max_cell_visits)) {
+                cell_visits = raw.cell_visits;
+                return kernel_failure(*failure);
+            }
+            if (auto failure = fill_components(raw, budget, limits)) {
+                cell_visits = raw.cell_visits;
+                return *failure;
+            }
+            cell_visits = raw.cell_visits;
+            auto stencil = make_stencil(*halo, requested.lattice.pitch_mm, clearance, budget);
+            if (std::holds_alternative<RepresentationFailure>(stencil)) {
+                return std::get<RepresentationFailure>(std::move(stencil));
+            }
+            auto offsets = std::get<std::vector<CellIndex>>(std::move(stencil));
+            auto cropped = dilate_and_crop(raw, requested, offsets, true, budget, limits, raw.cell_visits);
+            cell_visits = raw.cell_visits;
+            if (std::holds_alternative<RepresentationFailure>(cropped)) {
+                return std::get<RepresentationFailure>(std::move(cropped));
+            }
+            const auto old_cell_bytes = static_cast<std::uint64_t>(raw.cells.size());
+            raw.window = requested;
+            raw.cells = std::get<std::vector<std::uint8_t>>(std::move(cropped));
+            budget.release_bytes(old_cell_bytes);
+            const auto stencil_bytes = static_cast<std::uint64_t>(offsets.capacity()) * sizeof(CellIndex);
+            std::vector<CellIndex>().swap(offsets);
+            budget.release_bytes(stencil_bytes);
+            return detail::FieldBuilder::finish(std::move(raw), FieldPurpose::container_blocker, {},
+                                                std::move(container), {}, clearance, budget, limits.reserved_bytes);
+        }
+        catch (const std::bad_alloc&) {
+            return fail("FIELD_ALLOCATION_FAILURE", "STL container field allocation failed");
+        }
+    };
+    auto output = operation();
+    if (auto failure = interruption_failure(control)) {
+        return *failure;
+    }
+    return output;
 }
 
 class CountingResource final : public std::pmr::memory_resource {
 public:
-    explicit CountingResource(std::uint64_t initial_ceiling) noexcept { begin_operation(initial_ceiling); }
+    CountingResource(std::uint64_t initial_ceiling, AttemptScope& attempt, std::uint64_t input_bytes) noexcept
+    {
+        begin_operation(initial_ceiling, attempt, input_bytes);
+    }
     [[nodiscard]] std::uint64_t current() const noexcept { return current_; }
-    void begin_operation(std::uint64_t owned_ceiling) noexcept
+    void begin_operation(std::uint64_t owned_ceiling, AttemptScope& attempt, std::uint64_t input_bytes) noexcept
     {
         owned_ceiling_ = owned_ceiling;
         operation_peak_ = current_;
         operation_active_ = true;
+        attempt_ = &attempt;
+        input_bytes_ = input_bytes;
+        initial_ = current_;
     }
-    void end_operation() noexcept { operation_active_ = false; }
+    void end_operation() noexcept
+    {
+        operation_active_ = false;
+        attempt_ = nullptr;
+    }
     [[nodiscard]] std::uint64_t operation_peak() const noexcept { return operation_peak_; }
 
 private:
@@ -1022,9 +1312,19 @@ private:
         if (!operation_active_ || current_ > owned_ceiling_ || bytes > owned_ceiling_ - current_) {
             throw std::bad_alloc {};
         }
+        const auto prospective = current_ + bytes;
+        auto total = input_bytes_;
+        if (!checked_add(total, prospective > initial_ ? prospective - initial_ : 0)) {
+            throw std::bad_alloc {};
+        }
+        // The hook is already active while Storage's containers construct.
+        // Denied requests never raise this bound; an upstream allocation may
+        // still fail after this successful admission.
+        attempt_->observe_admitted_bytes(total);
         void* result = std::pmr::new_delete_resource()->allocate(bytes, alignment);
-        current_ += bytes;
+        current_ = prospective;
         operation_peak_ = std::max(operation_peak_, current_);
+        attempt_->observe_working_bytes(total);
         return result;
     }
     void do_deallocate(void* pointer, std::size_t bytes, std::size_t alignment) override
@@ -1036,6 +1336,9 @@ private:
     std::uint64_t owned_ceiling_ {};
     std::uint64_t current_ {};
     std::uint64_t operation_peak_ {};
+    AttemptScope* attempt_ {};
+    std::uint64_t input_bytes_ {};
+    std::uint64_t initial_ {};
     bool operation_active_ {};
 };
 
@@ -1044,6 +1347,11 @@ struct BlockedField::Storage {
     struct FootprintRecord {
         std::pmr::string id;
         Footprint footprint;
+        explicit FootprintRecord(std::pmr::memory_resource* resource) :
+            id(std::size_t {}, '\0', resource),
+            footprint(std::size_t {}, resource)
+        {
+        }
     };
     using Footprints = std::pmr::list<FootprintRecord>;
     std::shared_ptr<const CellField> mask;
@@ -1052,11 +1360,12 @@ struct BlockedField::Storage {
     std::pmr::vector<std::uint32_t> counts;
     Footprints footprints;
 
-    Storage(std::shared_ptr<const CellField> value, RepresentationLimits admission, std::uint64_t owned_ceiling) :
+    Storage(std::shared_ptr<const CellField> value, RepresentationLimits admission, std::uint64_t owned_ceiling,
+            AttemptScope& attempt, std::uint64_t input_bytes) :
         mask(std::move(value)),
         limits(admission),
-        resource(owned_ceiling),
-        counts(&resource),
+        resource(owned_ceiling, attempt, input_bytes),
+        counts(std::size_t {}, &resource),
         footprints(&resource)
     {
     }
@@ -1121,7 +1430,7 @@ public:
         input_bytes_(input_bytes),
         initial_(resource.current())
     {
-        resource_.begin_operation(ceiling);
+        resource_.begin_operation(ceiling, attempt, input_bytes);
     }
     ~ResourceOperation()
     {
@@ -1144,10 +1453,13 @@ std::optional<RepresentationFailure> charge_visit(kernel::Budget& budget, std::u
                                                   std::uint64_t& cell_visits, std::string_view method)
 {
     if (cell_visits == max_cell_visits) {
-        return fail("FIELD_CELL_VISIT_LIMIT", std::string(method) + " exhausted its cell-visit limit");
+        return RepresentationFailure { "FIELD_CELL_VISIT_LIMIT", "exhausted its cell-visit limit", method };
     }
     if (!budget.consume_work(1)) {
-        return fail("FIELD_KERNEL_WORK_LIMIT", std::string(method) + " exhausted its work limit");
+        if (auto failure = interruption_failure(budget.control())) {
+            return failure;
+        }
+        return RepresentationFailure { "FIELD_KERNEL_WORK_LIMIT", "exhausted its work limit", method };
     }
     ++cell_visits;
     return std::nullopt;
@@ -1209,6 +1521,105 @@ std::optional<std::uint64_t> owned_ceiling(std::uint64_t input_bytes, std::uint6
 
 BlockedField::BlockedField(std::unique_ptr<Storage> storage) noexcept : storage_(std::move(storage)) {}
 BlockedField::~BlockedField() = default;
+std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> BlockedField::clone(
+    const RepresentationLimits& requested, RepresentationAttemptStats& attempt,
+    const runtime::OperationControl& control) const
+{
+    const auto limits = operation_limits(storage_->limits, requested);
+    kernel::Budget budget(limits.max_kernel_work, limits.max_working_bytes, control);
+    std::uint64_t cell_visits {};
+    AttemptScope attempt_scope(attempt, limits, budget, cell_visits);
+    const auto interruption = [&]() -> std::optional<RepresentationFailure> {
+        auto cause = budget.interruption();
+        if (cause == runtime::StopCause::none) {
+            cause = control.poll();
+        }
+        if (cause == runtime::StopCause::none) {
+            return {};
+        }
+        return fail(cause == runtime::StopCause::user_stopped ? "OPERATION_CANCELLED" : "DEADLINE_EXCEEDED",
+                    "blocked-field clone was interrupted before publication");
+    };
+    const auto input = representation_residency();
+    if (!input || !attempt_scope.set_input(*input)) {
+        return fail("FIELD_MEMORY_LIMIT", "committed blocked-field residency is unrepresentable");
+    }
+    if (auto failure = interruption()) {
+        return *failure;
+    }
+    std::uint64_t fixed = limits.reserved_bytes;
+    if (storage_->counts.size() > limits.max_cells || !checked_add(fixed, attempt.input_resident_bytes) ||
+        !checked_add(fixed, sizeof(Storage) + sizeof(BlockedField)) || fixed > limits.max_working_bytes ||
+        !budget.reserve_bytes(fixed)) {
+        return fail("FIELD_MEMORY_LIMIT", "committed and staged blocked fields exceed their byte allowance");
+    }
+    const auto visit = [&]() -> std::optional<RepresentationFailure> {
+        if (auto failure = charge_visit(budget, limits.max_cell_visits, cell_visits, "blocked-field clone")) {
+            if (auto stopped = interruption()) {
+                return stopped;
+            }
+            return failure;
+        }
+        return {};
+    };
+    try {
+        // PMR checks every requested count/index/string/list allocation before
+        // operator new, including overlap with the complete committed owner.
+        auto staged = std::make_unique<Storage>(storage_->mask, limits, limits.max_working_bytes - fixed, attempt_scope,
+                                                fixed - limits.reserved_bytes);
+        ResourceOperation operation(
+            staged->resource, limits.max_working_bytes - fixed, attempt_scope,
+            attempt.input_resident_bytes + sizeof(Storage) + sizeof(BlockedField) + staged->resource.current());
+        staged->counts.reserve(storage_->counts.capacity());
+        for (const auto count : storage_->counts) {
+            if (auto failure = visit()) {
+                return *failure;
+            }
+            staged->counts.push_back(count);
+        }
+        for (const auto& record : storage_->footprints) {
+            if (!budget.consume_work(1)) {
+                if (auto failure = interruption()) {
+                    return *failure;
+                }
+                return fail("FIELD_KERNEL_WORK_LIMIT", "blocked-field clone exhausted record-copy work");
+            }
+            Storage::Footprint indices(std::size_t {}, &staged->resource);
+            indices.reserve(record.footprint.capacity());
+            for (const auto index : record.footprint) {
+                if (auto failure = visit()) {
+                    return *failure;
+                }
+                indices.push_back(index);
+            }
+            std::pmr::string id(std::size_t {}, '\0', &staged->resource);
+            id.reserve(record.id.capacity());
+            for (const auto byte : record.id) {
+                if (!budget.consume_work(1)) {
+                    if (auto failure = interruption()) {
+                        return *failure;
+                    }
+                    return fail("FIELD_KERNEL_WORK_LIMIT", "blocked-field clone exhausted identifier-copy work");
+                }
+                id.push_back(byte);
+            }
+            // MSVC Debug allocator-only constructors and ordinary moves can
+            // allocate proxies inside noexcept. Count constructors propagate
+            // denial; same-resource buffer swaps then allocate nothing.
+            staged->footprints.emplace_back(&staged->resource);
+            auto& copied = staged->footprints.back();
+            copied.id.swap(id);
+            copied.footprint.swap(indices);
+        }
+        if (auto failure = interruption()) {
+            return *failure;
+        }
+        return std::unique_ptr<BlockedField>(new BlockedField(std::move(staged)));
+    }
+    catch (const std::bad_alloc&) {
+        return fail("FIELD_ALLOCATION_FAILURE", "bounded blocked-field clone allocation failed");
+    }
+}
 const GridWindow& BlockedField::window() const noexcept { return storage_->mask->window(); }
 
 RepresentationOutcome<VoxelGeometry> prepare_voxel_geometry(std::shared_ptr<const AcceptedSolid> source,
@@ -1289,10 +1700,15 @@ std::optional<RepresentationFailure> BlockedField::add(std::string id, std::shar
 
 std::optional<RepresentationFailure> BlockedField::add(std::string_view id, std::shared_ptr<const CellField> blocker,
                                                        const RepresentationLimits& requested,
-                                                       RepresentationAttemptStats& attempt)
+                                                       RepresentationAttemptStats& attempt,
+                                                       const runtime::OperationControl& control)
 {
+    if (auto failure = interruption_failure(control)) {
+        attempt = {};
+        return failure;
+    }
     const auto limits = operation_limits(storage_->limits, requested);
-    kernel::Budget budget(limits.max_kernel_work, limits.max_working_bytes);
+    kernel::Budget budget(limits.max_kernel_work, limits.max_working_bytes, control);
     std::uint64_t cell_visits {};
     AttemptScope attempt_scope(attempt, limits, budget, cell_visits);
     if (!blocker || blocker->purpose() != FieldPurpose::placed_pair_blocker ||
@@ -1321,6 +1737,9 @@ std::optional<RepresentationFailure> BlockedField::add(std::string_view id, std:
         const auto comparison =
             compare_identifier(std::string_view(existing.id.data(), existing.id.size()), id, budget);
         if (comparison == IdentifierComparison::exhausted) {
+            if (auto failure = interruption_failure(control)) {
+                return failure;
+            }
             return fail("FIELD_KERNEL_WORK_LIMIT", "copy-id lookup exhausted its work limit");
         }
         if (comparison == IdentifierComparison::equal) {
@@ -1353,7 +1772,7 @@ std::optional<RepresentationFailure> BlockedField::add(std::string_view id, std:
     }
     ResourceOperation operation(storage_->resource, *ceiling, attempt_scope, inputs.bytes);
     try {
-        BlockedField::Storage::Footprint footprint { &storage_->resource };
+        BlockedField::Storage::Footprint footprint(std::size_t {}, &storage_->resource);
         footprint.reserve(static_cast<std::size_t>(occupied));
         for (std::size_t index = 0; index < blocker->cells().size(); ++index) {
             if (auto error = charge_visit(budget, limits.max_cell_visits, cell_visits, "copy footprint construction")) {
@@ -1364,11 +1783,20 @@ std::optional<RepresentationFailure> BlockedField::add(std::string_view id, std:
             }
         }
         std::pmr::string key { id, &storage_->resource };
-        (void)budget.consume_work(static_cast<std::uint64_t>(id.size()));
-        storage_->footprints.push_back(BlockedField::Storage::FootprintRecord { std::move(key), std::move(footprint) });
-        (void)budget.consume_work(1);
+        if (auto failure = interruption_failure(control)) {
+            return failure;
+        }
+        if (!budget.consume_work(static_cast<std::uint64_t>(id.size()) + occupied + 1)) {
+            if (auto failure = interruption_failure(control)) {
+                return failure;
+            }
+            return fail("FIELD_KERNEL_WORK_LIMIT", "copy commit exhausted its work limit");
+        }
+        storage_->footprints.emplace_back(&storage_->resource);
+        auto& inserted = storage_->footprints.back();
+        inserted.id.swap(key);
+        inserted.footprint.swap(footprint);
         for (const auto index : storage_->footprints.back().footprint) {
-            (void)budget.consume_work(1);
             ++cell_visits;
             ++storage_->counts[index];
         }
@@ -1386,10 +1814,15 @@ std::optional<RepresentationFailure> BlockedField::remove(std::string_view id)
 }
 
 std::optional<RepresentationFailure> BlockedField::remove(std::string_view id, const RepresentationLimits& requested,
-                                                          RepresentationAttemptStats& attempt)
+                                                          RepresentationAttemptStats& attempt,
+                                                          const runtime::OperationControl& control)
 {
+    if (auto failure = interruption_failure(control)) {
+        attempt = {};
+        return failure;
+    }
     const auto limits = operation_limits(storage_->limits, requested);
-    kernel::Budget budget(limits.max_kernel_work, limits.max_working_bytes);
+    kernel::Budget budget(limits.max_kernel_work, limits.max_working_bytes, control);
     std::uint64_t cell_visits {};
     AttemptScope attempt_scope(attempt, limits, budget, cell_visits);
     const auto current = representation_residency();
@@ -1406,6 +1839,9 @@ std::optional<RepresentationFailure> BlockedField::remove(std::string_view id, c
     for (auto at = storage_->footprints.begin(); at != storage_->footprints.end(); ++at) {
         const auto comparison = compare_identifier(std::string_view(at->id.data(), at->id.size()), id, budget);
         if (comparison == IdentifierComparison::exhausted) {
+            if (auto failure = interruption_failure(control)) {
+                return failure;
+            }
             return fail("FIELD_KERNEL_WORK_LIMIT", "copy-id lookup exhausted its work limit");
         }
         if (comparison == IdentifierComparison::equal) {
@@ -1431,12 +1867,19 @@ std::optional<RepresentationFailure> BlockedField::remove(std::string_view id, c
             updates > limits.max_cell_visits - cell_visits ? "FIELD_CELL_VISIT_LIMIT" : "FIELD_KERNEL_WORK_LIMIT",
             "copy removal update exceeds the operation limit");
     }
+    if (auto failure = interruption_failure(control)) {
+        return failure;
+    }
+    if (!budget.consume_work(updates + 1)) {
+        if (auto failure = interruption_failure(control)) {
+            return failure;
+        }
+        return fail("FIELD_KERNEL_WORK_LIMIT", "copy removal commit exhausted its work limit");
+    }
     for (const auto index : found->footprint) {
-        (void)budget.consume_work(1);
         ++cell_visits;
         --storage_->counts[index];
     }
-    (void)budget.consume_work(1);
     storage_->footprints.erase(found);
     return std::nullopt;
 }
@@ -1449,42 +1892,56 @@ std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_
 }
 
 std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> make_blocked_field(
-    std::shared_ptr<const CellField> mask, const RepresentationLimits& limits, RepresentationAttemptStats& attempt)
+    std::shared_ptr<const CellField> mask, const RepresentationLimits& limits, RepresentationAttemptStats& attempt,
+    const runtime::OperationControl& control)
 {
-    kernel::Budget budget(limits.max_kernel_work, limits.max_working_bytes);
-    std::uint64_t cell_visits {};
-    AttemptScope attempt_scope(attempt, limits, budget, cell_visits);
-    if (!mask || mask->purpose() != FieldPurpose::container_blocker) {
-        return fail("FIELD_INPUT", "an immutable container blocker is required");
+    if (auto failure = interruption_failure(control)) {
+        attempt = {};
+        return *failure;
     }
-    const auto input = mask->representation_residency();
-    if (!input || !attempt_scope.set_input(*input)) {
-        return fail("FIELD_MEMORY_LIMIT", "container mask residency is unrepresentable");
-    }
-    const auto count = mask->cells().size();
-    if (!budget.reserve_bytes(limits.reserved_bytes) || !budget.reserve_bytes(attempt.input_resident_bytes) ||
-        !budget.reserve_bytes(sizeof(BlockedField::Storage)) || count > limits.max_cells) {
-        return fail("FIELD_MEMORY_LIMIT", "container mask and count storage exceed byte limit");
-    }
-    std::uint64_t fixed {};
-    if (!checked_add(fixed, limits.reserved_bytes) || !checked_add(fixed, attempt.input_resident_bytes) ||
-        !checked_add(fixed, sizeof(BlockedField::Storage)) || fixed > limits.max_working_bytes) {
-        return fail("FIELD_MEMORY_LIMIT", "container mask and count storage exceed byte limit");
-    }
-    try {
-        auto storage =
-            std::make_unique<BlockedField::Storage>(std::move(mask), limits, limits.max_working_bytes - fixed);
-        ResourceOperation operation(storage->resource, limits.max_working_bytes - fixed, attempt_scope,
-                                    attempt.input_resident_bytes + sizeof(BlockedField::Storage));
-        storage->counts.resize(count);
-        if (!budget.reserve_bytes(storage->resource.current())) {
-            return fail("FIELD_MEMORY_LIMIT", "blocked-field count allocation exceeds byte limit");
+    auto operation = [&]() -> std::variant<std::unique_ptr<BlockedField>, RepresentationFailure> {
+        kernel::Budget budget(limits.max_kernel_work, limits.max_working_bytes, control);
+        std::uint64_t cell_visits {};
+        AttemptScope attempt_scope(attempt, limits, budget, cell_visits);
+        if (!mask || mask->purpose() != FieldPurpose::container_blocker) {
+            return fail("FIELD_INPUT", "an immutable container blocker is required");
         }
-        return std::unique_ptr<BlockedField>(new BlockedField(std::move(storage)));
+        const auto input = mask->representation_residency();
+        if (!input || !attempt_scope.set_input(*input)) {
+            return fail("FIELD_MEMORY_LIMIT", "container mask residency is unrepresentable");
+        }
+        const auto count = mask->cells().size();
+        if (!budget.reserve_bytes(limits.reserved_bytes) || !budget.reserve_bytes(attempt.input_resident_bytes) ||
+            !budget.reserve_bytes(sizeof(BlockedField::Storage)) || count > limits.max_cells) {
+            return fail("FIELD_MEMORY_LIMIT", "container mask and count storage exceed byte limit");
+        }
+        std::uint64_t fixed {};
+        if (!checked_add(fixed, limits.reserved_bytes) || !checked_add(fixed, attempt.input_resident_bytes) ||
+            !checked_add(fixed, sizeof(BlockedField::Storage)) || fixed > limits.max_working_bytes) {
+            return fail("FIELD_MEMORY_LIMIT", "container mask and count storage exceed byte limit");
+        }
+        try {
+            auto storage =
+                std::make_unique<BlockedField::Storage>(std::move(mask), limits, limits.max_working_bytes - fixed,
+                                                        attempt_scope, fixed - limits.reserved_bytes);
+            ResourceOperation operation(
+                storage->resource, limits.max_working_bytes - fixed, attempt_scope,
+                attempt.input_resident_bytes + sizeof(BlockedField::Storage) + storage->resource.current());
+            storage->counts.resize(count);
+            if (!budget.reserve_bytes(storage->resource.current())) {
+                return fail("FIELD_MEMORY_LIMIT", "blocked-field count allocation exceeds byte limit");
+            }
+            return std::unique_ptr<BlockedField>(new BlockedField(std::move(storage)));
+        }
+        catch (const std::bad_alloc&) {
+            return fail("FIELD_ALLOCATION_FAILURE", "blocked-field count allocation failed");
+        }
+    };
+    auto output = operation();
+    if (auto failure = interruption_failure(control)) {
+        return *failure;
     }
-    catch (const std::bad_alloc&) {
-        return fail("FIELD_ALLOCATION_FAILURE", "blocked-field count allocation failed");
-    }
+    return output;
 }
 
 RepresentationOutcome<CellField> voxelize_object(std::shared_ptr<const VoxelGeometry> geometry, GridLattice lattice,

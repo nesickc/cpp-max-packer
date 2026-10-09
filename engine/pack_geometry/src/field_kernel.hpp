@@ -10,17 +10,22 @@
 namespace spectrapack::geometry {
 namespace detail::validation_kernel {
 
+inline constexpr std::string_view kRasterWorkRevision = "existing-boundary-sat-v1";
+
 // Conservative field-only adapter.  It deliberately returns indeterminate on
 // any interval/predicate uncertainty; callers turn that into a blocked cell.
-[[nodiscard]] std::optional<KernelFailure> rasterize_boundary(
-    const PlacedSolid&, const GridWindow&, std::span<std::uint8_t> boundary,
-    Budget&, std::uint64_t& cell_visits, std::uint64_t max_cell_visits);
+[[nodiscard]] std::optional<KernelFailure> rasterize_boundary(const PlacedSolid&, const GridWindow&,
+                                                              std::span<std::uint8_t> boundary, Budget&,
+                                                              std::uint64_t& cell_visits, std::uint64_t max_cell_visits,
+                                                              bool skip_existing_boundary = true);
 [[nodiscard]] Decision classify_material_witness(
     const PlacedSolid&, Bounds outward_world_point_interval, Budget&);
 [[nodiscard]] Decision euclidean_offset_reaches(CellIndex delta,
                                                 double pitch_mm,
                                                 double clearance_mm, Budget&);
 [[nodiscard]] bool field_floating_environment_supported() noexcept;
+// Encloses both placed-vertex intervals and the exact-cardinal cuboid path.
+[[nodiscard]] std::optional<Bounds> transformed_source_box(Bounds, Vec3, Quaternion) noexcept;
 [[nodiscard]] std::optional<Bounds> outward_grid_cell(const GridWindow&,
                                                       CellIndex) noexcept;
 // yes means the entire closed cell is certified inside the box after the

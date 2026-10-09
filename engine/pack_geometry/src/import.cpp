@@ -13,6 +13,8 @@
 
 #include "exact_predicates.hpp"
 #include "export_validation_internal.hpp"
+#include "import_admission.hpp"
+#include "operation_checks.hpp"
 #include "solid_analysis.hpp"
 
 namespace spectrapack::geometry {
@@ -94,33 +96,35 @@ float read_f32(std::span<const std::byte> bytes, std::size_t at) {
   return std::bit_cast<float>(read_u32(bytes, at));
 }
 
-std::variant<ParsedMesh, ImportFailure> parse_binary(
-    std::span<const std::byte> bytes, std::uint32_t count) {
-  ParsedMesh result;
-  result.encoding = StlEncoding::binary;
-  result.vertices.reserve(static_cast<std::size_t>(count) * 3U);
-  result.triangles.reserve(count);
-  bool first = true;
-  for (std::uint32_t face = 0; face != count; ++face) {
-    const auto base = std::size_t{84} + std::size_t{50} * face;
-    Triangle triangle{};
-    for (int vertex = 0; vertex != 3; ++vertex) {
-      Vec3 point{
-          static_cast<double>(read_f32(bytes, base + 12 + vertex * 12)),
-          static_cast<double>(read_f32(bytes, base + 16 + vertex * 12)),
-          static_cast<double>(read_f32(bytes, base + 20 + vertex * 12))};
-      if (!finite(point)) {
-        return input_failure(
-            "NONFINITE_COORDINATE", "Binary STL contains a non-finite vertex.",
-            base + 12 + vertex * 12);
-      }
-      triangle[vertex] = static_cast<std::uint32_t>(result.vertices.size());
-      result.vertices.push_back(point);
-      extend(result.bounds, point, first);
+std::variant<ParsedMesh, ImportFailure> parse_binary(std::span<const std::byte> bytes, std::uint32_t count,
+                                                     const runtime::OperationControl& control)
+{
+    ParsedMesh result;
+    result.encoding = StlEncoding::binary;
+    result.vertices.reserve(static_cast<std::size_t>(count) * 3U);
+    result.triangles.reserve(count);
+    bool first = true;
+    for (std::uint32_t face = 0; face != count; ++face) {
+        if ((face & 255U) == 0) {
+            detail::operation_checkpoint(control);
+        }
+        const auto base = std::size_t { 84 } + std::size_t { 50 } * face;
+        Triangle triangle {};
+        for (int vertex = 0; vertex != 3; ++vertex) {
+            Vec3 point { static_cast<double>(read_f32(bytes, base + 12 + vertex * 12)),
+                         static_cast<double>(read_f32(bytes, base + 16 + vertex * 12)),
+                         static_cast<double>(read_f32(bytes, base + 20 + vertex * 12)) };
+            if (!finite(point)) {
+                return input_failure("NONFINITE_COORDINATE", "Binary STL contains a non-finite vertex.",
+                                     base + 12 + vertex * 12);
+            }
+            triangle[vertex] = static_cast<std::uint32_t>(result.vertices.size());
+            result.vertices.push_back(point);
+            extend(result.bounds, point, first);
+        }
+        result.triangles.push_back(triangle);
     }
-    result.triangles.push_back(triangle);
-  }
-  return result;
+    return result;
 }
 
 bool next(std::istringstream& input, std::string& word) {
@@ -141,94 +145,95 @@ bool number(std::istringstream& input, double& value) {
   return error == std::errc{} && end == view.data() + view.size() && std::isfinite(value);
 }
 
-std::variant<ParsedMesh, ImportFailure> parse_ascii(
-    std::span<const std::byte> bytes, const ImportLimits& limits) {
-  const std::string text(reinterpret_cast<const char*>(bytes.data()), bytes.size());
-  std::istringstream input(text);
-  ParsedMesh result;
-  result.encoding = StlEncoding::ascii;
-  bool first = true;
-  bool saw_solid = false;
-  std::string word;
+std::variant<ParsedMesh, ImportFailure> parse_ascii(std::span<const std::byte> bytes, const ImportLimits& limits,
+                                                    const runtime::OperationControl& control)
+{
+    const std::string text(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    std::istringstream input(text);
+    input.imbue(std::locale::classic());
+    ParsedMesh result;
+    result.encoding = StlEncoding::ascii;
+    bool first = true;
+    bool saw_solid = false;
+    std::string word;
 
-  while (next(input, word)) {
-    if (word != "solid") {
-      return input_failure("MALFORMED_ASCII", "ASCII STL must begin each section with solid.");
-    }
-    saw_solid = true;
-    std::string ignored;
-    std::getline(input, ignored);
-    bool closed = false;
     while (next(input, word)) {
-      if (word == "endsolid") {
+        if (word != "solid") {
+            return input_failure("MALFORMED_ASCII", "ASCII STL must begin each section with solid.");
+        }
+        saw_solid = true;
+        std::string ignored;
         std::getline(input, ignored);
-        closed = true;
-        break;
-      }
-      if (word != "facet" || !next(input, word) || word != "normal") {
-        return input_failure("MALFORMED_ASCII", "Expected facet normal.");
-      }
-      if (result.triangles.size() >= limits.max_triangles ||
-          result.vertices.size() > std::numeric_limits<std::uint32_t>::max() - 3ULL) {
-        return resource_failure("TRIANGLE_COUNT", "ASCII STL exceeds the triangle limit.");
-      }
-      double normal{};
-      if (!number(input, normal) || !number(input, normal) || !number(input, normal)) {
-        return input_failure("MALFORMED_ASCII", "Facet normal is malformed.");
-      }
-      if (!next(input, word) || word != "outer" ||
-          !next(input, word) || word != "loop") {
-        return input_failure("MALFORMED_ASCII", "Expected outer loop.");
-      }
+        bool closed = false;
+        while (next(input, word)) {
+            detail::operation_checkpoint(control);
+            if (word == "endsolid") {
+                std::getline(input, ignored);
+                closed = true;
+                break;
+            }
+            if (word != "facet" || !next(input, word) || word != "normal") {
+                return input_failure("MALFORMED_ASCII", "Expected facet normal.");
+            }
+            if (result.triangles.size() >= limits.max_triangles ||
+                result.vertices.size() > std::numeric_limits<std::uint32_t>::max() - 3ULL) {
+                return resource_failure("TRIANGLE_COUNT", "ASCII STL exceeds the triangle limit.");
+            }
+            double normal {};
+            if (!number(input, normal) || !number(input, normal) || !number(input, normal)) {
+                return input_failure("MALFORMED_ASCII", "Facet normal is malformed.");
+            }
+            if (!next(input, word) || word != "outer" || !next(input, word) || word != "loop") {
+                return input_failure("MALFORMED_ASCII", "Expected outer loop.");
+            }
 
-      Triangle triangle{};
-      for (int vertex = 0; vertex != 3; ++vertex) {
-        if (!next(input, word) || word != "vertex") {
-          return input_failure("MALFORMED_ASCII", "Expected exactly three vertices.");
+            Triangle triangle {};
+            for (int vertex = 0; vertex != 3; ++vertex) {
+                if (!next(input, word) || word != "vertex") {
+                    return input_failure("MALFORMED_ASCII", "Expected exactly three vertices.");
+                }
+                Vec3 point {};
+                if (!number(input, point[0]) || !number(input, point[1]) || !number(input, point[2])) {
+                    return input_failure("NONFINITE_COORDINATE", "A vertex is malformed or non-finite.");
+                }
+                triangle[vertex] = static_cast<std::uint32_t>(result.vertices.size());
+                result.vertices.push_back(point);
+                extend(result.bounds, point, first);
+            }
+            if (!next(input, word) || word != "endloop" || !next(input, word) || word != "endfacet") {
+                return input_failure("MALFORMED_ASCII", "Facet terminator is missing.");
+            }
+            result.triangles.push_back(triangle);
         }
-        Vec3 point{};
-        if (!number(input, point[0]) || !number(input, point[1]) || !number(input, point[2])) {
-          return input_failure(
-              "NONFINITE_COORDINATE", "A vertex is malformed or non-finite.");
+        if (!closed) {
+            return input_failure("TRUNCATED_STL", "ASCII STL ends before endsolid.");
         }
-        triangle[vertex] = static_cast<std::uint32_t>(result.vertices.size());
-        result.vertices.push_back(point);
-        extend(result.bounds, point, first);
-      }
-      if (!next(input, word) || word != "endloop" ||
-          !next(input, word) || word != "endfacet") {
-        return input_failure("MALFORMED_ASCII", "Facet terminator is missing.");
-      }
-      result.triangles.push_back(triangle);
     }
-    if (!closed) {
-      return input_failure("TRUNCATED_STL", "ASCII STL ends before endsolid.");
+    if (!saw_solid || result.triangles.empty()) {
+        return input_failure("MALFORMED_ASCII", "ASCII STL has no facets.");
     }
-  }
-  if (!saw_solid || result.triangles.empty()) {
-    return input_failure("MALFORMED_ASCII", "ASCII STL has no facets.");
-  }
-  return result;
+    return result;
 }
 
-std::variant<ParsedMesh, ImportFailure> parse(
-    std::span<const std::byte> bytes, const ImportLimits& limits) {
-  if (bytes.size() > limits.max_source_bytes) {
-    return resource_failure("SOURCE_BYTES", "STL source exceeds the byte limit.");
-  }
-  if (bytes.size() >= 84) {
-    const auto count = read_u32(bytes, 80);
-    const auto available = bytes.size() - 84;
-    if (std::uint64_t(count) <= std::numeric_limits<std::size_t>::max() / 50ULL &&
-        std::size_t(count) * 50ULL == available) {
-      if (count > limits.max_triangles ||
-          std::uint64_t(count) * 3ULL > std::numeric_limits<std::uint32_t>::max()) {
-        return resource_failure("TRIANGLE_COUNT", "Binary STL exceeds the triangle limit.");
-      }
-      return parse_binary(bytes, count);
+std::variant<ParsedMesh, ImportFailure> parse(std::span<const std::byte> bytes, const ImportLimits& limits,
+                                              const runtime::OperationControl& control)
+{
+    if (bytes.size() > limits.max_source_bytes) {
+        return resource_failure("SOURCE_BYTES", "STL source exceeds the byte limit.");
     }
-  }
-  return parse_ascii(bytes, limits);
+    if (bytes.size() >= 84) {
+        const auto count = read_u32(bytes, 80);
+        const auto available = bytes.size() - 84;
+        if (std::uint64_t(count) <= std::numeric_limits<std::size_t>::max() / 50ULL &&
+            std::size_t(count) * 50ULL == available) {
+            if (count > limits.max_triangles ||
+                std::uint64_t(count) * 3ULL > std::numeric_limits<std::uint32_t>::max()) {
+                return resource_failure("TRIANGLE_COUNT", "Binary STL exceeds the triangle limit.");
+            }
+            return parse_binary(bytes, count, control);
+        }
+    }
+    return parse_ascii(bytes, limits, control);
 }
 
 double normalize_zero(double value) {
@@ -394,8 +399,70 @@ std::optional<RepresentationResidency> AcceptedSolid::representation_residency()
   return result;
 }
 
+ImportAdmissionOutcome estimate_import_admission(std::span<const std::byte> bytes, const ImportLimits& limits,
+                                                 const runtime::OperationControl& control)
+{
+    try {
+        detail::operation_checkpoint(control);
+        if (bytes.size() > limits.max_source_bytes) {
+            return resource_failure("SOURCE_BYTES", "STL source exceeds the byte limit.");
+        }
+        std::uint64_t triangles = 0;
+        bool binary = false;
+        if (bytes.size() >= 84) {
+            const auto count = read_u32(bytes, 80);
+            binary = static_cast<std::uint64_t>(count) * 50 == bytes.size() - 84;
+            if (binary) {
+                triangles = count;
+            }
+        }
+        if (!binary) {
+            const auto white = [](unsigned char value) {
+                return value == ' ' || value == '\t' || value == '\n' || value == '\r' || value == '\v' ||
+                       value == '\f';
+            };
+            std::size_t start = 0;
+            while (start != bytes.size()) {
+                if ((start & 4095U) == 0) {
+                    detail::operation_checkpoint(control);
+                }
+                if (white(std::to_integer<unsigned char>(bytes[start]))) {
+                    ++start;
+                    continue;
+                }
+                auto end = start;
+                while (end != bytes.size() && !white(std::to_integer<unsigned char>(bytes[end]))) {
+                    if ((end & 4095U) == 0) {
+                        detail::operation_checkpoint(control);
+                    }
+                    ++end;
+                }
+                if (end - start == 5 && std::memcmp(bytes.data() + start, "facet", 5) == 0) {
+                    ++triangles;
+                }
+                start = end;
+            }
+        }
+        if (triangles > limits.max_triangles || triangles > std::numeric_limits<std::uint32_t>::max() / 3) {
+            return resource_failure("TRIANGLE_COUNT", "STL exceeds the triangle limit.");
+        }
+        const auto bound =
+            detail::import_payload_bound(triangles, binary ? 0 : bytes.size(), limits.max_diagnostic_examples);
+        if (!bound) {
+            return resource_failure("IMPORT_WORKING_BYTES", "Native import admission accounting overflowed.");
+        }
+        detail::operation_checkpoint(control);
+        return ImportAdmission { *bound, triangles };
+    }
+    catch (const detail::OperationInterrupted& interrupted) {
+        const auto code = detail::interruption_code(interrupted.cause);
+        return ImportFailure { code, code, "Native import admission was interrupted.", {} };
+    }
+}
+
 ImportOutcome<AssetDraft> detail::ImportAccess::inspect(std::span<const std::byte> bytes, const ImportOptions& options,
-                                                        bool baked_world, detail::ImportAttemptStats* attempt_stats)
+                                                        bool baked_world, detail::ImportAttemptStats* attempt_stats,
+                                                        const runtime::OperationControl& control)
 {
     if (attempt_stats) {
         *attempt_stats = {};
@@ -411,7 +478,14 @@ ImportOutcome<AssetDraft> detail::ImportAccess::inspect(std::span<const std::byt
     return settings_failure("INVALID_SCALE", "Unit scale must be finite and positive.");
   }
 
-  auto parsed_result = parse(bytes, options.limits);
+  const auto admission = estimate_import_admission(bytes, options.limits, control);
+  if (const auto* failure = std::get_if<ImportFailure>(&admission)) {
+      return *failure;
+  }
+  if (std::get<ImportAdmission>(admission).working_bytes_upper_bound > options.limits.max_working_bytes) {
+      return resource_failure("IMPORT_WORKING_BYTES", "Native import exceeds its admitted working-memory allowance.");
+  }
+  auto parsed_result = parse(bytes, options.limits, control);
   if (std::holds_alternative<ImportFailure>(parsed_result)) {
     return std::get<ImportFailure>(std::move(parsed_result));
   }
@@ -442,6 +516,9 @@ ImportOutcome<AssetDraft> detail::ImportAccess::inspect(std::span<const std::byt
   std::vector<std::uint32_t> remap(parsed.vertices.size());
     CleanupCounts cleanup {};
     for (std::size_t index = 0; index != parsed.vertices.size(); ++index) {
+        if ((index & 255U) == 0) {
+            detail::operation_checkpoint(control);
+        }
         const Vec3 point = normalize_zero(parsed.vertices[index]);
         const auto [position, inserted] =
             source_index.emplace(key(point), static_cast<std::uint32_t>(source_vertices.size()));
@@ -454,12 +531,13 @@ ImportOutcome<AssetDraft> detail::ImportAccess::inspect(std::span<const std::byt
         remap[index] = position->second;
     }
 
-  exact::WorkBudget cleanup_budget(options.limits.max_predicate_work);
-  std::vector<Triangle> source_faces;
-  std::map<Triangle, bool> seen_faces;
+    exact::WorkBudget cleanup_budget(options.limits.max_predicate_work, control);
+    std::vector<Triangle> source_faces;
+    std::map<Triangle, bool> seen_faces;
     std::uint64_t zero_area_faces = 0;
     std::uint64_t duplicate_faces = 0;
     for (const auto& parsed_face : parsed.triangles) {
+        detail::operation_checkpoint(control);
         Triangle face { remap[parsed_face[0]], remap[parsed_face[1]], remap[parsed_face[2]] };
         auto zero =
             collinear(source_vertices[face[0]], source_vertices[face[1]], source_vertices[face[2]], cleanup_budget);
@@ -491,6 +569,9 @@ ImportOutcome<AssetDraft> detail::ImportAccess::inspect(std::span<const std::byt
     std::vector<std::uint32_t> compact(source_vertices.size());
     std::vector<Vec3> compact_source;
     for (std::uint32_t index = 0; index != source_vertices.size(); ++index) {
+        if ((index & 255U) == 0) {
+            detail::operation_checkpoint(control);
+        }
         if (!referenced[index]) {
             continue;
         }
@@ -506,11 +587,12 @@ ImportOutcome<AssetDraft> detail::ImportAccess::inspect(std::span<const std::byt
     std::unordered_map<VecKey, std::uint32_t, VecHash> local_index;
   storage->vertices.reserve(compact_source.size());
   for (const auto& source : compact_source) {
-        Vec3 local {};
-        for (std::size_t axis = 0; axis != 3; ++axis) {
-            const double scaled = scale * source[axis];
-            local[axis] = normalize_zero(baked_world ? scaled : scaled - storage->frame.anchor_mm[axis]);
-        }
+      detail::operation_checkpoint(control);
+      Vec3 local {};
+      for (std::size_t axis = 0; axis != 3; ++axis) {
+          const double scaled = scale * source[axis];
+          local[axis] = normalize_zero(baked_world ? scaled : scaled - storage->frame.anchor_mm[axis]);
+      }
         if (!finite(local)) {
             return settings_failure("FRAME_OVERFLOW", "A local coordinate is not finite and representable.");
         }
@@ -538,23 +620,53 @@ ImportOutcome<AssetDraft> detail::ImportAccess::inspect(std::span<const std::byt
         }
     }
 
-    auto analysis = detail::analyze_solid({ storage->vertices, storage->triangles }, options.limits, cleanup_budget);
+    const auto source_triangle_count = parsed.triangles.size();
+    const auto source_encoding = parsed.encoding;
+    storage->baked_world_coordinates_exact = baked_world;
+    if (baked_world) {
+        if (storage->frame.anchor_mm != Vec3 { 0, 0, 0 } || storage->vertices.size() != compact_source.size()) {
+            storage->baked_world_coordinates_exact = false;
+        }
+        for (std::size_t vertex = 0; vertex != storage->vertices.size(); ++vertex) {
+            storage->baked_world_coordinates_exact =
+                storage->baked_world_coordinates_exact && storage->vertices[vertex] == compact_source[vertex];
+        }
+    }
+    // The admission table uses max(parser/dedup, analyzer), so no parser heap
+    // payload may cross this boundary. Scalars/certificates preserve reports.
+    decltype(parsed.vertices) {}.swap(parsed.vertices);
+    decltype(parsed.triangles) {}.swap(parsed.triangles);
+    decltype(source_index) {}.swap(source_index);
+    decltype(source_vertices) {}.swap(source_vertices);
+    decltype(remap) {}.swap(remap);
+    decltype(source_faces) {}.swap(source_faces);
+    decltype(seen_faces) {}.swap(seen_faces);
+    decltype(referenced) {}.swap(referenced);
+    decltype(compact) {}.swap(compact);
+    decltype(compact_source) {}.swap(compact_source);
+    decltype(local_index) {}.swap(local_index);
+
+    auto analysis = detail::analyze_solid(
+        { storage->vertices, storage->triangles }, options.limits, cleanup_budget,
+        baked_world ? exact::TriangleRelationPolicy::projected_separation_v1 : exact::TriangleRelationPolicy::legacy,
+        baked_world && attempt_stats ? &attempt_stats->projected : nullptr);
+    detail::operation_checkpoint(control);
     storage->report = std::move(analysis.report);
     if (attempt_stats) {
         attempt_stats->predicate_work = storage->report.predicate_work;
         attempt_stats->candidate_pair_tests = storage->report.candidate_pair_tests;
     }
-    storage->report.encoding = parsed.encoding;
+    storage->report.encoding = source_encoding;
     storage->report.source_byte_size = bytes.size();
-    storage->report.source_triangle_count = parsed.triangles.size();
-  storage->report.cleanup = cleanup;
-  storage->report.zero_area_faces = zero_area_faces;
-  storage->report.duplicate_faces = duplicate_faces;
-  if (storage->report.validity == Validity::valid) {
-    for (std::size_t face = 0; face != storage->triangles.size(); ++face) {
-      if (analysis.flip_faces[face] != 0) {
-        std::swap(storage->triangles[face][1], storage->triangles[face][2]);
-        ++storage->report.cleanup.faces_reoriented;
+    storage->report.source_triangle_count = source_triangle_count;
+    storage->report.cleanup = cleanup;
+    storage->report.zero_area_faces = zero_area_faces;
+    storage->report.duplicate_faces = duplicate_faces;
+    if (storage->report.validity == Validity::valid) {
+        for (std::size_t face = 0; face != storage->triangles.size(); ++face) {
+            if (analysis.flip_faces[face] != 0) {
+                std::swap(storage->triangles[face][1], storage->triangles[face][2]);
+                ++storage->report.cleanup.faces_reoriented;
             }
         }
     }
@@ -564,29 +676,39 @@ ImportOutcome<AssetDraft> detail::ImportAccess::inspect(std::span<const std::byt
          storage->report.cleanup.faces_reoriented != 0)) {
         storage->report.validity = Validity::invalid;
     }
-    storage->baked_world_coordinates_exact = baked_world;
-    if (baked_world) {
-        if (storage->frame.anchor_mm != Vec3 { 0.0, 0.0, 0.0 } || storage->vertices.size() != compact_source.size()) {
-            storage->baked_world_coordinates_exact = false;
-        }
-        for (std::size_t vertex = 0; vertex != storage->vertices.size(); ++vertex) {
-            storage->baked_world_coordinates_exact =
-                storage->baked_world_coordinates_exact && storage->vertices[vertex] == compact_source[vertex];
-        }
-    }
-
     return std::shared_ptr<const AssetDraft>(new AssetDraft(std::move(storage)));
 }
-ImportOutcome<AssetDraft> inspect_stl(std::span<const std::byte> bytes, const ImportOptions& options)
+ImportOutcome<AssetDraft> inspect_stl(std::span<const std::byte> bytes, const ImportOptions& options,
+                                      const runtime::OperationControl& control)
 {
-    return detail::ImportAccess::inspect(bytes, options, false, nullptr);
+    try {
+        control.phase(runtime::Phase::preparing);
+        detail::operation_checkpoint(control);
+        auto result = detail::ImportAccess::inspect(bytes, options, false, nullptr, control);
+        detail::operation_checkpoint(control);
+        return result;
+    }
+    catch (const detail::OperationInterrupted& interrupted) {
+        const auto code = detail::interruption_code(interrupted.cause);
+        return ImportFailure { code, code, "Native preparation was interrupted.", {} };
+    }
 }
 
 namespace detail {
 ImportOutcome<AssetDraft> inspect_baked_world_draft(std::span<const std::byte> bytes, const ImportLimits& limits,
-                                                    ImportAttemptStats& stats)
+                                                    ImportAttemptStats& stats, const runtime::OperationControl& control)
 {
-    return ImportAccess::inspect(bytes, { AssetRole::object, Units::mm, 1.0, limits }, true, &stats);
+    try {
+        operation_checkpoint(control);
+        auto result =
+            ImportAccess::inspect(bytes, { AssetRole::object, Units::mm, 1.0, limits }, true, &stats, control);
+        operation_checkpoint(control);
+        return result;
+    }
+    catch (const OperationInterrupted& interrupted) {
+        const auto code = interruption_code(interrupted.cause);
+        return ImportFailure { code, code, "Native export preparation was interrupted.", {} };
+    }
 }
 
 bool ImportAccess::baked_world_coordinates_exact(const AssetDraft& draft) noexcept
@@ -625,118 +747,181 @@ std::optional<std::uint64_t> ImportAccess::draft_payload_bytes(const AssetDraft&
 }
 }  // namespace detail
 
-ImportOutcome<RepairProposal> propose_weld(std::shared_ptr<const AssetDraft> original, const WeldOptions& options)
+ImportAdmissionOutcome estimate_weld_admission(const AssetDraft& original, const WeldOptions&,
+                                               const runtime::OperationControl& control)
 {
-    if (!original) {
-        return settings_failure("NULL_DRAFT", "A repair proposal requires an inspected draft.");
+    try {
+        detail::operation_checkpoint(control);
+        const auto mesh = original.mesh();
+        if (mesh.triangles.size() > std::numeric_limits<std::uint64_t>::max() / 3 ||
+            mesh.vertices.size() > mesh.triangles.size() * 3) {
+            return resource_failure("WELD_WORKING_BYTES", "The draft has an unrepresentable retained vertex bound.");
+        }
+        const auto bound =
+            detail::import_payload_bound(mesh.triangles.size(), 0, original.storage_->limits.max_diagnostic_examples);
+        const auto retained = detail::ImportAccess::draft_payload_bytes(original);
+        if (!bound || !retained || *retained > std::numeric_limits<std::uint64_t>::max() - *bound) {
+            return resource_failure("WELD_WORKING_BYTES", "Native repair admission accounting overflowed.");
+        }
+        return ImportAdmission { *bound + *retained, mesh.triangles.size() };
     }
-  if (!std::isfinite(options.tolerance_mm) || options.tolerance_mm <= 0.0) {
-        return settings_failure("INVALID_WELD_TOLERANCE", "Weld tolerance must be finite and positive.");
+    catch (const detail::OperationInterrupted& interrupted) {
+        const auto code = detail::interruption_code(interrupted.cause);
+        return ImportFailure { code, code, "Native repair admission was interrupted.", {} };
     }
-    if (original->storage_->repair_candidate) {
-        return ImportFailure { "INVALID_SOLID", "REPAIR_PROVENANCE_REQUIRED",
-                               "Create another repair proposal from the original inspected draft.", std::nullopt };
-    }
+}
 
-  const auto mesh = original->mesh();
-  std::vector<std::uint32_t> representatives;
-  std::vector<std::uint32_t> selected(mesh.vertices.size());
-  exact::WorkBudget predicate_budget(original->storage_->limits.max_predicate_work);
-  std::uint64_t candidate_pairs = 0;
-  double max_displacement = 0.0;
-  for (std::uint32_t vertex = 0; vertex != mesh.vertices.size(); ++vertex) {
-        selected[vertex] = vertex;
+ImportOutcome<RepairProposal> propose_weld(std::shared_ptr<const AssetDraft> original, const WeldOptions& options,
+                                           const runtime::OperationControl& control)
+{
+    try {
+        control.phase(runtime::Phase::preparing);
+        detail::operation_checkpoint(control);
+        if (!original) {
+            return settings_failure("NULL_DRAFT", "A repair proposal requires an inspected draft.");
+        }
+        if (!std::isfinite(options.tolerance_mm) || options.tolerance_mm <= 0.0) {
+            return settings_failure("INVALID_WELD_TOLERANCE", "Weld tolerance must be finite and positive.");
+        }
+        if (original->storage_->repair_candidate) {
+            return ImportFailure { "INVALID_SOLID", "REPAIR_PROVENANCE_REQUIRED",
+                                   "Create another repair proposal from the original inspected draft.", std::nullopt };
+        }
+
+        const auto admission = estimate_weld_admission(*original, options, control);
+        if (const auto* failure = std::get_if<ImportFailure>(&admission)) {
+            return *failure;
+        }
+        const auto allowance = std::min(original->storage_->limits.max_working_bytes, options.max_working_bytes);
+        if (std::get<ImportAdmission>(admission).working_bytes_upper_bound > allowance) {
+            return resource_failure("WELD_WORKING_BYTES",
+                                    "Native repair exceeds its admitted working-memory allowance.");
+        }
+
+        const auto mesh = original->mesh();
+        std::vector<std::uint32_t> representatives;
+        representatives.reserve(mesh.vertices.size());
+        std::vector<std::uint32_t> selected(mesh.vertices.size());
+        exact::WorkBudget predicate_budget(original->storage_->limits.max_predicate_work, control);
+        std::uint64_t candidate_pairs = 0;
+        double max_displacement = 0.0;
+        for (std::uint32_t vertex = 0; vertex != mesh.vertices.size(); ++vertex) {
+            detail::operation_checkpoint(control);
+            selected[vertex] = vertex;
+            for (const auto representative : representatives) {
+                if ((candidate_pairs & 255U) == 0) {
+                    detail::operation_checkpoint(control);
+                }
+                if (candidate_pairs >= options.max_candidate_pairs) {
+                    return resource_failure("WELD_CANDIDATE_PAIRS", "Welding exceeds its candidate-pair limit.");
+                }
+                ++candidate_pairs;
+                bool nearby = true;
+                for (std::size_t axis = 0; axis != 3; ++axis) {
+                    nearby = nearby && std::abs(mesh.vertices[vertex][axis] - mesh.vertices[representative][axis]) <=
+                                           options.tolerance_mm;
+                }
+                if (!nearby)
+                    continue;
+                const auto comparison = exact::compare_squared_distance(
+                    mesh.vertices[vertex], mesh.vertices[representative], options.tolerance_mm, predicate_budget);
+                if (comparison == exact::Comparison::uncertain) {
+                    detail::operation_checkpoint(control);
+                    return resource_failure("PREDICATE_WORK", "Welding exhausted its exact predicate-work limit.");
+                }
+                if (comparison == exact::Comparison::less || comparison == exact::Comparison::equal) {
+                    selected[vertex] = representative;
+                    const Vec3 delta { mesh.vertices[vertex][0] - mesh.vertices[representative][0],
+                                       mesh.vertices[vertex][1] - mesh.vertices[representative][1],
+                                       mesh.vertices[vertex][2] - mesh.vertices[representative][2] };
+                    max_displacement = std::max(max_displacement, std::hypot(delta[0], delta[1], delta[2]));
+                    break;
+                }
+            }
+            if (selected[vertex] == vertex)
+                representatives.push_back(vertex);
+        }
+
+        auto candidate_storage = std::make_shared<AssetDraft::Storage>();
+        candidate_storage->frame = original->storage_->frame;
+        candidate_storage->role = original->storage_->role;
+        candidate_storage->limits = original->storage_->limits;
+        candidate_storage->limits.max_working_bytes = allowance;
+        candidate_storage->vertices.reserve(representatives.size());
+        candidate_storage->triangles.reserve(mesh.triangles.size());
+        std::unordered_map<std::uint32_t, std::uint32_t> compact;
         for (const auto representative : representatives) {
-            if (candidate_pairs >= options.max_candidate_pairs) {
-                return resource_failure("WELD_CANDIDATE_PAIRS", "Welding exceeds its candidate-pair limit.");
+            detail::operation_checkpoint(control);
+            compact.emplace(representative, static_cast<std::uint32_t>(candidate_storage->vertices.size()));
+            candidate_storage->vertices.push_back(mesh.vertices[representative]);
+        }
+
+        CleanupCounts cleanup = original->report().cleanup;
+        std::uint64_t zero_area_faces = original->report().zero_area_faces;
+        std::uint64_t duplicate_faces = original->report().duplicate_faces;
+        std::map<Triangle, bool> seen;
+        for (const auto& source_face : mesh.triangles) {
+            detail::operation_checkpoint(control);
+            Triangle face { compact.at(selected[source_face[0]]), compact.at(selected[source_face[1]]),
+                            compact.at(selected[source_face[2]]) };
+            auto zero = collinear(candidate_storage->vertices[face[0]], candidate_storage->vertices[face[1]],
+                                  candidate_storage->vertices[face[2]], predicate_budget);
+            if (std::holds_alternative<ImportFailure>(zero)) {
+                detail::operation_checkpoint(control);
+                return std::get<ImportFailure>(std::move(zero));
             }
-            ++candidate_pairs;
-            bool nearby = true;
-            for (std::size_t axis = 0; axis != 3; ++axis) {
-                nearby = nearby && std::abs(mesh.vertices[vertex][axis] - mesh.vertices[representative][axis]) <=
-                                       options.tolerance_mm;
-            }
-            if (!nearby)
+            if (std::get<bool>(zero)) {
+                ++zero_area_faces;
+                ++cleanup.zero_area_faces_removed;
                 continue;
-            const auto comparison = exact::compare_squared_distance(
-                mesh.vertices[vertex], mesh.vertices[representative], options.tolerance_mm, predicate_budget);
-            if (comparison == exact::Comparison::uncertain) {
-                return resource_failure("PREDICATE_WORK", "Welding exhausted its exact predicate-work limit.");
             }
-            if (comparison == exact::Comparison::less || comparison == exact::Comparison::equal) {
-                selected[vertex] = representative;
-                const Vec3 delta { mesh.vertices[vertex][0] - mesh.vertices[representative][0],
-                                   mesh.vertices[vertex][1] - mesh.vertices[representative][1],
-                                   mesh.vertices[vertex][2] - mesh.vertices[representative][2] };
-                max_displacement = std::max(max_displacement, std::hypot(delta[0], delta[1], delta[2]));
-                break;
+            if (!seen.emplace(cyclic_key(face), true).second) {
+                ++duplicate_faces;
+                ++cleanup.duplicate_faces_removed;
+                continue;
+            }
+            candidate_storage->triangles.push_back(face);
+        }
+
+        // Match the import admission phase boundary: retain the original owner,
+        // release repair indexing payload before topology/BVH scratch grows.
+        decltype(representatives) {}.swap(representatives);
+        decltype(selected) {}.swap(selected);
+        decltype(compact) {}.swap(compact);
+        decltype(seen) {}.swap(seen);
+        auto analysis = detail::analyze_solid({ candidate_storage->vertices, candidate_storage->triangles },
+                                              candidate_storage->limits, predicate_budget);
+        detail::operation_checkpoint(control);
+        candidate_storage->report = std::move(analysis.report);
+        candidate_storage->report.encoding = original->report().encoding;
+        candidate_storage->report.source_byte_size = original->report().source_byte_size;
+        candidate_storage->report.source_triangle_count = original->report().source_triangle_count;
+        candidate_storage->report.cleanup = cleanup;
+        candidate_storage->report.zero_area_faces = zero_area_faces;
+        candidate_storage->report.duplicate_faces = duplicate_faces;
+        if (candidate_storage->report.validity == Validity::valid) {
+            for (std::size_t face = 0; face != candidate_storage->triangles.size(); ++face) {
+                if (analysis.flip_faces[face] != 0) {
+                    std::swap(candidate_storage->triangles[face][1], candidate_storage->triangles[face][2]);
+                    ++candidate_storage->report.cleanup.faces_reoriented;
+                }
             }
         }
-        if (selected[vertex] == vertex)
-            representatives.push_back(vertex);
-    }
+        candidate_storage->repair_candidate = true;
 
-    auto candidate_storage = std::make_shared<AssetDraft::Storage>();
-  candidate_storage->frame = original->storage_->frame;
-  candidate_storage->role = original->storage_->role;
-  candidate_storage->limits = original->storage_->limits;
-  std::unordered_map<std::uint32_t, std::uint32_t> compact;
-  for (const auto representative : representatives) {
-    compact.emplace(representative, static_cast<std::uint32_t>(candidate_storage->vertices.size()));
-    candidate_storage->vertices.push_back(mesh.vertices[representative]);
-  }
-
-  CleanupCounts cleanup = original->report().cleanup;
-  std::uint64_t zero_area_faces = original->report().zero_area_faces;
-    std::uint64_t duplicate_faces = original->report().duplicate_faces;
-    std::map<Triangle, bool> seen;
-    for (const auto& source_face : mesh.triangles) {
-        Triangle face { compact.at(selected[source_face[0]]), compact.at(selected[source_face[1]]),
-                        compact.at(selected[source_face[2]]) };
-        auto zero = collinear(candidate_storage->vertices[face[0]], candidate_storage->vertices[face[1]],
-                              candidate_storage->vertices[face[2]], predicate_budget);
-        if (std::holds_alternative<ImportFailure>(zero)) {
-            return std::get<ImportFailure>(std::move(zero));
+        auto candidate = std::shared_ptr<const AssetDraft>(new AssetDraft(std::move(candidate_storage)));
+        auto proposal_storage = std::make_shared<RepairProposal::Storage>();
+        proposal_storage->original = std::move(original);
+        proposal_storage->candidate = std::move(candidate);
+        proposal_storage->tolerance_mm = options.tolerance_mm;
+        proposal_storage->max_displacement_mm = max_displacement;
+        detail::operation_checkpoint(control);
+        return std::shared_ptr<const RepairProposal>(new RepairProposal(std::move(proposal_storage)));
     }
-    if (std::get<bool>(zero)) {
-      ++zero_area_faces;
-      ++cleanup.zero_area_faces_removed;
-      continue;
+    catch (const detail::OperationInterrupted& interrupted) {
+        const auto code = detail::interruption_code(interrupted.cause);
+        return ImportFailure { code, code, "Native repair preparation was interrupted.", {} };
     }
-    if (!seen.emplace(cyclic_key(face), true).second) {
-      ++duplicate_faces;
-      ++cleanup.duplicate_faces_removed;
-      continue;
-    }
-        candidate_storage->triangles.push_back(face);
-    }
-
-    auto analysis = detail::analyze_solid({ candidate_storage->vertices, candidate_storage->triangles },
-                                          candidate_storage->limits, predicate_budget);
-    candidate_storage->report = std::move(analysis.report);
-    candidate_storage->report.encoding = original->report().encoding;
-  candidate_storage->report.source_byte_size = original->report().source_byte_size;
-  candidate_storage->report.source_triangle_count = original->report().source_triangle_count;
-  candidate_storage->report.cleanup = cleanup;
-  candidate_storage->report.zero_area_faces = zero_area_faces;
-  candidate_storage->report.duplicate_faces = duplicate_faces;
-  if (candidate_storage->report.validity == Validity::valid) {
-    for (std::size_t face = 0; face != candidate_storage->triangles.size(); ++face) {
-      if (analysis.flip_faces[face] != 0) {
-        std::swap(candidate_storage->triangles[face][1], candidate_storage->triangles[face][2]);
-        ++candidate_storage->report.cleanup.faces_reoriented;
-      }
-    }
-  }
-  candidate_storage->repair_candidate = true;
-
-  auto candidate = std::shared_ptr<const AssetDraft>(new AssetDraft(std::move(candidate_storage)));
-  auto proposal_storage = std::make_shared<RepairProposal::Storage>();
-  proposal_storage->original = std::move(original);
-  proposal_storage->candidate = std::move(candidate);
-  proposal_storage->tolerance_mm = options.tolerance_mm;
-  proposal_storage->max_displacement_mm = max_displacement;
-  return std::shared_ptr<const RepairProposal>(new RepairProposal(std::move(proposal_storage)));
 }
 
 ImportOutcome<AcceptedSolid> accept_asset(std::shared_ptr<const AssetDraft> draft) {

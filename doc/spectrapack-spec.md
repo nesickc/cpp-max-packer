@@ -272,6 +272,8 @@ return best with the actual termination reason
 
 Use a mixture of compact neighborhoods and dispersed removals. Identical-copy ID permutations are not useful restarts; diversify geometry, orientations, grid phases, and candidate choices. Keep a separate feasible working layout for equal-count exploration. Discard a failed neighborhood without damaging the saved incumbent.
 
+For new desktop Starts, one monotonic budget begins at successful Start registration and includes job-specific loading, preparation, planning, search and validation. Completed import diagnostics are reported separately. At expiry, begin no new search work; measure bounded cleanup, publication and any positive overrun separately. Repeated Starts may reuse immutable native-verified assets with bounded ownership; cached reports or display meshes cannot authorize geometry. Legacy saved settings/results without an explicit budget scope retain their search-only interpretation. [ADR 0013](../spec/decisions/0013-cpu-runtime.md) defines the T-010/T-011 compatibility and ownership contract.
+
 Reserve budget for both a fresh greedy spectral run and subsequent improvement. Schedule multiple seeds within the chosen total budget, not one full budget per seed hidden from the user. All modes retain the AABB baseline. The full controller retains its initial spectral result as well. With identical configuration and a fixed work budget, continuing the same job cannot decrease the reported count.
 
 Use coarse-to-fine passes where memory permits: start at `2h`, then `h`, preserving physical poses and rebuilding fields. A coarser pitch may miss feasible arrangements, but it cannot invalidate an already validated incumbent. Stop with `budget_exhausted`, `user_stopped`, `search_stalled`, `resource_limit`, or `error`; none of these means globally optimal.
@@ -555,11 +557,12 @@ Suggested first implementation tasks, each linked to requirements:
 8. `T-008`: first box-to-viewer-to-export desktop journey — UI-01–UI-03, DATA-02.
 
 The post-T-008 delivery sequence is specified in [MILESTONES.md](MILESTONES.md):
-T-009 CPU scalability/practical packing, T-010 CPU runtime (including the T-011
-preparation/deadline work package) and T-012 explicit library-backed repair come
-first as three delivery tickets. Native and product-integration workers can work
-in parallel after shared interfaces are frozen; T-011 retains its acceptance IDs
-but has no separate branch or merge. T-013–T-023
+T-009 CPU scalability/practical packing, T-011 serial runtime/preparation/deadlines,
+T-010 measured CPU threading and T-012 explicit library-backed repair come first
+as separate delivery tickets under [ADR 0014](../spec/decisions/0014-runtime-delivery-split.md).
+Native and product-integration workers can work in parallel within a ticket after
+shared interfaces are frozen; dependent branches wait for prerequisite user merges.
+All acceptance IDs remain. T-013–T-023
 cover STL containers, orientations/count search, presets, jobs/recovery, Vulkan,
 deferred live viewing, benchmarks and offline release. Each delivery has its own
 ticket, requirements, dependencies and acceptance checks. These tasks close remaining

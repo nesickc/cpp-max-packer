@@ -13,6 +13,7 @@ const files = [
   ['Protocol', 'protocol'],
   ['BenchmarkSummary', 'benchmark-summary'],
   ['Desktop', 'desktop'],
+  ['DesktopRuntime', 'desktop-runtime'],
 ];
 
 function normalizeLf(value) {

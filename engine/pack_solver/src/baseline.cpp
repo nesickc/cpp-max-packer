@@ -24,6 +24,8 @@ namespace {
 using Matrix = std::array<int, 9>;
 constexpr std::uint64_t kSeedScratchBytes =
     sizeof(std::array<Matrix, 24>) + sizeof(std::array<int, 3>);
+// A non-elided return can coexist with its source outcome and run control.
+constexpr std::uint64_t kBaselineMetadataBytes = 2 * sizeof(BaselineOutcome) + sizeof(RunControl);
 
 enum class Boundary { none, stopped, deadline };
 
@@ -128,10 +130,13 @@ std::optional<std::uint64_t> candidate_bytes(
 }
 
 Boundary boundary(const RunControl& control) noexcept {
-  if (control.stop.stop_requested()) return Boundary::stopped;
-  if (control.deadline && std::chrono::steady_clock::now() >= *control.deadline) {
-    return Boundary::deadline;
-  }
+    const auto cause = control.poll();
+    if (cause == runtime::StopCause::user_stopped) {
+        return Boundary::stopped;
+    }
+    if (cause == runtime::StopCause::deadline) {
+        return Boundary::deadline;
+    }
   return Boundary::none;
 }
 
@@ -264,7 +269,7 @@ void apply_physical_failure(BaselineOutcome& out, std::string_view code)
     out.termination_reason =
         physical_resource_code(code) ? TerminationReason::resource_limit : TerminationReason::error;
     out.diagnostic_code = physical_diagnostic(code);
-    out.failure_details = RunFailureDetails { out.termination_reason, "physical_query", std::string(code), {}, {} };
+    out.failure_details = RunFailureDetails { out.termination_reason, "physical_query", code, {}, {} };
 }
 
 std::optional<geometry::Bounds> container_bounds(
@@ -395,6 +400,9 @@ std::optional<std::uint64_t> resident_bytes(
     const geometry::ValidationContext& context,
     const BaselineLimits& limits) noexcept {
   std::uint64_t bytes = limits.reserved_bytes;
+  if (!checked_add(bytes, kBaselineMetadataBytes)) {
+      return {};
+  }
   if (!add_optional(bytes, context.object()->resident_buffer_bytes())) return {};
   if (const auto* solid =
           std::get_if<std::shared_ptr<const geometry::AcceptedSolid>>(
@@ -473,6 +481,24 @@ BaselineOutcome run_aabb_baseline_impl(
   }
   if (initial && initial->context() == context) out.retained_solution = initial;
   initial.reset();
+  std::uint64_t metadata = limits.reserved_bytes;
+  if (!checked_add(metadata, kBaselineMetadataBytes) || metadata > limits.max_working_bytes) {
+      out.termination_reason = TerminationReason::resource_limit;
+      out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
+      out.failure_details = RunFailureDetails {
+          TerminationReason::resource_limit,
+          "preflight",
+          "PHYSICAL_RESOURCE_LIMIT",
+          ResourceLimitDetails { "fixed_metadata", metadata, limits.max_working_bytes },
+          {}
+      };
+      return out;
+  }
+  out.stats.tracked_working_bytes_peak = metadata;
+  if (const auto before_start = boundary(control); before_start != Boundary::none) {
+      apply_boundary(out, before_start);
+      return out;
+  }
 
   auto base = resident_bytes(*context, limits);
   if (base && exact_seeds &&
@@ -587,9 +613,8 @@ BaselineOutcome run_aabb_baseline_impl(
         out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
         return out;
       }
-      auto checked = geometry::validate(
-          context, candidate,
-          validation_limits(limits, out.stats, candidate_live));
+      auto checked =
+          geometry::validate(context, candidate, validation_limits(limits, out.stats, candidate_live), control);
       if (!record_validation(out.stats, checked.report, candidate_live, limits)) {
         out.termination_reason = TerminationReason::resource_limit;
         out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
@@ -877,9 +902,8 @@ BaselineOutcome run_aabb_baseline_impl(
             ++out.stats.candidate_evaluations;
             auto candidate =
                 std::get<std::shared_ptr<const geometry::Candidate>>(std::move(made));
-            auto checked = geometry::validate(
-                context, candidate,
-                validation_limits(limits, out.stats, candidate_live));
+            auto checked =
+                geometry::validate(context, candidate, validation_limits(limits, out.stats, candidate_live), control);
             if (!record_validation(out.stats, checked.report, candidate_live, limits)) {
               out.termination_reason = TerminationReason::resource_limit;
               out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";

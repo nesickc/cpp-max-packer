@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
+#include <string_view>
 
 #include "spectrapack/compute/correlation.hpp"
 #include "spectrapack/geometry/conservative_fields.hpp"
@@ -22,7 +24,11 @@ struct SpectralLimits {
     std::uint64_t max_direct_terms { 200'000'000 };
     std::uint64_t max_proximity_terms { 200'000'000 };
     std::uint64_t max_refinement_evaluations { 128 };
+    std::uint32_t cpu_thread_count { 1 };
 };
+
+[[nodiscard]] std::uint32_t cpu_supported_thread_count() noexcept;
+[[nodiscard]] std::string_view cpu_scheduling_policy() noexcept;
 
 struct SpectralStats {
     std::uint64_t correlations {};
@@ -36,10 +42,22 @@ struct SpectralStats {
     std::uint64_t proximity_terms {};
 };
 
+struct CpuFieldAdmissionEstimate {
+    std::uint64_t working_bytes_upper_bound {};
+    std::uint64_t footprint_copy_count {};
+    std::uint64_t effective_host_cap_bytes {};
+    std::uint32_t cpu_thread_count {};
+    // Borrows static-lifetime native policy text; adapters copy it when saving.
+    std::string_view scheduling_policy;
+};
+
 struct SpectralOutcome {
     BaselineOutcome run;
     RunStats baseline_stats;
     SpectralStats spectral_stats;
+    // Maximum successful actual-layout field admission, with its associated
+    // copy/thread/policy basis. Speculative empty preflight is not published.
+    std::optional<CpuFieldAdmissionEstimate> field_admission;
 };
 
 [[nodiscard]] SpectralOutcome run_cpu_spectral(std::shared_ptr<const geometry::ValidationContext>,

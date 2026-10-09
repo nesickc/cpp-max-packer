@@ -4,30 +4,59 @@
   "definitions": {
     "failure": {
       "type": "object",
-      "required": ["phase", "cause_code"],
+      "required": [
+        "phase",
+        "cause_code"
+      ],
       "properties": {
-        "phase": {"type": "string", "minLength": 1},
-        "cause_code": {"type": "string", "minLength": 1},
+        "phase": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cause_code": {
+          "type": "string",
+          "minLength": 1
+        },
         "resource": {
           "type": "object",
-          "required": ["name", "required", "limit"],
+          "required": [
+            "name",
+            "required",
+            "limit"
+          ],
           "properties": {
-            "name": {"type": "string", "minLength": 1},
-            "required": {"$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"},
-            "limit": {"$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"}
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"
+            },
+            "limit": {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"
+            }
           },
           "additionalProperties": false
         },
-        "suggested_pitch_mm": {"type": "number", "exclusiveMinimum": 0}
+        "suggested_pitch_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
       },
       "additionalProperties": false
     },
     "diagnostics": {
       "type": "object",
-      "required": ["diagnostic_code"],
+      "required": [
+        "diagnostic_code"
+      ],
       "properties": {
-        "diagnostic_code": {"type": "string"},
-        "failure": {"$ref": "#/definitions/failure"}
+        "diagnostic_code": {
+          "type": "string"
+        },
+        "failure": {
+          "$ref": "#/definitions/failure"
+        }
       },
       "additionalProperties": false
     },
@@ -73,7 +102,9 @@
         "resolved_settings"
       ],
       "properties": {
-        "diagnostics": {"$ref": "#/definitions/diagnostics"},
+        "diagnostics": {
+          "$ref": "#/definitions/diagnostics"
+        },
         "segment_id": {
           "type": "string",
           "minLength": 1
@@ -127,6 +158,9 @@
         },
         "resolved_settings": {
           "$ref": "https://spectrapack.invalid/schemas/v1/settings.schema.json#/definitions/resolved"
+        },
+        "runtime": {
+          "$ref": "#/definitions/runtime"
         }
       },
       "additionalProperties": false
@@ -195,6 +229,109 @@
         },
         "driver": {
           "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "runtime": {
+      "type": "object",
+      "required": [
+        "version",
+        "budget_scope",
+        "measurement_boundary",
+        "total_elapsed_seconds",
+        "native_elapsed_seconds",
+        "preparation_seconds",
+        "search_seconds",
+        "validation_seconds",
+        "publication_seconds",
+        "cleanup_seconds",
+        "deadline_overrun_seconds",
+        "preparation_reused",
+        "no_nonempty_incumbent",
+        "phases"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "budget_scope": {
+          "enum": [
+            "search_only",
+            "total_start"
+          ]
+        },
+        "measurement_boundary": {
+          "const": "before_result_commit"
+        },
+        "total_elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "native_elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "preparation_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "search_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "validation_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "publication_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cleanup_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "deadline_overrun_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "preparation_reused": {
+          "type": "boolean"
+        },
+        "no_nonempty_incumbent": {
+          "type": "boolean"
+        },
+        "phases": {
+          "type": "array",
+          "maxItems": 9,
+          "items": {
+            "type": "object",
+            "required": [
+              "phase",
+              "elapsed_seconds"
+            ],
+            "properties": {
+              "phase": {
+                "enum": [
+                  "loading",
+                  "preparing",
+                  "voxelizing",
+                  "planning_fft",
+                  "placing",
+                  "improving",
+                  "validating",
+                  "saving",
+                  "cleanup"
+                ]
+              },
+              "elapsed_seconds": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
       "additionalProperties": false
@@ -347,7 +484,9 @@
         "elapsed_seconds"
       ],
       "properties": {
-        "diagnostics": {"$ref": "#/definitions/diagnostics"},
+        "diagnostics": {
+          "$ref": "#/definitions/diagnostics"
+        },
         "resolved_settings": {
           "$ref": "https://spectrapack.invalid/schemas/v1/settings.schema.json#/definitions/resolved"
         },
@@ -381,6 +520,9 @@
         "elapsed_seconds": {
           "type": "number",
           "minimum": 0
+        },
+        "runtime": {
+          "$ref": "#/definitions/runtime"
         }
       },
       "additionalProperties": false

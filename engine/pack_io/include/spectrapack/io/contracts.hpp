@@ -12,7 +12,7 @@ namespace spectrapack::io {
 
 using Json = nlohmann::json;
 
-enum class ContractKind { settings, assets, results, protocol, benchmark_summary, desktop };
+enum class ContractKind { settings, assets, results, protocol, benchmark_summary, desktop, desktop_runtime };
 enum class ValidationStage { parse, schema, semantic };
 
 struct ValidationIssue {
@@ -41,19 +41,27 @@ class ValidatedDocument {
 
 using DecodeOutcome = std::variant<ValidatedDocument, ContractFailure>;
 
+struct ContractDiagnosticLimits {
+    // Zero is clamped to one: diagnostic retention never changes validity.
+    std::size_t max_issues { 32 };
+    std::size_t max_string_bytes { static_cast<std::size_t>(-1) };
+};
+
 class ContractValidator {
  public:
   ContractValidator();
+  // Compile this root first; parse/validate still accept every contract kind.
+  explicit ContractValidator(ContractKind initial_kind);
   ~ContractValidator();
   ContractValidator(ContractValidator&&) noexcept;
   ContractValidator& operator=(ContractValidator&&) noexcept;
   ContractValidator(const ContractValidator&) = delete;
   ContractValidator& operator=(const ContractValidator&) = delete;
 
-  DecodeOutcome parse(ContractKind kind, std::string_view utf8);
-  DecodeOutcome validate(ContractKind kind, const Json& value);
+  DecodeOutcome parse(ContractKind kind, std::string_view utf8, const ContractDiagnosticLimits& limits = {});
+  DecodeOutcome validate(ContractKind kind, const Json& value, const ContractDiagnosticLimits& limits = {});
 
- private:
+  private:
   class Impl;
   std::unique_ptr<Impl> impl_;
 };

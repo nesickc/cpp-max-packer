@@ -1,4 +1,5 @@
 #include "validation_kernel.hpp"
+#include "field_profile.hpp"
 
 #include "exact_predicates.hpp"
 #include "field_kernel.hpp"
@@ -643,14 +644,24 @@ std::optional<std::uint64_t> placed_prepared_owned_bytes(const PlacedSolid& soli
     return solid.prepared ? prepared_owned_bytes(*solid.prepared) : std::nullopt;
 }
 
-Budget::Budget(std::uint64_t max_work, std::uint64_t max_working_bytes) noexcept :
+Budget::Budget(std::uint64_t max_work, std::uint64_t max_working_bytes,
+               const runtime::OperationControl& control) noexcept :
     max_work_(max_work),
-    max_working_bytes_(max_working_bytes)
+    max_working_bytes_(max_working_bytes),
+    control_(control),
+    controlled_(control.stop.stop_possible() || control.deadline.has_value())
 {
 }
 
 bool Budget::consume_work(std::uint64_t units) noexcept
 {
+    if (controlled_ && ((poll_calls_++ & 255U) == 0U)) {
+        interruption_ = control_.poll();
+    }
+    if (interruption_ != runtime::StopCause::none) {
+        exhausted_ = true;
+        return false;
+    }
     if (work_used_ > max_work_ || units > max_work_ - work_used_) {
         exhausted_ = true;
         work_exhausted_ = true;
@@ -661,6 +672,13 @@ bool Budget::consume_work(std::uint64_t units) noexcept
 }
 
 bool Budget::reserve_bytes(std::uint64_t bytes) noexcept {
+    if (controlled_) {
+        interruption_ = control_.poll();
+    }
+    if (interruption_ != runtime::StopCause::none) {
+        exhausted_ = true;
+        return false;
+    }
   if (bytes_live_ > max_working_bytes_ || bytes > max_working_bytes_ - bytes_live_) {
     exhausted_=true; memory_exhausted_=true;
     return false;
@@ -684,6 +702,8 @@ bool Budget::work_exhausted() const noexcept { return work_exhausted_; }
 bool Budget::memory_exhausted() const noexcept { return memory_exhausted_; }
 bool Budget::arithmetic_capacity_exceeded() const noexcept { return arithmetic_capacity_exceeded_; }
 void Budget::note_arithmetic_capacity() noexcept { arithmetic_capacity_exceeded_=true; }
+runtime::StopCause Budget::interruption() const noexcept { return interruption_; }
+const runtime::OperationControl& Budget::control() const noexcept { return control_; }
 
 PrepareResult prepare(std::shared_ptr<const AcceptedSolid> solid, Budget& budget) {
   if (!solid) return {{},{"KERNEL_SOLID_REQUIRED","prepare"}};
@@ -822,6 +842,57 @@ PlaceResult place(std::shared_ptr<const PreparedSolid> solid, Vec3 translation,
 
 ConservativeBounds conservative_bounds(const PlacedSolid& solid) noexcept {
   return solid.conservative;
+}
+
+std::optional<Bounds> transformed_source_box(Bounds bounds, Vec3 translation, Quaternion quaternion) noexcept
+{
+    if (!supported_floating_environment() || !finite_pose(translation, quaternion)) {
+        return {};
+    }
+    for (std::size_t axis = 0; axis != 3; ++axis) {
+        if (!std::isfinite(bounds.min[axis]) || !std::isfinite(bounds.max[axis]) ||
+            bounds.min[axis] > bounds.max[axis]) {
+            return {};
+        }
+    }
+    const auto transform = rotation_transform(quaternion);
+    if (!transform) {
+        return {};
+    }
+    const auto rotation = rotation_intervals(quaternion);
+    Bounds result;
+    result.min.fill(std::numeric_limits<double>::infinity());
+    result.max.fill(-std::numeric_limits<double>::infinity());
+    // Each coordinate interval is the sum of monotone interval operations on
+    // independent source axes. Their extrema on a source box occur at corners,
+    // so this encloses every mesh-vertex interval without reading/allocating it.
+    for (unsigned corner = 0; corner != 8; ++corner) {
+        Vec3 point;
+        for (unsigned axis = 0; axis != 3; ++axis) {
+            point[axis] = corner & (1U << axis) ? bounds.max[axis] : bounds.min[axis];
+        }
+        for (int axis = 0; axis != 3; ++axis) {
+            auto interval = transformed_interval(point, translation, rotation, axis);
+            if (!interval.valid) {
+                return {};
+            }
+            if (transform->exact_cardinal) {
+                // Cuboid place() uses this checked sum plus one outward ULP,
+                // rather than the ordinary homogeneous interval expression.
+                const auto fast =
+                    widened(translation[axis] + transform->sign[axis] * point[transform->source_axis[axis]],
+                            translation[axis] + transform->sign[axis] * point[transform->source_axis[axis]]);
+                if (!fast.valid) {
+                    return {};
+                }
+                interval.low = std::min(interval.low, fast.low);
+                interval.high = std::max(interval.high, fast.high);
+            }
+            result.min[axis] = std::min(result.min[axis], interval.low);
+            result.max[axis] = std::max(result.max[axis], interval.high);
+        }
+    }
+    return result;
 }
 
 PhysicalBounds physical_bounds(std::shared_ptr<const AcceptedSolid> solid,
@@ -1179,6 +1250,12 @@ std::optional<ExactOrder> separated_interval_order(
 }
 
 const char* exact_failure_code(const Budget& budget) noexcept {
+    if (budget.interruption() == runtime::StopCause::user_stopped) {
+        return "OPERATION_CANCELLED";
+    }
+    if (budget.interruption() == runtime::StopCause::deadline) {
+        return "DEADLINE_EXCEEDED";
+    }
   if (budget.memory_exhausted()) return "KERNEL_MEMORY_LIMIT";
   if (budget.work_exhausted()) return "KERNEL_WORK_LIMIT";
   if (budget.arithmetic_capacity_exceeded())
@@ -1290,7 +1367,11 @@ ContainmentResult classify_axis_container(const PlacedSolid& object,
   return {Decision::yes,gap,std::move(method),""};
 }
 
-struct BoundaryCheck { BoundaryRelation relation; bool uncertain; };
+struct BoundaryCheck {
+  BoundaryRelation relation;
+  bool uncertain;
+  bool exact_work_exhausted{};
+};
 
 std::array<Vec3,3> triangle_points(const PlacedSolid& solid,const Triangle& face) {
   return {solid.world_vertices[face[0]],solid.world_vertices[face[1]],solid.world_vertices[face[2]]};
@@ -1313,12 +1394,97 @@ bool triangle_bounds_disjoint(const PlacedSolid& first,const Triangle& a,
   return false;
 }
 
+bool triangle_row_bounds(const PlacedSolid& first, const Triangle& face, const PlacedSolid& second,
+                         Bounds& row) noexcept
+{
+    if (!second.conservative.finite) {
+        return false;
+    }
+    for (int axis = 0; axis != 3; ++axis) {
+        const auto rhs_low = second.conservative.bounds_mm.min[axis];
+        const auto rhs_high = second.conservative.bounds_mm.max[axis];
+        if (!std::isfinite(rhs_low) || !std::isfinite(rhs_high) || rhs_low > rhs_high) {
+            return false;
+        }
+        row.min[axis] = std::numeric_limits<double>::infinity();
+        row.max[axis] = -row.min[axis];
+        for (const auto vertex : face) {
+            const auto& interval = first.vertex_intervals[vertex][axis];
+            if (!interval.valid || !std::isfinite(interval.low) || !std::isfinite(interval.high) ||
+                interval.low > interval.high) {
+                return false;
+            }
+            row.min[axis] = std::min(row.min[axis], interval.low);
+            row.max[axis] = std::max(row.max[axis], interval.high);
+        }
+    }
+    return true;
+}
+
+bool triangle_solid_bounds_disjoint(const PlacedSolid& first, const Triangle& face,
+                                    const PlacedSolid& second) noexcept
+{
+    Bounds row;
+    if (!triangle_row_bounds(first, face, second, row)) {
+        return false;
+    }
+    for (int axis = 0; axis != 3; ++axis) {
+        if (row.max[axis] < second.conservative.bounds_mm.min[axis] ||
+            second.conservative.bounds_mm.max[axis] < row.min[axis]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool triangle_solid_farther_than(const PlacedSolid& first, const Triangle& face, const PlacedSolid& second,
+                                 double clearance) noexcept
+{
+    Bounds row;
+    if (!(clearance >= 0.0) || !std::isfinite(clearance) || !triangle_row_bounds(first, face, second, row)) {
+        return false;
+    }
+    constexpr auto infinity = std::numeric_limits<double>::infinity();
+    const double requested_upper = std::nextafter(clearance * clearance, infinity);
+    if (!std::isfinite(requested_upper)) {
+        return false;
+    }
+    double squared_lower = 0.0;
+    for (int axis = 0; axis != 3; ++axis) {
+        double gap = 0.0;
+        if (row.max[axis] < second.conservative.bounds_mm.min[axis]) {
+            gap = second.conservative.bounds_mm.min[axis] - row.max[axis];
+        } else if (second.conservative.bounds_mm.max[axis] < row.min[axis]) {
+            gap = row.min[axis] - second.conservative.bounds_mm.max[axis];
+        }
+        if (!std::isfinite(gap)) {
+            return false;
+        }
+        const double gap_lower = std::max(0.0, std::nextafter(gap, -infinity));
+        const double square = gap_lower * gap_lower;
+        if (!std::isfinite(square)) {
+            return false;
+        }
+        const double square_lower = std::max(0.0, std::nextafter(square, -infinity));
+        const double sum = squared_lower + square_lower;
+        if (!std::isfinite(sum)) {
+            return false;
+        }
+        squared_lower = std::max(0.0, std::nextafter(sum, -infinity));
+    }
+    return squared_lower > requested_upper;
+}
+
 BoundaryCheck check_boundaries(const PlacedSolid& first,const PlacedSolid& second,
                                Budget& budget) {
   const auto a_mesh=first.prepared->asset->mesh();
   const auto b_mesh=second.prepared->asset->mesh();
   bool contact=false;
-  for (const auto& a:a_mesh.triangles) for (const auto& b:b_mesh.triangles) {
+  for (const auto& a:a_mesh.triangles) {
+    // Twelve logical units per axis cover checked row bounds and strict separation.
+    if (!budget.consume_work(36)) return {BoundaryRelation::indeterminate,true};
+    if (triangle_solid_bounds_disjoint(first,a,second)) continue;
+    for (const auto& b:b_mesh.triangles) {
     if (!budget.consume_work(1)) return {BoundaryRelation::indeterminate,true};
     if (triangle_bounds_disjoint(first,a,second,b)) continue;
     if (!first.represented_world_exact || !second.represented_world_exact)
@@ -1335,7 +1501,7 @@ BoundaryCheck check_boundaries(const PlacedSolid& first,const PlacedSolid& secon
       }
       if (ab==exact::SegmentTriangleCrossing::uncertain || ba==exact::SegmentTriangleCrossing::uncertain) {
         (void)budget.consume_work(exact_budget.used());
-        return {BoundaryRelation::indeterminate,true};
+        return {BoundaryRelation::indeterminate,true,exact_budget.exhausted()};
       }
       contact |= ab==exact::SegmentTriangleCrossing::boundary ||
                  ba==exact::SegmentTriangleCrossing::boundary;
@@ -1347,17 +1513,20 @@ BoundaryCheck check_boundaries(const PlacedSolid& first,const PlacedSolid& secon
       const auto relation=exact::triangle_relation(at,bt,none,none,0,exact_budget);
       if (relation==exact::TriangleRelation::uncertain) {
         (void)budget.consume_work(exact_budget.used());
-        return {BoundaryRelation::indeterminate,true};
+        return {BoundaryRelation::indeterminate,true,exact_budget.exhausted()};
       }
       if (relation==exact::TriangleRelation::forbidden ||
           relation==exact::TriangleRelation::shared_feature_only) contact=true;
     }
     if (!budget.consume_work(exact_budget.used())) return {BoundaryRelation::indeterminate,true};
+    }
   }
   return {contact?BoundaryRelation::contact:BoundaryRelation::disjoint,false};
 }
 
-Decision point_in_material(Vec3 point,const PlacedSolid& target,Budget& budget) {
+Decision point_in_material(Vec3 point,const PlacedSolid& target,Budget& budget,
+                           bool* exact_work_exhausted=nullptr) {
+  if (exact_work_exhausted) *exact_work_exhausted=false;
   if (target.prepared->is_cuboid && target.is_cardinal) {
     bool strict_inside=true;
     for (int axis=0;axis!=3;++axis) {
@@ -1380,6 +1549,7 @@ Decision point_in_material(Vec3 point,const PlacedSolid& target,Budget& budget) 
       {{0.137,0.271}},{{0.223,0.419}},{{0.347,0.163}},{{0.431,0.593}},
       {{0.557,0.317}},{{0.619,0.733}},{{0.709,0.467}},{{0.823,0.197}},
       {{0.911,0.541}},{{0.293,0.887}},{{0.487,0.773}},{{0.677,0.929}}}};
+  bool exhausted_ray=false;
   for (const auto slope:slopes) {
     Vec3 endpoint{{std::max(point[0],target.conservative.bounds_mm.max[0])+2*span+1,
                    point[1]+slope[0]*span,point[2]+slope[1]*span}};
@@ -1391,9 +1561,11 @@ Decision point_in_material(Vec3 point,const PlacedSolid& target,Budget& budget) 
       if (relation==exact::SegmentTriangleCrossing::crossing) ++crossings;
       else if (relation!=exact::SegmentTriangleCrossing::none) { retry=true; break; }
     }
+    exhausted_ray |= exact_budget.exhausted();
     if (!budget.consume_work(exact_budget.used())) return Decision::indeterminate;
     if (!retry) return crossings%2==0 ? Decision::no : Decision::yes;
   }
+  if (exact_work_exhausted) *exact_work_exhausted=exhausted_ray;
   return Decision::indeterminate;
 }
 
@@ -1810,7 +1982,11 @@ Threshold exact_surface_gap(const PlacedSolid& first,const PlacedSolid& second,
     return conservative_surface_gap(first,second,clearance,budget);
   bool equal=false,uncertain=false;
   const auto first_mesh=first.prepared->asset->mesh(),second_mesh=second.prepared->asset->mesh();
-  for (const auto& a:first_mesh.triangles) for (const auto& b:second_mesh.triangles) {
+  for (const auto& a:first_mesh.triangles) {
+    // Bounds plus downward-rounded gap, square and sum arithmetic for three axes.
+    if (!budget.consume_work(60)) return Threshold::indeterminate;
+    if (triangle_solid_farther_than(first,a,second,clearance)) continue;
+    for (const auto& b:second_mesh.triangles) {
     if (!budget.consume_work(1)) return Threshold::indeterminate;
     if (triangle_farther_than(first,a,second,b,clearance)) continue;
     const auto relation=exact_triangle_distance(exact_triangle_points(first,a),
@@ -1818,6 +1994,7 @@ Threshold exact_surface_gap(const PlacedSolid& first,const PlacedSolid& second,
     if (relation==ExactOrder::less) return Threshold::below;
     equal |= relation==ExactOrder::equal;
     uncertain |= relation==ExactOrder::indeterminate;
+    }
   }
   if (uncertain) return Threshold::indeterminate;
   return equal?Threshold::equal:Threshold::above;
@@ -1886,6 +2063,9 @@ std::optional<PairResult> cardinal_bounds_clearance_certificate(
 namespace {
 constexpr std::uint64_t kRasterFaceWork = 32;
 constexpr std::uint64_t kRasterCellWork = 180;
+// Three differences, two multiplies, two adds, index conversion, tag load and
+// comparison. These operations are executed even when the SAT is omitted.
+constexpr std::uint64_t kRasterLookupWork = 10;
 }  // namespace
 
 std::optional<std::uint64_t> estimate_unclipped_raster_work(const AcceptedSolid& solid, std::uint64_t copies,
@@ -1896,7 +2076,9 @@ std::optional<std::uint64_t> estimate_unclipped_raster_work(const AcceptedSolid&
     }
     std::uint64_t work = solid.mesh().triangles.size();
     // floor(high) >= floor(low), with one extra cell on both ends: at least 3^3.
-    for (const auto factor : { copies, passes, kRasterFaceWork + 27 * kRasterCellWork }) {
+    // Existing boundary tags may omit every later SAT. Only the padded visits
+    // and their lookup work are necessary when the ranges are unclipped.
+    for (const auto factor : { copies, passes, kRasterFaceWork + 27 * kRasterLookupWork }) {
         if (factor != 0 && work > UINT64_MAX / factor) {
             return {};
         }
@@ -1905,82 +2087,109 @@ std::optional<std::uint64_t> estimate_unclipped_raster_work(const AcceptedSolid&
     return work;
 }
 
-std::optional<KernelFailure> rasterize_boundary(
-    const PlacedSolid& solid,const GridWindow& window,
-    std::span<std::uint8_t> boundary,Budget& budget,
-    std::uint64_t& cell_visits,std::uint64_t max_cell_visits) {
-  std::uint64_t cell_count=1;
-  for (const auto extent:window.shape) {
-    if (extent==0 || cell_count>std::numeric_limits<std::uint64_t>::max()/extent)
-      return KernelFailure{"FIELD_INDEX_OVERFLOW","rasterize-boundary"};
-    cell_count*=extent;
-  }
-  if (boundary.size()!=cell_count)
-    return KernelFailure{"FIELD_BUFFER_SIZE","rasterize-boundary"};
-
-  std::array<std::int64_t,3> window_last{};
-  for (int axis=0;axis!=3;++axis) {
-    const auto extent=static_cast<std::int64_t>(window.shape[axis]-1);
-    if (window.first[axis]>std::numeric_limits<std::int64_t>::max()-extent)
-      return KernelFailure{"FIELD_INDEX_OVERFLOW","rasterize-boundary"};
-    window_last[axis]=window.first[axis]+extent;
-  }
-  const auto mesh=solid.prepared->asset->mesh();
-  for (const auto& face:mesh.triangles) {
-    if (!budget.consume_work(kRasterFaceWork))
-      return KernelFailure{"FIELD_KERNEL_WORK_LIMIT","rasterize-boundary"};
-    std::array<IntervalVec3,3> triangle{{solid.vertex_intervals[face[0]],
-                                        solid.vertex_intervals[face[1]],
-                                        solid.vertex_intervals[face[2]]}};
-    CellIndex first{},last{};
-    bool outside=false;
-    for (int axis=0;axis!=3;++axis) {
-      double low=triangle[0][axis].low,high=triangle[0][axis].high;
-      for (int vertex=1;vertex!=3;++vertex) {
-        low=std::min(low,triangle[vertex][axis].low);
-        high=std::max(high,triangle[vertex][axis].high);
-      }
-      const long double lo=(static_cast<long double>(low)-window.lattice.origin_mm[axis])/
-                           window.lattice.pitch_mm;
-      const long double hi=(static_cast<long double>(high)-window.lattice.origin_mm[axis])/
-                           window.lattice.pitch_mm;
-      if (!std::isfinite(lo)||!std::isfinite(hi) ||
-          lo<=static_cast<long double>(std::numeric_limits<std::int64_t>::min()+1) ||
-          hi>=static_cast<long double>(std::numeric_limits<std::int64_t>::max()))
-        return KernelFailure{"FIELD_INDEX_OVERFLOW","rasterize-boundary"};
-      // Include the cell below a lower grid plane because geometric queries use
-      // closed cells and exact surface contact may occupy both neighbours.
-      first[axis]=static_cast<std::int64_t>(std::floor(lo))-1;
-      last[axis]=static_cast<std::int64_t>(std::floor(hi))+1;
-      if (last[axis]<window.first[axis] || first[axis]>window_last[axis]) outside=true;
-      first[axis]=std::max(first[axis],window.first[axis]);
-      last[axis]=std::min(last[axis],window_last[axis]);
-    }
-    if (outside) continue;
-    for (std::int64_t z=first[2];z<=last[2];++z)
-      for (std::int64_t y=first[1];y<=last[1];++y)
-        for (std::int64_t x=first[0];x<=last[0];++x) {
-          if (cell_visits==max_cell_visits) {
-            if (field_failure_allocation_hook) field_failure_allocation_hook();
-            return KernelFailure{"FIELD_CELL_VISIT_LIMIT","rasterize-boundary"};
-          }
-          ++cell_visits;
-          if (!budget.consume_work(kRasterCellWork))
-            return KernelFailure{"FIELD_KERNEL_WORK_LIMIT","rasterize-boundary"};
-          const CellIndex index{x,y,z};
-          const auto cell=grid_cell_interval(window,index);
-          if (!cell)
-            return KernelFailure{"FIELD_INDEX_OVERFLOW","rasterize-boundary"};
-          if (!triangle_box_disjoint(triangle,*cell)) {
-            const auto lx=static_cast<std::uint64_t>(x-window.first[0]);
-            const auto ly=static_cast<std::uint64_t>(y-window.first[1]);
-            const auto lz=static_cast<std::uint64_t>(z-window.first[2]);
-            const auto flat=lx+window.shape[0]*(ly+std::uint64_t{window.shape[1]}*lz);
-            boundary[static_cast<std::size_t>(flat)]=2;
-          }
+std::optional<KernelFailure> rasterize_boundary(const PlacedSolid& solid, const GridWindow& window,
+                                                std::span<std::uint8_t> boundary, Budget& budget,
+                                                std::uint64_t& cell_visits, std::uint64_t max_cell_visits,
+                                                bool skip_existing_boundary)
+{
+    detail::FieldProfileTimer profile(detail::FieldProfilePhase::raster, budget, cell_visits);
+    std::uint64_t cell_count = 1;
+    for (const auto extent : window.shape) {
+        if (extent == 0 || cell_count > std::numeric_limits<std::uint64_t>::max() / extent) {
+            return KernelFailure { "FIELD_INDEX_OVERFLOW", "rasterize-boundary" };
         }
-  }
-  return std::nullopt;
+        cell_count *= extent;
+    }
+    if (boundary.size() != cell_count) {
+        return KernelFailure { "FIELD_BUFFER_SIZE", "rasterize-boundary" };
+    }
+
+    std::array<std::int64_t, 3> window_last {};
+    for (int axis = 0; axis != 3; ++axis) {
+        const auto extent = static_cast<std::int64_t>(window.shape[axis] - 1);
+        if (window.first[axis] > std::numeric_limits<std::int64_t>::max() - extent) {
+            return KernelFailure { "FIELD_INDEX_OVERFLOW", "rasterize-boundary" };
+        }
+        window_last[axis] = window.first[axis] + extent;
+    }
+    const auto mesh = solid.prepared->asset->mesh();
+    for (const auto& face : mesh.triangles) {
+        if (!budget.consume_work(kRasterFaceWork)) {
+            return KernelFailure { "FIELD_KERNEL_WORK_LIMIT", "rasterize-boundary" };
+        }
+        std::array<IntervalVec3, 3> triangle {
+            { solid.vertex_intervals[face[0]], solid.vertex_intervals[face[1]], solid.vertex_intervals[face[2]] }
+        };
+        CellIndex first {}, last {};
+        bool outside = false;
+        for (int axis = 0; axis != 3; ++axis) {
+            double low = triangle[0][axis].low, high = triangle[0][axis].high;
+            for (int vertex = 1; vertex != 3; ++vertex) {
+                low = std::min(low, triangle[vertex][axis].low);
+                high = std::max(high, triangle[vertex][axis].high);
+            }
+            const long double lo =
+                (static_cast<long double>(low) - window.lattice.origin_mm[axis]) / window.lattice.pitch_mm;
+            const long double hi =
+                (static_cast<long double>(high) - window.lattice.origin_mm[axis]) / window.lattice.pitch_mm;
+            if (!std::isfinite(lo) || !std::isfinite(hi) ||
+                lo <= static_cast<long double>(std::numeric_limits<std::int64_t>::min() + 1) ||
+                hi >= static_cast<long double>(std::numeric_limits<std::int64_t>::max())) {
+                return KernelFailure { "FIELD_INDEX_OVERFLOW", "rasterize-boundary" };
+            }
+            // Include the cell below a lower grid plane because geometric queries use
+            // closed cells and exact surface contact may occupy both neighbours.
+            first[axis] = static_cast<std::int64_t>(std::floor(lo)) - 1;
+            last[axis] = static_cast<std::int64_t>(std::floor(hi)) + 1;
+            if (last[axis] < window.first[axis] || first[axis] > window_last[axis]) {
+                outside = true;
+            }
+            first[axis] = std::max(first[axis], window.first[axis]);
+            last[axis] = std::min(last[axis], window_last[axis]);
+        }
+        if (outside) {
+            continue;
+        }
+        for (std::int64_t z = first[2]; z <= last[2]; ++z) {
+            for (std::int64_t y = first[1]; y <= last[1]; ++y) {
+                for (std::int64_t x = first[0]; x <= last[0]; ++x) {
+                    if (cell_visits == max_cell_visits) {
+                        if (field_failure_allocation_hook) {
+                            field_failure_allocation_hook();
+                        }
+                        return KernelFailure { "FIELD_CELL_VISIT_LIMIT", "rasterize-boundary" };
+                    }
+                    ++cell_visits;
+                    const auto lx = static_cast<std::uint64_t>(x - window.first[0]);
+                    const auto ly = static_cast<std::uint64_t>(y - window.first[1]);
+                    const auto lz = static_cast<std::uint64_t>(z - window.first[2]);
+                    const auto flat = lx + window.shape[0] * (ly + std::uint64_t { window.shape[1] } * lz);
+                    if (skip_existing_boundary) {
+                        if (!budget.consume_work(kRasterLookupWork)) {
+                            return KernelFailure { "FIELD_KERNEL_WORK_LIMIT", "rasterize-boundary" };
+                        }
+                        // The tag is monotone for this raster generation: more triangles
+                        // cannot make an already-conservative closed cell unoccupied.
+                        if (boundary[static_cast<std::size_t>(flat)] == 2) {
+                            continue;
+                        }
+                    }
+                    if (!budget.consume_work(kRasterCellWork)) {
+                        return KernelFailure { "FIELD_KERNEL_WORK_LIMIT", "rasterize-boundary" };
+                    }
+                    const CellIndex index { x, y, z };
+                    const auto cell = grid_cell_interval(window, index);
+                    if (!cell) {
+                        return KernelFailure { "FIELD_INDEX_OVERFLOW", "rasterize-boundary" };
+                    }
+                    if (!triangle_box_disjoint(triangle, *cell)) {
+                        boundary[static_cast<std::size_t>(flat)] = 2;
+                    }
+                }
+            }
+        }
+    }
+    return std::nullopt;
 }
 
 Decision classify_material_witness(const PlacedSolid& solid,
@@ -2149,29 +2358,41 @@ PairResult classify_pair(const PlacedSolid& first,const PlacedSolid& second,
   }
   if (separated_by_bounds(first,second,clearance,budget))
     return {Decision::no,BoundaryRelation::disjoint,Threshold::above,"outward-aabb",""};
+  if (separated_by_bounds(first,second,0.0,budget)) {
+    const auto gap=exact_surface_gap(first,second,clearance,budget);
+    return {Decision::no,BoundaryRelation::disjoint,gap,"outward-aabb-exact-gap",
+            gap==Threshold::indeterminate?"KERNEL_CLASSIFICATION_UNRESOLVED":""};
+  }
   const auto boundary=check_boundaries(first,second,budget);
   if (boundary.relation==BoundaryRelation::transverse_crossing)
     return {Decision::yes,boundary.relation,Threshold::below,"exact-boundary-crossing",""};
   if (boundary.relation==BoundaryRelation::indeterminate)
-    return {Decision::indeterminate,boundary.relation,Threshold::indeterminate,"boundary-shell","KERNEL_BOUNDARY_UNRESOLVED"};
+    return {Decision::indeterminate,boundary.relation,Threshold::indeterminate,"boundary-shell",
+            boundary.exact_work_exhausted?"KERNEL_EXACT_LIMIT":"KERNEL_BOUNDARY_UNRESOLVED"};
   if (boundary.relation==BoundaryRelation::contact)
     return {Decision::indeterminate,boundary.relation,clearance>0?Threshold::below:Threshold::equal,
             "boundary-shell","KERNEL_CONTACTED_DEGENERACY"};
   Decision overlap=Decision::no;
+  bool witness_work_exhausted=false;
   for (const auto witness:first.prepared->shell_witnesses) {
-    const auto inside=point_in_material(first.world_vertices[witness],second,budget);
+    bool exhausted=false;
+    const auto inside=point_in_material(first.world_vertices[witness],second,budget,&exhausted);
+    witness_work_exhausted |= exhausted;
     if (inside==Decision::indeterminate) overlap=Decision::indeterminate;
     else if (inside==Decision::yes) { overlap=Decision::yes; break; }
   }
   if (overlap!=Decision::yes) for (const auto witness:second.prepared->shell_witnesses) {
-    const auto inside=point_in_material(second.world_vertices[witness],first,budget);
+    bool exhausted=false;
+    const auto inside=point_in_material(second.world_vertices[witness],first,budget,&exhausted);
+    witness_work_exhausted |= exhausted;
     if (inside==Decision::indeterminate) overlap=Decision::indeterminate;
     else if (inside==Decision::yes) { overlap=Decision::yes; break; }
   }
   const auto gap=overlap==Decision::yes?Threshold::below:
                  exact_surface_gap(first,second,clearance,budget);
   return {overlap,BoundaryRelation::disjoint,gap,"boundary-disjoint-shell-witnesses",
-          overlap==Decision::indeterminate||gap==Threshold::indeterminate?"KERNEL_CLASSIFICATION_UNRESOLVED":""};
+          overlap==Decision::indeterminate||gap==Threshold::indeterminate?
+              (witness_work_exhausted?"KERNEL_EXACT_LIMIT":"KERNEL_CLASSIFICATION_UNRESOLVED"):""};
 }
 
 ContainmentResult classify_box(const PlacedSolid& object,BoxDimensions box,
@@ -2205,24 +2426,28 @@ ContainmentResult classify_stl(const PlacedSolid& object,const PlacedSolid& cont
     return {Decision::indeterminate,clearance>0?Threshold::below:Threshold::equal,
             "boundary-shell","KERNEL_CONTACTED_DEGENERACY"};
   if (boundary.relation==BoundaryRelation::indeterminate)
-    return {Decision::indeterminate,Threshold::indeterminate,"boundary-shell","KERNEL_BOUNDARY_UNRESOLVED"};
+    return {Decision::indeterminate,Threshold::indeterminate,"boundary-shell",
+            boundary.exact_work_exhausted?"KERNEL_EXACT_LIMIT":"KERNEL_BOUNDARY_UNRESOLVED"};
   for (const auto witness:object.prepared->shell_witnesses) {
     const Vec3 point=object.world_vertices[witness];
-    const auto inside=point_in_material(point,container,budget);
+    bool exhausted=false;
+    const auto inside=point_in_material(point,container,budget,&exhausted);
     if (inside==Decision::no)
       return {Decision::no,exact_surface_gap(object,container,clearance,budget),
               "boundary-disjoint-shell-witnesses","OUTSIDE_CONTAINER"};
     if (inside==Decision::indeterminate)
       return {Decision::indeterminate,Threshold::indeterminate,
-              "boundary-disjoint-shell-witnesses","KERNEL_OBJECT_WITNESS_UNRESOLVED"};
+              "boundary-disjoint-shell-witnesses",exhausted?"KERNEL_EXACT_LIMIT":"KERNEL_OBJECT_WITNESS_UNRESOLVED"};
   }
   for (const auto witness:container.prepared->shell_witnesses) {
-    const auto inside=point_in_material(container.world_vertices[witness],object,budget);
+    bool exhausted=false;
+    const auto inside=point_in_material(container.world_vertices[witness],object,budget,&exhausted);
     if (inside==Decision::yes)
       return {Decision::no,exact_surface_gap(object,container,clearance,budget),
               "boundary-disjoint-shell-witnesses","EXCLUDED_CAVITY_ENCLOSED"};
     if (inside==Decision::indeterminate)
-      return {Decision::indeterminate,Threshold::indeterminate,"boundary-disjoint-shell-witnesses","KERNEL_CONTAINER_WITNESS_UNRESOLVED"};
+      return {Decision::indeterminate,Threshold::indeterminate,"boundary-disjoint-shell-witnesses",
+              exhausted?"KERNEL_EXACT_LIMIT":"KERNEL_CONTAINER_WITNESS_UNRESOLVED"};
   }
   const auto gap=exact_surface_gap(object,container,clearance,budget);
   return {Decision::yes,gap,"boundary-disjoint-shell-witnesses",

@@ -34,18 +34,21 @@ class DisplayLod {
       const noexcept;
   [[nodiscard]] MeshView mesh() const noexcept;
   [[nodiscard]] const DisplayLodReport& report() const noexcept;
+  // Own retained storage and vector capacity; excludes the separately pinned source.
+  [[nodiscard]] std::optional<std::uint64_t> resident_buffer_bytes() const noexcept;
 
- private:
+  private:
   struct Storage;
   std::shared_ptr<const Storage> storage_;
   explicit DisplayLod(std::shared_ptr<const Storage>) noexcept;
-  friend RepresentationOutcome<DisplayLod> make_display_lod(
-      std::shared_ptr<const AcceptedSolid>, DisplayLodOptions,
-      const RepresentationLimits&);
+  friend RepresentationOutcome<DisplayLod> make_display_lod(std::shared_ptr<const AcceptedSolid>, DisplayLodOptions,
+                                                            const RepresentationLimits&,
+                                                            const runtime::OperationControl&);
 };
 
-[[nodiscard]] RepresentationOutcome<DisplayLod> make_display_lod(
-    std::shared_ptr<const AcceptedSolid>, DisplayLodOptions = {},
-    const RepresentationLimits& = {});
+[[nodiscard]] RepresentationOutcome<DisplayLod> make_display_lod(std::shared_ptr<const AcceptedSolid>,
+                                                                 DisplayLodOptions = {},
+                                                                 const RepresentationLimits& = {},
+                                                                 const runtime::OperationControl& = {});
 
 }  // namespace spectrapack::geometry

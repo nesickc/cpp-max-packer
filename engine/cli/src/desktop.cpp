@@ -3,6 +3,9 @@
 #include <spectrapack/geometry/display_lod.hpp>
 #include <spectrapack/io/result_export.hpp>
 #include <spectrapack/solver/orientations.hpp>
+#include <spectrapack/solver/spectral.hpp>
+
+#include "host_admission.hpp"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -14,6 +17,7 @@
 
 #include <array>
 #include <bit>
+#include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -28,6 +32,24 @@ namespace io = spectrapack::io;
 namespace solver = spectrapack::solver;
 using io::Json;
 using Asset = std::shared_ptr<const io::VerifiedAsset>;
+using spectrapack::cli::HostAdmission;
+
+std::optional<io::Error> unsupported_threads(const Json& request)
+{
+    const auto found = request.find("thread_count");
+    if (found != request.end() && found->is_number_integer() &&
+        (*found < 1 || *found > solver::cpu_supported_thread_count())) {
+        return io::Error {
+            "UNSUPPORTED_THREAD_COUNT",
+            "CPU count is outside actual native support.",
+            { { "supported_min", 1 },
+              { "supported_max", solver::cpu_supported_thread_count() },
+              { "requested", *found } },
+            true
+        };
+    }
+    return {};
+}
 
 int fail(std::string code, std::string message, int status = 2, Json details = Json::object())
 {
@@ -43,7 +65,8 @@ std::string path_text(const std::filesystem::path& path)
     return { reinterpret_cast<const char*>(value.data()), value.size() };
 }
 
-std::optional<Json> read_json(const std::filesystem::path& path, std::uint64_t limit, io::ContractKind kind)
+std::optional<Json> read_json(const std::filesystem::path& path, std::uint64_t limit, io::ContractKind kind,
+                              HostAdmission& budget)
 {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
@@ -55,13 +78,27 @@ std::optional<Json> read_json(const std::filesystem::path& path, std::uint64_t l
         return {};
     }
     input.seekg(0);
+    budget.repeated(static_cast<std::uint64_t>(size), 2);
+    budget.lexer(static_cast<std::uint64_t>(size));
     std::string bytes(static_cast<size_t>(size), '\0');
     if (!bytes.empty() && !input.read(bytes.data(), size)) {
         return {};
     }
+    spectrapack::cli::HostJsonAdmission admission(budget);
+    if (!Json::sax_parse(bytes, &admission)) {
+        return {};
+    }
     io::ContractValidator validator;
-    auto document = validator.parse(kind, bytes);
+    auto document = validator.parse(kind, bytes, { 16, 256 });
     if (!std::holds_alternative<io::ValidatedDocument>(document)) {
+        if (kind == io::ContractKind::desktop) {
+            const auto raw = Json::parse(bytes, nullptr, false);
+            if (raw.is_object()) {
+                if (auto cause = unsupported_threads(raw)) {
+                    throw *cause;
+                }
+            }
+        }
         return {};
     }
     return std::optional<Json>{std::in_place, std::get<io::ValidatedDocument>(document).value()};
@@ -92,13 +129,27 @@ std::optional<std::string> sha256(const std::string& bytes)
     return hash;
 }
 
-std::string ply(geo::MeshView mesh)
+std::string ply(geo::MeshView mesh, HostAdmission& budget)
 {
     std::ostringstream header;
     header << "ply\nformat binary_little_endian 1.0\nelement vertex " << mesh.vertices.size()
            << "\nproperty double x\nproperty double y\nproperty double z\nelement face " << mesh.triangles.size()
            << "\nproperty list uchar uint vertex_indices\nend_header\n";
     auto bytes = header.str();
+    std::uint64_t capacity = bytes.size();
+    const auto add = [&](std::uint64_t count, std::uint64_t width) {
+        if (count > UINT64_MAX / width || count * width > UINT64_MAX - capacity) {
+            throw spectrapack::cli::HostMemoryLimit {};
+        }
+        capacity += count * width;
+    };
+    add(mesh.vertices.size(), 24);
+    add(mesh.triangles.size(), 13);
+    if (capacity > SIZE_MAX || capacity > (64ULL << 20)) {
+        throw spectrapack::cli::HostMemoryLimit {};
+    }
+    budget.charge(capacity);
+    bytes.reserve(static_cast<std::size_t>(capacity));
     const auto append = [&bytes](auto value) {
         const auto encoded = std::bit_cast<std::array<char, sizeof(value)>>(value);
         bytes.append(encoded.data(), encoded.size());
@@ -138,64 +189,32 @@ std::optional<geo::OrientationPolicy> policy(const Json& value)
     return out;
 }
 
-int prepare(const std::map<std::string, std::filesystem::path>& options, const Asset& asset)
+int prepare(const std::map<std::string, std::filesystem::path>& options, const Asset& asset, HostAdmission& budget,
+            std::uint64_t available)
 {
-    auto request = read_json(options.at("--request"), 1ULL << 20, io::ContractKind::desktop);
+    auto request = read_json(options.at("--request"), 1ULL << 20, io::ContractKind::desktop, budget);
     io::ContractValidator validator;
     if (!request || !request->contains("desktop_version") || !request->contains("orientation")) {
         return fail("INVALID_SETTINGS", "Desktop settings do not satisfy version 1.");
     }
-    const auto input_policy = policy(request->at("orientation"));
-    if (!input_policy) {
-        return fail("INVALID_SETTINGS", "Desktop orientation is unsupported.");
+    const auto resolved = resolve_desktop_settings(*request, asset);
+    if (const auto* error = std::get_if<io::Error>(&resolved)) {
+        return fail(error->code, error->message, 2, error->details);
     }
-    auto made = solver::make_orientation_catalog(*input_policy, 24);
-    if (const auto* error = std::get_if<solver::CatalogFailure>(&made)) {
-        return fail(std::string(error->code), error->message);
-    }
-    const auto& catalog = std::get<solver::OrientationCatalog>(made);
-    Json orientation = request->at("orientation");
-    auto resolved_policy = *input_policy;
-    if (resolved_policy.mode == geo::OrientationMode::fixed) {
-        resolved_policy.catalog_xyzw = catalog.quaternions;
-        orientation["quaternion_xyzw"] = catalog.quaternions.front();
-    }
-    const io::ResultCatalog bound { 1, catalog.quaternions, io::ResultCatalogBinding::resolved_policy };
-    const auto hashed = io::result_catalog_sha256(bound, resolved_policy);
-    if (const auto* error = std::get_if<io::Error>(&hashed)) {
-        return fail(error->code, error->message);
-    }
-    const auto& record = asset->record();
-    Json settings {
-        { "settings_version", 1                                                                            },
-        { "object_asset",
-         { { "source_sha256", record.at("source").at("sha256") },
-            { "accepted_solid_sha256", record.at("accepted_solid").at("sha256") } }                        },
-        { "container",        { { "kind", "box" }, { "dimensions_mm", request->at("box_dimensions_mm") } } },
-        { "clearance_mm",     request->at("clearance_mm")                                                  },
-        { "orientation",      orientation                                                                  },
-        { "search",
-         { { "preset", "desktop-cpu-v1" },
-            { "deterministic", false },
-            { "budget_seconds", request->at("budget_seconds") },
-            { "seed", request->at("seed") } }                                                              },
-        { "resolution",       { { "mode", "manual" }, { "pitch_mm", request->at("pitch_mm") } }            },
-        { "compute",          { { "backend", "cpu" } }                                                     },
-        { "resolved",
-         { { "pitch_mm", request->at("pitch_mm") },
-            { "orientation_catalog_sha256", std::get<std::string>(hashed) },
-            { "orientation_catalog_version", 1 },
-            { "backend", "cpu" },
-            { "thread_count", 1 } }                                                                        }
-    };
-    if (!std::holds_alternative<io::ValidatedDocument>(validator.validate(io::ContractKind::settings, settings))) {
-        return fail("INVALID_SETTINGS", "Resolved settings are not valid; check the quaternion and uint64 seed.");
-    }
+    const auto& settings = std::get<Json>(resolved);
     const auto output = options.at("--output");
     Json preview = nullptr, preview_path = nullptr, warnings = Json::array();
-    auto lod = geo::make_display_lod(asset->solid());
+    geo::RepresentationLimits representation;
+    representation.max_working_bytes = available;
+    representation.reserved_bytes = budget.used() - *asset->solid()->resident_buffer_bytes();
+    auto lod = geo::make_display_lod(asset->solid(), {}, representation);
     if (const auto* mesh = std::get_if<std::shared_ptr<const geo::DisplayLod>>(&lod)) {
-        auto bytes = ply((*mesh)->mesh());
+        const auto resident = (*mesh)->resident_buffer_bytes();
+        if (!resident) {
+            throw spectrapack::cli::HostMemoryLimit {};
+        }
+        budget.charge(*resident);
+        auto bytes = ply((*mesh)->mesh(), budget);
         const auto hash = sha256(bytes);
         if (hash && bytes.size() <= (64ULL << 20) && write_file(output / "preview.ply", bytes)) {
             preview_path = path_text(output / "preview.ply");
@@ -214,7 +233,7 @@ int prepare(const std::map<std::string, std::filesystem::path>& options, const A
     }
     else {
         const auto& error = std::get<geo::RepresentationFailure>(lod);
-        warnings.push_back(io::error_json({ std::string(error.code), error.message, Json::object(), true }));
+        warnings.push_back(io::error_json({ std::string(error.code), std::string(error.message), Json::object(), true }));
     }
     if (!write_file(output / "settings.json", settings.dump(2))) {
         return fail("OUTPUT_WRITE_FAILED", "Resolved settings could not be published.", 3);
@@ -224,9 +243,9 @@ int prepare(const std::map<std::string, std::filesystem::path>& options, const A
     return std::cout ? 0 : 4;
 }
 
-int restore(const std::map<std::string, std::filesystem::path>& options, const Asset& asset)
+int restore(const std::map<std::string, std::filesystem::path>& options, const Asset& asset, HostAdmission& budget)
 {
-    auto stored = read_json(options.at("--result"), 64ULL << 20, io::ContractKind::results);
+    auto stored = read_json(options.at("--result"), 64ULL << 20, io::ContractKind::results, budget);
     if (!stored) {
         return fail("INVALID_RESULT", "Stored result does not satisfy the complete result contract.");
     }
@@ -259,7 +278,17 @@ int restore(const std::map<std::string, std::filesystem::path>& options, const A
         return fail("INVALID_SETTINGS", "Stored physical constraints are invalid.");
     }
     auto ctx = std::get<std::shared_ptr<const geo::ValidationContext>>(context);
+    const auto context_resident = ctx->resident_buffer_bytes();
+    if (!context_resident) {
+        throw spectrapack::cli::HostMemoryLimit {};
+    }
+    budget.charge(*context_resident);
     std::vector<geo::CopyPose> poses;
+    budget.repeated(stored->at("placements").size(), 2 * sizeof(geo::CopyPose));
+    for (const auto& p : stored->at("placements")) {
+        budget.repeated(p.at("copy_id").get_ref<const std::string&>().size(), 2);
+    }
+    poses.reserve(stored->at("placements").size());
     for (const auto& p : stored->at("placements")) {
         poses.push_back({ p.at("copy_id").get<std::string>(), p.at("translation_mm").get<geo::Vec3>(),
                           p.at("quaternion_xyzw").get<geo::Quaternion>() });
@@ -268,7 +297,9 @@ int restore(const std::map<std::string, std::filesystem::path>& options, const A
     if (!std::holds_alternative<std::shared_ptr<const geo::Candidate>>(candidate)) {
         return fail("INVALID_RESULT", "Stored poses are not canonical.");
     }
-    auto fresh = geo::validate(ctx, std::get<std::shared_ptr<const geo::Candidate>>(candidate));
+    geo::ValidationLimits validation_limits;
+    validation_limits.max_working_bytes = budget.remaining();
+    auto fresh = geo::validate(ctx, std::get<std::shared_ptr<const geo::Candidate>>(candidate), validation_limits);
     if (!fresh.validated_solution || fresh.report.validity != geo::Validity::valid) {
         return fail("RESULT_VALIDATION_FAILED", "Fresh native validation rejected the stored placements.", 5);
     }
@@ -279,7 +310,10 @@ int restore(const std::map<std::string, std::filesystem::path>& options, const A
     for (const auto* key : { "time_to_best_seconds", "peak_host_bytes", "peak_device_bytes", "termination_reason" }) {
         metadata["metrics"][key] = stored->at("metrics").at(key);
     }
-    auto rebuilt = io::build_result({ fresh.validated_solution, asset, {}, catalog, metadata });
+    auto rebuilt = io::build_result({
+        fresh.validated_solution, asset, {},
+          catalog, metadata, validation_limits, { 16, 256 }
+    });
     if (const auto* error = std::get_if<io::Error>(&rebuilt)) {
         return fail(error->code, error->message, 3, error->details);
     }
@@ -298,13 +332,18 @@ int restore(const std::map<std::string, std::filesystem::path>& options, const A
     if (options.contains("--stl")) {
         stl = options.at("--stl");
     }
-    auto published = io::export_result({ fresh.validated_solution,
-                                         asset,
-                                         {},
-                                         catalog,
-                                         std::move(document),
-                                         options.at("--output") / "result.json",
-                                         stl });
+    io::ExportRequest export_request { fresh.validated_solution,
+                                       asset,
+                                       {},
+                                       catalog,
+                                       std::move(document),
+                                       options.at("--output") / "result.json",
+                                       stl,
+                                       validation_limits,
+                                       {},
+                                       budget.remaining() };
+    export_request.diagnostic_limits = { 16, 256 };
+    auto published = io::export_result(export_request);
     if (const auto* error = std::get_if<io::Error>(&published)) {
         return fail(error->code, error->message, 3, error->details);
     }
@@ -320,33 +359,147 @@ int restore(const std::map<std::string, std::filesystem::path>& options, const A
 
 int run_desktop_command(const std::string& command, const std::vector<std::string>& arguments)
 {
-    std::map<std::string, std::filesystem::path> options;
-    for (size_t i = 0; i < arguments.size(); i += 2) {
-        const auto& flag = arguments[i];
-        if (i + 1 == arguments.size() || options.contains(flag) ||
-            (flag != "--object-report" && flag != "--output" &&
-             flag != (command == "desktop-prepare" ? "--request" : "--result") &&
-             !(command == "desktop-restore" && flag == "--stl"))) {
-            return fail("INVALID_REQUEST", "Desktop command options are invalid.");
+    try {
+        std::map<std::string, std::filesystem::path> options;
+        for (size_t i = 0; i < arguments.size(); i += 2) {
+            const auto& flag = arguments[i];
+            if (i + 1 == arguments.size() || options.contains(flag) ||
+                (flag != "--object-report" && flag != "--output" &&
+                 flag != (command == "desktop-prepare" ? "--request" : "--result") &&
+                 !(command == "desktop-restore" && flag == "--stl") && flag != "--available-host-bytes")) {
+                return fail("INVALID_REQUEST", "Desktop command options are invalid.");
+            }
+            options[flag] = std::filesystem::u8path(arguments[i + 1]);
         }
-        options[flag] = std::filesystem::u8path(arguments[i + 1]);
+        std::uint64_t available = 512ULL << 20;
+        if (options.contains("--available-host-bytes")) {
+            const auto text = path_text(options.at("--available-host-bytes"));
+            const auto [end, cause] = std::from_chars(text.data(), text.data() + text.size(), available);
+            if (cause != std::errc {} || end != text.data() + text.size() || available == 0 ||
+                available > (512ULL << 20)) {
+                return fail("INVALID_REQUEST", "--available-host-bytes must be an integer in [1,536870912].");
+            }
+        }
+        if (!options.contains("--object-report") || !options.contains("--output") ||
+            !options.contains(command == "desktop-prepare" ? "--request" : "--result")) {
+            return fail("INVALID_REQUEST", "Desktop command requires its input files and output directory.");
+        }
+        std::error_code error;
+        if (!std::filesystem::is_directory(options.at("--output"), error) || error ||
+            !std::filesystem::is_empty(options.at("--output"), error) || error) {
+            return fail("OUTPUT_PATH_INVALID", "Desktop output must be an existing empty private directory.");
+        }
+        HostAdmission budget(available);
+        auto loaded = io::load_accepted_asset(options.at("--object-report"),
+                                              {
+        },
+                                              { budget.remaining(), { 16, 256 } });
+        if (const auto* problem = std::get_if<io::Error>(&loaded)) {
+            return fail(problem->code, problem->message, 3, problem->details);
+        }
+        const auto asset = std::get<Asset>(loaded);
+        const auto pins = asset->resident_buffer_bytes(), solid = asset->solid()->resident_buffer_bytes();
+        if (!pins || !solid) {
+            throw spectrapack::cli::HostMemoryLimit {};
+        }
+        budget.charge(*pins);
+        budget.charge(*solid);
+        if (asset->solid()->role() != geo::AssetRole::object) {
+            return fail("ASSET_MISMATCH", "Desktop object report has the wrong role.");
+        }
+        return command == "desktop-prepare" ? prepare(options, asset, budget, available)
+                                            : restore(options, asset, budget);
     }
-    if (!options.contains("--object-report") || !options.contains("--output") ||
-        !options.contains(command == "desktop-prepare" ? "--request" : "--result")) {
-        return fail("INVALID_REQUEST", "Desktop command requires its input files and output directory.");
+    catch (const spectrapack::cli::HostMemoryLimit&) {
+        return fail("MEMORY_LIMIT",
+                    "Desktop helper inputs, retained owners and scratch exceed the available host allowance.", 3);
     }
-    std::error_code error;
-    if (!std::filesystem::is_directory(options.at("--output"), error) || error ||
-        !std::filesystem::is_empty(options.at("--output"), error) || error) {
-        return fail("OUTPUT_PATH_INVALID", "Desktop output must be an existing empty private directory.");
+    catch (const std::bad_alloc&) {
+        return fail("MEMORY_LIMIT", "Desktop helper exhausted bounded memory allocation.", 3);
     }
-    auto loaded = io::load_accepted_asset(options.at("--object-report"));
-    if (const auto* problem = std::get_if<io::Error>(&loaded)) {
-        return fail(problem->code, problem->message, 3, problem->details);
+    catch (const io::Error& cause) {
+        return fail(cause.code, cause.message, 3, cause.details);
     }
-    const auto asset = std::get<Asset>(loaded);
-    if (asset->solid()->role() != geo::AssetRole::object) {
-        return fail("ASSET_MISMATCH", "Desktop object report has the wrong role.");
+}
+
+std::variant<spectrapack::io::Json, spectrapack::io::Error> resolve_desktop_settings(const Json& request,
+                                                                                     const Asset& asset)
+{
+    io::ContractValidator validator;
+    if (auto failure = unsupported_threads(request)) {
+        return *failure;
     }
-    return command == "desktop-prepare" ? prepare(options, asset) : restore(options, asset);
+    if (!asset ||
+        !std::holds_alternative<io::ValidatedDocument>(
+            validator.validate(io::ContractKind::desktop, request, { 16, 256 })) ||
+        !request.contains("orientation")) {
+        return io::Error { "INVALID_SETTINGS", "Desktop settings do not satisfy version 1.", Json::object(), true };
+    }
+    const auto input_policy = policy(request.at("orientation"));
+    if (!input_policy) {
+        return io::Error { "INVALID_SETTINGS", "Desktop orientation is unsupported.", Json::object(), true };
+    }
+    auto made = solver::make_orientation_catalog(*input_policy, 24);
+    if (const auto* error = std::get_if<solver::CatalogFailure>(&made)) {
+        return io::Error { std::string(error->code), std::string(error->message), Json::object(), true };
+    }
+    const auto& catalog = std::get<solver::OrientationCatalog>(made);
+    Json orientation = request.at("orientation");
+    auto resolved_policy = *input_policy;
+    if (resolved_policy.mode == geo::OrientationMode::fixed) {
+        resolved_policy.catalog_xyzw = catalog.quaternions;
+        orientation["quaternion_xyzw"] = catalog.quaternions.front();
+    }
+    const io::ResultCatalog bound { 1, catalog.quaternions, io::ResultCatalogBinding::resolved_policy };
+    const auto hashed = io::result_catalog_sha256(bound, resolved_policy);
+    if (const auto* error = std::get_if<io::Error>(&hashed)) {
+        return *error;
+    }
+    const auto& record = asset->record();
+    Json settings {
+        { "settings_version", 1                                                                           },
+        { "object_asset",
+         { { "source_sha256", record.at("source").at("sha256") },
+            { "accepted_solid_sha256", record.at("accepted_solid").at("sha256") } }                       },
+        { "container",        { { "kind", "box" }, { "dimensions_mm", request.at("box_dimensions_mm") } } },
+        { "clearance_mm",     request.at("clearance_mm")                                                  },
+        { "orientation",      orientation                                                                 },
+        { "search",
+         { { "preset", "desktop-cpu-v1" },
+            { "deterministic", false },
+            { "budget_seconds", request.at("budget_seconds") },
+            { "seed", request.at("seed") } }                                                              },
+        { "resolution",       { { "mode", "manual" }, { "pitch_mm", request.at("pitch_mm") } }            },
+        { "compute",          { { "backend", "cpu" } }                                                    },
+        { "resolved",
+         { { "pitch_mm", request.at("pitch_mm") },
+            { "orientation_catalog_sha256", std::get<std::string>(hashed) },
+            { "orientation_catalog_version", 1 },
+            { "backend", "cpu" },
+            { "thread_count", 1 } }                                                                       }
+    };
+    settings["search"]["budget_scope"] = request.value("budget_scope", "search_only");
+    const auto threads = request.value("thread_count", 1u);
+    if (threads > solver::cpu_supported_thread_count()) {
+        return io::Error {
+            "UNSUPPORTED_THREAD_COUNT",
+            "CPU thread count exceeds this build's actual support.",
+            { { "supported_min", 1 },
+              { "supported_max", solver::cpu_supported_thread_count() },
+              { "requested", threads } },
+            true
+        };
+    }
+    settings["compute"]["thread_count"] = threads;
+    settings["resolved"]["thread_count"] = threads;
+    settings["resolved"]["cpu_runtime"] = {
+        { "version",           1                               },
+        { "scheduling_policy", solver::cpu_scheduling_policy() }
+    };
+    if (!std::holds_alternative<io::ValidatedDocument>(
+            validator.validate(io::ContractKind::settings, settings, { 16, 256 }))) {
+        return io::Error { "INVALID_SETTINGS", "Resolved settings are not valid; check the quaternion and uint64 seed.",
+                           Json::object(), true };
+    }
+    return settings;
 }

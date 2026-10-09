@@ -26,6 +26,7 @@ Primary: **Astra Ultra** handles coordination, final interface decisions, integr
 | `implementation_worker` | `gpt-6.1-sol` / `high` | Default bounded feature, module, integration, or repair |
 | `expert_worker` | `gpt-6.1-sol` / `xhigh` | Known difficult features, bounded numerical/C++/Vulkan diagnosis, or focused expert review |
 | `code_reviewer` | `gpt-6.1-sol` / `xhigh` | Routine independent review of code, tests, and contracts |
+| `process_reviewer` | `gpt-6.1-sol` / `high` | After-PR orchestration review; recommendations for human approval, no code review or edits |
 | `architect` | `gpt-6-astra` / `xhigh` | Selective architecture, shared contracts, and critical validity decisions |
 | `critical_reviewer` | `gpt-6-astra` / `xhigh` | Selective high-risk review or consequential uncertainty unresolved by Sol |
 | `light_worker` | `gpt-6-luna` / `low` | Low-risk/difficulty edits, fixtures, focused tests, inspection, documentation |
@@ -40,6 +41,12 @@ Primary: **Astra Ultra** handles coordination, final interface decisions, integr
 - Offload low-risk work to Luna. Send raw logs to `log_reviewer` with paths and a question; return a few notable lines with file/line references, failure counts, and a short summary. The primary/reviewer reads deeper only for an unresolved issue. A truncated or filtered log cannot establish success.
 - Where named roles are unavailable or their exposed settings are stale, explicitly pass the role's exact model **and** effort with fresh/limited context, and include its role-file instructions. See [setup status](doc/AGENT_SETUP.md) for verified capabilities. Report unavailable settings; never silently promote or substitute models.
 - Preserve existing ChatGPT sign-in and permissions. No API billing or Fast-speed changes. Leaf behavior is policy, not a claimed permission boundary.
+
+## Scope checkpoints and process feedback
+
+- Before substantial implementation, state the deliverable, simplest plausible approach, exclusions, first observable result, and rough expected scope in the existing ticket/plan; do not create a separate planning artifact by default.
+- Reassess unexpected growth: roughly 1,000 added handwritten production lines, a substantial overrun of planned scope, an unplanned subsystem/second execution path, or two failed repairs. Use the existing reviewer/diagnosis to decide continue, simplify, split, or redesign before expanding implementation. These are review triggers, not deletion quotas or permission requests. See [review procedure](doc/PROCESS_REVIEW.md).
+- Once a ready PR is opened, dispatch one fresh `process_reviewer` within the existing worker cap. It reviews orchestration evidence, not product code, and returns at most three recommendations for the user to approve, deny, or defer. Do not apply its recommendations without explicit human approval. This advisory pass does not gate product acceptance or run after every push.
 
 ## Shared product rules
 

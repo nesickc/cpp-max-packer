@@ -69,6 +69,17 @@
         },
         "seed": {
           "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"
+        },
+        "thread_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        },
+        "budget_scope": {
+          "enum": [
+            "search_only",
+            "total_start"
+          ]
         }
       },
       "additionalProperties": false
@@ -215,7 +226,13 @@
             "validating",
             "saving",
             "finished",
-            "failed"
+            "failed",
+            "loading",
+            "voxelizing",
+            "planning_fft",
+            "placing",
+            "improving",
+            "cleanup"
           ]
         },
         "started_at": {
@@ -253,6 +270,17 @@
               "type": "null"
             }
           ]
+        },
+        "sequence": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/counter"
+        },
+        "completion_elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "native_completion_elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
         }
       },
       "additionalProperties": false
@@ -331,6 +359,47 @@
               "type": "null"
             }
           ]
+        },
+        "cpu_runtime": {
+          "type": "object",
+          "required": [
+            "version",
+            "supported_min",
+            "supported_max",
+            "default_thread_count"
+          ],
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "supported_min": {
+              "const": 1
+            },
+            "supported_max": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            },
+            "default_thread_count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            },
+            "requested_thread_count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            },
+            "resolved_thread_count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            },
+            "working_set_estimate_bytes": {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/counter"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

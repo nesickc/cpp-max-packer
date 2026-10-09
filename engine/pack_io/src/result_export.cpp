@@ -2,9 +2,12 @@
 #include <spectrapack/geometry/rigid_transform.hpp>
 #include <spectrapack/io/result_export.hpp>
 
+#include "asset_admission.hpp"
+#include "operation_guard.hpp"
 #include "repair_replay.hpp"
 #include "result_builder_accounting.hpp"
 #include "result_export_test_seam.hpp"
+#include "result_publication.hpp"
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -13,6 +16,7 @@
 // clang-format off
 #include <windows.h>
 #include <bcrypt.h>
+#include "pinned_stage.hpp"
 // clang-format on
 #endif
 
@@ -79,8 +83,17 @@ std::atomic_uint64_t export_stage_write_count {};
 std::atomic_uint64_t export_stage_write_exception_number {};
 std::atomic<test::ClosedStageMutation> export_closed_stage_mutation { test::ClosedStageMutation::none };
 std::atomic_bool export_closed_stage_reader_failure {};
+std::atomic_bool export_fail_pinned_reference_query {};
+std::atomic<test::PostPublicationHook> export_post_publication_hook {};
+thread_local bool export_reference_pin_active {};
+struct PinnedReferenceScope {
+    bool previous { export_reference_pin_active };
+    PinnedReferenceScope() { export_reference_pin_active = true; }
+    ~PinnedReferenceScope() { export_reference_pin_active = previous; }
+};
 std::atomic_uint64_t export_builder_base_before_native_inputs {};
 std::atomic_uint64_t export_post_hash_base_before_reuse_comparison {};
+std::atomic_uint64_t export_base_before_hash {};
 std::atomic_uint64_t export_companion_write_base_before_final_documents {};
 std::string export_stage_token;
 std::vector<std::string> export_stage_tokens;
@@ -178,10 +191,17 @@ std::variant<Bytes, Error> read_bytes(const std::filesystem::path& path, std::ui
         if (!input) {
             return failure("ASSET_MISMATCH", "A retained provenance artifact cannot be opened.");
         }
+        if (detail::asset_budget) {
+            detail::asset_budget->charge(size);
+        }
         Bytes bytes(static_cast<std::size_t>(size));
-        if (!bytes.empty() &&
-            !input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) {
-            return failure("ASSET_MISMATCH", "A retained provenance artifact could not be read completely.");
+        for (std::size_t offset = 0; offset < bytes.size();) {
+            detail::poll_operation();
+            const auto size = std::min<std::size_t>(64 * 1024, bytes.size() - offset);
+            if (!input.read(reinterpret_cast<char*>(bytes.data() + offset), static_cast<std::streamsize>(size))) {
+                return failure("ASSET_MISMATCH", "A retained provenance artifact could not be read completely.");
+            }
+            offset += size;
         }
         char extra {};
         if (input.read(&extra, 1) || !input.eof()) {
@@ -241,9 +261,13 @@ std::variant<std::string, Error> sha256(const Bytes& bytes)
     if (status >= 0 && bytes.size() > std::numeric_limits<ULONG>::max()) {
         status = -1;
     }
-    if (status >= 0) {
-        status = BCryptHashData(hash_handle.get(), reinterpret_cast<PUCHAR>(const_cast<std::byte*>(bytes.data())),
-                                static_cast<ULONG>(bytes.size()), 0);
+    for (std::size_t offset = 0; status >= 0 && offset < bytes.size();) {
+        detail::poll_operation();
+        const auto size = std::min<std::size_t>(64 * 1024, bytes.size() - offset);
+        status =
+            BCryptHashData(hash_handle.get(), reinterpret_cast<PUCHAR>(const_cast<std::byte*>(bytes.data() + offset)),
+                           static_cast<ULONG>(size), 0);
+        offset += size;
     }
     if (status >= 0) {
         status = BCryptFinishHash(hash_handle.get(), digest.data(), digest_size, 0);
@@ -264,7 +288,7 @@ std::variant<std::string, Error> sha256(const Bytes& bytes)
 }
 
 std::variant<std::string, Error> sha256_file(const std::filesystem::path& path, std::uint64_t expected_size,
-                                             std::uint64_t max_working_bytes)
+                                             std::uint64_t max_working_bytes, std::istream* pinned = nullptr)
 {
 #ifdef _WIN32
     constexpr std::size_t kReadBufferBytes = 64 * 1024;
@@ -321,10 +345,15 @@ std::variant<std::string, Error> sha256_file(const std::filesystem::path& path, 
         BCRYPT_HASH_HANDLE hash {};
         status = BCryptCreateHash(provider.get(), &hash, object.data(), object_size, nullptr, 0, 0);
         BCryptHash hash_handle(hash);
-        std::ifstream input(path, std::ios::binary);
+        std::ifstream file;
+        if (!pinned) {
+            file.open(path, std::ios::binary);
+        }
+        auto& input = pinned ? *pinned : file;
         std::array<std::byte, kReadBufferBytes> buffer {};
         std::uint64_t total {};
         while (status >= 0 && input) {
+            detail::poll_operation();
             input.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
             const auto count = input.gcount();
             if (count < 0 || static_cast<std::uint64_t>(count) > expected_size - total) {
@@ -356,6 +385,7 @@ std::variant<std::string, Error> sha256_file(const std::filesystem::path& path, 
     return failure("INTERNAL_ERROR", "SHA-256 is unavailable on this platform.");
 #endif
 }
+bool add_repeated_bytes(std::uint64_t&, std::uint64_t, std::size_t) noexcept;
 Bytes serialize_ply(geometry::MeshView mesh)
 {
     std::ostringstream header;
@@ -363,7 +393,16 @@ Bytes serialize_ply(geometry::MeshView mesh)
            << "\nproperty double x\nproperty double y\nproperty double z\nelement face " << mesh.triangles.size()
            << "\nproperty list uchar uint vertex_indices\nend_header\n";
     const auto text = header.str();
-    Bytes bytes(text.size());
+    std::uint64_t size = text.size();
+    if (!add_repeated_bytes(size, mesh.vertices.size(), 24) || !add_repeated_bytes(size, mesh.triangles.size(), 13)) {
+        throw detail::AssetMemoryLimit {};
+    }
+    if (detail::asset_budget) {
+        detail::asset_budget->charge(size);
+    }
+    Bytes bytes;
+    bytes.reserve(static_cast<std::size_t>(size));
+    bytes.resize(text.size());
     if (!text.empty()) {
         std::memcpy(bytes.data(), text.data(), text.size());
     }
@@ -372,11 +411,13 @@ Bytes serialize_ply(geometry::MeshView mesh)
         bytes.insert(bytes.end(), first, first + sizeof(value));
     };
     for (const auto& vertex : mesh.vertices) {
+        detail::poll_operation();
         for (const auto coordinate : vertex) {
             append(coordinate);
         }
     }
     for (const auto& triangle : mesh.triangles) {
+        detail::poll_operation();
         append(std::uint8_t { 3 });
         for (const auto index : triangle) {
             append(index);
@@ -630,6 +671,133 @@ std::string utf8_path(const std::filesystem::path& path)
     const auto text = path.u8string();
     return { reinterpret_cast<const char*>(text.data()), text.size() };
 }
+struct GuardedLocation {
+    std::filesystem::path root;
+    std::filesystem::path candidate;
+};
+constexpr std::uint64_t kPathMetadataBytes = 64;
+std::uint64_t export_path_owner_bytes(const std::filesystem::path& path)
+{
+    // Include the terminator and pinned Debug string/path proxy payloads, plus
+    // transfer slack. Stack wrappers and allocator headers follow the existing
+    // portable-payload convention and are not process working-set measurements.
+    return (path.native().capacity() + 1ULL) * sizeof(wchar_t) + kPathMetadataBytes;
+}
+std::variant<std::filesystem::path, Error> admitted_canonical_export_path(const std::filesystem::path& input,
+                                                                          std::uint64_t remaining_bytes)
+{
+    struct CloseFile {
+        HANDLE handle;
+        ~CloseFile()
+        {
+            if (handle != INVALID_HANDLE_VALUE) {
+                CloseHandle(handle);
+            }
+        }
+    } file { CreateFileW(input.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                         nullptr, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr) };
+    const auto path_error = [](DWORD cause) {
+        auto problem = failure("EXPORT_PATH_INVALID", "Guarded STL canonical path could not be queried.");
+        problem.details = {
+            { "win32_error", cause }
+        };
+        return problem;
+    };
+    if (file.handle == INVALID_HANDLE_VALUE) {
+        const auto cause = GetLastError();
+        return path_error(cause);
+    }
+    DWORD kind = VOLUME_NAME_DOS;
+    auto needed = GetFinalPathNameByHandleW(file.handle, nullptr, 0, kind);
+    if (!needed && GetLastError() == ERROR_PATH_NOT_FOUND) {
+        // Match pinned MSVC canonical(): an unmounted volume may only have an
+        // NT name. Its Win32 spelling uses the GLOBALROOT namespace prefix.
+        kind = VOLUME_NAME_NT;
+        needed = GetFinalPathNameByHandleW(file.handle, nullptr, 0, kind);
+    }
+    if (!needed) {
+        return path_error(GetLastError());
+    }
+    constexpr std::wstring_view nt_prefix = LR"(\\?\GLOBALROOT)";
+    const auto prefix_size = kind == VOLUME_NAME_NT ? nt_prefix.size() : 0;
+    if (needed > 32768 || prefix_size > 32768 - needed) {
+        return path_error(ERROR_FILENAME_EXCED_RANGE);
+    }
+    const auto characters = needed + prefix_size;
+    // The pinned wchar string constructor rounds by at most 15 characters.
+    // Admit its terminator/proxies and move transfer before either allocation.
+    const auto construction_bytes = (characters + 16ULL) * sizeof(wchar_t) + kPathMetadataBytes;
+    if (construction_bytes > remaining_bytes) {
+        return failure("MEMORY_LIMIT", "Guarded STL path construction exceeds checked residency.");
+    }
+    std::wstring text(characters, L'\0');
+    const auto written = GetFinalPathNameByHandleW(file.handle, text.data() + prefix_size, needed, kind);
+    if (!written || written >= needed) {
+        return path_error(written ? ERROR_INSUFFICIENT_BUFFER : GetLastError());
+    }
+    // Never grow/retry after a pathname length change. The actual fixed buffer
+    // remains admitted even when a concurrent rename makes this query fail.
+    text.resize(prefix_size + written);
+    if (prefix_size) {
+        std::copy(nt_prefix.begin(), nt_prefix.end(), text.begin());
+    }
+    else if (text.starts_with(LR"(\\?\UNC\)")) {
+        text.erase(2, 6);
+    }
+    else if (text.size() >= 6 && text.starts_with(LR"(\\?\)") && text[5] == L':' &&
+             ((text[4] >= L'A' && text[4] <= L'Z') || (text[4] >= L'a' && text[4] <= L'z'))) {
+        text.erase(0, 4);
+    }
+    return std::filesystem::path(std::move(text));
+}
+std::variant<std::filesystem::path, Error> admitted_export_target(const std::filesystem::path& input,
+                                                                  std::uint64_t remaining_bytes)
+{
+    if (input.native().size() > 32768) {
+        return failure("EXPORT_PATH_INVALID", "Guarded STL input exceeds the supported Windows path.");
+    }
+    if (GetFileAttributesW(input.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        return admitted_canonical_export_path(input, remaining_bytes);
+    }
+    const auto cause = GetLastError();
+    if (cause != ERROR_FILE_NOT_FOUND && cause != ERROR_PATH_NOT_FOUND) {
+        return failure("EXPORT_PATH_INVALID", "Guarded STL destination could not be inspected.");
+    }
+    // parent_path()/filename() construct wide owners. Their proxy/capacity
+    // envelope is admitted before those substrings exist; the canonical parent
+    // and new leaf assembly coexist with both until return.
+    const auto derived_scratch = 4ULL * (input.native().size() + 16ULL) * sizeof(wchar_t) + 256;
+    if (derived_scratch > remaining_bytes) {
+        return failure("MEMORY_LIMIT", "Guarded STL parent/leaf construction exceeds checked residency.");
+    }
+    const auto parent = input.parent_path(), filename = input.filename();
+    if (parent.empty() || filename.empty()) {
+        return failure("EXPORT_PATH_INVALID", "Guarded STL destination requires an existing parent and a filename.");
+    }
+    auto canonical_parent = admitted_canonical_export_path(parent, remaining_bytes - derived_scratch);
+    if (auto* problem = std::get_if<Error>(&canonical_parent)) {
+        return std::move(*problem);
+    }
+    const auto& resolved_parent = std::get<std::filesystem::path>(canonical_parent);
+    const auto parent_bytes = export_path_owner_bytes(resolved_parent);
+    const auto separator = resolved_parent.native().back() == L'\\' ? 0ULL : 1ULL;
+    const auto characters = resolved_parent.native().size() + separator + filename.native().size();
+    if (characters >= 32768) {
+        return failure("EXPORT_PATH_INVALID", "Guarded STL parent/leaf exceeds the supported Windows path.");
+    }
+    const auto assembly_bytes = (characters + 16ULL) * sizeof(wchar_t) + kPathMetadataBytes;
+    if (parent_bytes > remaining_bytes - derived_scratch ||
+        assembly_bytes > remaining_bytes - derived_scratch - parent_bytes) {
+        return failure("MEMORY_LIMIT", "Guarded STL parent/leaf assembly exceeds checked residency.");
+    }
+    std::wstring text(characters, L'\0');
+    auto tail = std::copy(resolved_parent.native().begin(), resolved_parent.native().end(), text.begin());
+    if (separator) {
+        *tail++ = L'\\';
+    }
+    std::copy(filename.native().begin(), filename.native().end(), tail);
+    return std::filesystem::path(std::move(text));
+}
 bool contained_location(const std::filesystem::path& root, const std::filesystem::path& candidate)
 {
     std::error_code error;
@@ -666,6 +834,45 @@ bool contained_location(const std::filesystem::path& root, const std::filesystem
         }
     }
     return true;
+}
+std::variant<GuardedLocation, Error> captured_export_location(const std::filesystem::path& root,
+                                                              const std::filesystem::path& candidate,
+                                                              std::uint64_t remaining_bytes)
+{
+    auto canonical_root = admitted_canonical_export_path(root, remaining_bytes);
+    if (auto* problem = std::get_if<Error>(&canonical_root)) {
+        return std::move(*problem);
+    }
+    const auto& root_path = std::get<std::filesystem::path>(canonical_root);
+    const auto root_bytes = export_path_owner_bytes(root_path);
+    if (root_bytes > remaining_bytes) {
+        return failure("MEMORY_LIMIT", "Guarded STL canonical root exceeds checked residency.");
+    }
+    auto canonical_target = admitted_export_target(candidate, remaining_bytes - root_bytes);
+    if (auto* problem = std::get_if<Error>(&canonical_target)) {
+        return std::move(*problem);
+    }
+    const auto& candidate_path = std::get<std::filesystem::path>(canonical_target);
+    const auto candidate_bytes = export_path_owner_bytes(candidate_path);
+    // Each iterator owns its current path component. This envelope covers two
+    // component caches, their old/new MSVC growth, end iterators and Debug proxies.
+    const auto iterator_scratch =
+        4ULL * (root_path.native().size() + candidate_path.native().size() + 64ULL) * sizeof(wchar_t) + 256;
+    if (candidate_bytes > remaining_bytes - root_bytes ||
+        iterator_scratch > remaining_bytes - root_bytes - candidate_bytes) {
+        return failure("MEMORY_LIMIT", "Guarded STL containment components exceed checked residency.");
+    }
+    auto root_part = root_path.begin(), candidate_part = candidate_path.begin();
+    for (; root_part != root_path.end(); ++root_part, ++candidate_part) {
+        if (candidate_part == candidate_path.end() ||
+            CompareStringOrdinal(root_part->native().data(), static_cast<int>(root_part->native().size()),
+                                 candidate_part->native().data(), static_cast<int>(candidate_part->native().size()),
+                                 TRUE) != CSTR_EQUAL) {
+            return failure("EXPORT_PATH_INVALID", "An output path escapes the result directory.");
+        }
+    }
+    return GuardedLocation { std::get<std::filesystem::path>(std::move(canonical_root)),
+                             std::get<std::filesystem::path>(std::move(canonical_target)) };
 }
 bool same_file_bytes(const std::filesystem::path& first, const std::filesystem::path& second) noexcept
 {
@@ -747,6 +954,7 @@ public:
     OwnedStage(const OwnedStage&) = delete;
     ~OwnedStage() { cleanup(); }
     [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
+    void publication_complete() noexcept { published_ = true; }
     [[nodiscard]] std::optional<Error> write(std::span<const std::byte> bytes)
     {
 #ifdef SPECTRAPACK_ASSET_LOADER_TESTING
@@ -764,11 +972,14 @@ public:
             throw std::runtime_error("Injected stage write exception.");
         }
 #endif
-        DWORD wrote {};
-        if (bytes.size() > std::numeric_limits<DWORD>::max() ||
-            !WriteFile(handle_, bytes.data(), static_cast<DWORD>(bytes.size()), &wrote, nullptr) ||
-            wrote != bytes.size()) {
-            return failure("EXPORT_WRITE_FAILED", "Export stage could not be written.");
+        for (std::size_t offset = 0; offset < bytes.size();) {
+            detail::poll_operation();
+            const auto count = static_cast<DWORD>(std::min<std::size_t>(64 * 1024, bytes.size() - offset));
+            DWORD wrote {};
+            if (!WriteFile(handle_, bytes.data() + offset, count, &wrote, nullptr) || wrote != count) {
+                return failure("EXPORT_WRITE_FAILED", "Export stage could not be written.");
+            }
+            offset += count;
         }
         return std::nullopt;
     }
@@ -904,14 +1115,19 @@ std::optional<Error> mutate_closed_stage_for_test(const std::filesystem::path& p
 std::optional<Error> validate_closed_stl_stage(const std::filesystem::path& path,
                                                const std::shared_ptr<const geometry::ValidatedSolution>& solution,
                                                geometry::MeshView mesh, std::uint64_t triangle_count,
-                                               const std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges)
+                                               const std::vector<std::pair<std::uint64_t, std::uint64_t>>& ranges,
+                                               std::istream* pinned = nullptr)
 {
     const auto expected_size = 84 + 50 * triangle_count;
     std::error_code error;
     if (std::filesystem::file_size(path, error) != expected_size || error) {
         return failure("EXPORT_CHECK_FAILED", "Closed STL stage has an unexpected extent.");
     }
-    std::ifstream input(path, std::ios::binary);
+    std::ifstream file;
+    if (!pinned) {
+        file.open(path, std::ios::binary);
+    }
+    auto& input = pinned ? *pinned : file;
     std::array<std::byte, 84> prefix {};
     if (!input.read(reinterpret_cast<char*>(prefix.data()), static_cast<std::streamsize>(prefix.size()))) {
         return failure("EXPORT_CHECK_FAILED", "Closed STL stage has an incomplete header.");
@@ -980,32 +1196,104 @@ std::optional<Error> validate_closed_stl_stage(const std::filesystem::path& path
     return std::nullopt;
 }
 
-std::optional<std::string> portable_relative_path(const std::filesystem::path& root, const std::filesystem::path& path)
+std::variant<std::string, Error> portable_relative_path(const GuardedLocation& guarded)
 {
-    std::error_code error;
-    const auto relative = std::filesystem::relative(path, root, error);
-    if (error) {
-        return std::nullopt;
+#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+    if (export_fail_pinned_reference_query && export_reference_pin_active) {
+        auto problem = failure("EXPORT_PATH_INVALID", "STL path cannot be recorded portably.");
+        problem.details = {
+            { "path_reason",  "filesystem"        },
+            { "system_error", ERROR_ACCESS_DENIED }
+        };
+        return problem;
+    }
+#endif
+    // Use the canonical paths actually proved by containment. Windows component
+    // equality is ordinal/case-insensitive; lexical_relative would reject case
+    // variants and parent junctions that the guard has already resolved.
+    auto part = guarded.candidate.begin();
+    for (const auto& root_part : guarded.root) {
+        if (part == guarded.candidate.end() ||
+            CompareStringOrdinal(root_part.native().data(), static_cast<int>(root_part.native().size()),
+                                 part->native().data(), static_cast<int>(part->native().size()), TRUE) != CSTR_EQUAL) {
+            return failure("EXPORT_PATH_INVALID", "STL reference differs from its guarded canonical location.");
+        }
+        ++part;
+    }
+    std::filesystem::path relative;
+    for (; part != guarded.candidate.end(); ++part) {
+        relative /= *part;
     }
     const auto text = relative.generic_u8string();
     const std::string result(reinterpret_cast<const char*>(text.data()), text.size());
-    return portable_path(result) ? std::optional<std::string> { result } : std::nullopt;
+    if (!portable_path(result)) {
+        auto problem = failure("EXPORT_PATH_INVALID", "STL path cannot be recorded portably.");
+        problem.details = {
+            { "path_reason",   "nonportable" },
+            { "relative_path", result        }
+        };
+        return problem;
+    }
+    return result;
+}
+std::variant<std::filesystem::path, Error> admitted_absolute_export_path(const std::filesystem::path& input,
+                                                                         std::uint64_t remaining_bytes)
+{
+    const auto needed = GetFullPathNameW(input.c_str(), 0, nullptr, nullptr);
+    if (!needed || needed > 32768) {
+        auto problem = failure("EXPORT_PATH_INVALID", "STL absolute path exceeds the supported Windows path.");
+        problem.details = {
+            { "system_error", needed ? ERROR_FILENAME_EXCED_RANGE : GetLastError() }
+        };
+        return problem;
+    }
+    // MSVC constructor rounding is <=15 characters. Charge the wide owner
+    // and a possible path-construction copy before either allocation.
+    const auto construction_bytes = 2ULL * (needed + 16ULL) * sizeof(wchar_t);
+    if (construction_bytes > remaining_bytes) {
+        return failure("MEMORY_LIMIT", "STL absolute-path construction exceeds checked residency.");
+    }
+    std::wstring text(needed - 1, L'\0');
+    const auto written = GetFullPathNameW(input.c_str(), needed, text.data(), nullptr);
+    if (!written || written >= needed) {
+        auto problem = failure("EXPORT_PATH_INVALID", "STL absolute path changed during guarded construction.");
+        problem.details = {
+            { "system_error", written ? ERROR_FILENAME_EXCED_RANGE : GetLastError() }
+        };
+        return problem;
+    }
+    text.resize(written);
+    return std::filesystem::path(std::move(text));
 }
 }  // namespace
 
 namespace test {
 #ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+void fail_pinned_reference_query_for_test(bool enabled) noexcept { export_fail_pinned_reference_query.store(enabled); }
+void set_export_post_publication_hook_for_test(PostPublicationHook hook) noexcept
+{
+    export_post_publication_hook.store(hook);
+}
+std::string guarded_export_path_error_for_test(const std::filesystem::path& root, const std::filesystem::path& target,
+                                               std::uint64_t remaining_bytes)
+{
+    const auto captured = captured_export_location(root, target, remaining_bytes);
+    const auto* problem = std::get_if<Error>(&captured);
+    return problem ? problem->code : "";
+}
 void reset_export_residency_observation_for_test() noexcept
 {
     export_builder_base_before_native_inputs.store(0, std::memory_order_relaxed);
     export_post_hash_base_before_reuse_comparison.store(0, std::memory_order_relaxed);
+    export_base_before_hash.store(0, std::memory_order_relaxed);
     export_companion_write_base_before_final_documents.store(0, std::memory_order_relaxed);
 }
 ExportResidencyObservation export_residency_observation_for_test() noexcept
 {
     return { export_builder_base_before_native_inputs.load(std::memory_order_relaxed),
              export_post_hash_base_before_reuse_comparison.load(std::memory_order_relaxed),
-             export_companion_write_base_before_final_documents.load(std::memory_order_relaxed) };
+             export_companion_write_base_before_final_documents.load(std::memory_order_relaxed),
+             export_base_before_hash.load(std::memory_order_relaxed) };
 }
 #endif
 
@@ -1140,9 +1428,62 @@ std::optional<std::uint64_t> VerifiedAsset::resident_buffer_bytes() const noexce
     }
     return total;
 }
-AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path)
+AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path, const runtime::OperationControl& control,
+                                     const AssetLoadLimits& limits,
+                                     std::shared_ptr<const VerifiedAsset> reuse_candidate)
 {
+    const detail::OperationGuard operation(control);
     try {
+        detail::AssetBudget budget(limits.max_working_bytes);
+        const detail::AssetBudgetScope budget_scope(budget);
+#ifdef _WIN32
+        if (reuse_candidate) {
+            const auto& stored = *reuse_candidate->storage_;
+            const auto exact = [&](const std::filesystem::path& lexical, const std::filesystem::path& resolved,
+                                   const FileIdentity& identity, const Bytes& expected) {
+                detail::poll_operation();
+                std::error_code problem;
+                if (std::filesystem::is_symlink(lexical, problem) || problem || !same_identity(lexical, identity) ||
+                    !same_lexical_location(std::filesystem::weakly_canonical(lexical, problem), resolved) || problem) {
+                    return false;
+                }
+                if (std::filesystem::file_size(lexical, problem) != expected.size() || problem) {
+                    return false;
+                }
+                std::ifstream input(lexical, std::ios::binary);
+                if (!input) {
+                    return false;
+                }
+                std::array<char, 64 * 1024> chunk;
+                for (std::size_t offset = 0; offset < expected.size();) {
+                    detail::poll_operation();
+                    const auto count = std::min(chunk.size(), expected.size() - offset);
+                    if (!input.read(chunk.data(), static_cast<std::streamsize>(count)) ||
+                        std::memcmp(chunk.data(), expected.data() + offset, count) != 0) {
+                        return false;
+                    }
+                    offset += count;
+                }
+                char extra {};
+                return !input.read(&extra, 1) && input.eof() && same_identity(lexical, identity);
+            };
+            bool matched =
+                same_lexical_location(report_path, stored.report_lexical) &&
+                exact(stored.report_lexical, stored.report_path, stored.report_identity, stored.report_bytes) &&
+                exact(stored.source_lexical, stored.source_path, stored.source_identity, stored.source_bytes) &&
+                exact(stored.ply_lexical, stored.ply_path, stored.ply_identity, stored.ply_bytes);
+            for (const auto& artifact : stored.repair_artifacts) {
+                if (matched) {
+                    matched = exact(artifact.lexical, artifact.path, artifact.identity, artifact.bytes);
+                }
+            }
+            if (matched) {
+                return reuse_candidate;
+            }
+        }
+#endif
+        detail::poll_operation();
+        control.phase(runtime::Phase::loading);
         std::error_code error;
         if (report_path.empty() || std::filesystem::is_symlink(report_path, error) || error) {
             return failure("ASSET_MISMATCH", "The report path is invalid or symbolic.");
@@ -1154,7 +1495,10 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path)
         auto report_bytes = std::get<Bytes>(std::move(report_bytes_result));
         ContractValidator validator;
         const std::string_view text(reinterpret_cast<const char*>(report_bytes.data()), report_bytes.size());
-        auto decoded = validator.parse(ContractKind::assets, text);
+        if (!detail::admit_asset_json(text, budget)) {
+            return failure("ASSET_MISMATCH", "Retained report JSON is malformed or too deeply nested.");
+        }
+        auto decoded = validator.parse(ContractKind::assets, text, limits.diagnostic_limits);
         if (!std::holds_alternative<ValidatedDocument>(decoded)) {
             return contract_error(std::get<ContractFailure>(decoded));
         }
@@ -1195,11 +1539,25 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path)
                            : units_name == "inch" ? geometry::Units::inch
                                                   : geometry::Units::custom;
         const auto scale = record.at("source").at("unit_scale_mm").get<double>();
-        auto inspected = geometry::inspect_stl(source_bytes, { role, units, scale });
+        control.phase(runtime::Phase::preparing);
+        geometry::ImportLimits import_limits;
+        import_limits.max_working_bytes = budget.remaining();
+        const auto admission = geometry::estimate_import_admission(source_bytes, import_limits, control);
+        if (const auto* problem = std::get_if<geometry::ImportFailure>(&admission)) {
+            return Error { problem->code, problem->message, { { "reason", problem->reason } }, true };
+        }
+        auto native_bound = std::get<geometry::ImportAdmission>(admission).working_bytes_upper_bound;
+        auto inspected = geometry::inspect_stl(source_bytes, { role, units, scale, import_limits }, control);
+        detail::poll_operation();
+        if (const auto* problem = std::get_if<geometry::ImportFailure>(&inspected);
+            problem && problem->code == "MEMORY_LIMIT") {
+            return Error { problem->code, problem->message, { { "reason", problem->reason } }, true };
+        }
         if (std::holds_alternative<geometry::ImportFailure>(inspected)) {
             return failure("ASSET_MISMATCH", "The retained source STL no longer reconstructs a valid inspection.");
         }
-        const auto draft = std::get<std::shared_ptr<const geometry::AssetDraft>>(std::move(inspected));
+        auto draft = std::get<std::shared_ptr<const geometry::AssetDraft>>(std::move(inspected));
+        budget.charge(native_bound);
         geometry::ImportOutcome<geometry::AcceptedSolid> accepted;
         std::vector<RetainedRepairArtifact> repair_artifacts;
         if (record.at("repair_record").is_null()) {
@@ -1224,11 +1582,16 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path)
             if (std::get<std::string>(digest) != token || reference.at("path") != "assets/" + token + ".repair.json") {
                 return failure("ASSET_MISMATCH", "Retained repair token or content-addressed path does not match.");
             }
-            auto replay = detail::replay_repair(draft, record, bytes, source_bytes.size());
+            // Weld admission includes the original draft, so replace its import
+            // phase allowance instead of charging the same native owner twice.
+            budget.release(native_bound);
+            auto replay = detail::replay_repair(draft, record, bytes, source_bytes.size(), control, budget.remaining());
+            detail::poll_operation();
             if (const auto* problem = std::get_if<Error>(&replay)) {
                 return *problem;
             }
             auto restored = std::get<detail::ReplayedRepair>(std::move(replay));
+            native_bound = restored.native_bound;
             accepted = restored.solid;
             restored.artifacts.emplace(token + ".repair.json", std::move(bytes));
             const auto accepted_name = record.at("accepted_solid").at("sha256").get<std::string>() + ".ply";
@@ -1265,6 +1628,13 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path)
             return failure("ASSET_MISMATCH", "The retained source STL no longer reconstructs an accepted solid.");
         }
         auto solid = std::get<std::shared_ptr<const geometry::AcceptedSolid>>(std::move(accepted));
+        draft.reset();
+        const auto resident = solid->resident_buffer_bytes();
+        if (!resident) {
+            return failure("MEMORY_LIMIT", "Accepted-solid residency is not representable.");
+        }
+        budget.release(native_bound);
+        budget.charge(*resident);
         if (solid->role() != role || !same_frame(record, solid->frame(), source_bytes.size()) ||
             record.at("accepted_solid").at("vertex_count").get<std::uint64_t>() != solid->mesh().vertices.size() ||
             record.at("accepted_solid").at("triangle_count").get<std::uint64_t>() != solid->mesh().triangles.size()) {
@@ -1318,6 +1688,12 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path)
             record_payload_bytes, std::move(repair_artifacts) });
         return std::shared_ptr<const VerifiedAsset>(new VerifiedAsset(std::move(storage)));
     }
+    catch (const detail::AssetMemoryLimit&) {
+        return failure("MEMORY_LIMIT", "Accepted-asset loading exceeds its admitted working-memory allowance.");
+    }
+    catch (const detail::Interrupted& interruption) {
+        return detail::interrupted_error(interruption);
+    }
     catch (const std::bad_alloc&) {
         return failure("MEMORY_LIMIT", "Accepted-asset reconstruction exhausted memory.");
     }
@@ -1326,8 +1702,24 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path)
     }
 }
 
-ExportOutcome export_result(const ExportRequest& request)
+class ResultPublisher {
+public:
+    static ExportOutcome supplied(const ExportRequest& request, const runtime::OperationControl& control)
+    {
+        return publish(request, control, nullptr);
+    }
+    static ExportOutcome constructed(ResultPublicationRequest& request, const runtime::OperationControl& control);
+
+private:
+    static ExportOutcome publish(const ExportRequest&, const runtime::OperationControl&,
+                                 const geometry::ValidationReport*, std::uint64_t binding_payload_bytes = 0);
+};
+
+ExportOutcome ResultPublisher::publish(const ExportRequest& request, const runtime::OperationControl& control,
+                                       const geometry::ValidationReport* fresh_report,
+                                       std::uint64_t binding_payload_bytes)
 {
+    const detail::OperationGuard operation(control);
     bool primary_published {};
     const auto post_primary_error = [&request, &primary_published](Error error) {
         if (primary_published) {
@@ -1336,6 +1728,7 @@ ExportOutcome export_result(const ExportRequest& request)
         return error;
     };
     try {
+        detail::poll_operation();
         if (!request.solution || !request.object_asset || request.result.kind() != ContractKind::results) {
             return failure("EXPORT_INPUT_INVALID", "A bound result, solution, and object asset are required.");
         }
@@ -1371,89 +1764,97 @@ ExportOutcome export_result(const ExportRequest& request)
             admission_bytes > request.max_working_bytes) {
             return failure("MEMORY_LIMIT", "Checked export admission exceeds the configured working-memory limit.");
         }
-        const std::array<std::string_view, 7> metadata_keys { "schema_version", "job_id", "solution_revision",
-                                                              "created_at",     "engine", "search",
-                                                              "metrics" };
-        Json metadata = Json::object();
-        for (const auto key : metadata_keys) {
-            if (!supplied.contains(key)) {
-                return failure("EXPORT_RESULT_MISMATCH", "Result is missing rebuild metadata.");
-            }
-            metadata[std::string(key)] = supplied.at(std::string(key));
-        }
-        const std::array<std::string_view, 4> measured_metric_keys { "time_to_best_seconds", "peak_host_bytes",
-                                                                     "peak_device_bytes", "termination_reason" };
-        metadata["metrics"] = Json::object();
-        for (const auto key : measured_metric_keys) {
-            if (!supplied.at("metrics").contains(std::string(key))) {
-                return failure("EXPORT_RESULT_MISMATCH", "Result is missing a measured metric.");
-            }
-            metadata["metrics"][std::string(key)] = supplied.at("metrics").at(std::string(key));
-        }
-        std::uint64_t metadata_payload_bytes {};
-        std::uint64_t builder_live_bytes = admission_bytes;
-        if (!json_payload_bytes(metadata, metadata_payload_bytes) ||
-            !add_bytes(builder_live_bytes, metadata_payload_bytes) ||
-            // The rebuilt document is live with the supplied document during its exact binding check.
-            !add_bytes(builder_live_bytes, supplied_payload_bytes) || builder_live_bytes > request.max_working_bytes) {
-            return failure("MEMORY_LIMIT", "Checked export cannot retain rebuild payload residency.");
-        }
-        if (!supplied.is_object() || supplied.size() != 14 || !supplied.contains("label") ||
-            !supplied.contains("assets") || !supplied.contains("container") || !supplied.contains("constraints") ||
-            !supplied.contains("count") || !supplied.contains("placements") || !supplied.contains("validation")) {
-            return failure("EXPORT_RESULT_MISMATCH", "Result has unsupported pre-publication fields.");
-        }
-#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
-        export_builder_base_before_native_inputs.store(builder_live_bytes, std::memory_order_relaxed);
-#endif
+        std::uint64_t metadata_payload_bytes {}, rebuilt_payload_bytes {};
         const auto native_resident_bytes = solution_resident_bytes(*request.solution);
-        std::uint64_t builder_validation_live_bytes = builder_live_bytes;
-        if (!native_resident_bytes || !add_bytes(builder_validation_live_bytes, *native_resident_bytes) ||
-            builder_validation_live_bytes > request.max_working_bytes) {
-            return failure("MEMORY_LIMIT", "Checked export native residency exceeds the working-memory limit.");
-        }
-        auto builder_limits = request.validation_limits;
-        builder_limits.max_working_bytes =
-            std::min(builder_limits.max_working_bytes, request.max_working_bytes - builder_validation_live_bytes);
-        const auto rebuilt =
-            detail::build_result_with_report({ request.solution, request.object_asset, request.container_asset,
-                                               request.catalog, std::move(metadata), builder_limits });
-        if (!std::holds_alternative<ValidatedDocument>(rebuilt.result) ||
-            !exact_json_equal(std::get<ValidatedDocument>(rebuilt.result).value(), supplied)) {
-            if (const auto* error = std::get_if<Error>(&rebuilt.result);
-                error && error->code == "RESULT_VALIDATION_FAILED" && rebuilt.validation_attempted &&
-                rebuilt.validation_report.validity != geometry::Validity::valid) {
-                return validation_failure(rebuilt.validation_report, false);
+        if (!fresh_report) {
+            const std::array<std::string_view, 7> metadata_keys { "schema_version", "job_id", "solution_revision",
+                                                                  "created_at",     "engine", "search",
+                                                                  "metrics" };
+            Json metadata = Json::object();
+            for (const auto key : metadata_keys) {
+                if (!supplied.contains(key)) {
+                    return failure("EXPORT_RESULT_MISMATCH", "Result is missing rebuild metadata.");
+                }
+                metadata[std::string(key)] = supplied.at(std::string(key));
             }
-            if (const auto* error = std::get_if<Error>(&rebuilt.result); error && error->code == "MEMORY_LIMIT") {
-                Error resource = failure(error->code, error->message);
-                resource.details = {
-                    { "rebuild_code",    error->code    },
-                    { "rebuild_message", error->message },
-                    { "rebuild_details", error->details }
-                };
-                return resource;
+            const std::array<std::string_view, 4> measured_metric_keys { "time_to_best_seconds", "peak_host_bytes",
+                                                                         "peak_device_bytes", "termination_reason" };
+            metadata["metrics"] = Json::object();
+            for (const auto key : measured_metric_keys) {
+                if (!supplied.at("metrics").contains(std::string(key))) {
+                    return failure("EXPORT_RESULT_MISMATCH", "Result is missing a measured metric.");
+                }
+                metadata["metrics"][std::string(key)] = supplied.at("metrics").at(std::string(key));
             }
-            Error mismatch = failure("EXPORT_RESULT_MISMATCH",
-                                     "Result does not bind to the supplied native solution and provenance.");
-            if (std::holds_alternative<Error>(rebuilt.result)) {
-                const auto& error = std::get<Error>(rebuilt.result);
-                mismatch.details = {
-                    { "rebuild_code",    error.code    },
-                    { "rebuild_message", error.message },
-                    { "rebuild_details", error.details }
-                };
+            std::uint64_t builder_live_bytes = admission_bytes;
+            if (!json_payload_bytes(metadata, metadata_payload_bytes) ||
+                !add_bytes(builder_live_bytes, metadata_payload_bytes) ||
+                // The rebuilt document is live with the supplied document during its exact binding check.
+                !add_bytes(builder_live_bytes, supplied_payload_bytes) ||
+                builder_live_bytes > request.max_working_bytes) {
+                return failure("MEMORY_LIMIT", "Checked export cannot retain rebuild payload residency.");
             }
-            return mismatch;
-        }
-        std::uint64_t rebuilt_payload_bytes {};
-        if (!json_payload_bytes(std::get<ValidatedDocument>(rebuilt.result).value(), rebuilt_payload_bytes) ||
-            rebuilt_payload_bytes > supplied_payload_bytes) {
-            return failure("MEMORY_LIMIT", "Rebuilt result payload exceeds its checked reservation.");
+            if (!supplied.is_object() || supplied.size() != 14 || !supplied.contains("label") ||
+                !supplied.contains("assets") || !supplied.contains("container") || !supplied.contains("constraints") ||
+                !supplied.contains("count") || !supplied.contains("placements") || !supplied.contains("validation")) {
+                return failure("EXPORT_RESULT_MISMATCH", "Result has unsupported pre-publication fields.");
+            }
+#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+            export_builder_base_before_native_inputs.store(builder_live_bytes, std::memory_order_relaxed);
+#endif
+            std::uint64_t builder_validation_live_bytes = builder_live_bytes;
+            if (!native_resident_bytes || !add_bytes(builder_validation_live_bytes, *native_resident_bytes) ||
+                builder_validation_live_bytes > request.max_working_bytes) {
+                return failure("MEMORY_LIMIT", "Checked export native residency exceeds the working-memory limit.");
+            }
+            auto builder_limits = request.validation_limits;
+            builder_limits.max_working_bytes =
+                std::min(builder_limits.max_working_bytes, request.max_working_bytes - builder_validation_live_bytes);
+            const auto rebuilt = detail::build_result_with_report(
+                { request.solution, request.object_asset, request.container_asset, request.catalog, std::move(metadata),
+                  builder_limits, request.diagnostic_limits },
+                control);
+            detail::poll_operation();
+            if (!std::holds_alternative<ValidatedDocument>(rebuilt.result) ||
+                !exact_json_equal(std::get<ValidatedDocument>(rebuilt.result).value(), supplied)) {
+                if (const auto* error = std::get_if<Error>(&rebuilt.result);
+                    error && error->code == "RESULT_VALIDATION_FAILED" && rebuilt.validation_attempted &&
+                    rebuilt.validation_report.validity != geometry::Validity::valid) {
+                    return validation_failure(rebuilt.validation_report, false);
+                }
+                if (const auto* error = std::get_if<Error>(&rebuilt.result); error && error->code == "MEMORY_LIMIT") {
+                    Error resource = failure(error->code, error->message);
+                    resource.details = {
+                        { "rebuild_code",    error->code    },
+                        { "rebuild_message", error->message },
+                        { "rebuild_details", error->details }
+                    };
+                    return resource;
+                }
+                Error mismatch = failure("EXPORT_RESULT_MISMATCH",
+                                         "Result does not bind to the supplied native solution and provenance.");
+                if (std::holds_alternative<Error>(rebuilt.result)) {
+                    const auto& error = std::get<Error>(rebuilt.result);
+                    mismatch.details = {
+                        { "rebuild_code",    error.code    },
+                        { "rebuild_message", error.message },
+                        { "rebuild_details", error.details }
+                    };
+                }
+                return mismatch;
+            }
+            if (!json_payload_bytes(std::get<ValidatedDocument>(rebuilt.result).value(), rebuilt_payload_bytes) ||
+                rebuilt_payload_bytes > supplied_payload_bytes) {
+                return failure("MEMORY_LIMIT", "Rebuilt result payload exceeds its checked reservation.");
+            }
+            if (!add_bytes(metadata_payload_bytes, rebuilt_payload_bytes)) {
+                return failure("MEMORY_LIMIT", "Checked export payload accounting overflowed.");
+            }
+            // Keep both binding payloads alive and charged during the shared writer.
+            return publish(request, control, &rebuilt.validation_report, metadata_payload_bytes);
         }
         std::uint64_t persistent_writer_bytes = admission_bytes;
-        if (!add_bytes(persistent_writer_bytes, metadata_payload_bytes) ||
-            !add_bytes(persistent_writer_bytes, rebuilt_payload_bytes)) {
+        if (!add_bytes(persistent_writer_bytes, binding_payload_bytes)) {
             return failure("MEMORY_LIMIT", "Checked export payload accounting overflowed.");
         }
         std::uint64_t writer_live_bytes = persistent_writer_bytes;
@@ -1523,14 +1924,66 @@ ExportOutcome export_result(const ExportRequest& request)
             }
             return OwnedStage::create(stage_path);
         };
-        if (!contained_location(parent, request.result_path) ||
-            (request.stl_path && !contained_location(parent, *request.stl_path)) ||
-            (companion_final && !contained_location(parent, *companion_final))) {
+        if (!contained_location(parent, request.result_path)) {
+            return failure("EXPORT_PATH_INVALID", "An output path escapes the result directory.");
+        }
+        std::optional<GuardedLocation> guarded_stl;
+        std::uint64_t guarded_path_bytes {};
+        if (request.stl_path) {
+            auto captured =
+                captured_export_location(parent, *request.stl_path, request.max_working_bytes - writer_live_bytes);
+            if (const auto* problem = std::get_if<Error>(&captured)) {
+                return *problem;
+            }
+            guarded_stl = std::get<GuardedLocation>(std::move(captured));
+            if (!add_bytes(guarded_path_bytes, export_path_owner_bytes(guarded_stl->root)) ||
+                !add_bytes(guarded_path_bytes, export_path_owner_bytes(guarded_stl->candidate)) ||
+                !add_bytes(writer_live_bytes, guarded_path_bytes) || writer_live_bytes > request.max_working_bytes) {
+                return failure("MEMORY_LIMIT", "Guarded STL reference paths exceed checked residency.");
+            }
+        }
+        if (companion_final && !contained_location(parent, *companion_final)) {
             return failure("EXPORT_PATH_INVALID", "An output path escapes the result directory.");
         }
         const auto assets_directory = parent / "assets";
         if (!contained_location(parent, assets_directory)) {
             return failure("EXPORT_PATH_INVALID", "The asset directory escapes the result directory.");
+        }
+        std::optional<std::filesystem::path> absolute_stl;
+        std::optional<std::string> artifact_reference;
+        if (request.stl_path) {
+            auto absolute =
+                admitted_absolute_export_path(*request.stl_path, request.max_working_bytes - writer_live_bytes);
+            if (const auto* problem = std::get_if<Error>(&absolute)) {
+                return *problem;
+            }
+            absolute_stl = std::get<std::filesystem::path>(std::move(absolute));
+            const auto path_bytes = absolute_stl->native().capacity() * sizeof(wchar_t);
+            if (!add_bytes(writer_live_bytes, path_bytes) || !add_bytes(persistent_writer_bytes, path_bytes) ||
+                writer_live_bytes > request.max_working_bytes) {
+                return failure("MEMORY_LIMIT", "STL absolute-path owner exceeds checked residency.");
+            }
+            // Captured guard paths coexist with the requested publication path
+            // and component/UTF-8 scratch. Admit scratch before construction.
+            const auto reference_scratch =
+                16ULL * (guarded_stl->candidate.native().capacity() + guarded_stl->root.native().capacity() + 64ULL);
+            if (reference_scratch > request.max_working_bytes - writer_live_bytes) {
+                return failure("MEMORY_LIMIT", "STL portable-reference construction exceeds checked residency.");
+            }
+            auto reference = portable_relative_path(*guarded_stl);
+            if (const auto* problem = std::get_if<Error>(&reference)) {
+                return *problem;
+            }
+            artifact_reference = std::get<std::string>(std::move(reference));
+            if (!add_bytes(writer_live_bytes, artifact_reference->capacity()) ||
+                !add_bytes(persistent_writer_bytes, artifact_reference->capacity()) ||
+                writer_live_bytes > request.max_working_bytes) {
+                return failure("MEMORY_LIMIT", "STL portable reference exceeds checked residency.");
+            }
+            // Only the portable string and original absolute publication spelling
+            // remain live during checked STL writing/certification/publication.
+            guarded_stl.reset();
+            writer_live_bytes -= guarded_path_bytes;
         }
         if (!std::filesystem::exists(assets_directory, error) &&
             !std::filesystem::create_directory(assets_directory, error)) {
@@ -1607,13 +2060,45 @@ ExportOutcome export_result(const ExportRequest& request)
         if (auto problem = publish_for(request.container_asset)) {
             return *problem;
         }
+        Json committed_result;
+        if (request.runtime_before_commit) {
+            control.phase(runtime::Phase::saving);
+            // The trusted clock finalizer has at most the nine phase records.
+            // Admit the complete document copy and both bounded runtime copies
+            // before copying the already-live result DOM.
+            constexpr std::uint64_t runtime_cap = 64ULL << 10;
+            auto committed_live_bytes = writer_live_bytes;
+            if (!add_bytes(committed_live_bytes, supplied_payload_bytes) ||
+                !add_bytes(committed_live_bytes, 2 * runtime_cap) || committed_live_bytes > request.max_working_bytes) {
+                return failure("MEMORY_LIMIT", "Commit timing cannot retain a second result document.");
+            }
+            auto runtime_record = request.runtime_before_commit(request.runtime_context);
+            std::uint64_t runtime_record_bytes {};
+            if (!json_payload_bytes(runtime_record, runtime_record_bytes) || runtime_record_bytes > runtime_cap) {
+                return failure("MEMORY_LIMIT", "Commit timing exceeds its bounded finalizer allowance.");
+            }
+            committed_result = supplied;
+            committed_result["search"]["runtime"] = std::move(runtime_record);
+            committed_result["search"]["run_segments"].back()["runtime"] = committed_result["search"]["runtime"];
+            std::uint64_t runtime_payload_bytes {};
+            if (!json_payload_bytes(committed_result, runtime_payload_bytes) ||
+                !add_bytes(writer_live_bytes, runtime_payload_bytes) || writer_live_bytes > request.max_working_bytes) {
+                return failure("MEMORY_LIMIT", "Commit timing metadata exceeds checked export residency.");
+            }
+            ContractValidator timing_validator(ContractKind::results);
+            if (!std::holds_alternative<ValidatedDocument>(
+                    timing_validator.validate(ContractKind::results, committed_result, request.diagnostic_limits))) {
+                return failure("RESULT_RUNTIME_INVALID", "Final timing metadata does not satisfy the result contract.");
+            }
+        }
+        const auto& persisted_result = request.runtime_before_commit ? committed_result : supplied;
         {
             auto result_stage = create_protected_stage(request.result_path);
             if (const auto* problem = std::get_if<Error>(&result_stage)) {
                 return *problem;
             }
             auto stage = std::get<OwnedStage>(std::move(result_stage));
-            const auto text = request.result.value().dump(2);
+            const auto text = persisted_result.dump(2);
             std::uint64_t primary_write_live_bytes = writer_live_bytes;
             if (!add_bytes(primary_write_live_bytes, text.capacity()) ||
                 primary_write_live_bytes > request.max_working_bytes) {
@@ -1672,6 +2157,7 @@ ExportOutcome export_result(const ExportRequest& request)
             }
             std::uint64_t first {};
             for (const auto& copy : request.solution->copies()) {
+                detail::poll_operation();
                 const auto transform = geometry::RigidTransform::make(copy.rotation_xyzw, copy.translation_mm);
                 if (!transform) {
                     return post_primary_error(
@@ -1679,6 +2165,7 @@ ExportOutcome export_result(const ExportRequest& request)
                 }
                 ranges.emplace_back(first, mesh.triangles.size());
                 for (const auto& face : mesh.triangles) {
+                    detail::poll_operation();
                     std::array<std::array<float, 3>, 3> points {};
                     for (std::size_t vertex = 0; vertex != 3; ++vertex) {
                         const auto point = transform->apply(mesh.vertices[face[vertex]]);
@@ -1733,10 +2220,25 @@ ExportOutcome export_result(const ExportRequest& request)
         if (auto problem = mutate_closed_stage_for_test(stl_stage_path)) {
             return post_primary_error(*problem);
         }
-        if (auto problem = validate_closed_stl_stage(stl_stage_path, request.solution, mesh, triangle_count, ranges)) {
+        if (!add_bytes(stl_writer_live_bytes, detail::PinnedStage::kScratchBytes) ||
+            stl_writer_live_bytes > request.max_working_bytes ||
+            !add_bytes(stl_validation_live_bytes, detail::PinnedStage::kScratchBytes) ||
+            stl_validation_live_bytes > request.max_working_bytes) {
+            return post_primary_error(failure("MEMORY_LIMIT", "Immutable STL stage pin exceeds checked residency."));
+        }
+        detail::PinnedStage pinned_stage(stl_stage_path);
+        if (!pinned_stage.valid()) {
+            return post_primary_error(
+                failure("EXPORT_CHECK_FAILED", "Closed STL stage could not be pinned immutably."));
+        }
+#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+        PinnedReferenceScope pinned_reference_scope;
+#endif
+        if (auto problem = validate_closed_stl_stage(stl_stage_path, request.solution, mesh, triangle_count, ranges,
+                                                     &pinned_stage.stream())) {
             return post_primary_error(*problem);
         }
-        const auto reader = [&stl_stage_path, &ranges](std::size_t index) -> geometry::ExportCopyRead {
+        const auto reader = [&pinned_stage, &ranges](std::size_t index) -> geometry::ExportCopyRead {
 #ifdef SPECTRAPACK_ASSET_LOADER_TESTING
             if (export_closed_stage_reader_failure.exchange(false)) {
                 return geometry::ExportReadFailure { "EXPORT_READ", "Injected STL stage reader failure." };
@@ -1745,10 +2247,7 @@ ExportOutcome export_result(const ExportRequest& request)
             if (index >= ranges.size()) {
                 return geometry::ExportReadFailure { "EXPORT_RANGE", "Copy range is absent." };
             }
-            std::ifstream input(stl_stage_path, std::ios::binary);
-            if (!input) {
-                return geometry::ExportReadFailure { "EXPORT_READ", "STL stage could not be reopened." };
-            }
+            auto& input = pinned_stage.stream();
             const auto [first, count] = ranges[index];
             std::vector<std::byte> bytes(84 + count * 50);
             input.read(reinterpret_cast<char*>(bytes.data()), 84);
@@ -1762,19 +2261,25 @@ ExportOutcome export_result(const ExportRequest& request)
             return bytes;
         };
         auto remaining_validation_limits = request.validation_limits;
-        remaining_validation_limits.max_kernel_work -= rebuilt.validation_report.kernel_work;
-        remaining_validation_limits.max_aabb_pair_tests -= rebuilt.validation_report.aabb_pair_tests;
+        remaining_validation_limits.max_kernel_work -= fresh_report->kernel_work;
+        remaining_validation_limits.max_aabb_pair_tests -= fresh_report->aabb_pair_tests;
         remaining_validation_limits.max_working_bytes = std::min(remaining_validation_limits.max_working_bytes,
                                                                  request.max_working_bytes - stl_validation_live_bytes);
         const auto quantized =
             geometry::validate_quantized_export(request.solution, reader,
                                                 { remaining_validation_limits, request.per_copy_import_limits,
-                                                  request.max_working_bytes - stl_validation_live_bytes });
+                                                  request.max_working_bytes - stl_validation_live_bytes },
+                                                control);
+        detail::poll_operation();
         if (quantized.validity != geometry::Validity::valid) {
-            return post_primary_error(validation_failure(quantized, true, &rebuilt.validation_report));
+            return post_primary_error(validation_failure(quantized, true, fresh_report));
         }
+#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+        export_base_before_hash.store(stl_writer_live_bytes, std::memory_order_relaxed);
+#endif
         const auto assembly_hash =
-            sha256_file(stl_stage_path, 84 + 50 * triangle_count, request.max_working_bytes - stl_writer_live_bytes);
+            sha256_file(stl_stage_path, 84 + 50 * triangle_count, request.max_working_bytes - stl_writer_live_bytes,
+                        &pinned_stage.stream());
         if (const auto* problem = std::get_if<Error>(&assembly_hash)) {
             return post_primary_error(*problem);
         }
@@ -1788,10 +2293,58 @@ ExportOutcome export_result(const ExportRequest& request)
 #ifdef SPECTRAPACK_ASSET_LOADER_TESTING
         export_post_hash_base_before_reuse_comparison.store(post_hash_live_bytes, std::memory_order_relaxed);
 #endif
-        if (auto problem =
-                stl_stage.publish(*request.stl_path, false, request.max_working_bytes - post_hash_live_bytes)) {
-            return post_primary_error(*problem);
+        std::optional<detail::PinnedStage> reused_destination;
+        if (!pinned_stage.publish(*absolute_stl)) {
+            const auto publish_error = pinned_stage.publication_error();
+            if (publish_error == ERROR_ALREADY_EXISTS || publish_error == ERROR_FILE_EXISTS ||
+                publish_error == ERROR_ACCESS_DENIED) {
+                constexpr std::uint64_t reuse_scratch_bytes = 2ULL * 64 * 1024;
+                if (reuse_scratch_bytes > request.max_working_bytes - post_hash_live_bytes) {
+                    return post_primary_error(failure(
+                        "MEMORY_LIMIT", "Existing export comparison exceeds the configured working-memory limit."));
+                }
+                reused_destination.emplace(*absolute_stl, true);
+                if (!reused_destination->valid()) {
+                    auto problem = failure("EXPORT_WRITE_FAILED", "Existing STL destination cannot be pinned.");
+                    problem.details = {
+                        { "win32_error", publish_error }
+                    };
+                    return post_primary_error(std::move(problem));
+                }
+                if (!contained_location(parent, *absolute_stl) || is_input_alias(*absolute_stl)) {
+                    return post_primary_error(
+                        failure("EXPORT_PATH_INVALID", "Existing STL destination changed its guarded path."));
+                }
+                if (!pinned_stage.same_bytes(*reused_destination, [] {
+                    detail::poll_operation();
+                })) {
+                    return post_primary_error(
+                        failure("EXPORT_WRITE_FAILED", "Existing STL destination has different bytes."));
+                }
+                if (!add_bytes(post_hash_live_bytes, detail::PinnedStage::kScratchBytes) ||
+                    post_hash_live_bytes > request.max_working_bytes) {
+                    return post_primary_error(
+                        failure("MEMORY_LIMIT", "Existing STL destination pin exceeds checked residency."));
+                }
+                // Keep both pins through JSON commit. OwnedStage cleans the
+                // unused certified stage after the two handles are released.
+            }
+            else {
+                auto problem = failure("EXPORT_WRITE_FAILED", "Certified STL handle could not be published.");
+                problem.details = {
+                    { "win32_error", publish_error }
+                };
+                return post_primary_error(std::move(problem));
+            }
         }
+        else {
+            stl_stage.publication_complete();
+        }
+#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
+        if (const auto hook = export_post_publication_hook.load()) {
+            hook(*absolute_stl);
+        }
+#endif
         Json companion {
             { "schema_version",        1                                                                },
             { "units",                 "mm"                                                             },
@@ -1836,10 +2389,6 @@ ExportOutcome export_result(const ExportRequest& request)
                                                    request.max_working_bytes - companion_write_live_bytes)) {
             return post_primary_error(*problem);
         }
-        const auto artifact_path = portable_relative_path(parent, *request.stl_path);
-        if (!artifact_path) {
-            return post_primary_error(failure("EXPORT_PATH_INVALID", "STL path cannot be recorded portably."));
-        }
         std::uint64_t final_copy_preflight_bytes = companion_write_live_bytes;
         if (!add_bytes(final_copy_preflight_bytes, supplied_payload_bytes) ||
             !add_bytes(final_copy_preflight_bytes, supplied_payload_bytes) ||
@@ -1847,9 +2396,9 @@ ExportOutcome export_result(const ExportRequest& request)
             return post_primary_error(
                 failure("MEMORY_LIMIT", "Final result copies exceed the configured working-memory limit."));
         }
-        Json final_result = supplied;
+        Json final_result = persisted_result;
         final_result["artifacts"] = Json::array({
-            { { "kind", "assembled_stl" }, { "path", *artifact_path }, { "sha256", assembly_hash_value } }
+            { { "kind", "assembled_stl" }, { "path", *artifact_reference }, { "sha256", assembly_hash_value } }
         });
         std::uint64_t final_result_payload_bytes {};
         if (!json_payload_bytes(final_result, final_result_payload_bytes)) {
@@ -1863,7 +2412,7 @@ ExportOutcome export_result(const ExportRequest& request)
                 failure("MEMORY_LIMIT", "Final result validation exceeds the configured working-memory limit."));
         }
         ContractValidator validator;
-        auto checked_final = validator.validate(ContractKind::results, final_result);
+        auto checked_final = validator.validate(ContractKind::results, final_result, request.diagnostic_limits);
         if (!std::holds_alternative<ValidatedDocument>(checked_final)) {
             return post_primary_error(failure("EXPORT_RESULT_MISMATCH", "STL artifact result is invalid."));
         }
@@ -1891,11 +2440,86 @@ ExportOutcome export_result(const ExportRequest& request)
         success.companion_path = companion_path;
         return success;
     }
+    catch (const detail::Interrupted& interruption) {
+        return post_primary_error(detail::interrupted_error(interruption));
+    }
     catch (const std::bad_alloc&) {
         return post_primary_error(failure("MEMORY_LIMIT", "Checked export exhausted memory."));
     }
     catch (const std::exception&) {
         return post_primary_error(failure("EXPORT_FAILED", "Checked export failed."));
     }
+}
+ExportOutcome ResultPublisher::constructed(ResultPublicationRequest& request, const runtime::OperationControl& control)
+{
+    const detail::OperationGuard operation(control);
+    try {
+        detail::poll_operation();
+        auto& result = request.result;
+        if (!result.solution || !result.object_asset) {
+            return failure("RESULT_INPUT_INVALID", "Solution and verified object asset are required.");
+        }
+        std::uint64_t live_bytes {};
+        const auto native_bytes = solution_resident_bytes(*result.solution);
+        const auto object_bytes = result.object_asset->resident_buffer_bytes();
+        const auto container_bytes = result.container_asset && result.container_asset != result.object_asset
+                                         ? result.container_asset->resident_buffer_bytes()
+                                         : std::optional<std::uint64_t>(0);
+        if (!native_bytes || !object_bytes || !container_bytes || !json_payload_bytes(result.metadata, live_bytes) ||
+            !add_bytes(live_bytes, *native_bytes) || !add_bytes(live_bytes, *object_bytes) ||
+            !add_bytes(live_bytes, *container_bytes) ||
+            !add_repeated_bytes(live_bytes, result.catalog.quaternions.capacity(), sizeof(geometry::Quaternion)) ||
+            !add_repeated_bytes(live_bytes, request.result_path.native().capacity(),
+                                sizeof(std::filesystem::path::value_type)) ||
+            (request.stl_path && !add_repeated_bytes(live_bytes, request.stl_path->native().capacity(),
+                                                     sizeof(std::filesystem::path::value_type))) ||
+            live_bytes > request.max_working_bytes) {
+            return failure("MEMORY_LIMIT", "Result publication inputs exceed the checked working-memory limit.");
+        }
+        const auto validation_limits = result.validation_limits;
+        result.validation_limits.max_working_bytes =
+            std::min(result.validation_limits.max_working_bytes, request.max_working_bytes - live_bytes);
+        auto built = detail::build_result_with_report(result, control);
+        if (const auto* error = std::get_if<Error>(&built.result)) {
+            return *error;
+        }
+        // Transfer the document and release construction metadata before writer admission.
+        // No second document or independently reusable validation report escapes this call.
+        result.metadata = Json();
+        ExportRequest publication { std::move(result.solution),
+                                    std::move(result.object_asset),
+                                    std::move(result.container_asset),
+                                    std::move(result.catalog),
+                                    std::get<ValidatedDocument>(std::move(built.result)),
+                                    std::move(request.result_path),
+                                    std::move(request.stl_path) };
+        publication.validation_limits = validation_limits;
+        publication.per_copy_import_limits = request.per_copy_import_limits;
+        publication.max_working_bytes = request.max_working_bytes;
+        publication.max_output_bytes = request.max_output_bytes;
+        publication.runtime_before_commit = request.runtime_before_commit;
+        publication.runtime_context = request.runtime_context;
+        publication.diagnostic_limits = result.diagnostic_limits;
+        return publish(publication, control, &built.validation_report);
+    }
+    catch (const detail::Interrupted& interruption) {
+        return detail::interrupted_error(interruption);
+    }
+    catch (const std::bad_alloc&) {
+        return failure("MEMORY_LIMIT", "Result publication exhausted memory.");
+    }
+    catch (const std::exception&) {
+        return failure("EXPORT_FAILED", "Result publication failed.");
+    }
+}
+
+ExportOutcome export_result(const ExportRequest& request, const runtime::OperationControl& control)
+{
+    return ResultPublisher::supplied(request, control);
+}
+
+ExportOutcome build_and_export_result(ResultPublicationRequest&& request, const runtime::OperationControl& control)
+{
+    return ResultPublisher::constructed(request, control);
 }
 }  // namespace spectrapack::io

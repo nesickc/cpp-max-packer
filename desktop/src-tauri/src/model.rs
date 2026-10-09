@@ -49,6 +49,8 @@ pub struct State {
     pub result: Option<Value>,
     pub operation: Option<Operation>,
     pub last_error: Option<DesktopError>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cpu_runtime: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +63,12 @@ pub struct Operation {
     pub finished_at: Option<String>,
     pub result_id: Option<String>,
     pub detail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub sequence: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub completion_elapsed_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub native_completion_elapsed_seconds: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -127,6 +135,10 @@ pub fn validate_settings(value: &Value) -> Outcome<()> {
         pitch_mm: f64,
         budget_seconds: f64,
         seed: String,
+        #[serde(default)]
+        thread_count: Option<u32>,
+        #[serde(default)]
+        budget_scope: Option<String>,
     }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -144,6 +156,25 @@ pub fn validate_settings(value: &Value) -> Outcome<()> {
     }
     let settings: Settings = serde_json::from_value(value.clone())
         .map_err(|e| error("INVALID_SETTINGS", e.to_string()))?;
+    if settings
+        .thread_count
+        .is_some_and(|threads| !(1..=8).contains(&threads))
+    {
+        let mut failure = error(
+            "UNSUPPORTED_THREAD_COUNT",
+            "CPU thread count is outside the supported range.",
+        );
+        failure.details =
+            json!({"supported_min":1,"supported_max":8,"requested":settings.thread_count});
+        return Err(failure);
+    }
+    if settings
+        .budget_scope
+        .as_ref()
+        .is_some_and(|scope| scope != "search_only" && scope != "total_start")
+    {
+        return Err(error("INVALID_SETTINGS", "Budget scope is unsupported."));
+    }
     let positive = |x: f64| x.is_finite() && x > 0.0;
     let seed_ok = settings.seed.parse::<u64>().is_ok()
         && (settings.seed == "0"

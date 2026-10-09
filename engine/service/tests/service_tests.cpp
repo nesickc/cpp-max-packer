@@ -86,12 +86,13 @@ TEST_CASE("stdio service replays a request without redispatching", "[DATA-01][pr
       R"("engine":{"commit":"commit","version":"test"},)"
       R"("features":{"asset_import":false,"packing":false,"project_io":false,"result_export":false,)"
       R"("result_validation":false},)"
-      R"("implemented_commands":["capabilities","serve","inspect","solve","desktop-prepare","desktop-restore"],)"
+      R"("implemented_commands":["capabilities","serve","inspect","solve","desktop-prepare","desktop-restore","desktop-session"],)"
       R"("implemented_methods":["capabilities.get"],"max_active_solver_jobs":1,"max_record_bytes":1048576,)"
       R"("protocol_versions":[1],"schema_versions":{"assets":[1],"benchmark_summary":[1],"protocol":[1],)"
       R"("results":[1],"settings":[1]},)"
       R"("unsupported_methods":["asset.import","asset.accept_repair","job.preflight","job.start","job.stop",)"
-      R"("job.continue","job.status","project.open","project.save","result.validate","result.export"]}})" "\n";
+      R"("job.continue","job.status","project.open","project.save","result.validate","result.export"]}})"
+      "\n";
   REQUIRE(output.str() == expected + expected);
   REQUIRE(diagnostics.str().empty());
 }
@@ -99,8 +100,8 @@ TEST_CASE("stdio service replays a request without redispatching", "[DATA-01][pr
 TEST_CASE("capabilities advertise the reachable solve command", "[DATA-01][protocol]") {
   const auto value = spectrapack::service::capabilities({"test", "commit"});
   REQUIRE(value.at("implemented_commands") ==
-          spectrapack::io::Json::array(
-              {"capabilities", "serve", "inspect", "solve", "desktop-prepare", "desktop-restore"}));
+          spectrapack::io::Json::array({ "capabilities", "serve", "inspect", "solve", "desktop-prepare",
+                                         "desktop-restore", "desktop-session" }));
   REQUIRE_FALSE(value.at("features").at("packing").get<bool>());
 }
 

@@ -49,12 +49,15 @@ auto ulamok_context()
 }  // namespace
 TEST_CASE("T009 larger fields fit the default serial proximity work cap", "[solver][T009]")
 {
-    const auto value = sol::detail::build_spectral_pipeline(context(),
+    const auto native_context = context();
+    const auto catalog = std::get<sol::OrientationCatalog>(
+        sol::make_orientation_catalog(native_context->constraints().orientations, 24));
+    const auto value = sol::detail::build_spectral_pipeline(native_context,
                                                             {
                                                                 { -.25, .25, -.5 },
                                                                 1
     },
-                                                            {}, {});
+                                                            {}, {}, catalog);
     CAPTURE(value.diagnostic, value.stats.proximity_terms);
     REQUIRE(value.complete);
     REQUIRE(value.stats.proximity_terms < 200'000'000);
@@ -135,10 +138,15 @@ TEST_CASE("T009 nested preparation preserves the resource cause", "[solver][T009
 {
     sol::SpectralLimits limits;
     limits.per_representation.max_input_triangles = 1;
-    const auto value = sol::detail::build_spectral_pipeline(context({
-                                                                10, 8, 6
-    }),
-                                                            { { 0, 0, 0 }, 1 }, limits, {});
+    const auto native_context = context({ 10, 8, 6 });
+    const auto catalog = std::get<sol::OrientationCatalog>(
+        sol::make_orientation_catalog(native_context->constraints().orientations, limits.spectral.max_orientations));
+    const auto value = sol::detail::build_spectral_pipeline(native_context,
+                                                            {
+                                                                { 0, 0, 0 },
+                                                                1
+    },
+                                                            limits, {}, catalog);
     REQUIRE_FALSE(value.complete);
     REQUIRE(value.failure_details);
     CHECK(value.failure_details->reason == sol::TerminationReason::resource_limit);
@@ -259,7 +267,7 @@ TEST_CASE("T009 Ulamok analytical witness and real baseline retain 36", "[solver
                        << " pairs=" << baseline.stats.validation_aabb_pair_tests);
     REQUIRE(baseline.best);
     REQUIRE(baseline.best->solution->copies().size() >= 36);
-    REQUIRE(geo::estimate_unclipped_raster_work(*object, 36, 24) == 3'246'096'384ULL);
+    REQUIRE(geo::estimate_unclipped_raster_work(*object, 36, 24) == 200'392'704ULL);
 
     sol::SpectralLimits spectral_limits;
     spectral_limits.baseline.max_candidate_evaluations = 0;
@@ -275,15 +283,24 @@ TEST_CASE("T009 Ulamok analytical witness and real baseline retain 36", "[solver
                                                    spectral_limits, {}, {}, baseline.best->solution);
     REQUIRE(unsupported.run.termination_reason == sol::TerminationReason::resource_limit);
     REQUIRE(unsupported.run.failure_details);
-    CHECK_FALSE(unsupported.run.failure_details->suggested_pitch_mm);
+    // The boundary shortcut invalidates the old per-visit SAT floor. A coarser
+    // admitted shape is now meaningful advice; manual h=1 still fails unchanged.
+    REQUIRE(unsupported.run.failure_details->suggested_pitch_mm);
+    CHECK(*unsupported.run.failure_details->suggested_pitch_mm > 1);
+    CHECK_FALSE(sol::detail::spectral_admission(native_context,
+                                                {
+                                                    { 0, 0, 0 },
+                                                    *unsupported.run.failure_details->suggested_pitch_mm
+    },
+                                                spectral_limits, baseline.best->solution));
     CHECK(unsupported.spectral_stats.representation_cell_visits == 0);
     const auto retained = unsupported.run.best ? unsupported.run.best->solution : unsupported.run.retained_solution;
     REQUIRE(retained);
     CHECK(retained->copies().size() >= 36);
 }
 
-// Explicitly pending T-010 obligation; excluded from routine gates, not claimed passing.
-TEST_CASE("T010 pending Ulamok full cube field pass preserves 36", "[solver][T010][.qualification]")
+// T010-A2/A7: a retained resource failure does not qualify the practical catalog.
+TEST_CASE("T010 Ulamok full cube field pass preserves 36", "[solver][T010][qualification]")
 {
     const auto native_context = ulamok_context();
     const auto baseline = sol::run_aabb_baseline(native_context, {}, {});
@@ -309,6 +326,26 @@ TEST_CASE("T010 pending Ulamok full cube field pass preserves 36", "[solver][T01
     CHECK(value.run.termination_reason != sol::TerminationReason::resource_limit);
     CHECK(value.run.termination_reason != sol::TerminationReason::error);
     CHECK(value.spectral_stats.correlations >= 48);
+    CHECK(value.spectral_stats.representation_kernel_work <= limits.max_representation_kernel_work);
+    REQUIRE(value.field_admission);
+    CHECK(value.field_admission->working_bytes_upper_bound <= limits.max_working_bytes);
+    CHECK(geo::revalidate(retained).validated_solution);
+
+    const auto unsupported = sol::run_cpu_spectral(native_context, { {}, 1 }, limits, {}, {}, baseline.best->solution);
+    REQUIRE(unsupported.run.failure_details);
+    REQUIRE(unsupported.run.failure_details->suggested_pitch_mm);
+    const auto advice = *unsupported.run.failure_details->suggested_pitch_mm;
+    const auto suggested =
+        sol::run_cpu_spectral(native_context, { {}, advice }, limits, {}, {}, baseline.best->solution);
+    const auto suggested_retained = suggested.run.best ? suggested.run.best->solution : suggested.run.retained_solution;
+    CAPTURE(advice, suggested.run.diagnostic_code, suggested.spectral_stats.correlations,
+            suggested.spectral_stats.representation_kernel_work);
+    REQUIRE(suggested_retained);
+    CHECK(suggested_retained->copies().size() >= 36);
+    CHECK(suggested.run.termination_reason != sol::TerminationReason::resource_limit);
+    CHECK(suggested.run.termination_reason != sol::TerminationReason::error);
+    CHECK(suggested.spectral_stats.correlations >= 48);
+    CHECK(geo::revalidate(suggested_retained).validated_solution);
 }
 
 TEST_CASE("T009 full Pryanik solids have valid centered positive witnesses", "[solver][T009][.practical]")
@@ -345,6 +382,100 @@ TEST_CASE("T009 full Pryanik solids have valid centered positive witnesses", "[s
             REQUIRE(checked.validated_solution);
             REQUIRE(checked.validated_solution->copies().size() == 1);
             WARN("source=" << sources[index] << " witness_count=1 validation=" << checked.report.code);
+        }
+    }
+}
+
+TEST_CASE("T010 full Pryanik field profiles preserve two native-valid copies", "[solver][T010][qualification]")
+{
+    for (const auto source : { "rc/items/pryanik_1.STL", "rc/items/pryanik_2.STL" }) {
+        DYNAMIC_SECTION(source)
+        {
+            geo::Constraints constraints;
+            constraints.orientations.mode = geo::OrientationMode::fixed;
+            constraints.pair_clearance_mm = .1;
+            constraints.wall_clearance_mm = 1;
+            const auto made =
+                geo::make_validation_context(imported_object(source), geo::BoxDimensions { 100, 100, 50 }, constraints);
+            const auto native_context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+            const auto baseline = sol::run_aabb_baseline(native_context, {}, {});
+            REQUIRE(baseline.best);
+            REQUIRE(baseline.best->solution->copies().size() >= 2);
+            sol::SpectralLimits limits;
+            limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
+            limits.spectral.max_candidate_evaluations = limits.spectral.max_search_passes = 1;
+            limits.max_refinement_evaluations = 0;
+            const auto value =
+                sol::run_cpu_spectral(native_context, { {}, 4 }, limits, {}, {}, baseline.best->solution);
+            const auto retained = value.run.best ? value.run.best->solution : value.run.retained_solution;
+            CAPTURE(value.run.diagnostic_code, value.spectral_stats.representation_kernel_work,
+                    value.spectral_stats.correlations);
+            REQUIRE(retained);
+            CHECK(retained->copies().size() >= 2);
+            CHECK(value.run.termination_reason != sol::TerminationReason::resource_limit);
+            CHECK(value.run.termination_reason != sol::TerminationReason::error);
+            CHECK(value.spectral_stats.correlations >= 2);
+            CHECK(value.spectral_stats.representation_kernel_work <= limits.max_representation_kernel_work);
+            REQUIRE(value.field_admission);
+            CHECK(value.field_admission->working_bytes_upper_bound <= limits.max_working_bytes);
+            CHECK(geo::revalidate(retained).validated_solution);
+            if (source == std::string_view { "rc/items/pryanik_1.STL" }) {
+                // The ordinary desktop reaches this physical-face trial after its two baseline copies.
+                limits.max_refinement_evaluations = 1;
+                const auto refined =
+                    sol::run_cpu_spectral(native_context, { {}, 4 }, limits, {}, {}, baseline.best->solution);
+                const auto refined_retained = refined.run.best ? refined.run.best->solution
+                                                               : refined.run.retained_solution;
+                CAPTURE(refined.run.diagnostic_code, refined.run.stats.indeterminate_candidates);
+                CHECK(refined.spectral_stats.refinement_evaluations == 1);
+                CHECK(refined.run.stats.indeterminate_candidates == 1);
+                CHECK(refined.run.termination_reason != sol::TerminationReason::resource_limit);
+                CHECK(refined.run.termination_reason != sol::TerminationReason::error);
+                CHECK(refined_retained == baseline.best->solution);
+            }
+        }
+    }
+}
+
+TEST_CASE("T011 Pryanik boundary trials preserve uncertainty within the remaining work cap",
+          "[solver][T011][AT-09][AT-16][.practical]")
+{
+    geo::Constraints constraints;
+    constraints.orientations.mode = geo::OrientationMode::fixed;
+    constraints.pair_clearance_mm = .1;
+    constraints.wall_clearance_mm = 1;
+    const auto made = geo::make_validation_context(imported_object("rc/items/pryanik_1.STL"),
+                                                   geo::BoxDimensions { 100, 100, 50 }, constraints);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+    const auto native_context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+    for (const double trial_z : { 9.75, 29.5 }) {
+        DYNAMIC_SECTION("trial Z " << trial_z)
+        {
+            std::vector<geo::CopyPose> poses {
+                { "baseline-0-0", { 40.716953612864017, 40.772753562778234, 11.9 }, { 0, 0, 0, 1 } },
+                { "baseline-0-1", { 40.716953612864017, 40.772753562778234, 31.649999999999999 }, { 0, 0, 0, 1 } },
+                { "trial", { 31.433907225728035, 31.545507125556469, trial_z }, { 0, 0, 0, 1 } }
+            };
+            const auto candidate = geo::make_candidate(native_context, std::move(poses));
+            REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(candidate));
+            geo::ValidationLimits limits;
+            limits.max_kernel_work = 48'639'566;
+            const auto checked = geo::validate(
+                native_context, std::get<std::shared_ptr<const geo::Candidate>>(candidate), limits);
+            CAPTURE(trial_z, checked.report.code, checked.report.kernel_work, checked.report.checks[3].method);
+            CHECK_FALSE(checked.validated_solution);
+            CHECK(checked.report.validity != geo::Validity::valid);
+            CHECK(checked.report.code.find("LIMIT") == std::string::npos);
+            CHECK(checked.report.kernel_work <= limits.max_kernel_work);
+            if (trial_z == 9.75) {
+                CHECK(checked.report.code == "KERNEL_BOUNDARY_UNRESOLVED");
+            }
+            limits.max_kernel_work = 0;
+            const auto tiny = geo::validate(native_context, std::get<std::shared_ptr<const geo::Candidate>>(candidate),
+                                            limits);
+            CHECK_FALSE(tiny.validated_solution);
+            CHECK(tiny.report.validity == geo::Validity::indeterminate);
+            CHECK(tiny.report.code.find("WORK_LIMIT") != std::string::npos);
         }
     }
 }

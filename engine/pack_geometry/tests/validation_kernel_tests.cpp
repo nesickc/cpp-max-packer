@@ -1,4 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
+#include <fcl/narrowphase/detail/primitive_shape_algorithm/triangle_distance.h>
 
 #include "../src/validation_kernel.hpp"
 #include "validation_fixtures.hpp"
@@ -10,6 +11,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <stop_token>
 #include <variant>
 
 #include <xmmintrin.h>
@@ -316,4 +318,123 @@ TEST_CASE("AT-06 nondefault floating environments never validate touching cubes"
     CHECK(outcome.report.validity == geo::Validity::indeterminate);
     CHECK_FALSE(outcome.validated_solution);
   }
+}
+
+TEST_CASE("T011 row pruning agrees with exhaustive triangle pairs at analytic clearance thresholds",
+          "[geometry][T011][AT-09]")
+{
+    const auto exhaustive_gap = [](const geo::test_support::Mesh& first,
+                                   const geo::test_support::Mesh& second, geo::Vec3 translation) {
+        double gap = std::numeric_limits<double>::infinity();
+        for (const auto& a : first.triangles) {
+            for (const auto& b : second.triangles) {
+                std::array<fcl::Vector3d, 3> left, right;
+                for (int vertex = 0; vertex != 3; ++vertex) {
+                    for (int axis = 0; axis != 3; ++axis) {
+                        left[vertex][axis] = first.vertices[a[vertex]][axis];
+                        right[vertex][axis] = second.vertices[b[vertex]][axis] + translation[axis];
+                    }
+                }
+                fcl::Vector3d p, q;
+                gap = std::min(gap, fcl::detail::TriangleDistanced::triDistance(left.data(), right.data(), p, q));
+            }
+        }
+        return gap;
+    };
+    // The U's bounds overlap the item: rows may be omitted, but shell witnesses remain necessary.
+    // The tetrahedra instead have separated Z bounds, with a skew Euclidean gap of 7/4.
+    for (const bool overlapping_bounds : { false, true }) {
+        auto first_mesh = overlapping_bounds
+                              ? geo::test_support::translated(geo::test_support::u_prism(), { -1.5, -1.5, -.5 })
+                              : geo::test_support::translated(tetrahedron(), { -.5, -.5, -.5 });
+        auto second_mesh = overlapping_bounds ? geo::test_support::cuboid({ -.25, -.25, -.25 }, { .25, .25, .25 })
+                                              : first_mesh;
+        const geo::Vec3 offset = overlapping_bounds ? geo::Vec3 { 0, 0, 0 } : geo::Vec3 { .5, .75, 2.5 };
+        const double analytic_gap = overlapping_bounds ? .25 : 1.75;
+        // FCL is an independent, unpruned test oracle on these exactly represented fixtures.
+        REQUIRE(exhaustive_gap(first_mesh, second_mesh, offset) == analytic_gap);
+        for (const bool reverse_order : { false, true }) {
+            if (reverse_order) {
+                std::reverse(first_mesh.triangles.begin(), first_mesh.triangles.end());
+                std::reverse(second_mesh.triangles.begin(), second_mesh.triangles.end());
+            }
+            kernel::Budget setup { 200'000'000, 64 * 1024 * 1024 };
+            const auto first = make_solid(first_mesh, geo::AssetRole::object, { 0, 0, 0 }, identity, setup);
+            const auto second = make_solid(second_mesh, geo::AssetRole::object, offset, identity, setup);
+            for (const double clearance : { std::nextafter(analytic_gap, 0.0), analytic_gap,
+                                             std::nextafter(analytic_gap, 2 * analytic_gap) }) {
+                kernel::Budget budget { 200'000'000, 64 * 1024 * 1024 };
+                const auto result = reverse_order
+                                        ? kernel::classify_pair(*second.placed, *first.placed, clearance, budget)
+                                        : kernel::classify_pair(*first.placed, *second.placed, clearance, budget);
+                CAPTURE(overlapping_bounds, reverse_order, clearance, result.code);
+                CHECK_FALSE(budget.exhausted());
+                CHECK(result.material_overlap == kernel::Decision::no);
+                CHECK(result.boundaries == kernel::BoundaryRelation::disjoint);
+                const auto expected = clearance < analytic_gap ? kernel::Threshold::above
+                                      : clearance > analytic_gap ? kernel::Threshold::below
+                                                                 : kernel::Threshold::equal;
+                CHECK(result.surface_gap == expected);
+            }
+            kernel::Budget huge { 200'000'000, 64 * 1024 * 1024 };
+            const auto overflow_threshold = kernel::classify_pair(
+                *first.placed, *second.placed, std::numeric_limits<double>::max(), huge);
+            CHECK(overflow_threshold.surface_gap == kernel::Threshold::below);
+        }
+    }
+}
+
+TEST_CASE("T011 inexact represented vertices require separation before bypassing the boundary guard",
+          "[geometry][T011][AT-09]")
+{
+    kernel::Budget setup { 200'000'000, 64 * 1024 * 1024 };
+    const auto mesh = tetrahedron();
+    // Adding local half units to 1e16 is inexact even with cardinal rotations.
+    const auto first = make_solid(mesh, geo::AssetRole::object, { 1e16, 0, 0 }, identity, setup);
+    const auto disjoint = make_solid(mesh, geo::AssetRole::object, { 1e16, 0, 2 }, identity, setup);
+    const auto overlapping = make_solid(mesh, geo::AssetRole::object, { 1e16, 0, .25 }, identity, setup);
+    kernel::Budget separated_budget { 200'000'000, 64 * 1024 * 1024 };
+    const auto separated = kernel::classify_pair(*first.placed, *disjoint.placed, 1, separated_budget);
+    CHECK(separated.material_overlap == kernel::Decision::no);
+    CHECK(separated.surface_gap == kernel::Threshold::equal);
+    kernel::Budget overlapping_budget { 200'000'000, 64 * 1024 * 1024 };
+    const auto unresolved = kernel::classify_pair(*first.placed, *overlapping.placed, 0, overlapping_budget);
+    CHECK(unresolved.material_overlap == kernel::Decision::indeterminate);
+    CHECK(unresolved.code == "KERNEL_BOUNDARY_UNRESOLVED");
+
+    const geo::Quaternion rotation { 0, 0, std::sin(.173 / 2), std::cos(.173 / 2) };
+    const auto rotated = make_solid(mesh, geo::AssetRole::object, { 0, 0, 2 }, rotation, setup);
+    const auto origin = make_solid(mesh, geo::AssetRole::object, { 0, 0, 0 }, identity, setup);
+    kernel::Budget rotated_budget { 200'000'000, 64 * 1024 * 1024 };
+    const auto uncertain_gap = kernel::classify_pair(*origin.placed, *rotated.placed, 1, rotated_budget);
+    CHECK(uncertain_gap.material_overlap == kernel::Decision::no);
+    CHECK(uncertain_gap.surface_gap == kernel::Threshold::indeterminate);
+}
+
+TEST_CASE("T011 bounds and clearance row work preserve tiny caps and operation controls",
+          "[geometry][T011][AT-16]")
+{
+    kernel::Budget setup { 200'000'000, 64 * 1024 * 1024 };
+    const auto first = make_solid(tetrahedron(), geo::AssetRole::object, { 0, 0, 0 }, identity, setup);
+    const auto second = make_solid(tetrahedron(), geo::AssetRole::object, { .5, .75, 2.5 }, identity, setup);
+    for (const std::uint64_t cap : { 0, 12, 24, 83, 100 }) {
+        kernel::Budget limited { cap, 64 * 1024 * 1024 };
+        const auto result = kernel::classify_pair(*first.placed, *second.placed, 1.75, limited);
+        CAPTURE(cap, result.code);
+        CHECK(limited.work_exhausted());
+        CHECK(limited.work_used() <= cap);
+        CHECK(result.surface_gap == kernel::Threshold::indeterminate);
+    }
+    std::stop_source stop;
+    stop.request_stop();
+    spectrapack::runtime::OperationControl cancelled;
+    cancelled.stop = stop.get_token();
+    spectrapack::runtime::OperationControl expired;
+    expired.deadline = spectrapack::runtime::Clock::time_point::min();
+    for (const auto& control : { cancelled, expired }) {
+        kernel::Budget controlled { 200'000'000, 64 * 1024 * 1024, control };
+        const auto result = kernel::classify_pair(*first.placed, *second.placed, 1.75, controlled);
+        CHECK(result.surface_gap == kernel::Threshold::indeterminate);
+        CHECK(controlled.interruption() == control.poll());
+    }
 }

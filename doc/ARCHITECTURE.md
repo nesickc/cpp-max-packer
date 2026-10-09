@@ -19,6 +19,14 @@ The registry retains source bytes, accepted meshes, repair records and their sep
 
 ## Public boundaries
 
+[ADR 0013](../spec/decisions/0013-cpu-runtime.md) specifies T-011's dependency-free
+operation control, per-run field workspace and bounded retained native desktop
+session. Its shared interfaces are agreed; parallel-kernel selection and acceptance
+remain measurement gates. This does not implement the deferred public job service.
+[ADR 0015](../spec/decisions/0015-computational-failures.md) revises computational
+diagnostics to static descriptors and numeric values, with an explicit native C++
+consumer migration; existing adapters retain structured wire formatting.
+
 These are contract sketches, not committed ABI signatures:
 
 ```text
@@ -87,10 +95,11 @@ lifecycle. [T-008](T-008.md) records its bounded scope and acceptance evidence.
 [ADR 0011](../spec/decisions/0011-cpu-first-follow-up.md) and the
 [post-desktop milestones](MILESTONES.md) add the planned CPU-first delivery order,
 bounded multithreading and explicit reconstructed-solid acceptance. They do not
-change the current CLI/service ABI or schema versions. T-010 includes T-011 in
-one CPU runtime delivery with a joint worker/asset lifetime and deadline design.
-T-009, the combined T-010, and T-012 each use native and product-integration
-worker lanes; one integration owner edits shared CLI/I/O/desktop adapters.
+change the current CLI/service ABI or schema versions. The user-approved
+[ADR 0014](../spec/decisions/0014-runtime-delivery-split.md) delivers T-011 serial
+runtime foundations before T-010 threading, preserving the shared asset lifetime
+and deadline contract. Each delivery uses native and product-integration lanes;
+one integration owner edits shared CLI/I/O/desktop adapters.
 The repair and later service/checkpoint tickets settle their provenance and
 compatibility contracts before parallel edits. The milestone execution rules
 preserve serial baselines, exclusive file ownership and every acceptance gate.
