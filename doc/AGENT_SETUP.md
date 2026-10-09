@@ -35,12 +35,18 @@ The first-tranche creation manifest is `.local/agent-setup/install-20260908-1945
 
 ## Current verification and dispatch
 
+On 2026-10-09, this chat exposes `process_reviewer` with the configured
+`gpt-6.1-sol` / `high` settings. A fresh-context named-role dispatch after T-011
+PR #13 succeeds and returns two advisory process recommendations without edits.
+This verifies exposed settings and successful dispatch; independent runtime
+model metadata was not inspected. No fallback or policy/model change was needed.
+
 On 2026-10-02, all nine project TOML files parsed; all eight role allocations,
 the unchanged primary/default settings and two-worker cap, and 57 local links
 passed validation. A bounded Luna configuration/documentation check found no
 actionable inconsistency. Evidence: `.local/process-review-setup/validation.json`.
-The current chat does not expose the new named `process_reviewer`; its runtime
-dispatch remains unverified. Use the documented explicit fallback if needed.
+That earlier chat did not expose the new named `process_reviewer`; runtime
+dispatch was then unverified. The successful later dispatch is recorded above.
 
 On 2026-09-30, Python `tomllib` parsed all eight project TOML files. Assertions verified all seven role names/model/effort pairs, matching allocation tables in `AGENTS.md` and this document, leaf instructions, the Astra Ultra primary, Sol High default, and worker cap of two. `git diff --check` passed. This was configuration/documentation validation; no product tests or new model benchmark runs were needed.
 
