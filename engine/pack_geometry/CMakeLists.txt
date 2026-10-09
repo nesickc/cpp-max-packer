@@ -70,3 +70,6 @@ add_executable(spectrapack_representation_accounting_tests
 target_link_libraries(spectrapack_representation_accounting_tests PRIVATE
   pack_geometry Catch2::Catch2WithMain)
 catch_discover_tests(spectrapack_representation_accounting_tests)
+
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+  "${PROJECT_SOURCE_DIR}/tests/cmake/QualificationTimeouts.cmake")
