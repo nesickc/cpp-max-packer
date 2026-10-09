@@ -261,8 +261,6 @@ struct PipelineOwners {
     std::shared_ptr<const geometry::CellField> placed;
     std::shared_ptr<const geometry::CellField> kernel;
     const OrientationCatalog* catalog {};
-    const std::vector<std::uint8_t>* occupancy {};
-    const std::vector<double>* proximity {};
     const compute::CorrelationResult* binary {};
     const compute::CorrelationResult* ranked {};
     const std::vector<SpectralPipelineResult::RankedCandidate>* page {};
@@ -330,12 +328,6 @@ std::optional<std::uint64_t> owner_bytes(const PipelineOwners& owners) noexcept
     }
     if (owners.catalog &&
         !add_optional(bytes, product(owners.catalog->quaternions.capacity(), sizeof(geometry::Quaternion)))) {
-        return {};
-    }
-    if (owners.occupancy && !add_optional(bytes, product(owners.occupancy->capacity(), sizeof(std::uint8_t)))) {
-        return {};
-    }
-    if (owners.proximity && !add_optional(bytes, product(owners.proximity->capacity(), sizeof(double)))) {
         return {};
     }
     if (owners.binary && !add_optional(bytes, product(owners.binary->values.capacity(), sizeof(double)))) {
@@ -677,8 +669,7 @@ std::uint64_t SpectralWorkspace::layout_revision() const noexcept { return stora
 std::optional<RunFailureDetails> spectral_admission(const std::shared_ptr<const geometry::ValidationContext>& context,
                                                     geometry::GridLattice lattice, const SpectralLimits& limits,
                                                     const std::shared_ptr<const geometry::ValidatedSolution>& retained,
-                                                    const OrientationCatalog* actual_catalog,
-                                                    std::uint64_t* admitted_field_bytes)
+                                                    const OrientationCatalog* actual_catalog)
 {
     const auto reject = [](std::string_view code, std::string_view name, std::uint64_t required, std::uint64_t limit) {
         return RunFailureDetails {
@@ -856,9 +847,6 @@ std::optional<RunFailureDetails> spectral_admission(const std::shared_ptr<const 
     }
     if (*bytes > cap) {
         return reject("SPECTRAL_MEMORY_LIMIT", "working_bytes", *bytes, cap);
-    }
-    if (admitted_field_bytes) {
-        *admitted_field_bytes = *bytes;
     }
     return {};
 }

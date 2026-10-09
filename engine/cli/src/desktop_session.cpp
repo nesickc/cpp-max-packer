@@ -132,7 +132,6 @@ struct PreparedAsset {
     std::string token;
     Asset verified;
     std::shared_ptr<const geo::DisplayLod> display;
-    Json preview_response;
     std::filesystem::path report;
     std::uint64_t bytes {};
 };
@@ -352,7 +351,6 @@ struct PhaseContext {
     const Json& request;
     runtime::Clock::time_point start;
     std::uint64_t sequence {};
-    bool failed {};
     static void publish(void* raw, runtime::Phase phase) noexcept
     {
         auto& context = *static_cast<PhaseContext*>(raw);
@@ -675,7 +673,7 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
             if (const auto* failure = std::get_if<io::Error>(&loaded)) {
                 return response(request, false, io::error_json(*failure));
             }
-            PreparedAsset prepared { token(), std::get<Asset>(loaded), {}, Json(), report };
+            PreparedAsset prepared { token(), std::get<Asset>(loaded), {}, report };
             const auto reused = session.asset && prepared.verified == session.asset->verified;
             if (reused) {
                 prepared.display = session.asset->display;
@@ -702,8 +700,7 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
                                 io::error_json(error("ASSET_BUSY",
                                                      "Release the prior prepared token before another replacement.")));
             }
-            prepared.preview_response = std::get<Json>(std::move(preview));
-            result = prepared.preview_response;
+            result = std::get<Json>(std::move(preview));
             result["asset_token"] = prepared.token;
             result["preparation_version"] = 1;
             result["preparation_reused"] = reused;
