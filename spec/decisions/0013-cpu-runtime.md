@@ -384,6 +384,18 @@ without reopening search or resetting the run budget. If it cannot finish, retai
 the native last validated handle and previous complete disk/UI result, and report
 publication failure explicitly; do not fabricate a new valid result.
 
+Final native solve publication may combine result construction and publication in
+one IO-owned call. It performs one complete independent final revalidation, builds
+the document from the same immutable validated-solution and verified-asset owners,
+and consumes that document/report immediately through the shared writer. This
+internal composition does not create a reusable certificate or public validation
+bypass. Arbitrary supplied-document export retains its existing rebuild/binding
+checks, and STL export retains actual quantized-coordinate validation. Preserve
+simultaneous-owner admission and the same cleanup control throughout. Cleanup
+failure with a retained nonempty handle is an explicit publication failure; it
+must not become successful empty completion or contradict the runtime incumbent
+flag. This is an additive native integration change; wire schemas, untrusted
+restore/export behavior and the five-second cleanup allowance are unchanged.
 Stop acknowledgement is Rust's successful operation-scoped marker write within
 250 ms. Transport/marker failure is an error, not acknowledged cancellation.
 `stopping` persists until safe native completion. Qualification requires ordinary

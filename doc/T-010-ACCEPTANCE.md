@@ -41,6 +41,32 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
 
 ## Retained evidence and qualification
 
+- The 2026-10-09 combined constant-scratch geometry repair passes Debug/Release
+  validation (48 cases / 2,782 assertions each), ordinary solver/control gates
+  (137 / 5,995 Debug; 135 / 5,942 Release) and the full saved practical case
+  (1 / 27 each). Candidate eleven rejects the physical pair at 35,223,643 of its
+  original 48,639,566 work allowance. Production scope is 98 added / 2 removed
+  lines; prior numerical rejection, real cap failures and interval proofs remain.
+  Release engine `e98f7246bdb00a03b67b00bb4a0cf066638f7eed77c86763b97bcc71d82264ab`
+  completes original 30 s Pryanik 1 with two valid copies in 32.9386345 s, overrun
+  2.938634501 s. Fresh authoritative restore, checked STL and the existing full
+  vertex/source/companion reread pass; physical poses remain unchanged. Evidence:
+  `.local/t011/validation-path-fix-20261009/FINDINGS.md` and
+  `completed-evidence-summary.json`. This is native evidence, not a new GUI pass.
+- Affected Pryanik 2 reaches a retained nonempty incumbent but fails publication
+  at 35.0072032 s. The unchanged session mapper reports `ok:true` and top-level
+  `no_nonempty_incumbent:true`, contradicting native runtime `false`; no result
+  file is committed. Exact settings and source/accepted hashes match the earlier
+  GUI pass. The trace strongly supports expiry during a second fresh validation
+  inside one five-second cleanup window; slower phase timing has no established
+  cause. Preserve this failed run; no timing retry was used. The same critical
+  reviewer approved a bounded correction in [T-011](T-011.md) and clarified
+  [ADR 0013](../spec/decisions/0013-cpu-runtime.md): one IO-owned fresh-validation
+  build-and-publish operation using the shared writer, explicit failure reporting,
+  unchanged ownership, memory limits, supplied-document binding and checked STL.
+  The deferred field-transfer review is independently closed against its original
+  source/pins and allocation-failure logs, without repeating the field runs.
+  Full integration and actual GUI qualification remain open.
 - The measured boundary-only guard is not a passing repair. Its practical red
   and attempted green each fail one of 27 assertions: the latter finishes the
   boundary scan at 17,681,549 work, spends 30,120,970 in a witness ray, then
@@ -52,9 +78,10 @@ A single shared journey may satisfy both rows; duplicate runs are unnecessary.
   clearance-row rejection still needs review and practical proof. No success,
   cap change or new hierarchy is inferred. Evidence:
   `.local/t011/pryanik1-physical-resource/row-rejection/`, including
-  `gap-diagnosis/` and `clearance-count/`. Fresh review dispatch is currently
-  refused by the agent service's thread limit; primary mapping in
-  `.local/t011/remaining-native-controls/FINAL_MAPPING.md` is not independent.
+  `gap-diagnosis/` and `clearance-count/`. At the earlier checkpoint, fresh review was
+  refused by the agent service's thread limit; the primary mapping in
+  `.local/t011/remaining-native-controls/FINAL_MAPPING.md` was not independent.
+  Critical review resumed on 2026-10-09; its outcomes are recorded above.
 - Full Pryanik 2's actual desktop journey passes on engine `a44743a0...` with
   desktop `df36a1c3...`. Original 30 s Start-origin settings reach real fields,
   FFT and authoritative validation, then return `budget_exhausted` and two valid

@@ -174,7 +174,7 @@ TEST_CASE("T006 unproved cardinal and noncardinal pairs retain prior fallbacks",
     INFO(result.report.code);
     CHECK(result.report.validity == geo::Validity::valid);
     CHECK(check(result.report, geo::ValidationCheck::pair_solids).method ==
-          "boundary-disjoint-shell-witnesses");
+          "outward-aabb-exact-gap");
   }
 
   SECTION("a noncardinal distant pair retains the outward AABB path") {

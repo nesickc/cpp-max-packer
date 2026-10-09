@@ -436,3 +436,46 @@ TEST_CASE("T010 full Pryanik field profiles preserve two native-valid copies", "
         }
     }
 }
+
+TEST_CASE("T011 Pryanik boundary trials preserve uncertainty within the remaining work cap",
+          "[solver][T011][AT-09][AT-16][.practical]")
+{
+    geo::Constraints constraints;
+    constraints.orientations.mode = geo::OrientationMode::fixed;
+    constraints.pair_clearance_mm = .1;
+    constraints.wall_clearance_mm = 1;
+    const auto made = geo::make_validation_context(imported_object("rc/items/pryanik_1.STL"),
+                                                   geo::BoxDimensions { 100, 100, 50 }, constraints);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+    const auto native_context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+    for (const double trial_z : { 9.75, 29.5 }) {
+        DYNAMIC_SECTION("trial Z " << trial_z)
+        {
+            std::vector<geo::CopyPose> poses {
+                { "baseline-0-0", { 40.716953612864017, 40.772753562778234, 11.9 }, { 0, 0, 0, 1 } },
+                { "baseline-0-1", { 40.716953612864017, 40.772753562778234, 31.649999999999999 }, { 0, 0, 0, 1 } },
+                { "trial", { 31.433907225728035, 31.545507125556469, trial_z }, { 0, 0, 0, 1 } }
+            };
+            const auto candidate = geo::make_candidate(native_context, std::move(poses));
+            REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(candidate));
+            geo::ValidationLimits limits;
+            limits.max_kernel_work = 48'639'566;
+            const auto checked = geo::validate(
+                native_context, std::get<std::shared_ptr<const geo::Candidate>>(candidate), limits);
+            CAPTURE(trial_z, checked.report.code, checked.report.kernel_work, checked.report.checks[3].method);
+            CHECK_FALSE(checked.validated_solution);
+            CHECK(checked.report.validity != geo::Validity::valid);
+            CHECK(checked.report.code.find("LIMIT") == std::string::npos);
+            CHECK(checked.report.kernel_work <= limits.max_kernel_work);
+            if (trial_z == 9.75) {
+                CHECK(checked.report.code == "KERNEL_BOUNDARY_UNRESOLVED");
+            }
+            limits.max_kernel_work = 0;
+            const auto tiny = geo::validate(native_context, std::get<std::shared_ptr<const geo::Candidate>>(candidate),
+                                            limits);
+            CHECK_FALSE(tiny.validated_solution);
+            CHECK(tiny.report.validity == geo::Validity::indeterminate);
+            CHECK(tiny.report.code.find("WORK_LIMIT") != std::string::npos);
+        }
+    }
+}

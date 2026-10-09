@@ -1394,12 +1394,97 @@ bool triangle_bounds_disjoint(const PlacedSolid& first,const Triangle& a,
   return false;
 }
 
+bool triangle_row_bounds(const PlacedSolid& first, const Triangle& face, const PlacedSolid& second,
+                         Bounds& row) noexcept
+{
+    if (!second.conservative.finite) {
+        return false;
+    }
+    for (int axis = 0; axis != 3; ++axis) {
+        const auto rhs_low = second.conservative.bounds_mm.min[axis];
+        const auto rhs_high = second.conservative.bounds_mm.max[axis];
+        if (!std::isfinite(rhs_low) || !std::isfinite(rhs_high) || rhs_low > rhs_high) {
+            return false;
+        }
+        row.min[axis] = std::numeric_limits<double>::infinity();
+        row.max[axis] = -row.min[axis];
+        for (const auto vertex : face) {
+            const auto& interval = first.vertex_intervals[vertex][axis];
+            if (!interval.valid || !std::isfinite(interval.low) || !std::isfinite(interval.high) ||
+                interval.low > interval.high) {
+                return false;
+            }
+            row.min[axis] = std::min(row.min[axis], interval.low);
+            row.max[axis] = std::max(row.max[axis], interval.high);
+        }
+    }
+    return true;
+}
+
+bool triangle_solid_bounds_disjoint(const PlacedSolid& first, const Triangle& face,
+                                    const PlacedSolid& second) noexcept
+{
+    Bounds row;
+    if (!triangle_row_bounds(first, face, second, row)) {
+        return false;
+    }
+    for (int axis = 0; axis != 3; ++axis) {
+        if (row.max[axis] < second.conservative.bounds_mm.min[axis] ||
+            second.conservative.bounds_mm.max[axis] < row.min[axis]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool triangle_solid_farther_than(const PlacedSolid& first, const Triangle& face, const PlacedSolid& second,
+                                 double clearance) noexcept
+{
+    Bounds row;
+    if (!(clearance >= 0.0) || !std::isfinite(clearance) || !triangle_row_bounds(first, face, second, row)) {
+        return false;
+    }
+    constexpr auto infinity = std::numeric_limits<double>::infinity();
+    const double requested_upper = std::nextafter(clearance * clearance, infinity);
+    if (!std::isfinite(requested_upper)) {
+        return false;
+    }
+    double squared_lower = 0.0;
+    for (int axis = 0; axis != 3; ++axis) {
+        double gap = 0.0;
+        if (row.max[axis] < second.conservative.bounds_mm.min[axis]) {
+            gap = second.conservative.bounds_mm.min[axis] - row.max[axis];
+        } else if (second.conservative.bounds_mm.max[axis] < row.min[axis]) {
+            gap = row.min[axis] - second.conservative.bounds_mm.max[axis];
+        }
+        if (!std::isfinite(gap)) {
+            return false;
+        }
+        const double gap_lower = std::max(0.0, std::nextafter(gap, -infinity));
+        const double square = gap_lower * gap_lower;
+        if (!std::isfinite(square)) {
+            return false;
+        }
+        const double square_lower = std::max(0.0, std::nextafter(square, -infinity));
+        const double sum = squared_lower + square_lower;
+        if (!std::isfinite(sum)) {
+            return false;
+        }
+        squared_lower = std::max(0.0, std::nextafter(sum, -infinity));
+    }
+    return squared_lower > requested_upper;
+}
+
 BoundaryCheck check_boundaries(const PlacedSolid& first,const PlacedSolid& second,
                                Budget& budget) {
   const auto a_mesh=first.prepared->asset->mesh();
   const auto b_mesh=second.prepared->asset->mesh();
   bool contact=false;
-  for (const auto& a:a_mesh.triangles) for (const auto& b:b_mesh.triangles) {
+  for (const auto& a:a_mesh.triangles) {
+    // Twelve logical units per axis cover checked row bounds and strict separation.
+    if (!budget.consume_work(36)) return {BoundaryRelation::indeterminate,true};
+    if (triangle_solid_bounds_disjoint(first,a,second)) continue;
+    for (const auto& b:b_mesh.triangles) {
     if (!budget.consume_work(1)) return {BoundaryRelation::indeterminate,true};
     if (triangle_bounds_disjoint(first,a,second,b)) continue;
     if (!first.represented_world_exact || !second.represented_world_exact)
@@ -1434,6 +1519,7 @@ BoundaryCheck check_boundaries(const PlacedSolid& first,const PlacedSolid& secon
           relation==exact::TriangleRelation::shared_feature_only) contact=true;
     }
     if (!budget.consume_work(exact_budget.used())) return {BoundaryRelation::indeterminate,true};
+    }
   }
   return {contact?BoundaryRelation::contact:BoundaryRelation::disjoint,false};
 }
@@ -1896,7 +1982,11 @@ Threshold exact_surface_gap(const PlacedSolid& first,const PlacedSolid& second,
     return conservative_surface_gap(first,second,clearance,budget);
   bool equal=false,uncertain=false;
   const auto first_mesh=first.prepared->asset->mesh(),second_mesh=second.prepared->asset->mesh();
-  for (const auto& a:first_mesh.triangles) for (const auto& b:second_mesh.triangles) {
+  for (const auto& a:first_mesh.triangles) {
+    // Bounds plus downward-rounded gap, square and sum arithmetic for three axes.
+    if (!budget.consume_work(60)) return Threshold::indeterminate;
+    if (triangle_solid_farther_than(first,a,second,clearance)) continue;
+    for (const auto& b:second_mesh.triangles) {
     if (!budget.consume_work(1)) return Threshold::indeterminate;
     if (triangle_farther_than(first,a,second,b,clearance)) continue;
     const auto relation=exact_triangle_distance(exact_triangle_points(first,a),
@@ -1904,6 +1994,7 @@ Threshold exact_surface_gap(const PlacedSolid& first,const PlacedSolid& second,
     if (relation==ExactOrder::less) return Threshold::below;
     equal |= relation==ExactOrder::equal;
     uncertain |= relation==ExactOrder::indeterminate;
+    }
   }
   if (uncertain) return Threshold::indeterminate;
   return equal?Threshold::equal:Threshold::above;
@@ -2267,6 +2358,11 @@ PairResult classify_pair(const PlacedSolid& first,const PlacedSolid& second,
   }
   if (separated_by_bounds(first,second,clearance,budget))
     return {Decision::no,BoundaryRelation::disjoint,Threshold::above,"outward-aabb",""};
+  if (separated_by_bounds(first,second,0.0,budget)) {
+    const auto gap=exact_surface_gap(first,second,clearance,budget);
+    return {Decision::no,BoundaryRelation::disjoint,gap,"outward-aabb-exact-gap",
+            gap==Threshold::indeterminate?"KERNEL_CLASSIFICATION_UNRESOLVED":""};
+  }
   const auto boundary=check_boundaries(first,second,budget);
   if (boundary.relation==BoundaryRelation::transverse_crossing)
     return {Decision::yes,boundary.relation,Threshold::below,"exact-boundary-crossing",""};
