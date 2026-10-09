@@ -81,8 +81,8 @@ std::shared_ptr<const T> take(geo::RepresentationOutcome<T> value,
   if (std::holds_alternative<std::shared_ptr<const T>>(value))
     return std::get<std::shared_ptr<const T>>(std::move(value));
   const auto& failure = std::get<geo::RepresentationFailure>(value);
-  throw std::runtime_error(std::string(phase) + " " + failure.code + ": " +
-                           failure.message);
+  throw std::runtime_error(std::string(phase) + " " + std::string(failure.code) + ": " +
+                           std::string(failure.message));
 }
 const char* build_type() {
 #ifdef _DEBUG
