@@ -4,8 +4,10 @@ Updated: 2026-10-10. T-011 merged at `977c27c` (PR #13), following T-009
 `b82117a` (PR #12). Current delivery: `feature/SOL-08-cpu-threading`.
 
 This ledger records demonstrated scope. **T-011 local acceptance is complete**;
-its user merge is complete. **T-010 local acceptance is complete** on `6235d1c`;
-hosted CI and the user merge remain separate delivery steps. Final native
+its user merge is complete. **The original T-010 raster scope passes locally** on
+`6235d1c`; user review has reopened practical validation/scaling acceptance and
+PR #14 is draft. Historical passes below remain tied to their recorded workloads
+and revisions, including two-copy Pryanik cases. Final native
 source/PE pins and actual desktop evidence are recorded below.
 [T-010](T-010.md), [T-011](T-011.md) and [ADR 0013](../spec/decisions/0013-cpu-runtime.md)
 define the acceptance criteria and compatibility contract. A schema check, a
@@ -17,6 +19,79 @@ T-011 first owns T011-A1–A7 and the carried T009-A2/A3/A6 practical obligation
 T-010 then owns T010-A1–A7 after the T-011 user merge. Keep historical evidence
 and frozen targets here; changing the delivery order closes no gate. T010-A7
 later regresses the successful practical workflows delivered by T-011.
+
+## Many-copy Pryanik repair (2026-10-10)
+
+The user case uses full `pryanik_2.STL`, 400 x 340 x 285 mm, 2 mm pitch,
+cube rotations, eight threads, pair/wall 1/1 mm and a 60 s Start budget.
+Seed 42 is inherited; the failed operation's seed was not recoverable.
+This extends the earlier two-copy evidence; it does not replace or generalize it.
+Source SHA-256 is `6e69e7606566b608155d193c3db9baa920fff3507907f88ce12243887cfd62ac`.
+
+| Check | Observed result |
+| --- | --- |
+| Diagnostic-only replay | 15 retained copies, failed five-second final publication, 65.009 s total. This reproduces the practical failure, not every field of the original 77.549 s report. |
+| Fresh many-copy validation (`dcf2e8e`) | One warmup plus three samples at 1/8/32/128/280 copies: all 20 valid, identical poses and deterministic reports. Final 280-copy samples 24.691/20.515/27.760 ms, 587,472 validation bytes plus 96,252,273 caller bytes. Each pass charges 948,781 work units. Unchanged five-second/512 MiB targets pass. |
+| Cardinal bounds/scoring (`2e08701`) | Intended public-query and 280-copy Incumbent red/green. All 24 cube rotations use exact accepted extrema with charged work and zero vertex visits; near-cardinal queries retain the bounded generic path. Focused critical review has no remaining findings. |
+| Native geometry replay (`dcf2e8e`) | 306 copies independently validated and published in 25.247 s, following 9.656 s preparation before Start. Publication 9.847 ms, zero overrun, tracked peak 100,342,147 bytes including caller residency. |
+| Remaining search limit | Recoverable `RESOURCE_LIMIT / PHYSICAL_VALIDATION_RESOURCE`: 1,299,999,999 charged work units under the unchanged 1.3-billion cumulative cap, 3,046 candidates, ten passes, no spectral work. Published result is retained; count is not an optimum. |
+
+The geometry replay engine SHA-256 is
+`7ff2b2d0493e07cae817482f0e890aab270eeb8df824e92c6ee771f8afd3124f`.
+Complete observations, failed intermediate attempts, source/binary pins and review
+snapshots are under `.local/t010/pryanik-many-20261010/bounds-first/`;
+the final runtime case is `replay-final-setup-400x340x285-2mm8/`, and the final
+fresh-validation profile is `final-validation.json`.
+The old validation observations were single samples, so no repeated speedup ratio
+is claimed. These repairs reduce unnecessary geometry work; they do not establish
+near-linear threading, early desktop incumbent delivery or bulk STL export of
+hundreds of full-resolution copies. PR #14 remains draft for the outstanding
+native scaling and early-publication work.
+
+Affected geometry gates on `dcf2e8e` pass in Debug/Release: validation 57 cases,
+selected solver 34, conservative fields 46 and export validation 26 per build;
+representation accounting passes 16 Debug / 14 Release. Physical bounds (16) and
+allocation refusal (1) pass; their Release evidence is carried from unchanged
+query code. Result builder passes all 67 Debug cases. The Release full run passed
+66/67 before two expected-code assertions were corrected for validator-owned
+memory refusal; the corrected case then passes all 25 assertions, including
+forwarded cause and no output. The exact-boundary admission assertions stay intact.
+Exact selected names and complete final logs are in `bounds-first/gates/final-setup/`.
+An accidental interrupted rerun overwrote the first full solver log; that partial
+log is not used as complete evidence. The final selected solver logs and focused
+bootstrap red/green are retained.
+
+The controlled deadline gate also exposed a pre-existing dangling failure-code
+view. Repair `3fa60cf` owns up to 64 cause-code bytes inline, preserving allocation-
+free outcome transfer and sizeof-based metadata admission. Deterministic red
+reproduces source mutation; focused green verifies destruction, allocation-refused
+copies/moves and capacity/overflow. Critical review has no remaining findings.
+Its affected selection passes 37 Release / 38 Debug cases (769 / 811 assertions);
+the additional raw-buffer-peak case is Debug-only. Geometry code and its measured
+profile are unchanged by this diagnostic repair. Captured protocol outcomes are
+recorded separately from the original unexplained EOF, whose child exit was lost.
+All three final captured observations pass with native exit 0, one retained copy,
+the exact search-work cause, the separate cleanup deadline and unchanged previous
+result bytes. `bounds-first/ownership-evidence-summary.json` pins the final engine
+`98813e250c89b4b7d3414fd7e5cd44d1ec53143bd629dd5bcaa08d7c7a78a128`,
+its complete logs and carried geometry evidence. No root-cause claim is made for
+the original EOF; the independently reproduced dangling cause is repaired.
+
+The final Release desktop bundle uses source `3fa60cf`, the same final engine
+above, and app SHA-256
+`5d55e08f3afc5a300efdfc8aaf3264e3db3d250c1a84afb6b0192928a25c7deb`.
+The complete package build exits 0; its engine pin and all 167 staged resources
+match. Actual GUI verification imports full Pryanik 2 and runs the settings above:
+**306 native-valid copies appear in 42.5 s** (rounded UI elapsed), with the
+recoverable search-work warning and zero recorded Start overrun. This separate
+observation is slower than the isolated native replay; no cause or speedup ratio
+is inferred. The object preview remains present during sampled progress states;
+new packing copies still appear only when the operation terminates.
+GUI Save completes in 1.2 s and Open/revalidation in 32.6 s, preserving the
+306-copy layout and settings. Initial full import takes 30.0 s, outside Start.
+The saved project is `.local/t010/pryanik-many-20261010/gui/pryanik-many.spectrapack`;
+package logs/pins are in the sibling `package/` directory and original GUI session
+evidence is retained in `gui/`. Bulk packed-STL export was not rerun or qualified.
 
 ## Final T-011 local acceptance (2026-10-09)
 

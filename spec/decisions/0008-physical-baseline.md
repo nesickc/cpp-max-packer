@@ -79,6 +79,20 @@ Do not add centered-placement retries or hidden clearance padding to conceal
 uncertain validation.
 Report the refined validation kernel as `homogeneous-rational-interval-v2` so
 new decisive evidence is distinguishable from the earlier interval boundary.
+The later T-010 bounds-before-expansion refinement reports v3; see the dated
+addition to [ADR 0006](0006-independent-solid-validator.md). Historical v2 evidence
+retains its original revision.
+
+For the T-010 many-copy follow-up, an exact signed-permutation query reads the
+accepted local bounds directly. Those extrema equal the authoritative vertex
+extrema for cardinal rotations; generic rotations still traverse the accepted
+vertices. `max_vertex_visits` caps visits actually executed, not the size of a
+solid whose extrema already prove the answer. Thus a cardinal query may succeed
+with zero allowed visits, while a generic query requiring vertices still refuses
+before traversal. Preserve the fixed workspace/work charges, numerical checks and
+cumulative incumbent budget. Returned physical bounds and objective values keep
+their exact meaning; only resource use and formerly resource-limited outcomes
+change. No cache, new solver path or wire-schema migration is introduced.
 
 ### Positive pair-clearance thresholds
 

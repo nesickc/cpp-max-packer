@@ -137,6 +137,9 @@ classifiers must never receive an empty or partial vertex representation. Lazily
 materialize each required copy at most once in the pass, sharing the existing
 immutable prepared object. Charge descriptor/owner storage, proof scratch and
 work before use, with the same cumulative limits and cancellation control.
+After input/orientation checks, every pass charges one fixed setup work unit,
+including empty layouts and fresh revalidation. Deferred mesh preparation must
+not turn an empty bootstrap into free completion under a zero-work allowance.
 Resource or arithmetic failure yields indeterminate; it is not an inconclusive
 geometric proof that permits an uncharged retry.
 
@@ -145,6 +148,9 @@ change reorders existing geometry proofs, without trusting solver bounds or a
 previous verdict. It introduces no new public API, wire schema, accepted-solid
 identity, physical tolerance or clearance semantics. Persistent spatial indexes
 and incremental search validation remain outside this bounded change.
+Report `homogeneous-rational-interval-v3` to distinguish the changed validation
+strategy and resource evidence. Historical v2 reports/baselines keep their original
+revision; the existing string-valued result field needs no schema migration.
 
 Use independent analytic fixtures and rational expectations for contact, tiny
 overlap, enclosure, cavities, U-bridge containment, Euclidean clearance, rotated
