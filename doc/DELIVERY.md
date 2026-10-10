@@ -17,7 +17,7 @@ The spec's `T-001`–`T-008` are initial implementation tasks; `AT-01`–`AT-17`
 | [T-008 desktop workflow](T-008.md) | `feature/AT-15-desktop-workflow` | Merged through PR #10 at `a05fa2c`; bounded first-journey evidence and remaining full-v1 gates are recorded in the ticket |
 | [T-009 CPU field scalability](T-009.md) | `feature/SOL-05-cpu-field-scalability` | Merged through PR #12 at `b82117a`; bounded local gates and three retained-result desktop journeys pass. Reviewed scope revision carries successful practical spectral/STL support into T-010 without raising caps |
 | [T-011 serial runtime foundations](T-011.md) | `feature/SOL-08-cpu-runtime` | Merged through PR #13 at `977c27c`; final local T011-A1–A7 and carried T009-A2/A3/A6 evidence retained |
-| [T-010 measured CPU threading](T-010.md) | `feature/SOL-08-cpu-threading` | Local T010-A1–A7 pass on `6235d1c`: bounded raster threading, measured 1/2/4/8 scaling and three practical journeys; hosted CI/user merge pending |
+| [T-010 measured CPU threading](T-010.md) | `feature/SOL-08-cpu-threading` | Original raster scope passes local qualification and hosted CI on `2d75af6`. User 4 mm Ulamok review exposes poor whole-run scaling and delayed publication; bounded viewer repair passes focused/visual checks. Native follow-up and user acceptance remain open |
 
 [Delivery milestones](MILESTONES.md) define T-009–T-023 and their merged
 prerequisites. Each delivery ticket has a planned feature branch, requirements
