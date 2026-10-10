@@ -673,6 +673,39 @@ TEST_CASE("AT-06 validates the authoritative solid rather than an undersized pro
   CHECK_FALSE(outcome.validated_solution);
 }
 
+TEST_CASE("GEO-06 empty validation and fresh revalidation charge bounded setup work", "[bounds_first][GEO-06]")
+{
+    const auto value = context();
+    geo::ValidationLimits limits;
+    limits.max_kernel_work = 0;
+    const auto exhausted = validate_copies(value, {}, limits);
+    CHECK(exhausted.report.validity == geo::Validity::indeterminate);
+    CHECK(exhausted.report.code == "VALIDATION_KERNEL_WORK_LIMIT");
+    CHECK(exhausted.report.kernel_work == 0);
+    CHECK_FALSE(exhausted.validated_solution);
+
+    limits.max_kernel_work = 1;
+    const auto valid = validate_copies(value, {}, limits);
+    REQUIRE(valid.report.validity == geo::Validity::valid);
+    REQUIRE(valid.validated_solution);
+    CHECK(valid.report.kernel_work == 1);
+    CHECK(valid.validated_solution->copies().empty());
+
+    limits.max_kernel_work = 0;
+    const auto fresh_exhausted = geo::revalidate(valid.validated_solution, limits);
+    CHECK(fresh_exhausted.report.validity == geo::Validity::indeterminate);
+    CHECK(fresh_exhausted.report.code == "VALIDATION_KERNEL_WORK_LIMIT");
+    CHECK(fresh_exhausted.report.kernel_work == 0);
+    CHECK_FALSE(fresh_exhausted.validated_solution);
+
+    limits.max_kernel_work = 1;
+    const auto fresh_valid = geo::revalidate(valid.validated_solution, limits);
+    REQUIRE(fresh_valid.report.validity == geo::Validity::valid);
+    REQUIRE(fresh_valid.validated_solution);
+    CHECK(fresh_valid.report.kernel_work == 1);
+    CHECK(&fresh_valid.validated_solution->copies() == &valid.validated_solution->copies());
+}
+
 TEST_CASE("valid empty layouts retain finite epsilon for large finite boxes") {
   const auto finite_large = context({1e200, 1e200, 1e200});
   const auto valid_empty = validate_copies(finite_large, {});

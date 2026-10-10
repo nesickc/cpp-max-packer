@@ -306,6 +306,10 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
                           ValidationCheck::orientation, { pose.copy_id });
     }
     outcome.report.checks[1] = { ValidationCheck::orientation, CheckState::complete, "quaternion-permission" };
+    if (!budget.consume_work(1)) {
+        return reject(Validity::indeterminate, "VALIDATION_KERNEL_WORK_LIMIT", "Validation setup work was exhausted.",
+                      ValidationCheck::input);
+    }
     kernel::PrepareResult object;
     std::shared_ptr<const kernel::PlacedSolid> container;
     if (const auto* solid = std::get_if<std::shared_ptr<const AcceptedSolid>>(&expected_context->container())) {
