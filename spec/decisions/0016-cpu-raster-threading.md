@@ -256,5 +256,45 @@ no work, allocation, search or scheduling behavior to product calls.
 Measure active-empty versus active-306 footprint admission while accounting for
 the separately retained baseline handle, actual padded FFT buffers, field arrays
 and worker reserve. Source estimates alone cannot establish 2 mm support under
-512 MiB. Freeze the admission/trial-order change after that component evidence;
-resource failures remain terminal and may not be relabeled as a successful pass.
+512 MiB. Resource failures remain terminal and may not be relabeled as a
+successful pass.
+
+### Startup admission and trial order
+
+The native component probe records 761,804,113 bytes for an empty active layout
+with the 306-copy incumbent resident at the user's 2 mm pitch. Fixed buffers
+alone estimate 621,602,608 bytes, above the 536,870,912-byte cap. These are
+conservative admission estimates, not observed allocation peaks. Preserve this
+explicit refusal and qualify an explicitly configured supported pitch.
+
+Private startup preflight means fixed startup readiness plus known resident
+ownership. Remove its hypothetical environment-cell-count times active-copy-count
+footprint reservation; it does not certify that future layout growth will fit.
+Keep fixed field/correlation/FFT buffers, geometry, worker, caller and resident
+solution/snapshot reservations. Distinguish centrally retained solution ownership
+from the active working layout. A retained 306-copy result is not 306 planned
+footprints when the active trial is empty.
+
+Preserve exact dynamic admission: BlockedField add counts actual occupied cells
+and admits allocations through CountingResource; clone accounts retained
+capacities while ResidencyLedger includes the old field. Keep simultaneous old
+and staged owners, pose/ID capacities, unknown occupied cells, AttemptRecorder,
+rollback and cumulative work charging. No new footprint estimator or storage
+format is needed. Successful preflight cannot publish actual-layout admission;
+that evidence comes only from successful enforced pipeline stages.
+
+Run the existing empty spectral trial first with the baseline centrally retained,
+then its retained-layout extension if budget remains. Apply startup preflight
+and pitch-suggestion work-floor checks to the planned active layout, while
+charging all resident ownership. Never reset work at a trial/orientation boundary
+or ignore a baseline resource failure. This revises ADR 0009's trial order and
+ADR 0012's speculative footprint reservation; physical semantics and schemas
+are unchanged. Work-limited outcomes can change and require new source-pinned
+evidence; fixed-work determinism remains required.
+
+Required checks: the real-pipeline admission red turns green; exact-cap and
+one-byte-below growth with old/staged owners; failed clone/add rollback with
+retained valid incumbent; one-pass fresh search reaches FFT without losing the
+baseline; genuine fixed-buffer refusal remains explicit. Expected prerequisite
+scope remains bounded to baseline submission and private solver admission/order,
+without a new geometry estimator, lifetime framework or search operator.
