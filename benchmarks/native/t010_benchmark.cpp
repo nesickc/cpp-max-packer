@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <fstream>
@@ -7,12 +8,15 @@
 #include <string>
 #include <string_view>
 
+#include "../../engine/pack_compute/src/correlation_profile.hpp"
 #include "../../engine/pack_geometry/src/field_kernel.hpp"
 #include "../../engine/pack_geometry/src/field_profile.hpp"
 #include "../../engine/pack_geometry/src/placed_field_test_support.hpp"
 #include "../../engine/pack_geometry/src/raster_execution_internal.hpp"
 #include "../../engine/pack_geometry/tests/validation_fixtures.hpp"
 #include "../../engine/pack_solver/src/pipeline_profile.hpp"
+#include "../../engine/pack_solver/src/spectral_pipeline.hpp"
+#include "../../engine/pack_solver/src/storage_accounting.hpp"
 #include "baseline_support.hpp"
 #include "spectrapack/solver/spectral.hpp"
 #ifdef _WIN32
@@ -45,6 +49,7 @@ struct Profile {
     double baseline_validation_ms {}, baseline_scoring_ms {}, dominated_scoring_ms {};
     std::uint64_t validation_calls {}, scoring_calls {}, first36_seed {}, first36_candidate {};
     std::optional<double> first_valid36_ms, first_published36_ms;
+    std::array<std::array<std::array<double, 3>, 3>, 2> fft_axis_ms {};
 };
 void baseline_sample(void* context, const sol::detail::BaselineProfileSample& sample) noexcept
 {
@@ -119,6 +124,8 @@ bench::Json profile_json(const Profile& profile)
         { "nested_field_phases", fields        },
         { "pipeline_calls",      profile.pages }
     };
+    output["nested_fft_axis_ms"] = profile.fft_axis_ms;
+    output["fft_axis_order"] = "binary/proximity; environment-forward/kernel-forward/inverse; X/Y/Z";
     if (profile.validation_calls) {
         bench::Json orientations = bench::Json::array();
         std::uint64_t previous {};
@@ -187,7 +194,187 @@ bench::Json counters(const sol::SpectralOutcome& run)
         { "proximity_terms",            run.spectral_stats.proximity_terms            },
         { "validation_kernel_work",     run.run.stats.validation_kernel_work          },
         { "validation_aabb_pair_tests", run.run.stats.validation_aabb_pair_tests      },
+        { "geometry_kernel_work",       run.run.stats.geometry_kernel_work            },
+        { "geometry_vertex_visits",     run.run.stats.geometry_vertex_visits          },
+        { "invalid_candidates",         run.run.stats.invalid_candidates              },
+        { "indeterminate_candidates",   run.run.stats.indeterminate_candidates        },
+        { "refinement_evaluations",     run.spectral_stats.refinement_evaluations     },
         { "tracked_working_bytes_peak", run.run.stats.tracked_working_bytes_peak      }
+    };
+}
+
+bench::Json work_limits(const sol::SpectralLimits& limits)
+{
+    const auto phase = [](const sol::BaselineLimits& value) {
+        return bench::Json {
+            { "candidates",             value.max_candidate_evaluations                   },
+            { "passes",                 value.max_search_passes                           },
+            { "copies",                 value.max_copies                                  },
+            { "orientations",           value.max_orientations                            },
+            { "axis_cells",             value.max_axis_cells                              },
+            { "working_bytes",          value.max_working_bytes                           },
+            { "reserved_bytes",         value.reserved_bytes                              },
+            { "geometry_work",          value.max_geometry_kernel_work                    },
+            { "geometry_vertex_visits", value.max_geometry_vertex_visits                  },
+            { "validation_work",        value.max_validation_kernel_work                  },
+            { "validation_pair_tests",  value.max_validation_aabb_pair_tests              },
+            { "per_query",
+             { { "working_bytes", value.per_query.max_working_bytes },
+                { "work", value.per_query.max_kernel_work },
+                { "vertex_visits", value.per_query.max_vertex_visits } }                  },
+            { "per_validation",
+             { { "working_bytes", value.per_validation.max_working_bytes },
+                { "work", value.per_validation.max_kernel_work },
+                { "pair_tests", value.per_validation.max_aabb_pair_tests },
+                { "copies", value.per_validation.max_copy_count },
+                { "diagnostic_examples", value.per_validation.max_diagnostic_examples } } }
+        };
+    };
+    return {
+        { "baseline",                   phase(limits.baseline)                     },
+        { "spectral",                   phase(limits.spectral)                     },
+        { "working_bytes",              limits.max_working_bytes                   },
+        { "caller_reserved_bytes",      limits.reserved_bytes                      },
+        { "representation_work",        limits.max_representation_kernel_work      },
+        { "representation_cell_visits", limits.max_representation_cell_visits      },
+        { "direct_terms",               limits.max_direct_terms                    },
+        { "proximity_terms",            limits.max_proximity_terms                 },
+        { "refinement_evaluations",     limits.max_refinement_evaluations          },
+        { "per_representation",
+         { { "working_bytes", limits.per_representation.max_working_bytes },
+            { "work", limits.per_representation.max_kernel_work },
+            { "cell_visits", limits.per_representation.max_cell_visits },
+            { "cells", limits.per_representation.max_cells },
+            { "reserved_bytes", limits.per_representation.reserved_bytes },
+            { "input_triangles", limits.per_representation.max_input_triangles } } },
+        { "per_correlation",
+         { { "working_bytes", limits.per_correlation.max_working_bytes },
+            { "reserved_bytes", limits.per_correlation.reserved_bytes },
+            { "padded_cells", limits.per_correlation.max_padded_cells },
+            { "direct_terms", limits.per_correlation.max_direct_terms } }          }
+    };
+}
+
+// Diagnostic only: expose the existing preflight components without allocating
+// any fields or running an FFT. The saved poses are freshly native-validated.
+bench::Json admission_probe(const std::shared_ptr<const geo::ValidationContext>& context, geo::GridLattice lattice,
+                            sol::SpectralLimits limits, const sol::OrientationCatalog& catalog,
+                            const std::string& result_path)
+{
+    std::ifstream saved(result_path);
+    const auto result = bench::Json::parse(saved);
+    std::vector<geo::CopyPose> poses;
+    for (const auto& pose : result.at("placements")) {
+        poses.push_back({ pose.at("copy_id").get<std::string>(), pose.at("translation_mm").get<geo::Vec3>(),
+                          pose.at("quaternion_xyzw").get<geo::Quaternion>() });
+    }
+    const auto made = geo::make_candidate(context, std::move(poses));
+    const auto checked = geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(made));
+    if (!checked.validated_solution || checked.validated_solution->copies().size() != 306) {
+        throw std::runtime_error("saved306 failed fresh validation");
+    }
+    sol::Incumbent incumbent(context);
+    const auto offered = incumbent.offer(checked.validated_solution, {});
+    if (!offered.best) {
+        throw std::runtime_error("saved306 scoring failed");
+    }
+    const auto solution_bytes =
+        checked.validated_solution->resident_buffer_bytes().value() + 4 * sol::detail::kSharedOwnerControlBytes;
+    const auto snapshot_bytes = offered.retained_storage_bytes;
+    // Match the retained exact user's caller reserve, not this small probe's RSS.
+    constexpr std::uint64_t caller_bytes = 96'252'289;
+    limits.reserved_bytes = caller_bytes + snapshot_bytes;
+    geo::CellShape environment {}, kernel {};
+    const std::array<double, 3> dimensions { 400, 340, 285 };
+    for (std::size_t axis = 0; axis != 3; ++axis) {
+        environment[axis] = static_cast<std::uint32_t>(std::ceil(dimensions[axis] / lattice.pitch_mm)) + 2;
+    }
+    for (const auto& q : catalog.quaternions) {
+        const auto window = geo::estimate_object_window(*context->object(), lattice, q).value();
+        for (std::size_t axis = 0; axis != 3; ++axis) {
+            kernel[axis] = std::max(kernel[axis], window.shape[axis]);
+        }
+    }
+    const auto fft =
+        std::get<spectrapack::compute::CorrelationEstimate>(spectrapack::compute::estimate_correlation_cpu({
+            environment, kernel, { -1, -1, -1 },
+              {}
+    }));
+    const auto cells = [](geo::CellShape shape) {
+        return static_cast<std::uint64_t>(shape[0]) * shape[1] * shape[2];
+    };
+    auto expanded = environment;
+    const auto halo = static_cast<std::uint32_t>(std::ceil(1 / lattice.pitch_mm)) + 2;
+    for (auto& axis : expanded) {
+        axis += 2 * halo;
+    }
+    const auto environment_bytes = cells(environment) * 15;
+    const auto expanded_bytes = cells(expanded) * 10;
+    const auto kernel_bytes = cells(kernel) * 10;
+    const auto width = 2 * halo + 1;
+    const auto stencil_bytes = static_cast<std::uint64_t>(width) * width * width * sizeof(geo::CellIndex);
+    const auto proximity_bytes =
+        static_cast<std::uint64_t>(*std::max_element(environment.begin(), environment.end())) * 24;
+    const auto fft_retained_bytes = fft.padded_cells * sizeof(double);
+    const auto geometry_bytes = geo::estimate_field_geometry_bytes(*context->object()).value();
+    const auto worker_bytes = geo::estimate_raster_execution_bytes(limits.cpu_thread_count).value();
+    const auto fixed_bytes = environment_bytes + expanded_bytes + kernel_bytes + stencil_bytes + proximity_bytes +
+                             fft.working_bytes + fft_retained_bytes;
+    bench::Json scenarios = bench::Json::array();
+    for (const bool active306 : { false, true }) {
+        auto scenario_limits = limits;
+        if (!active306) {
+            scenario_limits.reserved_bytes += solution_bytes;
+        }
+        const auto failure = sol::detail::spectral_admission(
+            context, lattice, scenario_limits, active306 ? checked.validated_solution : nullptr, &catalog);
+        auto required = failure;
+        if (!required) {
+            scenario_limits.max_working_bytes = 0;
+            required = sol::detail::spectral_admission(context, lattice, scenario_limits,
+                                                       active306 ? checked.validated_solution : nullptr, &catalog);
+        }
+        scenarios.push_back({
+            { "active_copies",                      active306 ? 306 : 0                                                              },
+            { "resident_baseline_copies",           306                                                                              },
+            { "failure",                            failure ? bench::Json(std::string(failure->cause_code())) : bench::Json(nullptr) },
+            { "required_bytes",
+             required && required->resource ? bench::Json(required->resource->required) : bench::Json(nullptr)                       },
+            { "active_footprint_upper_bound_bytes", active306 ? cells(environment) * 306 * sizeof(std::size_t) : 0                   }
+        });
+    }
+    return {
+        { "measurement",                           "native conservative admission estimates; no fields or FFT executed" },
+        { "profile",                               "pryanik2-user"                                                      },
+        { "source",                                "rc/items/pryanik_2.STL"                                             },
+        { "pitch_mm",                              lattice.pitch_mm                                                     },
+        { "box_mm",                                { 400, 340, 285 }                                                    },
+        { "orientation",                           "cube"                                                               },
+        { "clearance_mm",                          { { "pair", 1 }, { "wall", 1 } }                                     },
+        { "cpu_thread_count",                      limits.cpu_thread_count                                              },
+        { "host_cap_bytes",                        limits.max_working_bytes                                             },
+        { "environment_shape",                     environment                                                          },
+        { "maximum_catalog_kernel_shape",          kernel                                                               },
+        { "padded_fft_shape",                      fft.padded_shape                                                     },
+        { "padded_fft_cells",                      fft.padded_cells                                                     },
+        { "caller_reserved_bytes",                 caller_bytes                                                         },
+        { "accepted_geometry_bytes",               context->object()->resident_buffer_bytes().value()                   },
+        { "resident_solution_bytes",               solution_bytes                                                       },
+        { "resident_snapshot_and_score_key_bytes", snapshot_bytes                                                       },
+        { "raster_prepared_geometry_bytes",        geometry_bytes                                                       },
+        { "raster_worker_reserve_bytes",           worker_bytes                                                         },
+        { "fixed_buffer_bytes",                    fixed_bytes                                                          },
+        { "fixed_buffer_components",
+         { { "environment_arrays", environment_bytes },
+            { "expanded_field", expanded_bytes },
+            { "kernel_field", kernel_bytes },
+            { "stencil", stencil_bytes },
+            { "proximity_scratch", proximity_bytes },
+            { "correlation_workspace", fft.working_bytes },
+            { "retained_correlation_array", fft_retained_bytes } }                                                      },
+        { "fresh_validation_work",                 checked.report.kernel_work                                           },
+        { "fresh_validation_pair_tests",           checked.report.aabb_pair_tests                                       },
+        { "scenarios",                             scenarios                                                            }
     };
 }
 }  // namespace
@@ -199,6 +386,8 @@ int main(int argc, char** argv)
         int samples = 5, warmups = 1;
         std::uint32_t threads = 1;
         std::string scope = "field";
+        std::string retained_result;
+        double diagnostic_pitch = 2;
         for (int index = 1; index < argc; index += 2) {
             if (index + 1 == argc) {
                 throw std::runtime_error("option requires a value");
@@ -223,6 +412,15 @@ int main(int argc, char** argv)
             else if (option == "--scope") {
                 scope = argv[index + 1];
             }
+            else if (option == "--retained-result") {
+                retained_result = argv[index + 1];
+            }
+            else if (option == "--pitch-mm") {
+                diagnostic_pitch = std::stod(argv[index + 1]);
+                if (diagnostic_pitch != 2 && diagnostic_pitch != 3 && diagnostic_pitch != 4) {
+                    throw std::runtime_error("diagnostic pitch must explicitly be 2, 3 or 4mm");
+                }
+            }
             else {
                 throw std::runtime_error("unknown option");
             }
@@ -230,18 +428,31 @@ int main(int argc, char** argv)
         if (samples < 1 || samples > 100 || warmups < 0 || warmups > 10) {
             throw std::runtime_error("invalid sample count");
         }
-        if (scope != "field" && scope != "prepared-start") {
-            throw std::runtime_error("scope must be field or prepared-start");
+        if (scope != "field" && scope != "prepared-start" && scope != "admission") {
+            throw std::runtime_error("scope must be field, prepared-start or admission");
         }
         if (profile_name != "analytic" && profile_name != "ulamok" && profile_name != "ulamok4-user" &&
-            profile_name != "pryanik1" && profile_name != "pryanik2") {
-            throw std::runtime_error("profile must be analytic, ulamok, ulamok4-user, pryanik1 or pryanik2");
+            profile_name != "ulamok4-limited" && profile_name != "pryanik2-many4-fixed" && profile_name != "pryanik1" &&
+            profile_name != "pryanik2" && profile_name != "pryanik2-user") {
+            throw std::runtime_error("unknown profile");
+        }
+        const bool pryanik_user = profile_name == "pryanik2-user";
+        if (pryanik_user && scope != "admission") {
+            throw std::runtime_error("pryanik2-user currently exposes admission scope only");
+        }
+        if (scope == "admission" && (!pryanik_user || retained_result.empty())) {
+            throw std::runtime_error("admission requires pryanik2-user and --retained-result");
         }
         const bool user_profile = profile_name == "ulamok4-user";
-        if (user_profile && scope != "prepared-start") {
-            throw std::runtime_error("ulamok4-user requires prepared-start scope");
+        const bool ulamok_limited = profile_name == "ulamok4-limited";
+        const bool pryanik_many = profile_name == "pryanik2-many4-fixed";
+        const bool limited_profile = ulamok_limited || pryanik_many;
+        const bool prepared_profile = user_profile || limited_profile;
+        if (prepared_profile && scope != "prepared-start") {
+            throw std::runtime_error("this profile requires prepared-start scope");
         }
-        const bool analytic = profile_name == "analytic", ulamok = profile_name == "ulamok" || user_profile;
+        const bool analytic = profile_name == "analytic",
+                   ulamok = profile_name == "ulamok" || user_profile || ulamok_limited;
         const std::string source = analytic                     ? "analytic-cuboid"
                                    : ulamok                     ? "rc/items/ulamok_2kg_simplified.stl"
                                    : profile_name == "pryanik1" ? "rc/items/pryanik_1.STL"
@@ -253,11 +464,13 @@ int main(int argc, char** argv)
                      : load(source);
         const double preparation_ms = elapsed(preparation_start);
         geo::Constraints constraints;
-        constraints.pair_clearance_mm = analytic ? .125 : user_profile ? 1 : .1;
+        constraints.pair_clearance_mm = analytic ? .125 : prepared_profile || pryanik_user ? 1 : .1;
         constraints.wall_clearance_mm = analytic ? .25 : 1;
-        constraints.orientations.mode = ulamok ? geo::OrientationMode::cube : geo::OrientationMode::fixed;
-        const geo::BoxDimensions box = analytic ? geo::BoxDimensions { 38, 28, 20 }
-                                       : ulamok ? geo::BoxDimensions { 400, user_profile ? 340. : 350., 285 }
+        constraints.orientations.mode =
+            ulamok || pryanik_user ? geo::OrientationMode::cube : geo::OrientationMode::fixed;
+        const geo::BoxDimensions box = analytic                       ? geo::BoxDimensions { 38, 28, 20 }
+                                       : pryanik_user || pryanik_many ? geo::BoxDimensions { 400, 340, 285 }
+                                       : ulamok ? geo::BoxDimensions { 400, prepared_profile ? 340. : 350., 285 }
                                                 : geo::BoxDimensions { 100, 100, 50 };
         const auto make_context = [&]() {
             auto made = geo::make_validation_context(object, box, constraints);
@@ -287,12 +500,24 @@ int main(int argc, char** argv)
         }
         const geo::GridLattice lattice {
             { 0, 0, 0 },
-            analytic                  ? 1.
-            : ulamok && !user_profile ? 16.
-                                      : 4.
+            pryanik_user                  ? diagnostic_pitch
+            : analytic                    ? 1.
+            : ulamok && !prepared_profile ? 16.
+                                          : 4.
         };
         sol::SpectralLimits limits;
         limits.cpu_thread_count = threads;
+        if (pryanik_many) {
+            // Preserve the exact user's caller reserve; this is a full-mesh,
+            // many-copy fixed-identity workload at explicitly supported 4mm.
+            limits.reserved_bytes = 96'252'289;
+        }
+        if (scope == "admission") {
+            const auto catalog = std::get<sol::OrientationCatalog>(
+                sol::make_orientation_catalog(constraints.orientations, limits.baseline.max_orientations));
+            std::cout << admission_probe(make_context(), lattice, limits, catalog, retained_result).dump(2) << '\n';
+            return 0;
+        }
         limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
         if (scope == "prepared-start") {
             limits.baseline = baseline_limits;
@@ -313,11 +538,17 @@ int main(int argc, char** argv)
             sol::detail::pipeline_profile_context = &profile;
             geo::detail::field_profile_sink = &field_sample;
             geo::detail::field_profile_context = &profile;
+            spectrapack::compute::detail::fft_axis_profile_context = &profile;
+            spectrapack::compute::detail::fft_axis_profile_sink =
+                [](void* context, const spectrapack::compute::detail::FftAxisProfileSample& sample) noexcept {
+                static_cast<Profile*>(context)->fft_axis_ms[sample.binary ? 0 : 1][sample.transform][sample.axis] +=
+                    sample.elapsed_ms;
+            };
             const auto start = Clock::now();
             profile.start = start;
             double catalog_ms {};
             std::optional<sol::OrientationCatalog> resolved_catalog;
-            if (user_profile) {
+            if (prepared_profile) {
                 sol::detail::baseline_profile_sink = &baseline_sample;
                 sol::detail::baseline_profile_context = &profile;
                 const auto catalog_start = Clock::now();
@@ -332,17 +563,18 @@ int main(int argc, char** argv)
             // accepted input stays fixed; no unrelated reference solution is
             // retained while observing its cumulative process high-water.
             const auto context = scope == "field" ? field_context : make_context();
-            const auto run = user_profile ? sol::run_cpu_spectral(context, lattice, *resolved_catalog, limits, {},
-                                                                  [&](const sol::SnapshotHandle& snapshot) {
+            const auto run = prepared_profile ? sol::run_cpu_spectral(context, lattice, *resolved_catalog, limits, {},
+                                                                      [&](const sol::SnapshotHandle& snapshot) {
                 if (snapshot && snapshot->score.count == 36 && !profile.first_published36_ms) {
                     profile.first_published36_ms = elapsed(start);
                 }
             })
-                                          : sol::run_cpu_spectral(context, lattice, limits, {}, {}, field_seed);
+                                              : sol::run_cpu_spectral(context, lattice, limits, {}, {}, field_seed);
             const double solver_ms = elapsed(start);
             sol::detail::baseline_profile_sink = nullptr;
             sol::detail::pipeline_profile_sink = nullptr;
             geo::detail::field_profile_sink = nullptr;
+            spectrapack::compute::detail::fft_axis_profile_sink = nullptr;
             if (!run.run.best) {
                 throw std::runtime_error("retained snapshot missing");
             }
@@ -360,14 +592,23 @@ int main(int argc, char** argv)
             }
             process_peak = process_counters.PeakWorkingSetSize;
 #endif
-            const bool complete = (run.run.termination_reason == sol::TerminationReason::budget_exhausted ||
-                                   run.run.termination_reason == sol::TerminationReason::search_stalled) &&
-                                  run.run.diagnostic_code != "PHYSICAL_DEADLINE" &&
-                                  run.spectral_stats.correlations >= (ulamok ? 48 : 2) && checked.validated_solution &&
-                                  run.run.best->solution->copies().size() >= (ulamok ? 36 : 2) &&
-                                  (!user_profile || (profile.first_valid36_ms && profile.first_published36_ms &&
-                                                     run.baseline_stats.search_passes == 24 &&
-                                                     run.spectral_stats.refinement_evaluations == 128));
+            const bool complete =
+                (run.run.termination_reason == sol::TerminationReason::budget_exhausted ||
+                 run.run.termination_reason == sol::TerminationReason::search_stalled) &&
+                run.run.diagnostic_code != "PHYSICAL_DEADLINE" &&
+                run.spectral_stats.correlations >= (ulamok ? 48 : 2) && checked.validated_solution &&
+                run.run.best->solution->copies().size() >= (ulamok         ? 36
+                                                            : pryanik_many ? 280
+                                                                           : 2) &&
+                (!user_profile ||
+                 (profile.first_valid36_ms && profile.first_published36_ms && run.baseline_stats.search_passes == 24 &&
+                  run.spectral_stats.refinement_evaluations == 128)) &&
+                (!limited_profile ||
+                 (run.spectral_stats.correlations == (ulamok_limited ? 48 : 2) &&
+                  run.baseline_stats.search_passes == (ulamok_limited ? 24 : 1) &&
+                  run.run.stats.candidate_evaluations - run.baseline_stats.candidate_evaluations == 1 &&
+                  run.spectral_stats.refinement_evaluations == 0 && run.field_admission &&
+                  run.field_admission->footprint_copy_count == 0));
             passed &= complete;
             records.push_back({
                 { "ordinal",                                 ordinal                                      },
@@ -402,7 +643,7 @@ int main(int argc, char** argv)
                 { "process_lifetime_peak_working_set_bytes", process_peak                                 },
                 { "best_found",                              bench::snapshot_json(run.run.best)           }
             });
-            if (user_profile) {
+            if (prepared_profile) {
                 records.back()["diagnostic_counters"] = {
                     { "baseline_candidates",      run.baseline_stats.candidate_evaluations  },
                     { "baseline_passes",          run.baseline_stats.search_passes          },
@@ -420,12 +661,14 @@ int main(int argc, char** argv)
                                           ? "accepted-preparation,initial-baseline,independent-revalidation"
                                           : "accepted-preparation";
         std::cout << bench::Json {
-            { "seed",                          user_profile ? bench::Json("42") : bench::Json(nullptr)      },
+            { "seed",                          prepared_profile ? bench::Json("42") : bench::Json(nullptr)  },
             { "seed_note",
              "Native API has no RNG seed; recorded user seed is unused, catalog entries are deterministic." },
-            { "measurement",                   user_profile
-                                 ? "instrumented exact-geometry full work, no wall deadline; not qualified speed"
-                                 : "qualified-profile fixed work"               },
+            { "measurement",
+             limited_profile
+                  ? "limited fixed work: one spectral candidate/pass, zero refinement; not full solve quality"
+              : user_profile ? "instrumented exact-geometry full work, no wall deadline; not qualified speed"
+                             : "qualified-profile fixed work"                                               },
             { "ticket",                        "T-010"                                                      },
             { "profile",                       profile_name                                                 },
             { "source",                        source                                                       },
@@ -435,6 +678,7 @@ int main(int argc, char** argv)
             { "accepted_input_resident_bytes", object->resident_buffer_bytes().value()                      },
             { "host_cap_bytes",                limits.max_working_bytes                                     },
             { "representation_work_cap",       limits.max_representation_kernel_work                        },
+            { "work_limits",                   work_limits(limits)                                          },
             { "scope",                         scope                                                        },
             { "field_work_revision",           geo::detail::validation_kernel::kRasterWorkRevision          },
             { "placed_support_policy",         geo::detail::kPlacedSupportPolicy                            },

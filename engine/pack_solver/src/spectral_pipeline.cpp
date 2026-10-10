@@ -802,8 +802,8 @@ std::optional<RunFailureDetails> spectral_admission(const std::shared_ptr<const 
     auto bytes = current_bytes(owners, limits);
     const auto cap = std::min({ limits.max_working_bytes, limits.per_representation.max_working_bytes,
                                 limits.per_correlation.max_working_bytes });
-    // Bound every per-copy footprint by the full environment. Account arrays
-    // separately from prepare/place metadata, expanded fill/dilation/crop and FFT.
+    // Startup readiness includes fixed buffers and resident solutions. Actual
+    // active-layout footprints are admitted by the pipeline's residency ledger.
     const auto copy_count = retained ? retained->copies().size() : 0;
     const long double halo_value =
         std::ceil(static_cast<long double>(
@@ -833,16 +833,14 @@ std::optional<RunFailureDetails> spectral_admission(const std::shared_ptr<const 
             geometry_bytes.reset();
         }
     }
-    const auto footprints = product(*count, copy_count);
     const auto stencil_width = 2 * static_cast<std::uint64_t>(halo_value) + 1;
     auto stencil = product(stencil_width, stencil_width);
     if (stencil) {
         stencil = product(*stencil, stencil_width);
     }
     const auto team_bytes = geometry::estimate_raster_execution_bytes(limits.cpu_thread_count);
-    if (!bytes || !team_bytes || !add(*bytes, *team_bytes) ||
-        !geometry_bytes || !expanded_cells || !footprints || !stencil || !add(*bytes, *geometry_bytes) ||
-        !add_optional(*bytes, product(*footprints, sizeof(std::size_t))) ||
+    if (!bytes || !team_bytes || !add(*bytes, *team_bytes) || !geometry_bytes || !expanded_cells || !stencil ||
+        !add(*bytes, *geometry_bytes) ||
         (retained && (!add_optional(*bytes, pose_bytes(retained->copies())) ||
                       !add_optional(*bytes, product(copy_count, 2 * sizeof(void*))))) ||
         !add_optional(*bytes, product(*count, 15)) || !add_optional(*bytes, product(*expanded_cells, 10)) ||

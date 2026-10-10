@@ -8,6 +8,7 @@
 #include <limits>
 #include <new>
 #include <numbers>
+#include <span>
 #include <string>
 #include <utility>
 #include <variant>
@@ -27,6 +28,11 @@ constexpr std::uint64_t kSeedScratchBytes =
     sizeof(std::array<Matrix, 24>) + sizeof(std::array<int, 3>);
 // A non-elided return can coexist with its source outcome and run control.
 constexpr std::uint64_t kBaselineMetadataBytes = 2 * sizeof(BaselineOutcome) + sizeof(RunControl);
+constexpr std::uint64_t kPendingPoseMetadataBytes = sizeof(std::vector<geometry::CopyPose>)
+#if defined(_MSC_VER) && defined(_DEBUG)
+                                                    + sizeof(std::_Container_proxy)
+#endif
+    ;
 
 enum class Boundary { none, stopped, deadline };
 
@@ -420,19 +426,22 @@ std::optional<std::uint64_t> resident_bytes(
   return bytes;
 }
 
-std::optional<std::uint64_t> live_bytes(
-    std::uint64_t base, const std::vector<geometry::Quaternion>& seeds,
-    const std::vector<geometry::CopyPose>& working,
-    const std::shared_ptr<const geometry::ValidatedSolution>& best,
-    std::uint64_t incumbent_bytes) noexcept {
-  std::uint64_t bytes = base;
-  if (!add_optional(bytes, checked_product(seeds.capacity(), sizeof(geometry::Quaternion))) ||
-      !add_optional(bytes, pose_bytes(working, true)) ||
-      !add_optional(bytes, solution_bytes(best)) ||
-      !checked_add(bytes, incumbent_bytes)) {
-    return {};
-  }
-  return bytes;
+std::optional<std::uint64_t> live_bytes(std::uint64_t base, const std::vector<geometry::Quaternion>& seeds,
+                                        const std::vector<geometry::CopyPose>& working,
+                                        const std::shared_ptr<const geometry::ValidatedSolution>& best,
+                                        std::uint64_t incumbent_bytes,
+                                        const std::vector<geometry::CopyPose>* pending = nullptr) noexcept
+{
+    std::uint64_t bytes = base;
+    if (!add_optional(bytes, checked_product(seeds.capacity(), sizeof(geometry::Quaternion))) ||
+        !add_optional(bytes, pose_bytes(working, true)) || !add_optional(bytes, solution_bytes(best)) ||
+        !checked_add(bytes, incumbent_bytes)) {
+        return {};
+    }
+    if (pending && (!checked_add(bytes, kPendingPoseMetadataBytes) || !add_optional(bytes, pose_bytes(*pending, true)))) {
+        return {};
+    }
+    return bytes;
 }
 
 struct CopyIdBuffer {
@@ -454,18 +463,26 @@ CopyIdBuffer copy_id_buffer(std::size_t seed,
   return result;
 }
 
-std::optional<std::uint64_t> proposed_pose_bytes(
-    const std::vector<geometry::CopyPose>& working,
-    std::size_t new_id_size) noexcept {
-  auto bytes = checked_product(working.size() + 1, sizeof(geometry::CopyPose));
-  if (!bytes) return {};
-  for (const auto& copy : working) {
-    if (!checked_add(*bytes, static_cast<std::uint64_t>(copy.copy_id.capacity()) + 1)) {
-      return {};
+std::optional<std::uint64_t> proposed_pose_bytes(const std::vector<geometry::CopyPose>& working,
+                                                 std::span<const geometry::CopyPose> pending) noexcept
+{
+    if (pending.size() > std::numeric_limits<std::size_t>::max() - working.size()) {
+        return {};
     }
-  }
-  if (!checked_add(*bytes, static_cast<std::uint64_t>(new_id_size) + 1)) return {};
-  return bytes;
+    auto bytes = checked_product(working.size() + pending.size(), sizeof(geometry::CopyPose));
+    if (!bytes)
+        return {};
+    for (const auto& copy : working) {
+        if (!checked_add(*bytes, static_cast<std::uint64_t>(copy.copy_id.capacity()) + 1)) {
+            return {};
+        }
+    }
+    for (const auto& copy : pending) {
+        if (!checked_add(*bytes, static_cast<std::uint64_t>(copy.copy_id.capacity()) + 1)) {
+            return {};
+        }
+    }
+    return bytes;
 }
 
 }  // namespace
@@ -718,17 +735,30 @@ BaselineOutcome run_aabb_baseline_impl(
       ++out.stats.orientations_started;
 
       std::vector<geometry::CopyPose> working;
-      auto live = live_bytes(*base, seeds, working, admitted_solution,
-                             incumbent_bytes);
+      auto pending_preflight = live_bytes(*base, seeds, working, admitted_solution, incumbent_bytes);
+      if (!pending_preflight || !checked_add(*pending_preflight, kPendingPoseMetadataBytes) ||
+          !update_peak(out.stats, *pending_preflight, limits)) {
+          retain_best();
+          out.termination_reason = TerminationReason::resource_limit;
+          out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
+          return out;
+      }
+      if (const auto before_pending = boundary(control); before_pending != Boundary::none) {
+          retain_best();
+          apply_boundary(out, before_pending);
+          return out;
+      }
+      // MSVC Debug's default constructor is noexcept despite allocating a proxy.
+      std::vector<geometry::CopyPose> pending(std::size_t {});
+      auto live = live_bytes(*base, seeds, working, admitted_solution, incumbent_bytes, &pending);
       if (!live || !update_peak(out.stats, *live, limits)) {
-        retain_best();
-        out.termination_reason = TerminationReason::resource_limit;
-        out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
-        return out;
+          retain_best();
+          out.termination_reason = TerminationReason::resource_limit;
+          out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
+          return out;
       }
 
-      auto oriented = geometry::oriented_bounds(
-          context->object(), seeds[seed], query_limits(limits, out.stats, *live));
+      auto oriented = geometry::oriented_bounds(context->object(), seeds[seed], query_limits(limits, out.stats, *live));
       if (const auto* failure =
               std::get_if<geometry::PhysicalQueryFailure>(&oriented)) {
         if (!record_geometry(out.stats, failure->stats, *live, limits)) {
@@ -829,6 +859,144 @@ BaselineOutcome run_aabb_baseline_impl(
       bool interrupted = false;
       const bool has_cells =
           grid[0].count != 0 && grid[1].count != 0 && grid[2].count != 0;
+      const std::size_t batch_size = std::holds_alternative<geometry::BoxDimensions>(context->container()) ? 32 : 1;
+      std::uint64_t generated_id = out.stats.candidate_evaluations;
+      enum class Submission { accepted, rejected, terminal };
+      const auto submit = [&](std::span<const geometry::CopyPose> additions) {
+          if (const auto before = boundary(control); before != Boundary::none) {
+              apply_boundary(out, before);
+              return Submission::terminal;
+          }
+          if (additions.size() > remaining(limits.max_candidate_evaluations, out.stats.candidate_evaluations) ||
+              additions.size() > remaining(limits.max_copies, working.size())) {
+              out.termination_reason = TerminationReason::budget_exhausted;
+              out.diagnostic_code = "PHYSICAL_CANDIDATE_LIMIT";
+              return Submission::terminal;
+          }
+          const auto submission_live = live_bytes(*base, seeds, working, admitted_solution, incumbent_bytes, &pending);
+          const auto trial_storage = proposed_pose_bytes(working, additions);
+          // The factory's private copy coexists with its by-value input.
+          std::uint64_t candidate_live = submission_live.value_or(UINT64_MAX);
+          if (!submission_live || !add_optional(candidate_live, trial_storage) ||
+              !add_optional(candidate_live, trial_storage) ||
+              !checked_add(candidate_live, sizeof(geometry::Candidate) + 2 * detail::kSharedOwnerControlBytes) ||
+              !update_peak(out.stats, candidate_live, limits)) {
+              out.termination_reason = TerminationReason::resource_limit;
+              out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
+              return Submission::terminal;
+          }
+          detail::allocation_point();
+          std::vector<geometry::CopyPose> trial;
+          trial.reserve(working.size() + additions.size());
+          trial.insert(trial.end(), working.begin(), working.end());
+          trial.insert(trial.end(), additions.begin(), additions.end());
+          detail::allocation_point();
+          auto made = geometry::make_candidate(context, std::move(trial));
+          if (!std::holds_alternative<std::shared_ptr<const geometry::Candidate>>(made)) {
+              out.termination_reason = TerminationReason::error;
+              out.diagnostic_code = "PHYSICAL_CANDIDATE_ERROR";
+              return Submission::terminal;
+          }
+          if (const auto before = boundary(control); before != Boundary::none) {
+              apply_boundary(out, before);
+              return Submission::terminal;
+          }
+          auto candidate = std::get<std::shared_ptr<const geometry::Candidate>>(std::move(made));
+          out.stats.candidate_evaluations += additions.size();
+          auto checked = [&] {
+              detail::BaselineProfileTimer profile(detail::BaselineProfilePhase::validation, profile_seed,
+                                                   out.stats.candidate_evaluations);
+              auto value =
+                  geometry::validate(context, candidate, validation_limits(limits, out.stats, candidate_live), control);
+              profile.result(candidate->copies().size(), static_cast<bool>(value.validated_solution));
+              return value;
+          }();
+          if (!record_validation(out.stats, checked.report, candidate_live, limits)) {
+              out.termination_reason = TerminationReason::resource_limit;
+              out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
+              return Submission::terminal;
+          }
+          if (!checked.validated_solution) {
+              if (checked.report.validity == geometry::Validity::invalid) {
+                  ++out.stats.invalid_candidates;
+                  return Submission::rejected;
+              }
+              ++out.stats.indeterminate_candidates;
+              if (resource_code(checked.report.code)) {
+                  out.termination_reason = TerminationReason::resource_limit;
+                  out.diagnostic_code = "PHYSICAL_VALIDATION_RESOURCE";
+                  out.failure_details = RunFailureDetails {
+                      TerminationReason::resource_limit, "baseline_validation", checked.report.code, {}, {}
+                  };
+                  return Submission::terminal;
+              }
+              if (checked.report.code == "KERNEL_FLOATING_ENVIRONMENT") {
+                  out.termination_reason = TerminationReason::error;
+                  out.diagnostic_code = "PHYSICAL_FLOATING_ENVIRONMENT";
+                  return Submission::terminal;
+              }
+              if (checked.report.code == "OPERATION_CANCELLED" || checked.report.code == "DEADLINE_EXCEEDED") {
+                  apply_boundary(out,
+                                 checked.report.code == "OPERATION_CANCELLED" ? Boundary::stopped : Boundary::deadline);
+                  return Submission::terminal;
+              }
+              return Submission::rejected;
+          }
+          auto replacement_live = candidate_live;
+          if (!add_optional(replacement_live, pose_bytes(checked.validated_solution->copies(), false)) ||
+              !update_peak(out.stats, replacement_live, limits)) {
+              out.termination_reason = TerminationReason::resource_limit;
+              out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
+              return Submission::terminal;
+          }
+          detail::allocation_point();
+          working = checked.validated_solution->copies();
+          auto offer_live = live_bytes(*base, seeds, working, admitted_solution, incumbent_bytes, &pending);
+          if (!offer_live || !add_optional(*offer_live, solution_bytes(checked.validated_solution)) ||
+              !add_optional(*offer_live, retained_report_bytes(checked.report)) ||
+              !update_peak(out.stats, *offer_live, limits)) {
+              out.termination_reason = TerminationReason::resource_limit;
+              out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
+              return Submission::terminal;
+          }
+          if (!offer(checked.validated_solution, *offer_live)) {
+              return Submission::terminal;
+          }
+          return Submission::accepted;
+      };
+      const auto flush = [&] {
+          if (pending.empty()) {
+              return true;
+          }
+          const auto result = submit(pending);
+          if (result == Submission::terminal) {
+              return false;
+          }
+          if (result == Submission::rejected && pending.size() > 1) {
+              for (const auto& pose : pending) {
+                  if (submit({ &pose, 1 }) == Submission::terminal) {
+                      return false;
+                  }
+              }
+          }
+          pending.clear();
+          return true;
+      };
+      if (has_cells && limits.max_copies && out.stats.candidate_evaluations < limits.max_candidate_evaluations) {
+          auto pending_live = live;
+          const auto capacity =
+              std::min<std::uint64_t>({ batch_size, limits.max_copies,
+                                        remaining(limits.max_candidate_evaluations, out.stats.candidate_evaluations) });
+          if (!pending_live || !add_optional(*pending_live, checked_product(capacity, sizeof(geometry::CopyPose))) ||
+              !update_peak(out.stats, *pending_live, limits)) {
+              retain_best();
+              out.termination_reason = TerminationReason::resource_limit;
+              out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
+              return out;
+          }
+          detail::allocation_point();
+          pending.reserve(static_cast<std::size_t>(capacity));
+      }
       for (std::uint64_t z = 0; z != grid[2].count && !interrupted && has_cells; ++z) {
         for (std::uint64_t y = 0; y != grid[1].count && !interrupted; ++y) {
           for (std::uint64_t x = 0; x != grid[0].count; ++x) {
@@ -847,8 +1015,7 @@ BaselineOutcome run_aabb_baseline_impl(
               break;
             }
 
-            live = live_bytes(*base, seeds, working, admitted_solution,
-                              incumbent_bytes);
+            live = live_bytes(*base, seeds, working, admitted_solution, incumbent_bytes, &pending);
             if (!live || !update_peak(out.stats, *live, limits)) {
               out.termination_reason = TerminationReason::resource_limit;
               out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
@@ -883,109 +1050,34 @@ BaselineOutcome run_aabb_baseline_impl(
             }
             if (interrupted) break;
 
-            const auto id = copy_id_buffer(seed, out.stats.candidate_evaluations);
-            const auto trial_storage = proposed_pose_bytes(working, id.size);
-            // make_candidate deliberately copies its by-value input into private
-            // storage, so both equal buffers are live at the factory boundary.
-            const auto candidate_storage = trial_storage;
-            std::uint64_t candidate_live = *live;
-            if (!add_optional(candidate_live, trial_storage) ||
-                !add_optional(candidate_live, candidate_storage) ||
-                !checked_add(candidate_live,
-                             sizeof(geometry::Candidate) +
-                                 2 * detail::kSharedOwnerControlBytes) ||
-                !update_peak(out.stats, candidate_live, limits)) {
-              out.termination_reason = TerminationReason::resource_limit;
-              out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
-              interrupted = true;
-              break;
-            }
-
-            detail::allocation_point();
-            std::vector<geometry::CopyPose> trial;
-            trial.reserve(working.size() + 1);
-            trial.insert(trial.end(), working.begin(), working.end());
-            trial.push_back({std::string(id.text.data(), id.size), point,
-                             seeds[seed]});
-            detail::allocation_point();
-            auto made = geometry::make_candidate(context, std::move(trial));
-            if (!std::holds_alternative<std::shared_ptr<const geometry::Candidate>>(made)) {
-              out.termination_reason = TerminationReason::error;
-              out.diagnostic_code = "PHYSICAL_CANDIDATE_ERROR";
-              interrupted = true;
-              break;
-            }
-            ++out.stats.candidate_evaluations;
-            auto candidate =
-                std::get<std::shared_ptr<const geometry::Candidate>>(std::move(made));
-            auto checked = [&] {
-                detail::BaselineProfileTimer profile(detail::BaselineProfilePhase::validation, profile_seed,
-                                                     out.stats.candidate_evaluations);
-                auto value = geometry::validate(context, candidate,
-                                                validation_limits(limits, out.stats, candidate_live), control);
-                profile.result(candidate->copies().size(), static_cast<bool>(value.validated_solution));
-                return value;
-            }();
-            if (!record_validation(out.stats, checked.report, candidate_live, limits)) {
-              out.termination_reason = TerminationReason::resource_limit;
-              out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
-              interrupted = true;
-              break;
-            }
-            if (!checked.validated_solution) {
-              if (checked.report.validity == geometry::Validity::invalid) {
-                ++out.stats.invalid_candidates;
-                continue;
-              }
-              ++out.stats.indeterminate_candidates;
-              if (resource_code(checked.report.code)) {
+            const auto id = copy_id_buffer(seed, generated_id++);
+            // Reserve the complete bounded ID before construction, including
+            // the implementation's inline-string capacity.
+            auto pending_live = live_bytes(*base, seeds, working, admitted_solution, incumbent_bytes, &pending);
+            if (!pending_live || !checked_add(*pending_live, id.text.size() + 1) ||
+                !update_peak(out.stats, *pending_live, limits)) {
                 out.termination_reason = TerminationReason::resource_limit;
-                out.diagnostic_code = "PHYSICAL_VALIDATION_RESOURCE";
-                out.failure_details = RunFailureDetails {
-                    TerminationReason::resource_limit, "baseline_validation", checked.report.code, {}, {}
-                };
+                out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
                 interrupted = true;
                 break;
-              }
-              if (checked.report.code == "KERNEL_FLOATING_ENVIRONMENT") {
-                out.termination_reason = TerminationReason::error;
-                out.diagnostic_code = "PHYSICAL_FLOATING_ENVIRONMENT";
-                interrupted = true;
-                break;
-              }
-
-              continue;
-            }
-
-            const auto replacement_storage =
-                pose_bytes(checked.validated_solution->copies(), false);
-            std::uint64_t replacement_live = candidate_live;
-            if (!add_optional(replacement_live, replacement_storage) ||
-                !update_peak(out.stats, replacement_live, limits)) {
-              out.termination_reason = TerminationReason::resource_limit;
-              out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
-              interrupted = true;
-              break;
             }
             detail::allocation_point();
-            working = checked.validated_solution->copies();
-
-            auto offer_live = live_bytes(*base, seeds, working,
-                                         admitted_solution, incumbent_bytes);
-            if (!offer_live ||
-                !add_optional(*offer_live,
-                              solution_bytes(checked.validated_solution)) ||
-                !add_optional(*offer_live,
-                              retained_report_bytes(checked.report)) ||
-                !update_peak(out.stats, *offer_live, limits) ||
-                !offer(checked.validated_solution, *offer_live)) {
-              interrupted = true;
-              break;
+            pending.push_back({ std::string(id.text.data(), id.size), point, seeds[seed] });
+            const auto target = working.empty() ? 1 : batch_size;
+            if ((pending.size() >= target ||
+                 pending.size() >= remaining(limits.max_candidate_evaluations, out.stats.candidate_evaluations) ||
+                 pending.size() >= remaining(limits.max_copies, working.size())) &&
+                !flush()) {
+                interrupted = true;
+                break;
             }
           }
         }
       }
 
+      if (!interrupted && !flush()) {
+          interrupted = true;
+      }
       if (interrupted) {
         retain_best();
         return out;

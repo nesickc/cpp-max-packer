@@ -158,6 +158,13 @@ TEST_CASE("T010 blocked clone preserves overlapping footprints and source owners
         }
     }
     CHECK(attempt.kernel_work >= 343);
+    geo::RepresentationLimits exact_clone_limits;
+    exact_clone_limits.max_working_bytes = attempt.working_bytes_peak;
+    geo::RepresentationAttemptStats exact_clone_stats;
+    const auto exact_clone = source->clone(exact_clone_limits, exact_clone_stats);
+    REQUIRE(std::holds_alternative<std::unique_ptr<geo::BlockedField>>(exact_clone));
+    CHECK(exact_clone_stats.working_bytes_peak <= exact_clone_limits.max_working_bytes);
+    CHECK(std::get<std::unique_ptr<geo::BlockedField>>(exact_clone)->placed_count({ 3, 3, 3 }) == 2);
     REQUIRE_FALSE(copy->remove("a"));
     CHECK(copy->placed_count({ 3, 3, 3 }) == 1);
     CHECK(source->placed_count({ 3, 3, 3 }) == 2);
@@ -205,4 +212,87 @@ TEST_CASE("T010 blocked clone preserves overlapping footprints and source owners
     CHECK(partial.admitted_bytes_upper_bound == cap.max_working_bytes);
     CHECK(source->placed_count({ 3, 3, 3 }) == 2);
 #endif
+}
+
+TEST_CASE("T010 actual footprint growth admits old and staged owners at its exact cap",
+          "[fields][T010][footprint-growth]")
+{
+    const geo::GridWindow window {
+        { {}, 1 },
+        {},
+        { 7, 7, 7 }
+    };
+    const auto geometry = std::get<std::shared_ptr<const geo::VoxelGeometry>>(geo::prepare_voxel_geometry(
+        ts::accepted(ts::cuboid({ -.1, -.1, -.1 }, { .1, .1, .1 }), geo::AssetRole::object)));
+    const auto field =
+        std::get<std::shared_ptr<const geo::CellField>>(geo::voxelize_placed(geometry, window,
+                                                                             {
+                                                                                 "a", { 3, 3, 3 },
+                                                                                  { 0, 0, 0, 1 }
+    },
+                                                                             1.5));
+    const auto mask = std::get<std::shared_ptr<const geo::CellField>>(
+        geo::voxelize_container(geo::BoxDimensions { 7, 7, 7 }, window, 0));
+    auto source = std::get<std::unique_ptr<geo::BlockedField>>(geo::make_blocked_field(mask));
+    REQUIRE_FALSE(source->add("a", field));
+    REQUIRE_FALSE(source->add("b", field));
+    const auto clone = [&] {
+        geo::RepresentationAttemptStats stats;
+        return std::get<std::unique_ptr<geo::BlockedField>>(source->clone({}, stats));
+    };
+    const auto old_owner_reserve = [&](const geo::BlockedField& staged) {
+        const auto old = source->representation_residency();
+        const auto current = staged.representation_residency();
+        REQUIRE(old);
+        REQUIRE(current);
+        std::uint64_t reserve {};
+        for (std::uint8_t index = 0; index != old->count; ++index) {
+            const auto& block = old->blocks[index];
+            const bool shared =
+                std::any_of(current->blocks.begin(), current->blocks.begin() + current->count, [&](const auto& other) {
+                return block.identity == other.identity && block.kind == other.kind;
+            });
+            if (!shared) {
+                reserve += block.bytes;
+            }
+        }
+        return reserve;
+    };
+    std::uint64_t required {};
+    {
+        auto staged = clone();
+        geo::RepresentationLimits limits;
+        limits.reserved_bytes = old_owner_reserve(*staged);
+        REQUIRE(limits.reserved_bytes > 0);
+        geo::RepresentationAttemptStats stats;
+        REQUIRE_FALSE(staged->add("c", field, limits, stats));
+        // Representation attempt peaks exclude the caller's reserved owners.
+        required = stats.admitted_bytes_upper_bound + limits.reserved_bytes;
+        REQUIRE(required >= stats.working_bytes_peak + limits.reserved_bytes);
+        CHECK(staged->placed_count({ 3, 3, 3 }) == 3);
+        CHECK(source->placed_count({ 3, 3, 3 }) == 2);
+    }
+    for (const bool exact : { false, true }) {
+        auto staged = clone();
+        geo::RepresentationLimits limits;
+        limits.reserved_bytes = old_owner_reserve(*staged);
+        limits.max_working_bytes = required - !exact;
+        geo::RepresentationAttemptStats stats;
+        const auto failure = staged->add("c", field, limits, stats);
+        CAPTURE(exact, required, limits.reserved_bytes);
+        CHECK(stats.working_bytes_peak + limits.reserved_bytes <= limits.max_working_bytes);
+        CHECK(source->placed_count({ 3, 3, 3 }) == 2);
+        if (exact) {
+            CHECK_FALSE(failure);
+            CHECK(staged->placed_count({ 3, 3, 3 }) == 3);
+        }
+        else {
+            REQUIRE(failure);
+            CHECK(failure->code == "FIELD_MEMORY_LIMIT");
+            CHECK(staged->placed_count({ 3, 3, 3 }) == 2);
+            limits.max_working_bytes = UINT64_MAX;
+            REQUIRE_FALSE(staged->add("c", field, limits, stats));
+            CHECK(staged->placed_count({ 3, 3, 3 }) == 3);
+        }
+    }
 }

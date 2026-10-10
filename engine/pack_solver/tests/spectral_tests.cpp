@@ -8,6 +8,7 @@
 #include <cfenv>
 #include <cmath>
 #include <cstdlib>
+#include <exception>
 #include <limits>
 #include <memory>
 #include <new>
@@ -660,12 +661,20 @@ TEST_CASE("T011 candidate validation distinguishes resource FPU and control fail
 {
     namespace runtime = spectrapack::runtime;
     const auto context = default_fixed_context();
-    const auto initial = native_solution(context, { { "initial", { 1, 1, 1 }, { 0, 0, 0, 1 } } });
+    const auto initial = native_solution(context, {
+                                                      { "initial", { 1, 1, 1 }, { 0, 0, 0, 1 } }
+    });
+    const auto empty_candidate = geo::make_candidate(context, {});
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(empty_candidate));
+    const auto empty = geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(empty_candidate));
+    REQUIRE(empty.validated_solution);
     for (const int mode : { 0, 1, 2, 3, 4 }) {
         struct Interrupt {
             int mode;
             bool expired {};
+            bool saw_fft {};
             unsigned visits {};
+            unsigned empty_visits {};
             std::stop_source stop;
             runtime::Clock::time_point cutoff { runtime::Clock::now() + std::chrono::hours(1) };
         } interrupt { mode };
@@ -679,10 +688,10 @@ TEST_CASE("T011 candidate validation distinguishes resource FPU and control fail
         limits.spectral.max_search_passes = 1;
         limits.max_refinement_evaluations = 1;
         if (mode == 0) {
-            limits.spectral.per_validation.max_kernel_work = 0;
+            limits.spectral.per_validation.max_kernel_work = empty.report.kernel_work;
         }
         if (mode == 4) {
-            limits.spectral.per_validation.max_working_bytes = 0;
+            limits.spectral.per_validation.max_working_bytes = empty.report.working_bytes_peak;
         }
         solver::RunControl control { interrupt.stop.get_token(), interrupt.cutoff };
         control.now_context = control.phase_context = &interrupt;
@@ -692,7 +701,13 @@ TEST_CASE("T011 candidate validation distinguishes resource FPU and control fail
         };
         control.phase_sink = [](void* state, runtime::Phase phase) noexcept {
             auto& interrupt = *static_cast<Interrupt*>(state);
-            if (phase == runtime::Phase::validating) {
+            if (phase == runtime::Phase::planning_fft) {
+                interrupt.saw_fft = true;
+            }
+            if (phase == runtime::Phase::validating && !interrupt.saw_fft) {
+                ++interrupt.empty_visits;
+            }
+            else if (phase == runtime::Phase::validating) {
                 ++interrupt.visits;
                 if (interrupt.mode == 1) {
                     interrupt.stop.request_stop();
@@ -708,7 +723,13 @@ TEST_CASE("T011 candidate validation distinguishes resource FPU and control fail
         const auto outcome = solver::run_cpu_spectral(context, { {}, .5 }, limits, control, {}, initial);
         std::fesetround(rounding_reset.original);
         CAPTURE(mode, outcome.run.diagnostic_code);
+        REQUIRE(interrupt.saw_fft);
+        REQUIRE(interrupt.empty_visits == 1);
         REQUIRE(interrupt.visits == 1);
+        CHECK(outcome.spectral_stats.correlations == 2);
+        CHECK(outcome.run.stats.candidate_evaluations == 1);
+        CHECK(outcome.run.stats.validation_kernel_work >=
+              outcome.baseline_stats.validation_kernel_work + empty.report.kernel_work);
         REQUIRE(outcome.run.best);
         CHECK(outcome.run.best->solution == initial);
         CHECK(geo::revalidate(outcome.run.best->solution).report.validity == geo::Validity::valid);
@@ -1757,10 +1778,10 @@ TEST_CASE("AT-16 spectral wrapper accounts copied long ids during proposal valid
     solver::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
-    limits.spectral.max_candidate_evaluations = 32;
+    limits.spectral.max_candidate_evaluations = 512;
     limits.spectral.max_search_passes = 2;
-    limits.spectral.max_copies = 3;
-    limits.max_refinement_evaluations = 32;
+    limits.spectral.max_copies = 4;  // Above physical capacity, so fresh search completes.
+    limits.max_refinement_evaluations = 512;
     limits.per_representation.max_cells = 10'000;
     limits.per_correlation.max_padded_cells = 10'000;
     const auto run = [&](const std::shared_ptr<const geo::ValidatedSolution>& initial,
@@ -1773,12 +1794,24 @@ TEST_CASE("AT-16 spectral wrapper accounts copied long ids during proposal valid
                                         run_limits, {}, {}, initial);
     };
 
+    auto fresh_limits = limits;
+    fresh_limits.spectral.max_search_passes = 1;
+    const auto fresh = run(short_initial, fresh_limits);
+    REQUIRE(fresh.run.stats.search_passes == 1);
+    REQUIRE(fresh.run.best);
+    REQUIRE(fresh.run.best->score.count == 3);
+    // Fund exactly the first retained-layout proposal after the completed fresh trial.
+    limits.spectral.max_candidate_evaluations = fresh.run.stats.candidate_evaluations + 1;
     const auto short_run = run(short_initial, limits);
     const auto long_run = run(long_initial, limits);
     REQUIRE(short_run.run.best);
     REQUIRE(long_run.run.best);
     REQUIRE(short_run.run.best->solution->copies().size() == 3);
     REQUIRE(long_run.run.best->solution->copies().size() == 3);
+    REQUIRE(short_run.run.stats.search_passes == 1);
+    REQUIRE(long_run.run.stats.search_passes == 1);
+    REQUIRE(long_run.run.stats.candidate_evaluations == fresh.run.stats.candidate_evaluations + 1);
+    REQUIRE(long_run.run.stats.validation_kernel_work > fresh.run.stats.validation_kernel_work);
     const auto id_capacity_delta =
         long_initial->copies().front().copy_id.capacity() - short_initial->copies().front().copy_id.capacity();
     REQUIRE(id_capacity_delta > 0);
@@ -1805,10 +1838,10 @@ TEST_CASE("AT-16 spectral wrapper accounts copied long ids during proposal valid
     REQUIRE_FALSE(limited_publications.empty());
     CHECK(limited.run.best == limited_publications.back());
     CHECK(limited.run.retained_solution == limited_publications.back()->solution);
-    CHECK(limited.run.best->solution->copies().size() < long_run.run.best->solution->copies().size());
+    CHECK(limited.run.best->score.count >= fresh.run.best->score.count);
     REQUIRE(long_run.run.stats.candidate_evaluations >= 2);
     CHECK(limited.run.stats.candidate_evaluations <= long_run.run.stats.candidate_evaluations);
-    CHECK(limited.run.retained_solution == long_initial);
+    CHECK(geo::revalidate(limited.run.retained_solution).validated_solution);
     REQUIRE(limited.run.failure_details);
     CHECK(limited.run.failure_details->reason == solver::TerminationReason::resource_limit);
     CHECK(limited.run.failure_details->cause_code() == "FIELD_MEMORY_LIMIT");
@@ -1816,7 +1849,7 @@ TEST_CASE("AT-16 spectral wrapper accounts copied long ids during proposal valid
 
 TEST_CASE("AT-16 candidate id ownership bounds real spectral validation", "[solver][T010][AT-16][wrapper]")
 {
-    // Many independently accepted closed components retain the unit envelope,
+    // Many independently accepted closed components retain a .875 envelope,
     // but real validation preparation/placements need more scratch than copying
     // two ID buffers. This distinguishes candidate ownership from field caching.
     geo::test_support::Mesh mesh;
@@ -1831,34 +1864,71 @@ TEST_CASE("AT-16 candidate id ownership bounds real spectral validation", "[solv
     const auto accepted = geo::test_support::accepted(mesh, geo::AssetRole::object);
     geo::Constraints constraints;
     constraints.orientations.mode = geo::OrientationMode::fixed;
-    const auto made = geo::make_validation_context(accepted, geo::BoxDimensions { 3, 1, 1 }, constraints);
+    const auto made = geo::make_validation_context(accepted, geo::BoxDimensions { 2, 1, 1 }, constraints);
     REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
     const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
     const geo::Quaternion identity { 0, 0, 0, 1 };
     const std::string long_id(8192, 'x');
     const auto initial = native_solution(context, {
-                                                      { long_id, { 1.4, .5, .5 }, identity }
+                                                      { long_id, { 1.5, .5, .5 }, identity }
     });
     const auto short_initial = native_solution(context, {
-                                                            { "s", { 1.4, .5, .5 }, identity }
+                                                            { "s", { 1.5, .5, .5 }, identity }
     });
     solver::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
-    limits.spectral.max_candidate_evaluations = 1;
-    limits.spectral.max_search_passes = 1;
+    limits.spectral.max_candidate_evaluations = 512;
+    limits.spectral.max_search_passes = 2;
     limits.spectral.max_copies = 3;
+    limits.max_refinement_evaluations = 0;
     limits.per_representation.max_cells = 10'000;
     limits.per_correlation.max_padded_cells = 10'000;
+    {
+        const auto witness = native_solution(
+            context, {
+                         { "left",  { .5, .5, .5 },  identity },
+                         { "right", { 1.5, .5, .5 }, identity }
+        });
+        REQUIRE(witness->copies().size() == 2);
+        const solver::OrientationCatalog catalog { 1, { identity } };
+        const auto pipeline = solver::detail::build_spectral_pipeline(context, { {}, .5 }, limits, initial, catalog);
+        CAPTURE(pipeline.diagnostic);
+        REQUIRE(pipeline.complete);
+        REQUIRE(pipeline.ranked_candidates);
+        // Ranked translations are lattice-cell indices: {1,1,1} is {.5,.5,.5}mm.
+        REQUIRE(std::any_of(pipeline.ranked_candidates->begin(), pipeline.ranked_candidates->end(),
+                            [](const auto& candidate) {
+            return candidate.translation == geo::CellIndex { 1, 1, 1 } && candidate.direct_zero_overlap;
+        }));
+    }
     const auto run = [&](const std::shared_ptr<const geo::ValidatedSolution>& seed,
                          const solver::SpectralLimits& allowance, solver::SnapshotSink sink = {}) {
         return solver::run_cpu_spectral(context, { {}, .5 }, allowance, {}, std::move(sink), seed);
     };
+    auto fresh_limits = limits;
+    fresh_limits.spectral.max_search_passes = 1;
+    const auto fresh = run(short_initial, fresh_limits);
+    CAPTURE(static_cast<int>(fresh.run.termination_reason), fresh.run.diagnostic_code,
+            fresh.run.stats.candidate_evaluations, fresh.run.stats.search_passes,
+            fresh.run.best ? fresh.run.best->score.count : 0, fresh.run.stats.validation_kernel_work,
+            fresh.run.stats.geometry_kernel_work, fresh.run.stats.invalid_candidates,
+            fresh.run.stats.indeterminate_candidates, fresh.spectral_stats.correlations,
+            fresh.spectral_stats.refinement_evaluations, fresh.spectral_stats.representation_kernel_work,
+            fresh.spectral_stats.direct_terms, fresh.spectral_stats.proximity_terms,
+            fresh.field_admission ? fresh.field_admission->working_bytes_upper_bound : 0,
+            fresh.run.failure_details ? fresh.run.failure_details->cause_code() : std::string_view {});
+    REQUIRE(fresh.run.stats.search_passes == 1);
+    REQUIRE(fresh.run.best);
+    REQUIRE((fresh.run.best->score.count == 1 || fresh.run.best->score.count == 2));
+    limits.spectral.max_candidate_evaluations = fresh.run.stats.candidate_evaluations + 1;
     const auto measured = run(initial, limits);
     const auto measured_short = run(short_initial, limits);
     REQUIRE(measured.run.best);
     REQUIRE(measured.run.best->solution->copies().size() == 2);
-    REQUIRE(measured.run.stats.candidate_evaluations > 0);
+    REQUIRE(measured.run.stats.search_passes == 1);
+    REQUIRE(measured.run.stats.candidate_evaluations == fresh.run.stats.candidate_evaluations + 1);
+    REQUIRE(measured.run.stats.validation_kernel_work > fresh.run.stats.validation_kernel_work);
     REQUIRE(measured_short.run.best);
     REQUIRE(measured_short.run.best->solution->copies().size() == 2);
     const auto id_bytes =
@@ -1869,6 +1939,8 @@ TEST_CASE("AT-16 candidate id ownership bounds real spectral validation", "[solv
     auto capped = limits;
     capped.max_working_bytes = measured_short.run.stats.tracked_working_bytes_peak + 3 * id_bytes + id_bytes / 2;
     capped.spectral.max_working_bytes = capped.max_working_bytes;
+    CAPTURE(capped.max_working_bytes, measured.run.stats.tracked_working_bytes_peak);
+    REQUIRE(measured.run.stats.tracked_working_bytes_peak > capped.max_working_bytes);
     std::vector<solver::SnapshotHandle> publications;
     const auto limited = run(initial, capped, [&](solver::SnapshotHandle snapshot) {
         publications.push_back(std::move(snapshot));
@@ -1878,7 +1950,8 @@ TEST_CASE("AT-16 candidate id ownership bounds real spectral validation", "[solv
             limited.run.stats.candidate_evaluations);
     REQUIRE(short_control.run.best);
     CHECK(short_control.run.best->solution->copies().size() == 2);
-    CHECK(limited.run.stats.candidate_evaluations > 0);
+    CHECK(limited.run.stats.search_passes == 1);
+    CHECK(limited.run.stats.candidate_evaluations == fresh.run.stats.candidate_evaluations + 1);
     CHECK(limited.run.termination_reason == solver::TerminationReason::resource_limit);
     CHECK(limited.run.diagnostic_code == "PHYSICAL_VALIDATION_RESOURCE");
     CHECK(limited.run.stats.tracked_working_bytes_peak <= capped.max_working_bytes);
@@ -1886,7 +1959,7 @@ TEST_CASE("AT-16 candidate id ownership bounds real spectral validation", "[solv
     REQUIRE_FALSE(publications.empty());
     CHECK(limited.run.best == publications.back());
     CHECK(limited.run.retained_solution == publications.back()->solution);
-    CHECK(limited.run.retained_solution == initial);
+    CHECK(geo::revalidate(limited.run.retained_solution).validated_solution);
 }
 
 TEST_CASE("AT-16 spectral wrapper retains a validated initial when central allocation fails",
@@ -1936,6 +2009,7 @@ TEST_CASE("AT-16 resolved spectral catches allocation failure after central publ
     limits.per_representation.max_cells = 10'000;
     limits.per_correlation.max_padded_cells = 10'000;
     solver::SpectralOutcome outcome;
+    solver::SnapshotHandle published;
     bool escaped {};
     {
         AllocationFailureReset reset;
@@ -1945,7 +2019,8 @@ TEST_CASE("AT-16 resolved spectral catches allocation failure after central publ
                                                    { 0, 0, 0 },
                                                    .5
             },
-                                               catalog, limits, {}, [&](solver::SnapshotHandle) {
+                                               catalog, limits, {}, [&](solver::SnapshotHandle snapshot) {
+                published = std::move(snapshot);
                 enable_persistent_allocation_failure();
             }, initial);
         }
@@ -1956,6 +2031,9 @@ TEST_CASE("AT-16 resolved spectral catches allocation failure after central publ
 
     CHECK_FALSE(escaped);
     CHECK(outcome.run.termination_reason == solver::TerminationReason::resource_limit);
+    CHECK(outcome.run.diagnostic_code == "SPECTRAL_ALLOCATION_FAILURE");
+    REQUIRE(published);
+    CHECK(outcome.run.best == published);
     CHECK(outcome.run.retained_solution == initial);
 }
 
@@ -2217,8 +2295,10 @@ TEST_CASE(
 {
     const geo::Quaternion identity { 0, 0, 0, 1 };
     const auto context = cuboid_context({ -.5, -.5, -.5 }, { .5, .5, .5 }, { 3, 1, 1 }, { identity });
-    const auto initial = native_solution(context, {
-                                                      { "off-grid", { 1.4, .5, .5 }, identity }
+    const auto initial =
+        native_solution(context, {
+                                     { "left",  { .5, .5, .5 },  identity },
+                                     { "right", { 2.5, .5, .5 }, identity }
     });
     native_solution(context, {
                                  { "a", { .5, .5, .5 },  identity },
@@ -2236,20 +2316,34 @@ TEST_CASE(
     limits.per_representation.max_cells = 10'000;
     limits.per_correlation.max_padded_cells = 10'000;
 
+    auto one_candidate = limits;
+    one_candidate.spectral.max_candidate_evaluations = 1;
+    const auto prefix = solver::run_cpu_spectral(context, { {}, .5 }, one_candidate, {}, {}, initial);
+    REQUIRE(prefix.run.best);
+    CHECK(prefix.run.best->score.count == 2);
+    CHECK(prefix.run.retained_solution == initial);
+    std::vector<std::size_t> publications;
+
     const auto outcome = solver::run_cpu_spectral(context,
                                                   {
                                                       { 0, 0, 0 },
                                                       .5
     },
-                                                  limits, {}, {}, initial);
+                                                  limits, {}, [&](solver::SnapshotHandle snapshot) {
+        publications.push_back(snapshot->score.count);
+    }, initial);
 
     REQUIRE(outcome.run.best);
     CHECK(outcome.run.termination_reason == solver::TerminationReason::budget_exhausted);
     CHECK(outcome.run.diagnostic_code == "SPECTRAL_COPY_LIMIT");
     CHECK(outcome.run.stats.candidate_evaluations < limits.spectral.max_candidate_evaluations);
-    CHECK(outcome.run.stats.search_passes == 1);
+    CHECK(outcome.run.stats.search_passes == 0);
     CHECK(outcome.run.best->solution->copies().size() == 3);
     CHECK(outcome.run.retained_solution != initial);
+    CHECK(std::none_of(publications.begin(), publications.end(), [](auto count) {
+        return count < 2;
+    }));
+    CHECK(geo::revalidate(outcome.run.retained_solution).validated_solution);
 }
 
 TEST_CASE(
@@ -2315,23 +2409,34 @@ TEST_CASE("AT-16 spectral wrapper charges placed-face bounds to the cumulative q
     limits.per_representation.max_cells = 10'000;
     limits.per_correlation.max_padded_cells = 10'000;
 
-    const auto ordinary = solver::run_cpu_spectral(context,
-                                                   {
-                                                       { 0, 0, 0 },
-                                                       .5
-    },
-                                                   limits, {}, {}, initial);
-    REQUIRE(ordinary.run.stats.geometry_kernel_work >= ordinary.baseline_stats.geometry_kernel_work);
-    const auto ordinary_spectral_work =
-        ordinary.run.stats.geometry_kernel_work - ordinary.baseline_stats.geometry_kernel_work;
+    auto prefix_limits = limits;
+    prefix_limits.spectral.max_candidate_evaluations = 1;
+    prefix_limits.max_refinement_evaluations = 1;
+    const auto prefix = solver::run_cpu_spectral(context, { {}, .5 }, prefix_limits, {}, {}, initial);
+    REQUIRE(prefix.run.best);
+    REQUIRE(prefix.run.stats.candidate_evaluations == 1);
+    REQUIRE(prefix.spectral_stats.refinement_evaluations == 1);
+    const auto prefix_work = prefix.run.stats.geometry_kernel_work - prefix.baseline_stats.geometry_kernel_work;
+    const auto catalog =
+        std::get<solver::OrientationCatalog>(solver::make_orientation_catalog(context->constraints().orientations, 1));
+    solver::detail::SpectralWorkspace workspace;
+    const auto empty_pipeline =
+        solver::detail::build_spectral_pipeline(workspace, context, { {}, .5 }, limits, {}, catalog, {});
+    REQUIRE(empty_pipeline.complete);
+    const auto next_pipeline = solver::detail::build_spectral_pipeline(workspace, context, { {}, .5 }, limits,
+                                                                       prefix.run.best->solution, catalog, {});
+    REQUIRE(next_pipeline.complete);
     const auto one_bounds = geo::oriented_bounds(context->object(), identity, {});
     REQUIRE(std::holds_alternative<geo::OrientedBounds>(one_bounds));
     const auto one_bounds_work = std::get<geo::OrientedBounds>(one_bounds).stats.kernel_work;
     REQUIRE(one_bounds_work > 0);
-    REQUIRE(ordinary_spectral_work <= std::numeric_limits<std::uint64_t>::max() - one_bounds_work);
+    const auto next_ranking_work = next_pipeline.ranking_bounds_stats.kernel_work;
+    REQUIRE(prefix_work <= std::numeric_limits<std::uint64_t>::max() - next_ranking_work - one_bounds_work);
 
     limits.max_refinement_evaluations = 32;
-    limits.spectral.max_geometry_kernel_work = ordinary_spectral_work + one_bounds_work;
+    // After one native proposal, fund the next real pipeline ranking and object
+    // bounds query. The following placed-copy bounds query must be refused.
+    limits.spectral.max_geometry_kernel_work = prefix_work + next_ranking_work + one_bounds_work;
     const auto limited = solver::run_cpu_spectral(context,
                                                   {
                                                       { 0, 0, 0 },
@@ -2343,11 +2448,12 @@ TEST_CASE("AT-16 spectral wrapper charges placed-face bounds to the cumulative q
     CHECK(limited.run.stats.geometry_kernel_work - limited.baseline_stats.geometry_kernel_work <=
           limits.spectral.max_geometry_kernel_work);
     CHECK(limited.run.termination_reason == solver::TerminationReason::resource_limit);
-    CHECK(limited.spectral_stats.refinement_evaluations == 0);
-    CHECK(limited.run.stats.candidate_evaluations == ordinary.run.stats.candidate_evaluations);
+    CHECK(limited.run.diagnostic_code == "PHYSICAL_WORK_LIMIT");
+    CHECK(limited.spectral_stats.refinement_evaluations == prefix.spectral_stats.refinement_evaluations);
+    CHECK(limited.run.stats.candidate_evaluations == prefix.run.stats.candidate_evaluations);
     REQUIRE(limited.run.best);
-    REQUIRE(ordinary.run.best);
-    CHECK(limited.run.best->solution->copies().size() == ordinary.run.best->solution->copies().size());
+    CHECK(limited.run.best->score.count == prefix.run.best->score.count);
+    CHECK(geo::revalidate(limited.run.retained_solution).validated_solution);
 }
 
 TEST_CASE("AT-12 spectral rejects a signed-zero nonmember initial before search", "[solver][T007][AT-12][catalog]")
@@ -3202,6 +3308,173 @@ TEST_CASE("AT-12 pipeline refuses cap below retained payload plus new fields", "
     CHECK(geo::revalidate(checked.validated_solution).validated_solution);
 }
 
+TEST_CASE("T010 active footprints admit actual bounded fields in a larger environment",
+          "[solver][T010][footprint-admission]")
+{
+    const auto context = cuboid_context(
+        {
+            -.25, -.25, -.25
+    },
+        { .25, .25, .25 }, { 10, 10, 10 }, { { 0, 0, 0, 1 } });
+    std::vector<geo::CopyPose> poses;
+    for (const double z : { 2., 4., 6., 8. }) {
+        for (const double y : { 2., 4., 6., 8. }) {
+            for (const double x : { 2., 4., 6., 8. }) {
+                poses.push_back({
+                    "copy-" + std::to_string(poses.size()), { x, y, z },
+                       { 0, 0, 0, 1 }
+                });
+            }
+        }
+    }
+    const auto initial = native_solution(context, poses);
+    const geo::GridLattice lattice {
+        { 0, 0, 0 },
+        .5
+    };
+    const auto catalog =
+        std::get<solver::OrientationCatalog>(solver::make_orientation_catalog(context->constraints().orientations, 1));
+    solver::SpectralLimits limits;
+    const auto measured = solver::detail::build_spectral_pipeline(context, lattice, limits, initial, catalog);
+    REQUIRE(measured.complete);
+    REQUIRE(measured.stats.correlations == 2);
+    // Fixed startup estimates may exceed actual stage peaks. The defect here
+    // is a hypothetical full-environment footprint for each tiny placed copy.
+    limits.max_working_bytes = 2ULL << 20;
+    limits.per_representation.max_working_bytes = limits.per_correlation.max_working_bytes = limits.max_working_bytes;
+    const auto bounded = solver::detail::build_spectral_pipeline(context, lattice, limits, initial, catalog);
+    REQUIRE(bounded.complete);
+    CHECK(bounded.working_bytes_peak <= limits.max_working_bytes);
+    const auto admission = solver::detail::spectral_admission(context, lattice, limits, initial, &catalog);
+    CAPTURE(measured.admitted_bytes_upper_bound, admission ? admission->cause_code() : std::string_view {},
+            admission && admission->resource ? admission->resource->required : 0);
+    CHECK_FALSE(admission);
+    CHECK(geo::revalidate(initial).validated_solution);
+}
+
+TEST_CASE("T010 fresh one-candidate spectral trial reaches FFT while baseline stays incumbent",
+          "[solver][T010][fresh-trial]")
+{
+    const auto context = cuboid_context(
+        {
+            -1, -1, -1
+    },
+        { 1, 1, 1 }, { 4, 4, 4 }, { { 0, 0, 0, 1 } });
+    solver::SpectralLimits limits;
+    limits.baseline.max_candidate_evaluations = limits.baseline.max_copies = 8;
+    limits.baseline.max_search_passes = 1;
+    limits.spectral.max_candidate_evaluations = limits.spectral.max_search_passes = 1;
+    limits.spectral.max_copies = 8;
+    limits.max_refinement_evaluations = 0;
+    std::vector<std::size_t> published;
+    const auto outcome = solver::run_cpu_spectral(context,
+                                                  {
+                                                      { 0, 0, 0 },
+                                                      .5
+    },
+                                                  limits, {}, [&](solver::SnapshotHandle snapshot) {
+        published.push_back(snapshot->score.count);
+    });
+    REQUIRE(outcome.run.best);
+    CHECK(outcome.run.best->score.count == 8);
+    CHECK(outcome.baseline_stats.candidate_evaluations == 8);
+    CHECK(outcome.run.stats.candidate_evaluations == 9);
+    CHECK(outcome.spectral_stats.correlations == 2);
+    REQUIRE(published.size() == 1);
+    CHECK(published.front() == 8);
+    REQUIRE(outcome.field_admission);
+    CHECK(outcome.field_admission->footprint_copy_count == 0);
+    CHECK(geo::revalidate(outcome.run.best->solution).validated_solution);
+}
+
+TEST_CASE("T010 fresh empty validation preserves control cause and central incumbent",
+          "[solver][T010][empty-validation-control]")
+{
+    const bool deadline = GENERATE(false, true);
+    const auto context = default_fixed_context();
+    const auto initial = native_solution(context, {
+                                                      { "initial", { 1, 1, 1 }, { 0, 0, 0, 1 } }
+    });
+    struct Interrupt {
+        bool deadline, published {}, in_empty_validation {}, expired {};
+        unsigned validation_polls {};
+        std::stop_source stop;
+    } interrupt { deadline };
+    solver::RunControl control;
+    control.stop = interrupt.stop.get_token();
+    control.deadline = spectrapack::runtime::Clock::time_point { std::chrono::seconds { 1 } };
+    control.now_context = control.phase_context = &interrupt;
+    control.phase_sink = [](void* raw, spectrapack::runtime::Phase phase) noexcept {
+        auto& state = *static_cast<Interrupt*>(raw);
+        if (state.published && phase == spectrapack::runtime::Phase::validating) {
+            state.in_empty_validation = true;
+        }
+    };
+    control.now_fn = [](void* raw) noexcept {
+        auto& state = *static_cast<Interrupt*>(raw);
+        // The third poll follows the empty validator's one-unit setup charge.
+        if (state.in_empty_validation && ++state.validation_polls == 3) {
+            state.expired = state.deadline;
+            if (!state.deadline) {
+                state.stop.request_stop();
+            }
+        }
+        return spectrapack::runtime::Clock::time_point { std::chrono::seconds { state.expired ? 1 : 0 } };
+    };
+    solver::SpectralLimits limits;
+    limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
+    limits.spectral.max_candidate_evaluations = limits.spectral.max_search_passes = 1;
+    solver::SnapshotHandle published;
+    unsigned publications {};
+    const auto outcome =
+        solver::run_cpu_spectral(context, { {}, .5 }, limits, control, [&](solver::SnapshotHandle snapshot) {
+        published = std::move(snapshot);
+        ++publications;
+        interrupt.published = true;
+    }, initial);
+    CAPTURE(deadline, outcome.run.diagnostic_code);
+    REQUIRE(interrupt.in_empty_validation);
+    CHECK(interrupt.validation_polls >= 3);
+    CHECK(publications == 1);
+    REQUIRE(published);
+    CHECK(outcome.run.best == published);
+    CHECK(outcome.run.retained_solution == initial);
+    CHECK(outcome.run.stats.validation_kernel_work == outcome.baseline_stats.validation_kernel_work + 1);
+    CHECK(outcome.run.stats.candidate_evaluations == 0);
+    CHECK(outcome.spectral_stats.correlations == 0);
+    CHECK(outcome.run.termination_reason ==
+          (deadline ? solver::TerminationReason::budget_exhausted : solver::TerminationReason::user_stopped));
+    CHECK(outcome.run.diagnostic_code == (deadline ? "PHYSICAL_DEADLINE" : "PHYSICAL_USER_STOPPED"));
+}
+
+TEST_CASE("T010 manual2mm fixed FFT buffers remain an explicit memory refusal", "[solver][T010][fixed-buffer-refusal]")
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = 1;
+    constraints.orientations.mode = geo::OrientationMode::cube;
+    auto made = geo::make_validation_context(
+        geo::test_support::accepted(
+            geo::test_support::cuboid({ -42.84008026123047, -30.667238242924215, -9.000000059604645 },
+                                      { 42.84008026123047, 30.667238242924215, 9.000000059604645 }),
+            geo::AssetRole::object),
+        geo::BoxDimensions { 400, 340, 285 }, constraints);
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(std::move(made));
+    solver::SpectralLimits limits;
+    limits.cpu_thread_count = 8;
+    limits.reserved_bytes = 96'252'289;
+    const auto refusal = solver::detail::spectral_admission(context,
+                                                            {
+                                                                { 0, 0, 0 },
+                                                                2
+    },
+                                                            limits);
+    REQUIRE(refusal);
+    CHECK(refusal->cause_code() == "SPECTRAL_MEMORY_LIMIT");
+    REQUIRE(refusal->resource);
+    CHECK(refusal->resource->required > limits.max_working_bytes);
+    CHECK(refusal->resource->limit == limits.max_working_bytes);
+}
+
 TEST_CASE("AT-12 stage A clamps cumulative representation and proximity work", "[solver][T007][AT-12][pipeline]")
 {
     geo::Constraints constraints;
@@ -4019,6 +4292,102 @@ TEST_CASE("AT-16 lazy ranked page allocation failure leaves reusable native work
     for (std::size_t index = 0; index != retry.ranked_candidates->size(); ++index) {
         CHECK((*retry.ranked_candidates)[index].translation == (*warm.ranked_candidates)[index].translation);
         CHECK((*retry.ranked_candidates)[index].score == (*warm.ranked_candidates)[index].score);
+    }
+}
+
+TEST_CASE("T010 pending batch owner catches real Debug proxy allocation failure",
+          "[solver][T010][baseline-pending-oom]")
+{
+#if defined(_MSC_VER) && defined(_DEBUG)
+    const auto context = default_fixed_context();
+    struct ClockState {
+        bool published {};
+        unsigned calls_after_publication {};
+        std::uint64_t allocations_before_fault {};
+    } clock;
+    solver::RunControl control;
+    control.deadline = spectrapack::runtime::Clock::time_point { std::chrono::seconds { 1 } };
+    control.now_context = &clock;
+    control.now_fn = [](void* raw) noexcept {
+        auto& state = *static_cast<ClockState*>(raw);
+        if (state.published && ++state.calls_after_publication == 3) {
+            state.allocations_before_fault = test_allocation_attempts.load(std::memory_order_relaxed);
+            fail_test_allocations.store(true, std::memory_order_relaxed);
+        }
+        return spectrapack::runtime::Clock::time_point {};
+    };
+    std::optional<solver::BaselineOutcome> outcome;
+    const auto previous_terminate = std::set_terminate([] {
+        std::_Exit(86);
+    });
+    {
+        AllocationFailureReset reset;
+        outcome.emplace(solver::run_aabb_baseline(context, {}, control, [&](solver::SnapshotHandle snapshot) {
+            clock.published = snapshot->score.count == 0;
+        }));
+    }
+    std::set_terminate(previous_terminate);
+    const auto allocations_after_fault = test_allocation_attempts.load(std::memory_order_relaxed);
+    REQUIRE(clock.calls_after_publication == 3);
+    CHECK(allocations_after_fault == clock.allocations_before_fault + 1);
+    REQUIRE(outcome);
+    CHECK(outcome->termination_reason == solver::TerminationReason::resource_limit);
+    CHECK(outcome->diagnostic_code == "PHYSICAL_ALLOCATION_FAILURE");
+    REQUIRE(outcome->best);
+    CHECK(outcome->best->score.count == 0);
+    CHECK(outcome->retained_solution == outcome->best->solution);
+    CHECK(outcome->stats.candidate_evaluations == 0);
+#else
+    SUCCEED("MSVC Debug container proxies are absent in this configuration.");
+#endif
+}
+
+TEST_CASE("T010 pending batch metadata admits its exact boundary before construction",
+          "[solver][T010][baseline-pending-cap]")
+{
+    const auto context = default_fixed_context();
+    // Keep both supplied and copied seeds resident, making this owner boundary
+    // exceed bootstrap scratch. Only the first orientation is entered.
+    const std::vector<geo::Quaternion> seeds(512, geo::Quaternion { 0, 0, 0, 1 });
+    const auto run = [&](std::uint64_t cap, unsigned& calls_after_publication) {
+        bool published {};
+        struct ClockState {
+            bool* published;
+            unsigned* calls;
+        } clock { &published, &calls_after_publication };
+        solver::RunControl control;
+        control.deadline = spectrapack::runtime::Clock::time_point { std::chrono::seconds { 1 } };
+        control.now_context = &clock;
+        control.now_fn = [](void* raw) noexcept {
+            auto& state = *static_cast<ClockState*>(raw);
+            const bool stopped = *state.published && ++*state.calls == 3;
+            return spectrapack::runtime::Clock::time_point { std::chrono::seconds { stopped ? 1 : 0 } };
+        };
+        solver::BaselineLimits limits;
+        limits.max_working_bytes = cap;
+        return solver::detail::run_aabb_baseline_with_seeds(context, limits, control, seeds,
+                                                            [&](solver::SnapshotHandle snapshot) {
+            published = snapshot->score.count == 0;
+        });
+    };
+    unsigned measured_calls {};
+    const auto measured = run(UINT64_MAX, measured_calls);
+    REQUIRE(measured_calls == 3);
+    REQUIRE(measured.best);
+    REQUIRE(measured.diagnostic_code == "PHYSICAL_DEADLINE");
+    const auto required = measured.stats.tracked_working_bytes_peak;
+    REQUIRE(required > 0);
+    for (const bool exact : { false, true }) {
+        unsigned calls {};
+        const auto outcome = run(required - !exact, calls);
+        CAPTURE(exact, required, calls);
+        REQUIRE(outcome.best);
+        CHECK(outcome.best->score.count == 0);
+        CHECK(outcome.retained_solution == outcome.best->solution);
+        CHECK(outcome.stats.candidate_evaluations == 0);
+        CHECK(outcome.stats.tracked_working_bytes_peak <= required - !exact);
+        CHECK(calls == (exact ? 3 : 2));
+        CHECK(outcome.diagnostic_code == (exact ? "PHYSICAL_DEADLINE" : "PHYSICAL_RESOURCE_LIMIT"));
     }
 }
 

@@ -20,6 +20,8 @@
 #include <type_traits>
 #include <utility>
 
+#include "correlation_profile.hpp"
+
 namespace spectrapack::compute {
 
 CorrelationResult::CorrelationResult(Index3 first, Shape3 extent, std::vector<double>& source, NumericReport report,
@@ -432,11 +434,15 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
             if (auto interrupted = interruption(stats)) {
                 return *interrupted;
             }
-            pocketfft::c2c(shape, strides, strides, axes, true, blocked.data(), blocked.data(), 1.0, 1);
+            detail::profile_fft_axis(binary, 0, axis, [&] {
+                pocketfft::c2c(shape, strides, strides, axes, true, blocked.data(), blocked.data(), 1.0, 1);
+            });
             if (auto interrupted = interruption(stats)) {
                 return *interrupted;
             }
-            pocketfft::c2c(shape, strides, strides, axes, true, occupied.data(), occupied.data(), 1.0, 1);
+            detail::profile_fft_axis(binary, 1, axis, [&] {
+                pocketfft::c2c(shape, strides, strides, axes, true, occupied.data(), occupied.data(), 1.0, 1);
+            });
             if (auto interrupted = interruption(stats)) {
                 return *interrupted;
             }
@@ -456,8 +462,10 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
             if (auto interrupted = interruption(stats)) {
                 return *interrupted;
             }
-            pocketfft::c2c(shape, strides, strides, axes, false, blocked.data(), blocked.data(),
-                           axis == 0 ? inverse_factor : 1.0, 1);
+            detail::profile_fft_axis(binary, 2, axis, [&] {
+                pocketfft::c2c(shape, strides, strides, axes, false, blocked.data(), blocked.data(),
+                               axis == 0 ? inverse_factor : 1.0, 1);
+            });
             if (auto interrupted = interruption(stats)) {
                 return *interrupted;
             }

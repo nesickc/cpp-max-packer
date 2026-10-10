@@ -1,6 +1,6 @@
 # T-010 / T-011 cross-ticket evidence ledger
 
-Updated: 2026-10-10. T-011 merged at `977c27c` (PR #13), following T-009
+Updated: 2026-10-11. T-011 merged at `977c27c` (PR #13), following T-009
 `b82117a` (PR #12). Current delivery: `feature/SOL-08-cpu-threading`.
 
 This ledger records demonstrated scope. **T-011 local acceptance is complete**;
@@ -19,6 +19,54 @@ T-011 first owns T011-A1–A7 and the carried T009-A2/A3/A6 practical obligation
 T-010 then owns T010-A1–A7 after the T-011 user merge. Keep historical evidence
 and frozen targets here; changing the delivery order closes no gate. T010-A7
 later regresses the successful practical workflows delivered by T-011.
+
+## Practical threading completion prerequisites (2026-10-11)
+
+The user authorized finishing measured multithreading before further packing
+refinement. The bounded design is in T-010 and ADR 0016; PR #14 remains draft.
+Evidence is under `.local/t010/completion-20261010/`. These prerequisite checks
+do not establish FFT parallelism or a new performance qualification.
+
+- Box-baseline batching reaches 64 independently valid copies using 2,544 pair
+  checks under the unchanged 3,000-check cap; the observed old implementation
+  retained 26. Fresh full-layout validation uses 2,016 checks. The first new pose
+  remains separately validated; STL containment retains individual submission.
+- Critical review exposed MSVC Debug allocation in a default `noexcept` pending
+  vector constructor. The corrected throwing construction and proxy admission
+  pass the targeted allocation-refusal and exact-boundary checks. The isolated
+  red exits through the installed terminate handler (86); its historical source
+  reconstruction is documented, not represented as a contemporaneously pinned
+  red binary. Reviewed final baseline files are in `stage1-frozen/`.
+- Removing only speculative startup footprint reservation lets the real 64-copy
+  pipeline fit within 2 MiB: observed admission 1,022,116 bytes versus the old
+  hypothetical startup estimate of 6,657,624 bytes. Exact-cap transactional
+  add/clone checks retain old and staged ownership and verify rollback. The
+  original 2 mm full-container fixed-buffer refusal remains explicit.
+- Fresh spectral search runs before retained-layout extension, while the valid
+  baseline stays centrally retained and work remains cumulative. Its interruption
+  regression first fails four assertions, then passes all 30: Stop/deadline during
+  empty-layout validation retains actual spent work and the exact published
+  handle, with the correct interruption status.
+
+The corrected fixtures and carried passing cases cover all **151 Release / 153
+Debug ordinary solver cases**, with eight heavy practical/qualification cases
+explicitly omitted. This is a union of recorded runs, not one final clean module
+run. The first Release collection passes 149/150; the Debug collection reaches its
+240-second watchdog after 121 completed cases. A local-symbol debugger identifies
+a 16-byte MSVC vector-proxy allocation in empty-trial construction. The narrow
+throwing-construction/admission repair passes ten assertions in each build and
+retains the exact publication. It does not justify a broader constructor rewrite.
+
+Two corrected candidate-ID/fault-injection fixtures pass 96 assertions in each
+build; the previously uncompleted Debug tail passes 30 cases / 613 assertions.
+The candidate-ID case independently proves its two-copy witness and proposal,
+then distinguishes a measured 860,244-byte long-ID peak from its 856,116-byte
+Release cap, with native-valid rollback. Critical review approves the final
+production and fixture changes. Complete logs, exclusions and source/binary pins
+are indexed by `stage2-final-coverage.json` and `stage2-final-frozen/pins.json`.
+The Release benchmark builds successfully. Prerequisite production C++ changes
+are +291/-161 lines (net +130), excluding tests and the diagnostic benchmark.
+No new serial performance baseline or parallel-kernel target has yet been frozen.
 
 ## Many-copy Pryanik repair (2026-10-10)
 
