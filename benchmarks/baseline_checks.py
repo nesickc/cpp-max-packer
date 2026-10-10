@@ -517,7 +517,7 @@ def _validation(value, poses, context, limits):
         "fresh report")
     need(report["validity"] == "valid" and report["code"] == "VALID" and
          type(report["message"]) is str and report["message"] and
-         report["kernel_revision"] == "homogeneous-rational-interval-v2",
+         report["kernel_revision"] == "homogeneous-rational-interval-v3",
          "fresh report verdict differs")
     number(report["epsilon_mm"], "fresh epsilon is invalid", 0.0)
     integer(report["aabb_pair_tests"], "fresh pair count is invalid", 0,

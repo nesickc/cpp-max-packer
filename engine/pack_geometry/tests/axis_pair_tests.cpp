@@ -159,8 +159,7 @@ TEST_CASE("T006 exhausted cardinal pair proof work stays indeterminate",
   CHECK_FALSE(result.validated_solution);
   CHECK(result.report.aabb_pair_tests == 1);
   CHECK(result.report.kernel_work <= limits.max_kernel_work);
-  CHECK(check(result.report, geo::ValidationCheck::pair_solids).method ==
-        "exact-cardinal-bounds-lower-bound");
+  CHECK(check(result.report, geo::ValidationCheck::pair_solids).method == "posed-bounds");
 }
 
 TEST_CASE("T006 unproved cardinal and noncardinal pairs retain prior fallbacks",
@@ -190,7 +189,6 @@ TEST_CASE("T006 unproved cardinal and noncardinal pairs retain prior fallbacks",
     CHECK(result.report.validity == geo::Validity::valid);
     CHECK(check(result.report, geo::ValidationCheck::broad_phase).method ==
           "outward-aabb");
-    CHECK(check(result.report, geo::ValidationCheck::pair_solids).method ==
-          "kernel");
+    CHECK(check(result.report, geo::ValidationCheck::pair_solids).method == "outward-aabb");
   }
 }

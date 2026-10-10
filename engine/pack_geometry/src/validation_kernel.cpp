@@ -582,6 +582,15 @@ class PlacedSolid {
   bool represented_world_exact {};
 };
 
+class PosedBounds {
+public:
+    std::shared_ptr<const AcceptedSolid> asset;
+    Vec3 translation {};
+    CardinalRotation cardinal;
+    bool is_cardinal {};
+    ConservativeBounds conservative;
+};
+
 std::optional<std::uint64_t> prepared_owned_bytes(const PreparedSolid& solid) noexcept
 {
     constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
@@ -715,7 +724,7 @@ const runtime::OperationControl& Budget::control() const noexcept { return contr
 PrepareResult prepare(std::shared_ptr<const AcceptedSolid> solid, Budget& budget) {
   if (!solid) return {{},{"KERNEL_SOLID_REQUIRED","prepare"}};
   if (!budget.consume_work(1)) return {{},{"KERNEL_WORK_LIMIT","prepare"}};
-  const std::uint64_t base_bytes=sizeof(PreparedSolid);
+  const std::uint64_t base_bytes = sizeof(PreparedSolid) + 64;
   if (!budget.reserve_bytes(base_bytes)) return {{},{"KERNEL_MEMORY_LIMIT","prepare"}};
   try {
     auto result=std::make_shared<PreparedSolid>();
@@ -745,7 +754,12 @@ PlaceResult place(std::shared_ptr<const PreparedSolid> solid, Vec3 translation,
   const auto transform = rotation_transform(quaternion);
   if (!transform) return {{},{"KERNEL_POSE_INVALID","place"}};
   if (!budget.consume_work(32)) return {{},{"KERNEL_WORK_LIMIT","place"}};
-  if (!budget.reserve_bytes(sizeof(PlacedSolid))) return {{},{"KERNEL_MEMORY_LIMIT","place"}};
+  if (!budget.reserve_bytes(sizeof(PlacedSolid) + 64)) {
+      return {
+          {},
+          { "KERNEL_MEMORY_LIMIT", "place" }
+      };
+  }
   try {
     auto result=std::make_shared<PlacedSolid>();
     result->prepared=std::move(solid);
@@ -902,6 +916,105 @@ std::optional<Bounds> transformed_source_box(Bounds bounds, Vec3 translation, Qu
     return result;
 }
 
+PosedBoundsResult posed_bounds(std::shared_ptr<const AcceptedSolid> asset, Vec3 translation, Quaternion quaternion,
+                               Budget& budget)
+{
+    if (!supported_floating_environment()) {
+        return {
+            {},
+            { "KERNEL_FLOATING_ENVIRONMENT", "posed-bounds" }
+        };
+    }
+    if (!asset || !finite_pose(translation, quaternion)) {
+        return {
+            {},
+            { "KERNEL_POSE_INVALID", "posed-bounds" }
+        };
+    }
+    // Covers the transform, corner/interval temporaries, and returned owner.
+    ScratchCharge scratch(budget, sizeof(RotationTransform) + 32 * sizeof(Interval) + 12 * sizeof(Vec3));
+    if (!scratch.held()) {
+        return {
+            {},
+            { "KERNEL_MEMORY_LIMIT", "posed-bounds" }
+        };
+    }
+    if (!budget.consume_work(32)) {
+        return {
+            {},
+            { "KERNEL_WORK_LIMIT", "posed-bounds" }
+        };
+    }
+    const auto transform = rotation_transform(quaternion);
+    if (!transform) {
+        return {
+            {},
+            { "KERNEL_POSE_INVALID", "posed-bounds" }
+        };
+    }
+    // Include the separately allocated shared-owner control block conservatively.
+    if (!budget.reserve_bytes(sizeof(PosedBounds) + 64)) {
+        return {
+            {},
+            { "KERNEL_MEMORY_LIMIT", "posed-bounds" }
+        };
+    }
+    try {
+        auto result = std::make_shared<PosedBounds>();
+        result->asset = std::move(asset);
+        result->translation = translation;
+        result->is_cardinal = transform->exact_cardinal;
+        result->cardinal = { transform->source_axis, transform->sign };
+        const auto local = result->asset->bounds_mm();
+        if (result->is_cardinal) {
+            for (int axis = 0; axis != 3; ++axis) {
+                const auto source = result->cardinal.source_axis[axis];
+                const auto sign = result->cardinal.sign[axis];
+                const double low = translation[axis] + sign * (sign > 0 ? local.min[source] : local.max[source]);
+                const double high = translation[axis] + sign * (sign > 0 ? local.max[source] : local.min[source]);
+                result->conservative.bounds_mm.min[axis] =
+                    std::nextafter(low, -std::numeric_limits<double>::infinity());
+                result->conservative.bounds_mm.max[axis] =
+                    std::nextafter(high, std::numeric_limits<double>::infinity());
+            }
+        }
+        else {
+            if (!budget.consume_work(8 * 90)) {
+                return {
+                    {},
+                    { "KERNEL_WORK_LIMIT", "posed-bounds" }
+                };
+            }
+            const auto enclosing = transformed_source_box(local, translation, quaternion);
+            if (!enclosing) {
+                return {
+                    {},
+                    { "KERNEL_INTERVAL_OVERFLOW", "posed-bounds" }
+                };
+            }
+            result->conservative.bounds_mm = *enclosing;
+        }
+        result->conservative.finite = std::ranges::all_of(result->conservative.bounds_mm.min, [](double value) {
+            return std::isfinite(value);
+        }) && std::ranges::all_of(result->conservative.bounds_mm.max, [](double value) {
+            return std::isfinite(value);
+        });
+        if (!result->conservative.finite) {
+            return {
+                {},
+                { "KERNEL_INTERVAL_OVERFLOW", "posed-bounds" }
+            };
+        }
+        return { std::move(result), {} };
+    }
+    catch (const std::bad_alloc&) {
+        return {
+            {},
+            { "KERNEL_ALLOCATION_FAILURE", "posed-bounds" }
+        };
+    }
+}
+
 PhysicalBounds physical_bounds(std::shared_ptr<const AcceptedSolid> solid,
                                Quaternion quaternion,
                                std::uint64_t max_vertex_visits,
@@ -1018,20 +1131,29 @@ PhysicalBounds physical_bounds(std::shared_ptr<const AcceptedSolid> solid,
   return result;
 }
 
-bool separated_by_bounds(const PlacedSolid& first,const PlacedSolid& second,
-                         double clearance,Budget& budget) noexcept {
-  if (!supported_floating_environment() || !budget.consume_work(12) ||
-      clearance<0 || !std::isfinite(clearance) ||
-      !first.conservative.finite || !second.conservative.finite) return false;
-  for (int axis=0;axis!=3;++axis) {
-    const double a=std::nextafter(first.conservative.bounds_mm.max[axis]+clearance,
-                                  std::numeric_limits<double>::infinity());
-    const double b=std::nextafter(second.conservative.bounds_mm.max[axis]+clearance,
-                                  std::numeric_limits<double>::infinity());
-    if (a<second.conservative.bounds_mm.min[axis] || b<first.conservative.bounds_mm.min[axis])
-      return true;
-  }
-  return false;
+namespace {
+bool separated_conservative_bounds(const ConservativeBounds& first, const ConservativeBounds& second, double clearance,
+                                   Budget& budget) noexcept
+{
+    if (!supported_floating_environment() || !budget.consume_work(12) || clearance < 0 || !std::isfinite(clearance) ||
+        !first.finite || !second.finite) {
+        return false;
+    }
+    for (int axis = 0; axis != 3; ++axis) {
+        const double a = std::nextafter(first.bounds_mm.max[axis] + clearance, std::numeric_limits<double>::infinity());
+        const double b =
+            std::nextafter(second.bounds_mm.max[axis] + clearance, std::numeric_limits<double>::infinity());
+        if (a < second.bounds_mm.min[axis] || b < first.bounds_mm.min[axis]) {
+            return true;
+        }
+    }
+    return false;
+}
+}  // namespace
+
+bool separated_by_bounds(const PlacedSolid& first, const PlacedSolid& second, double clearance, Budget& budget) noexcept
+{
+    return separated_conservative_bounds(first.conservative, second.conservative, clearance, budget);
 }
 
 namespace {
@@ -1053,40 +1175,47 @@ struct CardinalExtrema {
   AxisCoordinate high;
 };
 
-CardinalExtrema cardinal_extrema(const PlacedSolid& solid, int axis) noexcept {
-  const auto bounds = solid.prepared->asset->bounds_mm();
-  const int source = solid.cardinal.source_axis[axis];
-  const int sign = solid.cardinal.sign[axis];
-  const double local_low = sign > 0 ? bounds.min[source] : bounds.max[source];
-  const double local_high = sign > 0 ? bounds.max[source] : bounds.min[source];
-  return {{solid.translation[axis], local_low, sign},
-          {solid.translation[axis], local_high, sign}};
+Bounds local_bounds(const PlacedSolid& solid) noexcept { return solid.prepared->asset->bounds_mm(); }
+Bounds local_bounds(const PosedBounds& solid) noexcept { return solid.asset->bounds_mm(); }
+
+template <class Solid>
+CardinalExtrema cardinal_extrema(const Solid& solid, int axis) noexcept
+{
+    const auto bounds = local_bounds(solid);
+    const int source = solid.cardinal.source_axis[axis];
+    const int sign = solid.cardinal.sign[axis];
+    const double local_low = sign > 0 ? bounds.min[source] : bounds.max[source];
+    const double local_high = sign > 0 ? bounds.max[source] : bounds.min[source];
+    return {
+        { solid.translation[axis], local_low,  sign },
+        { solid.translation[axis], local_high, sign }
+    };
 }
 
-CardinalBoundProof cardinal_bounds_clearance_proof(
-    const PlacedSolid& first, const PlacedSolid& second, double clearance,
-    Budget& budget) noexcept {
-  if (!(clearance > 0.0) || !first.is_cardinal || !second.is_cardinal)
+template <class Solid>
+CardinalBoundProof cardinal_bounds_clearance_proof(const Solid& first, const Solid& second, double clearance,
+                                                   Budget& budget) noexcept
+{
+    if (!(clearance > 0.0) || !first.is_cardinal || !second.is_cardinal)
+        return CardinalBoundProof::unproved;
+    ScratchCharge stack_charge(budget, 2 * sizeof(CardinalExtrema));
+    if (!stack_charge.held())
+        return CardinalBoundProof::indeterminate;
+    for (int axis = 0; axis != 3; ++axis) {
+        const auto first_extrema = cardinal_extrema(first, axis);
+        const auto second_extrema = cardinal_extrema(second, axis);
+        const auto first_before = compare_gap(second_extrema.low, first_extrema.high, clearance, budget);
+        if (first_before == ExactOrder::indeterminate)
+            return CardinalBoundProof::indeterminate;
+        if (first_before != ExactOrder::less)
+            return CardinalBoundProof::at_least_threshold;
+        const auto second_before = compare_gap(first_extrema.low, second_extrema.high, clearance, budget);
+        if (second_before == ExactOrder::indeterminate)
+            return CardinalBoundProof::indeterminate;
+        if (second_before != ExactOrder::less)
+            return CardinalBoundProof::at_least_threshold;
+    }
     return CardinalBoundProof::unproved;
-  ScratchCharge stack_charge(budget, 2 * sizeof(CardinalExtrema));
-  if (!stack_charge.held()) return CardinalBoundProof::indeterminate;
-  for (int axis = 0; axis != 3; ++axis) {
-    const auto first_extrema = cardinal_extrema(first, axis);
-    const auto second_extrema = cardinal_extrema(second, axis);
-    const auto first_before = compare_gap(
-        second_extrema.low, first_extrema.high, clearance, budget);
-    if (first_before == ExactOrder::indeterminate)
-      return CardinalBoundProof::indeterminate;
-    if (first_before != ExactOrder::less)
-      return CardinalBoundProof::at_least_threshold;
-    const auto second_before = compare_gap(
-        first_extrema.low, second_extrema.high, clearance, budget);
-    if (second_before == ExactOrder::indeterminate)
-      return CardinalBoundProof::indeterminate;
-    if (second_before != ExactOrder::less)
-      return CardinalBoundProof::at_least_threshold;
-  }
-  return CardinalBoundProof::unproved;
 }
 
 AxisPairClassification classify_axis_cuboids(const PlacedSolid& first,
@@ -1270,15 +1399,15 @@ const char* exact_failure_code(const Budget& budget) noexcept {
   return "KERNEL_EXACT_LIMIT";
 }
 
-ContainmentResult classify_axis_container(const PlacedSolid& object,
-    const std::array<AxisCoordinate,3>& low,const std::array<AxisCoordinate,3>& high,
-    double clearance,Budget& budget,std::string method) {
-  const bool exact=object.is_cardinal;
-  bool any_equal=false;
-  if (exact) {
+template <class Solid>
+ContainmentResult classify_cardinal_container(const Solid& object, const std::array<AxisCoordinate, 3>& low,
+                                              const std::array<AxisCoordinate, 3>& high, double clearance,
+                                              Budget& budget, std::string method)
+{
+    bool any_equal = false;
     std::array<AxisCoordinate, 3> object_low;
     std::array<AxisCoordinate, 3> object_high;
-    const auto accepted_bounds = object.prepared->asset->bounds_mm();
+    const auto accepted_bounds = local_bounds(object);
     for (int axis = 0; axis != 3; ++axis) {
       const int source = object.cardinal.source_axis[axis];
       const int sign = object.cardinal.sign[axis];
@@ -1306,72 +1435,76 @@ ContainmentResult classify_axis_container(const PlacedSolid& object,
     for (int axis=0;axis!=3;++axis) {
       const auto first=compare_gap(object_low[axis],low[axis],clearance,budget);
       const auto second=compare_gap(high[axis],object_high[axis],clearance,budget);
-      if (first==ExactOrder::less || second==ExactOrder::less) gap=Threshold::below;
-      else if ((first==ExactOrder::indeterminate || second==ExactOrder::indeterminate) &&
-               gap!=Threshold::below) gap=Threshold::indeterminate;
-      else if (gap==Threshold::above &&
-               (first==ExactOrder::equal || second==ExactOrder::equal)) gap=Threshold::equal;
+      if (first == ExactOrder::indeterminate || second == ExactOrder::indeterminate) {
+          return { Decision::indeterminate, Threshold::indeterminate, std::move(method), exact_failure_code(budget) };
+      }
+      if (first == ExactOrder::less || second == ExactOrder::less) {
+          return { Decision::yes, Threshold::below, std::move(method), "" };
+      }
+      if (gap == Threshold::above && (first == ExactOrder::equal || second == ExactOrder::equal)) {
+          gap = Threshold::equal;
+      }
     }
     return {Decision::yes,gap,std::move(method),
             gap==Threshold::indeterminate?exact_failure_code(budget):""};
-  }
+}
 
-  Threshold gap=Threshold::above;
-  const auto mesh = object.prepared->asset->mesh();
-  for (std::size_t index = 0; index != object.vertex_intervals.size(); ++index) {
-    for (int axis = 0; axis != 3; ++axis) {
-      const auto& vertex_interval = object.vertex_intervals[index][axis];
-      const auto low_interval = axis_coordinate_interval(low[axis]);
-      const auto high_interval = axis_coordinate_interval(high[axis]);
-      auto low_order = separated_interval_order(vertex_interval, low_interval);
-      auto high_order = separated_interval_order(vertex_interval, high_interval);
-      if (!low_order)
-        low_order = compare_rotated_vertex_to_plane(
-            object, mesh.vertices[index], axis, low[axis], 0, 0, budget);
-      if (!high_order)
-        high_order = compare_rotated_vertex_to_plane(
-            object, mesh.vertices[index], axis, high[axis], 0, 0, budget);
-      if (*low_order == ExactOrder::indeterminate ||
-          *high_order == ExactOrder::indeterminate)
-        return {Decision::indeterminate,Threshold::indeterminate,
-                std::move(method),exact_failure_code(budget)};
-      if (*low_order == ExactOrder::less ||
-          *high_order == ExactOrder::greater)
-        return {Decision::no,Threshold::below,std::move(method),
-                "OUTSIDE_CONTAINER"};
-      any_equal |= *low_order == ExactOrder::equal ||
-                   *high_order == ExactOrder::equal;
-
-      if (clearance == 0) continue;
-      const auto inward_low = add_interval(low_interval, point_interval(clearance));
-      const auto inward_high = subtract_interval(high_interval, point_interval(clearance));
-      auto lower_gap = separated_interval_order(vertex_interval, inward_low);
-      auto upper_gap = separated_interval_order(vertex_interval, inward_high);
-      if (!lower_gap)
-        lower_gap = compare_rotated_vertex_to_plane(
-            object, mesh.vertices[index], axis, low[axis], clearance, -1,
-            budget);
-      if (!upper_gap)
-        upper_gap = compare_rotated_vertex_to_plane(
-            object, mesh.vertices[index], axis, high[axis], clearance, 1,
-            budget);
-      if (*lower_gap == ExactOrder::indeterminate ||
-          *upper_gap == ExactOrder::indeterminate)
-        return {Decision::indeterminate,Threshold::indeterminate,
-                std::move(method),exact_failure_code(budget)};
-      if (*lower_gap == ExactOrder::less ||
-          *upper_gap == ExactOrder::greater) {
-        gap = Threshold::below;
-      } else if (gap == Threshold::above &&
-                 (*lower_gap == ExactOrder::equal ||
-                  *upper_gap == ExactOrder::equal)) {
-        gap = Threshold::equal;
-      }
+ContainmentResult classify_axis_container(const PlacedSolid& object, const std::array<AxisCoordinate, 3>& low,
+                                          const std::array<AxisCoordinate, 3>& high, double clearance, Budget& budget,
+                                          std::string method)
+{
+    if (object.is_cardinal) {
+        return classify_cardinal_container(object, low, high, clearance, budget, std::move(method));
     }
-  }
-  if (clearance == 0)
-    gap = any_equal ? Threshold::equal : Threshold::above;
-  return {Decision::yes,gap,std::move(method),""};
+    bool any_equal = false;
+    Threshold gap = Threshold::above;
+    const auto mesh = object.prepared->asset->mesh();
+    for (std::size_t index = 0; index != object.vertex_intervals.size(); ++index) {
+        for (int axis = 0; axis != 3; ++axis) {
+            const auto& vertex_interval = object.vertex_intervals[index][axis];
+            const auto low_interval = axis_coordinate_interval(low[axis]);
+            const auto high_interval = axis_coordinate_interval(high[axis]);
+            auto low_order = separated_interval_order(vertex_interval, low_interval);
+            auto high_order = separated_interval_order(vertex_interval, high_interval);
+            if (!low_order)
+                low_order =
+                    compare_rotated_vertex_to_plane(object, mesh.vertices[index], axis, low[axis], 0, 0, budget);
+            if (!high_order)
+                high_order =
+                    compare_rotated_vertex_to_plane(object, mesh.vertices[index], axis, high[axis], 0, 0, budget);
+            if (*low_order == ExactOrder::indeterminate || *high_order == ExactOrder::indeterminate)
+                return { Decision::indeterminate, Threshold::indeterminate, std::move(method),
+                         exact_failure_code(budget) };
+            if (*low_order == ExactOrder::less || *high_order == ExactOrder::greater)
+                return { Decision::no, Threshold::below, std::move(method), "OUTSIDE_CONTAINER" };
+            any_equal |= *low_order == ExactOrder::equal || *high_order == ExactOrder::equal;
+
+            if (clearance == 0)
+                continue;
+            const auto inward_low = add_interval(low_interval, point_interval(clearance));
+            const auto inward_high = subtract_interval(high_interval, point_interval(clearance));
+            auto lower_gap = separated_interval_order(vertex_interval, inward_low);
+            auto upper_gap = separated_interval_order(vertex_interval, inward_high);
+            if (!lower_gap)
+                lower_gap = compare_rotated_vertex_to_plane(object, mesh.vertices[index], axis, low[axis], clearance,
+                                                            -1, budget);
+            if (!upper_gap)
+                upper_gap = compare_rotated_vertex_to_plane(object, mesh.vertices[index], axis, high[axis], clearance,
+                                                            1, budget);
+            if (*lower_gap == ExactOrder::indeterminate || *upper_gap == ExactOrder::indeterminate)
+                return { Decision::indeterminate, Threshold::indeterminate, std::move(method),
+                         exact_failure_code(budget) };
+            if (*lower_gap == ExactOrder::less || *upper_gap == ExactOrder::greater) {
+                gap = Threshold::below;
+            }
+            else if (gap == Threshold::above && (*lower_gap == ExactOrder::equal || *upper_gap == ExactOrder::equal)) {
+                gap = Threshold::equal;
+            }
+        }
+    }
+    if (clearance == 0)
+        gap = any_equal ? Threshold::equal : Threshold::above;
+    return { Decision::yes, gap, std::move(method), "" };
 }
 
 struct BoundaryCheck {
@@ -2065,6 +2198,89 @@ std::optional<PairResult> cardinal_bounds_clearance_certificate(
                     Threshold::indeterminate,
                     "exact-cardinal-bounds-lower-bound",
                     exact_failure_code(budget)};
+}
+
+std::optional<PairResult> bounds_pair_certificate(const PosedBounds& first, const PosedBounds& second, double clearance,
+                                                  Budget& budget)
+{
+    if (clearance == 0.0) {
+        return std::nullopt;
+    }
+    const auto unresolved = [&](const char* code) {
+        return PairResult { Decision::indeterminate, BoundaryRelation::indeterminate, Threshold::indeterminate,
+                            "posed-bounds", code };
+    };
+    ScratchCharge result_storage(budget, 128);
+    if (!result_storage.held()) {
+        return unresolved("KERNEL_MEMORY_LIMIT");
+    }
+    if (!(clearance > 0.0) || !std::isfinite(clearance)) {
+        return unresolved("KERNEL_CLEARANCE_INVALID");
+    }
+    if (!supported_floating_environment()) {
+        return unresolved("KERNEL_FLOATING_ENVIRONMENT");
+    }
+    if (separated_conservative_bounds(first.conservative, second.conservative, clearance, budget)) {
+        return PairResult { Decision::no, BoundaryRelation::disjoint, Threshold::above, "outward-aabb", "" };
+    }
+    if (budget.exhausted() || budget.arithmetic_capacity_exceeded()) {
+        return unresolved(exact_failure_code(budget));
+    }
+    const auto proof = cardinal_bounds_clearance_proof(first, second, clearance, budget);
+    if (proof == CardinalBoundProof::unproved) {
+        return std::nullopt;
+    }
+    if (proof == CardinalBoundProof::indeterminate) {
+        return unresolved(exact_failure_code(budget));
+    }
+    return PairResult { Decision::no, BoundaryRelation::disjoint, Threshold::at_least,
+                        "exact-cardinal-bounds-lower-bound", "" };
+}
+
+std::optional<ContainmentResult> bounds_box_certificate(const PosedBounds& object, BoxDimensions box, double clearance,
+                                                        Budget& budget)
+{
+    if (clearance == 0.0) {
+        return std::nullopt;
+    }
+    const auto unresolved = [&](const char* code) {
+        return ContainmentResult { Decision::indeterminate, Threshold::indeterminate, "posed-bounds-box", code };
+    };
+    if (!supported_floating_environment()) {
+        return unresolved("KERNEL_FLOATING_ENVIRONMENT");
+    }
+    if (!(clearance > 0.0) || !std::isfinite(clearance) ||
+        !(box.width_mm > 0 && box.depth_mm > 0 && box.height_mm > 0) || !std::isfinite(box.width_mm) ||
+        !std::isfinite(box.depth_mm) || !std::isfinite(box.height_mm)) {
+        return unresolved("KERNEL_INPUT_INVALID");
+    }
+    ScratchCharge scratch(budget, 4 * sizeof(std::array<AxisCoordinate, 3>) + 128);
+    if (!scratch.held()) {
+        return unresolved("KERNEL_MEMORY_LIMIT");
+    }
+    const std::array<AxisCoordinate, 3> low {
+        { { 0, 0, 1 }, { 0, 0, 1 }, { 0, 0, 1 } }
+    };
+    const std::array<AxisCoordinate, 3> high {
+        { { 0, box.width_mm, 1 }, { 0, box.depth_mm, 1 }, { 0, box.height_mm, 1 } }
+    };
+    if (object.is_cardinal) {
+        return classify_cardinal_container(object, low, high, clearance, budget, "analytic-box");
+    }
+    // A rotated source envelope may be loose. It can prove containment, never
+    // disprove it; insufficient envelope clearance defers to actual vertices.
+    for (int axis = 0; axis != 3; ++axis) {
+        const auto first = compare_gap({ 0, object.conservative.bounds_mm.min[axis], 1 }, low[axis], clearance, budget);
+        const auto second =
+            compare_gap(high[axis], { 0, object.conservative.bounds_mm.max[axis], 1 }, clearance, budget);
+        if (first == ExactOrder::indeterminate || second == ExactOrder::indeterminate) {
+            return unresolved(exact_failure_code(budget));
+        }
+        if (first == ExactOrder::less || second == ExactOrder::less) {
+            return std::nullopt;
+        }
+    }
+    return ContainmentResult { Decision::yes, Threshold::at_least, "outward-bounds-box", "" };
 }
 
 namespace {

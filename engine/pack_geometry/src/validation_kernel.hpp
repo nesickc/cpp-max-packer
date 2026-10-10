@@ -11,7 +11,7 @@
 
 namespace spectrapack::geometry::detail::validation_kernel {
 
-inline constexpr std::string_view kRevision = "homogeneous-rational-interval-v2";
+inline constexpr std::string_view kRevision = "homogeneous-rational-interval-v3";
 
 enum class Decision : std::uint8_t { no, yes, indeterminate };
 // `at_least` certifies that a lower bound meets the requested threshold. It
@@ -77,6 +77,7 @@ class PreparedSolid;
 [[nodiscard]] std::optional<std::uint64_t> estimate_unclipped_raster_work(const AcceptedSolid&, std::uint64_t copies,
                                                                           std::uint64_t passes) noexcept;
 class PlacedSolid;
+class PosedBounds;
 
 [[nodiscard]] std::optional<std::uint64_t> prepared_owned_bytes(const PreparedSolid&) noexcept;
 [[nodiscard]] std::optional<std::uint64_t> placed_owned_bytes(const PlacedSolid&) noexcept;
@@ -92,6 +93,12 @@ struct PlaceResult {
   std::shared_ptr<const PlacedSolid> solid;
   KernelFailure failure;
   [[nodiscard]] explicit operator bool() const noexcept { return static_cast<bool>(solid); }
+};
+
+struct PosedBoundsResult {
+    std::shared_ptr<const PosedBounds> bounds;
+    KernelFailure failure;
+    [[nodiscard]] explicit operator bool() const noexcept { return static_cast<bool>(bounds); }
 };
 
 struct PairResult {
@@ -145,6 +152,14 @@ struct PhysicalBounds {
     Quaternion rotation_xyzw, Budget& budget);
 [[nodiscard]] ConservativeBounds conservative_bounds(
     const PlacedSolid& solid) noexcept;
+// A lightweight enclosing representation cannot be passed to full classifiers.
+// Optional certificates are absent only when geometry requires the full path;
+// failed arithmetic, control or resource checks return indeterminate instead.
+[[nodiscard]] PosedBoundsResult posed_bounds(std::shared_ptr<const AcceptedSolid>, Vec3, Quaternion, Budget&);
+[[nodiscard]] std::optional<PairResult> bounds_pair_certificate(const PosedBounds&, const PosedBounds&,
+                                                                double clearance_mm, Budget&);
+[[nodiscard]] std::optional<ContainmentResult> bounds_box_certificate(const PosedBounds&, BoxDimensions,
+                                                                      double clearance_mm, Budget&);
 [[nodiscard]] PhysicalBounds physical_bounds(
     std::shared_ptr<const AcceptedSolid> solid, Quaternion rotation_xyzw,
     std::uint64_t max_vertex_visits, Budget& budget) noexcept;

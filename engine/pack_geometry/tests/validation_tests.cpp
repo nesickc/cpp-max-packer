@@ -1,19 +1,19 @@
-#include <catch2/catch_test_macros.hpp>
-#include <catch2/catch_approx.hpp>
-
-#include "spectrapack/geometry/validation.hpp"
-#include "validation_fixtures.hpp"
-
 #include <array>
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
 #include <cmath>
 #include <cstdint>
-#include <memory>
 #include <limits>
+#include <memory>
 #include <numbers>
+#include <stop_token>
 #include <string>
 #include <type_traits>
 #include <variant>
 #include <vector>
+
+#include "spectrapack/geometry/validation.hpp"
+#include "validation_fixtures.hpp"
 
 namespace geo = spectrapack::geometry;
 namespace {
@@ -62,6 +62,40 @@ TEST_CASE("AT-06 accepts a single authoritative cube inside a box") {
   CHECK(trusted->copies().front().copy_id == "copy-1");
 }
 
+TEST_CASE("GEO-06 many separated noncuboid copies validate within bounded instance memory", "[bounds_first][GEO-06]")
+{
+    const auto solid = geo::test_support::accepted(geo::test_support::u_prism(), geo::AssetRole::object);
+    const auto made = geo::make_validation_context(solid, geo::BoxDimensions { 20, 24, 32 }, { 1, 1, {} });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+    const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+    std::vector<geo::CopyPose> copies;
+    for (int z = 0; z != 14; ++z) {
+        for (int y = 0; y != 5; ++y) {
+            for (int x = 0; x != 4; ++x) {
+                copies.push_back({
+                    "copy-" + std::to_string(copies.size()),
+                    { 2.5 + 4 * x, 2.5 + 4 * y, 1.5 + 2 * z },
+                    { 0, 0, 0, 1 }
+                });
+            }
+        }
+    }
+    geo::ValidationLimits limits;
+    limits.max_working_bytes = 1ULL << 20;
+    const auto result = validate_copies(value, copies, limits);
+    INFO("code=" << result.report.code << " bytes=" << result.report.working_bytes_peak
+                 << " work=" << result.report.kernel_work);
+    REQUIRE(result.report.validity == geo::Validity::valid);
+    REQUIRE(result.validated_solution);
+    CHECK(result.validated_solution->copies().size() == 280);
+    CHECK(result.report.working_bytes_peak <= limits.max_working_bytes);
+    const auto fresh = geo::revalidate(result.validated_solution, limits);
+    REQUIRE(fresh.validated_solution);
+    CHECK(fresh.report.validity == geo::Validity::valid);
+    CHECK(fresh.validated_solution->context() == value);
+    CHECK(&fresh.validated_solution->copies() == &result.validated_solution->copies());
+}
+
 TEST_CASE("AT-06 public revalidation forwards the original immutable candidate") {
   const auto original = validate_one(context(), {5, 5, 5});
   REQUIRE(original.validated_solution);
@@ -83,6 +117,242 @@ TEST_CASE("AT-06 public revalidation forwards the original immutable candidate")
   CHECK(capped.report.validity == geo::Validity::indeterminate);
   CHECK(capped.report.code == "VALIDATION_COPY_LIMIT");
   CHECK_FALSE(capped.validated_solution);
+}
+
+TEST_CASE("GEO-06 loose rotated source bounds cannot reject an enclosed sparse solid", "[bounds_first][GEO-06]")
+{
+    const geo::test_support::Mesh mesh {
+        { { 0, 0, 0 },     { 4, 0, 0 },     { 0, 4, 0 },     { 0, 0, 1 }     },
+        { { { 1, 2, 3 } }, { { 0, 3, 2 } }, { { 0, 1, 3 } }, { { 0, 2, 1 } } }
+    };
+    const auto solid = geo::test_support::accepted(mesh, geo::AssetRole::object);
+    const geo::Quaternion rotated { 0, 0, std::sin(std::numbers::pi / 8), std::cos(std::numbers::pi / 8) };
+    const auto made = geo::make_validation_context(solid,
+                                                   geo::BoxDimensions {
+                                                       8, 5, 3
+    },
+                                                   { .5, .5, { geo::OrientationMode::free, {} } });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+    const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+    // Actual rotated vertices have y in [3.75-sqrt(8), 3.75]; the
+    // transformed source-box envelope reaches 3.75+sqrt(8), outside the box.
+    const auto enclosed = validate_copies(value, {
+                                                     { "sparse", { 4, 3.75, 1.5 }, rotated }
+    });
+    INFO(enclosed.report.code);
+    CHECK(enclosed.report.validity == geo::Validity::valid);
+    CHECK(enclosed.validated_solution);
+    const auto outside = validate_copies(value, {
+                                                    { "sparse", { 4, 4.75, 1.5 }, rotated }
+    });
+    CHECK(outside.report.validity == geo::Validity::invalid);
+    CHECK_FALSE(outside.validated_solution);
+}
+
+TEST_CASE("GEO-06 mixed certificates and lazy full validation retain cumulative limits", "[bounds_first][GEO-06]")
+{
+    const geo::test_support::Mesh mesh {
+        { { 0, 0, 0 },     { 1, 0, 0 },     { 0, 1, 0 },     { 0, 0, 1 }     },
+        { { { 1, 2, 3 } }, { { 0, 2, 1 } }, { { 0, 1, 3 } }, { { 0, 3, 2 } } }
+    };
+    const auto made = geo::make_validation_context(geo::test_support::accepted(mesh, geo::AssetRole::object),
+                                                   geo::BoxDimensions { 20, 20, 20 }, { 1.75, .25, {} });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+    const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+    const std::vector<geo::CopyPose> poses {
+        { "first",    { 2, 2, 2 },        { 0, 0, 0, 1 } },
+        { "diagonal", { 2.5, 2.75, 4.5 }, { 0, 0, 0, 1 } },
+        { "remote",   { 12, 12, 12 },     { 0, 0, 0, 1 } }
+    };
+    const auto complete = validate_copies(value, poses);
+    REQUIRE(complete.validated_solution);
+    REQUIRE(complete.report.validity == geo::Validity::valid);
+    CHECK(complete.report.aabb_pair_tests == 3);
+    for (const bool memory : { false, true }) {
+        geo::ValidationLimits limits;
+        if (memory) {
+            limits.max_working_bytes = complete.report.working_bytes_peak - 1;
+        }
+        else {
+            limits.max_kernel_work = complete.report.kernel_work - 1;
+        }
+        const auto limited = validate_copies(value, poses, limits);
+        INFO(limited.report.code);
+        CHECK(limited.report.validity == geo::Validity::indeterminate);
+        CHECK_FALSE(limited.validated_solution);
+        CHECK(limited.report.working_bytes_peak <= limits.max_working_bytes);
+        CHECK(limited.report.kernel_work <= limits.max_kernel_work);
+    }
+    geo::ValidationLimits pairs;
+    pairs.max_aabb_pair_tests = 2;
+    const auto pair_limited = validate_copies(value, poses, pairs);
+    CHECK(pair_limited.report.code == "VALIDATION_AABB_PAIR_LIMIT");
+    CHECK(pair_limited.report.aabb_pair_tests == 2);
+    CHECK_FALSE(pair_limited.validated_solution);
+}
+
+TEST_CASE("GEO-06 bounds certificates preserve exact local gaps at large translations", "[bounds_first][AT-09]")
+{
+    const auto solid =
+        geo::test_support::accepted(geo::test_support::cuboid({ -1.5, -1, -1 }, { 1.5, 1, 1 }), geo::AssetRole::object);
+    const auto made = geo::make_validation_context(solid,
+                                                   geo::BoxDimensions {
+                                                       1e16 + 16, 20, 20
+    },
+                                                   { 1, 1, { geo::OrientationMode::cube, {} } });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+    const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+    for (const auto& [offset, expected] : std::array<std::pair<double, geo::Validity>, 3> {
+             std::pair { 2, geo::Validity::invalid },
+              { 4, geo::Validity::valid   },
+              { 6, geo::Validity::valid   }
+    }) {
+        const auto result = validate_copies(value, {
+                                                       { "first",  { 1e16, 5, 5 },          { 0, 0, 0, 1 } },
+                                                       { "second", { 1e16 + offset, 5, 5 }, { 0, 0, 0, 1 } }
+        });
+        CAPTURE(offset, result.report.code);
+        CHECK(result.report.validity == expected);
+    }
+}
+
+TEST_CASE("GEO-06 noncuboid cardinal bounds resolve all signed wall thresholds", "[bounds_first][AT-09]")
+{
+    const geo::test_support::Mesh mesh {
+        { { 0, 0, 0 },     { 2, 0, 0 },     { 0, 1, 0 },     { 0, 0, 3 }     },
+        { { { 1, 2, 3 } }, { { 0, 3, 2 } }, { { 0, 1, 3 } }, { { 0, 2, 1 } } }
+    };
+    const auto solid = geo::test_support::accepted(mesh, geo::AssetRole::object);
+    const auto bounds = solid->bounds_mm();
+    const auto made = geo::make_validation_context(solid,
+                                                   geo::BoxDimensions {
+                                                       20, 20, 20
+    },
+                                                   { 1, 1, { geo::OrientationMode::cube, {} } });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+    const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+    const double half_sqrt = std::sqrt(.5);
+    const std::array<geo::Quaternion, 3> rotations {
+        geo::Quaternion { 0,  0,  0,         1         },
+         { 0,  0,  half_sqrt, half_sqrt },
+         { .5, .5, .5,        .5        }
+    };
+    constexpr int source[3][3] {
+        { 0, 1, 2 },
+        { 1, 0, 2 },
+        { 2, 0, 1 }
+    };
+    constexpr int sign[3][3] {
+        { 1,  1, 1 },
+        { -1, 1, 1 },
+        { 1,  1, 1 }
+    };
+    constexpr double delta = 0x1p-20;
+    for (int rotation = 0; rotation != 3; ++rotation) {
+        for (int axis = 0; axis != 3; ++axis) {
+            for (const bool upper : { false, true }) {
+                for (const double gap : { 1 - delta, 1.0, 1 + delta }) {
+                    const int local = source[rotation][axis], direction = sign[rotation][axis];
+                    const double low = direction * (direction > 0 ? bounds.min[local] : bounds.max[local]);
+                    const double high = direction * (direction > 0 ? bounds.max[local] : bounds.min[local]);
+                    geo::Vec3 translation { 10, 10, 10 };
+                    translation[axis] = upper ? 20 - gap - high : gap - low;
+                    const auto result = validate_copies(value, {
+                                                                   { "wall", translation, rotations[rotation] }
+                    });
+                    CAPTURE(rotation, axis, upper, gap, result.report.code);
+                    CHECK(result.report.validity == (gap < 1 ? geo::Validity::invalid : geo::Validity::valid));
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("GEO-06 deferred materialization preserves STL excluded volume", "[bounds_first][AT-07]")
+{
+    const auto check_container = [](const geo::test_support::Mesh& object, const geo::test_support::Mesh& container,
+                                   geo::Vec3 translation, const char* code, const char* method) {
+        const auto made = geo::make_validation_context(
+            geo::test_support::accepted(object, geo::AssetRole::object),
+            geo::test_support::accepted(container, geo::AssetRole::container), { .1, .1, {} });
+        REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+        const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+        const auto result = validate_copies(value, {
+                                                       { "excluded", translation, { 0, 0, 0, 1 } }
+        });
+        INFO(result.report.code);
+        CHECK(result.report.validity == geo::Validity::invalid);
+        CHECK(result.report.code == code);
+        CHECK(result.report.checks[4].method == method);
+        CHECK_FALSE(result.validated_solution);
+    };
+    SECTION("bridge crosses U-shaped excluded space")
+    {
+        check_container(geo::test_support::cuboid({ -1, -.25, -.25 }, { 1, .25, .25 }), geo::test_support::u_prism(),
+                        { 1.5, 1.5, .5 }, "OUTSIDE_CONTAINER", "exact-boundary-crossing");
+    }
+    SECTION("object encloses a forbidden container cavity")
+    {
+        check_container(
+            geo::test_support::cuboid({ 3, 3, 3 }, { 7, 7, 7 }),
+            geo::test_support::hollow_cuboid({ 0, 0, 0 }, { 10, 10, 10 }, { 4, 4, 4 }, { 6, 6, 6 }),
+            { 5, 5, 5 }, "EXCLUDED_CAVITY_ENCLOSED", "boundary-disjoint-shell-witnesses");
+    }
+}
+
+TEST_CASE("GEO-06 proof-only validation honors Stop and deadline during work", "[bounds_first][AT-16]")
+{
+    const auto value = context({ 100, 100, 100 }, { 1, 1, {} });
+    std::vector<geo::CopyPose> poses;
+    for (int index = 0; index != 32; ++index) {
+        poses.push_back({
+            "copy-" + std::to_string(index), { 2.0 + 3 * index, 5, 5 },
+               { 0, 0, 0, 1 }
+        });
+    }
+    const auto made = geo::make_candidate(value, poses);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(made));
+    const auto candidate = std::get<std::shared_ptr<const geo::Candidate>>(made);
+    for (const bool cancel : { false, true }) {
+        struct ClockState {
+            int calls {};
+            std::stop_source stop;
+            bool cancel {};
+        } state { 0, {}, cancel };
+        spectrapack::runtime::OperationControl control;
+        control.stop = state.stop.get_token();
+        control.deadline = spectrapack::runtime::Clock::time_point {} + std::chrono::seconds(1);
+        control.now_context = &state;
+        control.now_fn = [](void* context) noexcept {
+            auto& clock = *static_cast<ClockState*>(context);
+            if (++clock.calls >= 20) {
+                if (clock.cancel) {
+                    clock.stop.request_stop();
+                }
+                else {
+                    return spectrapack::runtime::Clock::time_point {} + std::chrono::seconds(2);
+                }
+            }
+            return spectrapack::runtime::Clock::time_point {};
+        };
+        const auto interrupted = geo::validate(value, candidate, {}, control);
+        CHECK(interrupted.report.kernel_work > 0);
+        CHECK(interrupted.report.validity == geo::Validity::indeterminate);
+        CHECK(interrupted.report.code == (cancel ? "OPERATION_CANCELLED" : "DEADLINE_EXCEEDED"));
+        CHECK_FALSE(interrupted.validated_solution);
+    }
+}
+
+TEST_CASE("GEO-06 nonfinite transformed bounds cannot authorize a placement", "[bounds_first][GEO-06]")
+{
+    const auto value = context({ std::numeric_limits<double>::max(), 20, 20 }, { 1, 1, {} });
+    const auto result =
+        validate_copies(value, {
+                                   { "overflow", { std::numeric_limits<double>::max(), 5, 5 }, { 0, 0, 0, 1 } }
+    });
+    CHECK(result.report.validity == geo::Validity::indeterminate);
+    CHECK(result.report.code == "KERNEL_INTERVAL_OVERFLOW");
+    CHECK_FALSE(result.validated_solution);
 }
 
 TEST_CASE("T010 retained validation residency charges large owned IDs and catalog capacity", "[T010][residency]")
