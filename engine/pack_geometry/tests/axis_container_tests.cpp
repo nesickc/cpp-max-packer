@@ -72,7 +72,7 @@ TEST_CASE("T006 cardinal tetrahedron resolves exact analytic box walls",
             .report.validity == geo::Validity::invalid);
   const auto exact = validate_one(context, {2, 1.5, 2.5}, identity);
   CHECK(exact.report.validity == geo::Validity::valid);
-  CHECK(exact.report.kernel_revision == "homogeneous-rational-interval-v2");
+  CHECK(exact.report.kernel_revision == "homogeneous-rational-interval-v3");
   CHECK(validate_one(context, {2 + delta, 1.5, 2.5}, identity)
             .report.validity == geo::Validity::valid);
 }

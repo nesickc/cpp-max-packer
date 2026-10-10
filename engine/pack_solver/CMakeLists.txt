@@ -24,3 +24,6 @@ target_link_libraries(spectrapack_solver_tests PRIVATE
   pack_solver spectrapack_test_support Catch2::Catch2WithMain)
 include(Catch)
 catch_discover_tests(spectrapack_solver_tests)
+
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+  "${PROJECT_SOURCE_DIR}/tests/cmake/QualificationTimeouts.cmake")

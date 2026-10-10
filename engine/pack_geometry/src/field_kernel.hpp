@@ -8,16 +8,17 @@
 #include "validation_kernel.hpp"
 
 namespace spectrapack::geometry {
+class RasterExecution;
 namespace detail::validation_kernel {
 
 inline constexpr std::string_view kRasterWorkRevision = "existing-boundary-sat-v1";
 
 // Conservative field-only adapter.  It deliberately returns indeterminate on
 // any interval/predicate uncertainty; callers turn that into a blocked cell.
-[[nodiscard]] std::optional<KernelFailure> rasterize_boundary(const PlacedSolid&, const GridWindow&,
-                                                              std::span<std::uint8_t> boundary, Budget&,
-                                                              std::uint64_t& cell_visits, std::uint64_t max_cell_visits,
-                                                              bool skip_existing_boundary = true);
+[[nodiscard]] std::optional<KernelFailure> rasterize_boundary(
+    const PlacedSolid &, const GridWindow &, std::span<std::uint8_t> boundary,
+    Budget &, std::uint64_t &cell_visits, std::uint64_t max_cell_visits,
+    bool skip_existing_boundary = true, RasterExecution *execution = nullptr);
 [[nodiscard]] Decision classify_material_witness(
     const PlacedSolid&, Bounds outward_world_point_interval, Budget&);
 [[nodiscard]] Decision euclidean_offset_reaches(CellIndex delta,

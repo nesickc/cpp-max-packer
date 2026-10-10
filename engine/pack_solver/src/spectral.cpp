@@ -1,4 +1,5 @@
 #include "spectrapack/solver/spectral.hpp"
+#include <thread>
 
 #include <algorithm>
 #include <array>
@@ -23,11 +24,11 @@ namespace {
 enum class Boundary { none, stopped, deadline };
 
 // Public fallback, coordinator source and non-elided destination can coexist.
-constexpr std::uint64_t kSpectralMetadataBytes = 3 * sizeof(SpectralOutcome) + sizeof(RunControl) +
-                                                 sizeof(std::optional<RunFailureDetails>) +
-                                                 sizeof(std::vector<geometry::Quaternion>) + sizeof(CatalogOutcome)
+constexpr std::uint64_t kSpectralMetadataBytes =
+    3 * sizeof(SpectralOutcome) + sizeof(RunControl) + sizeof(std::optional<RunFailureDetails>) +
+    sizeof(std::vector<geometry::Quaternion>) + sizeof(CatalogOutcome) + sizeof(std::vector<geometry::CopyPose>)
 #if defined(_ITERATOR_DEBUG_LEVEL) && _ITERATOR_DEBUG_LEVEL != 0
-                                                 + 2 * sizeof(std::_Container_proxy)
+    + 3 * sizeof(std::_Container_proxy)
 #endif
     ;
 
@@ -492,18 +493,10 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         admission_failure = detail::spectral_admission(context, lattice, limits, retained, &catalog);
     }
     if (admission_failure) {
-        bool retained_work_impossible = false;
-        // A native-valid box placement lies inside the environment. Positive
-        // pair clearance expands its raster window by at least two more cells,
-        // leaving every triangle's padded candidate range unclipped.
-        if (retained && std::holds_alternative<geometry::BoxDimensions>(context->container()) &&
-            context->constraints().pair_clearance_mm > 0) {
-            const auto floor = geometry::estimate_unclipped_raster_work(*context->object(), retained->copies().size(),
-                                                                        catalog.quaternions.size());
-            retained_work_impossible = !floor || *floor > limits.max_representation_kernel_work;
-        }
+        // The first trial is empty. Resident baseline copies do not impose a
+        // placed-copy raster work floor on that planned active layout.
         auto suggestion = lattice;
-        for (int attempt = 0; attempt != 64 && !retained_work_impossible; ++attempt) {
+        for (int attempt = 0; attempt != 64; ++attempt) {
             suggestion.pitch_mm *= 2;
             if (!std::isfinite(suggestion.pitch_mm)) {
                 break;
@@ -1415,21 +1408,17 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             }
         };
 
-        const auto retained_trial = run_trial(retained);
-        if (retained_trial != TrialStatus::complete) {
-            outcome.run.best = incumbent.best();
-            outcome.run.retained_solution = outcome.run.best ? outcome.run.best->solution : retained;
-            return outcome;
-        }
-        if (spectral_passes < limits.spectral.max_search_passes && spectral_passes < 2 && retained &&
-            spectral_candidates < limits.spectral.max_candidate_evaluations) {
+        // Search shape-aware placements before extending the retained box grid.
+        // The same incumbent and cumulative work counters span both trials.
+        {
             if (!honor_boundary()) {
                 return outcome;
             }
             wrapper_dynamic_bytes = 0;
             std::shared_ptr<const geometry::ValidatedSolution> empty_start;
             {
-                const auto empty_candidate = geometry::make_candidate(context, {});
+                const auto empty_candidate =
+                    geometry::make_candidate(context, std::vector<geometry::CopyPose>(std::size_t {}));
                 if (!std::holds_alternative<std::shared_ptr<const geometry::Candidate>>(empty_candidate)) {
                     outcome.run.termination_reason = TerminationReason::error;
                     outcome.run.diagnostic_code = "SPECTRAL_EMPTY_TRIAL_ERROR";
@@ -1485,6 +1474,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 }
                 outcome.run.stats.tracked_working_bytes_peak =
                     std::max(outcome.run.stats.tracked_working_bytes_peak, empty_validation_peak);
+                if (!honor_boundary()) {
+                    return outcome;
+                }
                 if (empty_validation_limit_exceeded) {
                     outcome.run.termination_reason = TerminationReason::resource_limit;
                     outcome.run.diagnostic_code = "PHYSICAL_VALIDATION_RESOURCE";
@@ -1535,6 +1527,15 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 return outcome;
             }
         }
+        if (spectral_passes < limits.spectral.max_search_passes && spectral_passes < 2 && retained &&
+            spectral_candidates < limits.spectral.max_candidate_evaluations) {
+            const auto retained_trial = run_trial(retained);
+            if (retained_trial != TrialStatus::complete) {
+                outcome.run.best = incumbent.best();
+                outcome.run.retained_solution = outcome.run.best ? outcome.run.best->solution : retained;
+                return outcome;
+            }
+        }
         outcome.run.best = incumbent.best();
         if (outcome.run.best) {
             outcome.run.retained_solution = outcome.run.best->solution;
@@ -1564,8 +1565,16 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
 
 }  // namespace
 
-std::uint32_t cpu_supported_thread_count() noexcept { return 1; }
-std::string_view cpu_scheduling_policy() noexcept { return "serial-v1"; }
+std::uint32_t cpu_supported_thread_count() noexcept {
+#ifdef _WIN32
+  return std::clamp(std::thread::hardware_concurrency(), 1U, 8U);
+#else
+  return 1;
+#endif
+}
+std::string_view cpu_scheduling_policy(std::uint32_t count) noexcept {
+    return count == 1 ? "serial-v1" : "raster-rows256-fft-lines64-v1";
+}
 
 SpectralOutcome run_cpu_spectral(std::shared_ptr<const geometry::ValidationContext> context,
                                  geometry::GridLattice lattice, const SpectralLimits& limits, const RunControl& control,

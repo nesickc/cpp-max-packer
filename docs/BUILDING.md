@@ -132,8 +132,11 @@ a resolved [settings document](../spec/schemas/settings.schema.json):
 For an STL interior-volume container, also pass `--container-report container.json`.
 A box container uses the dimensions in settings. Asset hashes must match the
 reports. Settings must already resolve manual pitch, a version-1 fixed/cube/custom
-orientation catalog and CPU execution with one thread; this command does not
-resolve incomplete settings. See [ADR 0009](../spec/decisions/0009-cpu-spectral-placement-and-export.md#headless-integration-and-test-seams)
+orientation catalog and a supported CPU thread count. Count one uses `serial-v1`;
+larger counts use `raster-rows256-v1`, up to the engine-reported Windows maximum
+of eight. Existing serial settings remain executable. This command does not
+resolve incomplete settings. See [ADR 0016](../spec/decisions/0016-cpu-raster-threading.md)
+for CPU execution and [ADR 0009](../spec/decisions/0009-cpu-spectral-placement-and-export.md#headless-integration-and-test-seams)
 for the exact boundary.
 
 Deterministic runs use explicit candidate/pass budgets. Time-budget runs use

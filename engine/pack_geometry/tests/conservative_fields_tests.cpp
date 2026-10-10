@@ -1,4 +1,6 @@
+#include "spectrapack/geometry/raster_execution.hpp"
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <cfenv>
 #include <cmath>
 #include <limits>
@@ -33,9 +35,16 @@ std::shared_ptr<const geo::VoxelGeometry> prepared(
 TEST_CASE(
     "GEO-04 conservative fields preserve a hollow cavity and signed grid "
     "origin") {
+  const auto count = GENERATE(1U, 2U, 4U, 8U);
+  auto made = geo::make_raster_execution(count, 512ULL << 20);
+  REQUIRE(std::holds_alternative<std::unique_ptr<geo::RasterExecution>>(made));
+  auto &execution = std::get<std::unique_ptr<geo::RasterExecution>>(made);
+  geo::RepresentationAttemptStats attempt;
+
   auto g = prepared(
       ts::hollow_cuboid({-3, -2, -2}, {3, 2, 2}, {-1, -1, -1}, {1, 1, 1}));
-  auto r = geo::voxelize_object(g, {{-.25, .5, -.75}, .5}, {0, 0, 0, 1});
+  auto r = geo::voxelize_object(g, {{-.25, .5, -.75}, .5}, {0, 0, 0, 1}, {},
+                                attempt, {}, execution.get());
   REQUIRE(std::holds_alternative<std::shared_ptr<const geo::CellField>>(r));
   auto f = std::get<std::shared_ptr<const geo::CellField>>(std::move(r));
   CHECK(f->window().first[0] < 0);
@@ -91,12 +100,19 @@ TEST_CASE("SOL-05 admission fails closed before a field allocation") {
 
 TEST_CASE(
     "SOL-02 placed clearance constructs its outside halo before cropping") {
+  const auto count = GENERATE(1U, 2U, 4U, 8U);
+  auto made = geo::make_raster_execution(count, 512ULL << 20);
+  REQUIRE(std::holds_alternative<std::unique_ptr<geo::RasterExecution>>(made));
+  auto &execution = std::get<std::unique_ptr<geo::RasterExecution>>(made);
+  geo::RepresentationAttemptStats attempt;
+
   auto g = prepared(ts::cuboid({.1, .1, .1}, {.2, .2, .2}));
   geo::GridWindow requested{{{0, 0, 0}, 1}, {0, 0, 0}, {3, 3, 3}};
   // The solid is wholly in global cell (-1,1,1), outside the requested field.
   // Its full 0.25 mm cell-union offset nevertheless reaches cell (0,1,1).
-  auto result = geo::voxelize_placed(
-      g, requested, {"outside", {-.5, 1, 1}, {0, 0, 0, 1}}, .25);
+  auto result =
+      geo::voxelize_placed(g, requested, {"outside", {-.5, 1, 1}, {0, 0, 0, 1}},
+                           .25, {}, attempt, {}, execution.get());
   REQUIRE(
       std::holds_alternative<std::shared_ptr<const geo::CellField>>(result));
   const auto field = std::get<std::shared_ptr<const geo::CellField>>(result);
@@ -107,13 +123,20 @@ TEST_CASE(
 TEST_CASE(
     "GEO-04 STL container blocker preserves permitted material and excluded "
     "cavity") {
+  const auto count = GENERATE(1U, 2U, 4U, 8U);
+  auto made = geo::make_raster_execution(count, 512ULL << 20);
+  REQUIRE(std::holds_alternative<std::unique_ptr<geo::RasterExecution>>(made));
+  auto &execution = std::get<std::unique_ptr<geo::RasterExecution>>(made);
+  geo::RepresentationAttemptStats attempt;
+
   auto container = ts::accepted(
       ts::hollow_cuboid({-4, -4, -4}, {4, 4, 4}, {-1, -1, -1}, {1, 1, 1}),
       geo::AssetRole::container);
   // Container imports retain their minimum as the local origin: outer [0,8]
   // and excluded cavity [3,5].
   geo::GridWindow requested{{{.25, .25, .25}, .5}, {0, 0, 0}, {16, 16, 16}};
-  auto result = geo::voxelize_container(container, requested, 0.0);
+  auto result = geo::voxelize_container(container, requested, 0.0, {}, attempt,
+                                        {}, execution.get());
   REQUIRE(
       std::holds_alternative<std::shared_ptr<const geo::CellField>>(result));
   const auto field = std::get<std::shared_ptr<const geo::CellField>>(result);
@@ -125,12 +148,19 @@ TEST_CASE(
 TEST_CASE(
     "GEO-04 noncardinal hollow object retains useful cavity and exterior "
     "cells") {
+  const auto count = GENERATE(1U, 2U, 4U, 8U);
+  auto made = geo::make_raster_execution(count, 512ULL << 20);
+  REQUIRE(std::holds_alternative<std::unique_ptr<geo::RasterExecution>>(made));
+  auto &execution = std::get<std::unique_ptr<geo::RasterExecution>>(made);
+  geo::RepresentationAttemptStats attempt;
+
   auto g = prepared(
       ts::hollow_cuboid({-3, -3, -2}, {3, 3, 2}, {-1, -1, -1}, {1, 1, 1}));
   const double half_angle = std::acos(-1.0) / 12.0;
   auto result =
       geo::voxelize_object(g, {{.125, -.375, .25}, .25},
-                           {0, 0, std::sin(half_angle), std::cos(half_angle)});
+                           {0, 0, std::sin(half_angle), std::cos(half_angle)},
+                           {}, attempt, {}, execution.get());
   REQUIRE(
       std::holds_alternative<std::shared_ptr<const geo::CellField>>(result));
   const auto field = std::get<std::shared_ptr<const geo::CellField>>(result);
@@ -403,6 +433,12 @@ TEST_CASE(
 TEST_CASE(
     "GEO-04 a slanted tetrahedron publishes only blocked-or-free binary "
     "cells") {
+  const auto count = GENERATE(1U, 2U, 4U, 8U);
+  auto made = geo::make_raster_execution(count, 512ULL << 20);
+  REQUIRE(std::holds_alternative<std::unique_ptr<geo::RasterExecution>>(made));
+  auto &execution = std::get<std::unique_ptr<geo::RasterExecution>>(made);
+  geo::RepresentationAttemptStats attempt;
+
   ts::Mesh tetra{{{{0, 0, 0}, {9, .1, .2}, {.3, 8, .1}, {.2, .4, 7}}},
                  {{{1, 2, 3}}, {{0, 2, 1}}, {{0, 1, 3}}, {{0, 3, 2}}}};
   auto g = prepared(tetra);
@@ -410,7 +446,8 @@ TEST_CASE(
   const double half = 15.0 * std::acos(-1.0) / 360.0;
   const geo::Quaternion rotation{std::sin(half) / root3, std::sin(half) / root3,
                                  std::sin(half) / root3, std::cos(half)};
-  auto result = geo::voxelize_object(g, {{.125, -.375, .25}, .25}, rotation);
+  auto result = geo::voxelize_object(g, {{.125, -.375, .25}, .25}, rotation, {},
+                                     attempt, {}, execution.get());
   REQUIRE(
       std::holds_alternative<std::shared_ptr<const geo::CellField>>(result));
   const auto field = std::get<std::shared_ptr<const geo::CellField>>(result);

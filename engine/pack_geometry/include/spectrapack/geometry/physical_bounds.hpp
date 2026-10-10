@@ -12,6 +12,7 @@ namespace spectrapack::geometry {
 struct PhysicalQueryLimits {
   std::uint64_t max_working_bytes{128ULL << 20};
   std::uint64_t max_kernel_work{100'000'000};
+  // Executed mesh-vertex reads; exact cardinal extrema need none.
   std::uint64_t max_vertex_visits{5'000'000};
 };
 

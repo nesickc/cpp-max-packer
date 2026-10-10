@@ -1,6 +1,6 @@
 add_library(pack_geometry STATIC
   src/import.cpp src/solid_analysis.cpp src/exact_predicates.cpp
-  src/validation.cpp src/validation_kernel.cpp
+  src/validation.cpp src/validation_kernel.cpp src/raster_execution.cpp
   src/display_lod.cpp src/conservative_fields.cpp src/physical_bounds.cpp
   src/rigid_transform.cpp src/export_validation.cpp)
 target_include_directories(pack_geometry PUBLIC include)
@@ -42,7 +42,7 @@ target_link_libraries(spectrapack_display_lod_tests PRIVATE pack_geometry Catch2
 catch_discover_tests(spectrapack_display_lod_tests)
 
 add_executable(spectrapack_conservative_fields_tests
-  tests/conservative_fields_tests.cpp tests/raster_reuse_tests.cpp tests/object_window_tests.cpp
+  tests/conservative_fields_tests.cpp tests/raster_reuse_tests.cpp tests/raster_threading_tests.cpp tests/object_window_tests.cpp
   tests/blocked_clone_tests.cpp)
 target_link_libraries(spectrapack_conservative_fields_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
 catch_discover_tests(spectrapack_conservative_fields_tests)
@@ -70,3 +70,6 @@ add_executable(spectrapack_representation_accounting_tests
 target_link_libraries(spectrapack_representation_accounting_tests PRIVATE
   pack_geometry Catch2::Catch2WithMain)
 catch_discover_tests(spectrapack_representation_accounting_tests)
+
+set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+  "${PROJECT_SOURCE_DIR}/tests/cmake/QualificationTimeouts.cmake")

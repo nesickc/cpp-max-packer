@@ -931,7 +931,7 @@ TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 writer funds caller native residen
     exact_limits.max_working_bytes = workspace - 1;
     const auto below_workspace = geo::revalidate(solution, exact_limits);
     REQUIRE_FALSE(below_workspace.validated_solution);
-    REQUIRE(below_workspace.report.code == "KERNEL_MEMORY_LIMIT");
+    REQUIRE(below_workspace.report.code == "VALIDATION_MEMORY_LIMIT");
 
     auto cap = observed.builder_base_before_native_inputs;
     REQUIRE(checked_add(cap, *native_bytes));
@@ -953,7 +953,7 @@ TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 writer funds caller native residen
     REQUIRE(std::holds_alternative<io::Error>(exported));
     const auto& error = std::get<io::Error>(exported);
     REQUIRE(error.code == "EXPORT_RESOURCE_LIMIT");
-    REQUIRE(error.details.at("validation_code") == "KERNEL_MEMORY_LIMIT");
+    REQUIRE(error.details.at("validation_code") == "VALIDATION_MEMORY_LIMIT");
     REQUIRE_FALSE(std::filesystem::exists(output / "result.json"));
 }
 TEST_CASE_METHOD(ResultBuilderFixture, "AT-14 writer clamps quantized validation to builder work already observed",

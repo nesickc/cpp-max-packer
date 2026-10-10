@@ -45,7 +45,15 @@ Solver admission stays private. Check shape/cell limits and aggregate live
 storage before expensive unsupported field work. Include accepted assets,
 retained solution, container mask, reference counts, occupancy, proximity,
 distance scratch, orientation kernel, simultaneous correlation outputs, FFT
-workspace and existing caller reserve. Geometry exposes a checked scalar prepare/place and metadata bound beside its private types; accepted inputs, grid arrays, per-copy footprints/IDs and caller reserve are excluded. Solver admission adds these separately, bounding each retained footprint by a full environment size_t array, expanded fill/dilation/crop scratch and simultaneous correlation outputs.
+workspace and existing caller reserve. Geometry exposes a checked scalar
+prepare/place and metadata bound beside its private types; accepted inputs,
+grid arrays, per-copy footprints/IDs and caller reserve are excluded. Solver
+startup admission adds known ownership, expanded fill/dilation/crop scratch and
+simultaneous correlation outputs. T-010's ADR 0016 revision removes the
+speculative full-environment size_t array per copy: actual footprint capacities
+are admitted before allocation, including simultaneous old and staged owners.
+Startup admission does not guarantee future layout growth. A centrally retained
+solution is resident ownership, distinct from the active layout's footprints.
 
 Preserve dynamic residency checks at
 actual allocation boundaries; a preliminary estimate does not replace them.

@@ -42,6 +42,8 @@ enum class FieldPurpose { object_kernel, placed_pair_blocker, container_blocker 
 [[nodiscard]] std::optional<std::uint64_t> estimate_unclipped_raster_work(const AcceptedSolid&, std::uint64_t copies,
                                                                           std::uint64_t passes) noexcept;
 
+class RasterExecution;
+
 class VoxelGeometry {
 public:
     VoxelGeometry(const VoxelGeometry&) = delete;
@@ -103,22 +105,24 @@ private:
                                                                           const runtime::OperationControl& = {});
 [[nodiscard]] RepresentationOutcome<CellField> voxelize_object(std::shared_ptr<const VoxelGeometry>, GridLattice,
                                                                Quaternion, const RepresentationLimits& = {});
-[[nodiscard]] RepresentationOutcome<CellField> voxelize_object(std::shared_ptr<const VoxelGeometry>, GridLattice,
-                                                               Quaternion, const RepresentationLimits&,
-                                                               RepresentationAttemptStats&,
-                                                               const runtime::OperationControl& = {});
+[[nodiscard]] RepresentationOutcome<CellField>
+voxelize_object(std::shared_ptr<const VoxelGeometry>, GridLattice, Quaternion,
+                const RepresentationLimits &, RepresentationAttemptStats &,
+                const runtime::OperationControl & = {},
+                RasterExecution * = nullptr);
 [[nodiscard]] RepresentationOutcome<CellField> voxelize_placed(std::shared_ptr<const VoxelGeometry>, GridWindow,
                                                                CopyPose, double, const RepresentationLimits& = {});
-[[nodiscard]] RepresentationOutcome<CellField> voxelize_placed(std::shared_ptr<const VoxelGeometry>, GridWindow,
-                                                               const CopyPose&, double, const RepresentationLimits&,
-                                                               RepresentationAttemptStats&,
-                                                               const runtime::OperationControl& = {});
+[[nodiscard]] RepresentationOutcome<CellField> voxelize_placed(
+    std::shared_ptr<const VoxelGeometry>, GridWindow, const CopyPose &, double,
+    const RepresentationLimits &, RepresentationAttemptStats &,
+    const runtime::OperationControl & = {}, RasterExecution * = nullptr);
 [[nodiscard]] RepresentationOutcome<CellField> voxelize_container(Container, GridWindow, double,
                                                                   const RepresentationLimits& = {});
-[[nodiscard]] RepresentationOutcome<CellField> voxelize_container(Container, GridWindow, double,
-                                                                  const RepresentationLimits&,
-                                                                  RepresentationAttemptStats&,
-                                                                  const runtime::OperationControl& = {});
+[[nodiscard]] RepresentationOutcome<CellField>
+voxelize_container(Container, GridWindow, double, const RepresentationLimits &,
+                   RepresentationAttemptStats &,
+                   const runtime::OperationControl & = {},
+                   RasterExecution * = nullptr);
 
 class BlockedField {
 public:

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -11,8 +13,8 @@
 
 #include "spectrapack/geometry/physical_bounds.hpp"
 #include "spectrapack/geometry/validation.hpp"
-#include "spectrapack/solver/incumbent.hpp"
 #include "spectrapack/runtime/operation_control.hpp"
+#include "spectrapack/solver/incumbent.hpp"
 
 namespace spectrapack::solver {
 
@@ -53,11 +55,35 @@ struct ResourceLimitDetails {
 };
 
 struct RunFailureDetails {
+    RunFailureDetails(TerminationReason reason_value, std::string_view phase_value, std::string_view cause,
+                      std::optional<ResourceLimitDetails> resource_value,
+                      std::optional<double> suggested_pitch_value) noexcept :
+        reason(reason_value),
+        phase(phase_value),
+        resource(resource_value),
+        suggested_pitch_mm(suggested_pitch_value)
+    {
+        if (cause.size() > cause_storage_.size()) {
+            cause = "DIAGNOSTIC_CAUSE_CODE_OVERFLOW";
+        }
+        cause_size_ = cause.size();
+        for (std::size_t index = 0; index != cause_size_; ++index) {
+            cause_storage_[index] = cause[index];
+        }
+    }
+
+    [[nodiscard]] std::string_view cause_code() const noexcept { return { cause_storage_.data(), cause_size_ }; }
+
     TerminationReason reason { TerminationReason::error };
     std::string_view phase;
-    std::string_view cause_code;
     std::optional<ResourceLimitDetails> resource;
     std::optional<double> suggested_pitch_mm;
+
+private:
+    // A returned validation report can own its code. Inline ownership preserves
+    // that text through allocation-free copies and moves without a self-view.
+    std::array<char, 64> cause_storage_ {};
+    std::size_t cause_size_ {};
 };
 
 struct BaselineOutcome {

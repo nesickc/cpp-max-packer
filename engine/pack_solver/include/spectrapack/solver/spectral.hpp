@@ -28,7 +28,8 @@ struct SpectralLimits {
 };
 
 [[nodiscard]] std::uint32_t cpu_supported_thread_count() noexcept;
-[[nodiscard]] std::string_view cpu_scheduling_policy() noexcept;
+[[nodiscard]] std::string_view
+cpu_scheduling_policy(std::uint32_t count = 1) noexcept;
 
 struct SpectralStats {
     std::uint64_t correlations {};

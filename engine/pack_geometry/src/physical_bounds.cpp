@@ -350,10 +350,6 @@ PhysicalQueryOutcome<OrientedBounds> oriented_bounds(std::shared_ptr<const Accep
   if (!solid) return failure("PHYSICAL_SOLID_REQUIRED", "An accepted solid is required.");
   if (!std::ranges::all_of(quaternion, finite) || !std::ranges::any_of(quaternion, [](double x) { return x != 0; }))
     return failure("PHYSICAL_QUATERNION_INVALID", "Quaternion must be finite and nonzero.");
-  const auto vertex_count = static_cast<std::uint64_t>(solid->mesh().vertices.size());
-  if (vertex_count > limits.max_vertex_visits)
-    return failure("PHYSICAL_VERTEX_LIMIT",
-                   "Accepted vertex visits exceed the physical query limit.");
   kernel::Budget budget{limits.max_kernel_work, limits.max_working_bytes};
   const auto physical = kernel::physical_bounds(
       std::move(solid), quaternion, limits.max_vertex_visits, budget);

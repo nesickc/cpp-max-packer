@@ -1,18 +1,18 @@
 #include <catch2/catch_test_macros.hpp>
-
-#include "spectrapack/geometry/validation.hpp"
-#include "spectrapack/solver/baseline.hpp"
-
-#include "../../pack_geometry/tests/validation_fixtures.hpp"
-#include "../src/allocation_fault.hpp"
-
-#include <chrono>
+#include <catch2/generators/catch_generators.hpp>
 #include <cfenv>
+#include <chrono>
 #include <cmath>
 #include <memory>
 #include <numbers>
 #include <set>
 #include <variant>
+
+#include "../../pack_geometry/tests/validation_fixtures.hpp"
+#include "../src/allocation_fault.hpp"
+#include "../src/pipeline_profile.hpp"
+#include "spectrapack/geometry/validation.hpp"
+#include "spectrapack/solver/baseline.hpp"
 
 namespace geo = spectrapack::geometry;
 namespace solver = spectrapack::solver;
@@ -52,6 +52,161 @@ std::shared_ptr<const geo::ValidationContext> mesh_context(
 }
 
 }  // namespace
+
+TEST_CASE("T010 box grid reaches64 within bounded complete-layout validation work", "[solver][T010][baseline-batches]")
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = 1;
+    const auto context = baseline_context(1, { 9, 9, 9 }, constraints);
+    std::vector<geo::CopyPose> witness;
+    for (const double z : { 1.5, 3.5, 5.5, 7.5 }) {
+        for (const double y : { 1.5, 3.5, 5.5, 7.5 }) {
+            for (const double x : { 1.5, 3.5, 5.5, 7.5 }) {
+                witness.push_back({
+                    "baseline-0-" + std::to_string(witness.size()), { x, y, z },
+                       { 0, 0, 0, 1 }
+                });
+            }
+        }
+    }
+    const auto full = validated(context, witness);
+    solver::BaselineLimits limits;
+    limits.max_candidate_evaluations = limits.max_copies = 64;
+    limits.max_search_passes = 1;
+    limits.max_validation_aabb_pair_tests = 3000;
+    std::vector<std::size_t> published;
+    const auto result = solver::run_aabb_baseline(context, limits, {}, [&](solver::SnapshotHandle snapshot) {
+        if (snapshot->score.count) {
+            published.push_back(snapshot->score.count);
+        }
+    });
+    CAPTURE(full->report().aabb_pair_tests, limits.max_validation_aabb_pair_tests,
+            result.stats.validation_aabb_pair_tests);
+    REQUIRE(result.best);
+    CHECK(result.best->score.count == 64);
+    CHECK(result.stats.search_passes == 1);
+    CHECK(result.stats.validation_kernel_work <= limits.max_validation_kernel_work);
+    CHECK(result.stats.validation_aabb_pair_tests <= limits.max_validation_aabb_pair_tests);
+    REQUIRE_FALSE(published.empty());
+    CHECK(published.front() == 1);
+    CHECK(geo::revalidate(result.best->solution).validated_solution);
+}
+
+TEST_CASE("T010 box batches flush exact candidate and copy limits", "[solver][T010][baseline-batches]")
+{
+    const auto cap = GENERATE(0ULL, 1ULL, 2ULL, 31ULL, 32ULL, 33ULL, 34ULL, 63ULL, 64ULL);
+    const bool copy_cap = GENERATE(false, true);
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = 1;
+    const auto context = baseline_context(1, { 9, 9, 9 }, constraints);
+    solver::BaselineLimits limits;
+    limits.max_search_passes = 1;
+    limits.max_candidate_evaluations = copy_cap ? 64 : cap;
+    limits.max_copies = copy_cap ? cap : 64;
+    const auto result = solver::run_aabb_baseline(context, limits, {});
+    CAPTURE(cap, copy_cap);
+    REQUIRE(result.best);
+    CHECK(result.best->score.count == cap);
+    CHECK(result.stats.candidate_evaluations == cap);
+    CHECK(result.stats.search_passes == (cap == 64 ? 1 : 0));
+    CHECK(geo::revalidate(result.best->solution).validated_solution);
+}
+
+TEST_CASE("T010 a resource-exhausted batch never retries or replaces its valid prefix",
+          "[solver][T010][baseline-batches]")
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = 1;
+    const auto context = baseline_context(1, { 9, 9, 9 }, constraints);
+    solver::BaselineLimits limits;
+    limits.max_validation_aabb_pair_tests = 10;
+    const auto result = solver::run_aabb_baseline(context, limits, {});
+    REQUIRE(result.best);
+    CHECK(result.best->score.count == 1);
+    CHECK(result.stats.candidate_evaluations == 33);
+    CHECK(result.stats.validation_aabb_pair_tests == 10);
+    CHECK(result.stats.indeterminate_candidates == 1);
+    CHECK(result.stats.search_passes == 0);
+    CHECK(result.termination_reason == solver::TerminationReason::resource_limit);
+    REQUIRE(result.failure_details);
+    CHECK(result.failure_details->cause_code() == "VALIDATION_AABB_PAIR_LIMIT");
+    CHECK(geo::revalidate(result.best->solution).validated_solution);
+}
+
+TEST_CASE("T010 geometric batch rejection retries stable poses through full validation",
+          "[solver][T010][baseline-batches]")
+{
+    // Binary0.1 translations can overlap by an exact sub-ULP amount at zero
+    // clearance. A failed group must not discard later individually valid poses.
+    const auto context = baseline_context(.1, { 4, .1, .1 });
+    const auto witness = validated(
+        context, {
+                     { "first", { .05, .05, .05 }, { 0, 0, 0, 1 } },
+                     { "later", { .25, .05, .05 }, { 0, 0, 0, 1 } }
+    });
+    struct Capture {
+        bool rejected_group {}, accepted_after_group {};
+    } capture;
+    struct ResetProfile {
+        ~ResetProfile() { solver::detail::baseline_profile_sink = nullptr; }
+    } reset;
+    solver::detail::baseline_profile_context = &capture;
+    solver::detail::baseline_profile_sink = [](void* opaque,
+                                               const solver::detail::BaselineProfileSample& sample) noexcept {
+        auto& state = *static_cast<Capture*>(opaque);
+        if (sample.phase != solver::detail::BaselineProfilePhase::validation) {
+            return;
+        }
+        if (sample.copy_count > 2 && !sample.native_valid) {
+            state.rejected_group = true;
+        }
+        if (state.rejected_group && sample.native_valid && sample.copy_count >= 2) {
+            state.accepted_after_group = true;
+        }
+    };
+    solver::BaselineLimits limits;
+    limits.max_search_passes = 1;
+    const auto result = solver::run_aabb_baseline(context, limits, {});
+    REQUIRE(result.best);
+    CHECK(result.best->score.count >= witness->copies().size());
+    CHECK(capture.rejected_group);
+    CHECK(capture.accepted_after_group);
+    CHECK(result.stats.invalid_candidates + result.stats.indeterminate_candidates > 0);
+    CHECK(result.best->solution->copies().front().copy_id == "baseline-0-0");
+    CHECK(geo::revalidate(result.best->solution).validated_solution);
+}
+
+TEST_CASE("T010 deadline during pending generation never flushes unsubmitted poses", "[solver][T010][baseline-batches]")
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = 1;
+    const auto context = baseline_context(1, { 9, 9, 9 }, constraints);
+    struct State {
+        bool first {};
+        unsigned polls {};
+    } state;
+    const auto now = [](void* opaque) noexcept {
+        auto& state = *static_cast<State*>(opaque);
+        return spectrapack::runtime::Clock::time_point {} +
+               std::chrono::milliseconds(state.first && ++state.polls >= 32 ? 100 : 0);
+    };
+    const solver::RunControl control {
+        {}, spectrapack::runtime::Clock::time_point {} + std::chrono::milliseconds(100), now, &state
+    };
+    const auto result = solver::run_aabb_baseline(context, {}, control, [&](solver::SnapshotHandle snapshot) {
+        if (snapshot->score.count == 1) {
+            state.first = true;
+        }
+    });
+    REQUIRE(state.first);
+    CHECK(state.polls >= 32);
+    REQUIRE(result.best);
+    CHECK(result.best->score.count == 1);
+    CHECK(result.stats.candidate_evaluations == 1);
+    CHECK(result.stats.search_passes == 0);
+    CHECK(result.diagnostic_code == "PHYSICAL_DEADLINE");
+    CHECK(geo::revalidate(result.best->solution).validated_solution);
+}
 
 TEST_CASE("T006 baseline produces cube_exact 64 through authoritative validation", "[solver][T006][AT-10]") {
   const auto context = baseline_context(10, {40, 40, 40});
@@ -424,7 +579,9 @@ TEST_CASE("T006 floating environment validation failure stops after retained bes
   CHECK(result.retained_solution == delivered->solution);
   CHECK(result.termination_reason == solver::TerminationReason::error);
   CHECK(result.diagnostic_code == "PHYSICAL_FLOATING_ENVIRONMENT");
-  CHECK(result.stats.candidate_evaluations == 2);
+  // The first pose plus both pending poses are charged at validator entry;
+  // the failed batch does not retry after the floating-environment error.
+  CHECK(result.stats.candidate_evaluations == 3);
   CHECK(result.stats.invalid_candidates == 0);
   CHECK(result.stats.indeterminate_candidates == 1);
   CHECK(callbacks == 2);

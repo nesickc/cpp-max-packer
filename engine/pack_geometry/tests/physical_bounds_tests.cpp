@@ -40,6 +40,63 @@ TEST_CASE("T006 physical cardinal extrema use every accepted mesh vertex", "[T00
   CHECK(value.bounds_mm.max == geo::Vec3{0.5, 1, 1.5});
 }
 
+TEST_CASE("GEO-06 exact cardinal queries use accepted extrema without vertex visits", "[bounds_first][SOL-01]")
+{
+    const auto solid = accepted_tetrahedron();
+    const double h = std::sqrt(.5);
+    const std::array<geo::Quaternion, 24> rotations {
+        { { 0, 0, 0, 1 },       { h, 0, 0, h },       { -h, 0, 0, h },       { 0, h, 0, h },       { 0, -h, 0, h },
+         { 0, 0, h, h },       { 0, 0, -h, h },      { 1, 0, 0, 0 },        { 0, 1, 0, 0 },       { 0, 0, 1, 0 },
+         { .5, .5, .5, .5 },   { .5, .5, -.5, .5 },  { .5, -.5, .5, .5 },   { .5, -.5, -.5, .5 }, { -.5, .5, .5, .5 },
+         { -.5, .5, -.5, .5 }, { -.5, -.5, .5, .5 }, { -.5, -.5, -.5, .5 }, { h, h, 0, 0 },       { h, -h, 0, 0 },
+         { h, 0, h, 0 },       { h, 0, -h, 0 },      { 0, h, h, 0 },        { 0, h, -h, 0 } }
+    };
+    geo::PhysicalQueryLimits limits;
+    limits.max_vertex_visits = 0;
+    for (const auto& rotation : rotations) {
+        // Independent reference scans the actual asymmetric accepted mesh.
+        const auto [x, y, z, w] = rotation;
+        const double norm = x * x + y * y + z * z + w * w;
+        const double matrix[3][3] {
+            { (w * w + x * x - y * y - z * z) / norm, 2 * (x * y - w * z) / norm,             2 * (x * z + w * y) / norm             },
+            { 2 * (x * y + w * z) / norm,             (w * w - x * x + y * y - z * z) / norm, 2 * (y * z - w * x) / norm             },
+            { 2 * (x * z - w * y) / norm,             2 * (y * z + w * x) / norm,             (w * w - x * x - y * y + z * z) / norm }
+        };
+        geo::Bounds reference;
+        reference.min.fill(std::numeric_limits<double>::infinity());
+        reference.max.fill(-std::numeric_limits<double>::infinity());
+        for (const auto& vertex : solid->mesh().vertices) {
+            for (int axis = 0; axis != 3; ++axis) {
+                double coordinate {};
+                for (int local = 0; local != 3; ++local) {
+                    coordinate += matrix[axis][local] * vertex[local];
+                }
+                reference.min[axis] = std::min(reference.min[axis], coordinate);
+                reference.max[axis] = std::max(reference.max[axis], coordinate);
+            }
+        }
+        for (const double scale : { 1.0, -1.0, 2.0, -3.0 }) {
+            auto quaternion = rotation;
+            for (auto& coordinate : quaternion) {
+                coordinate *= scale;
+            }
+            const auto outcome = geo::oriented_bounds(solid, quaternion, limits);
+            CAPTURE(quaternion, scale);
+            REQUIRE(std::holds_alternative<geo::OrientedBounds>(outcome));
+            const auto& value = std::get<geo::OrientedBounds>(outcome);
+            CHECK(value.exact_cardinal_extrema);
+            CHECK(value.bounds_mm.min == reference.min);
+            CHECK(value.bounds_mm.max == reference.max);
+            CHECK(value.stats.vertex_visits == 0);
+            CHECK(value.stats.kernel_work > 0);
+        }
+    }
+    const auto perturbed = geo::oriented_bounds(solid, { 1e-12, 0, 0, 1 }, limits);
+    REQUIRE(std::holds_alternative<geo::PhysicalQueryFailure>(perturbed));
+    CHECK(std::get<geo::PhysicalQueryFailure>(perturbed).code == "PHYSICAL_VERTEX_LIMIT");
+    CHECK(std::get<geo::PhysicalQueryFailure>(perturbed).stats.vertex_visits == 0);
+}
+
 TEST_CASE("T006 physical generic extrema retain homogeneous quaternion meaning", "[T006][SOL-01]") {
   // H(q)/dot(q,q) gives the independently derived 3/5, 4/5 active Z
   // rotation for this deliberately non-unit quaternion.
@@ -158,7 +215,7 @@ TEST_CASE("T006 physical reports query work memory and vertex caps", "[T006][QA-
   const auto solid = accepted_cube(-1, 1);
   const auto no_work = geo::oriented_bounds(solid, {0, 0, 0, 1}, {128ULL << 20, 1, 100});
   const auto no_memory = geo::oriented_bounds(solid, {0, 0, 0, 1}, {1, 100, 100});
-  const auto few_vertices = geo::oriented_bounds(solid, {0, 0, 0, 1}, {128ULL << 20, 100, 1});
+  const auto few_vertices = geo::oriented_bounds(solid, { 0, 0, 1, 2 }, { 128ULL << 20, 100, 1 });
   const auto no_axis_memory = geo::plan_regular_axis(0, 1, 0, 2, 0, 0, 2,
                                                      {1, 100'000, 0});
   CHECK(std::holds_alternative<geo::PhysicalQueryFailure>(no_work));
@@ -213,3 +270,5 @@ TEST_CASE("T006 physical supported floating environment produces finite cardinal
   CHECK(std::isfinite(bounds.min[0]));
   CHECK(std::isfinite(bounds.max[2]));
 }
+#include <algorithm>
+#include <array>
