@@ -298,3 +298,126 @@ retained valid incumbent; one-pass fresh search reaches FFT without losing the
 baseline; genuine fixed-buffer refusal remains explicit. Expected prerequisite
 scope remains bounded to baseline submission and private solver admission/order,
 without a new geometry estimator, lifetime framework or search operator.
+
+## Measured FFT completion decision (2026-10-11)
+
+Status: frozen before FFT parallel implementation. Prerequisites are committed as
+`68e3d6b`; the Release benchmark SHA-256 is
+`245b0484c09f1e5d11d65767c4e4f9d0cc0fdd68afcf401d548d6788c9867794`.
+The binary was built before that commit from identical pinned sources. Evidence:
+`.local/t010/completion-20261010/serial-baseline-68e3d6b/`. All 36 observations
+(one warmup and five samples per profile) complete with independent native
+validation and repeatable work/ordered poses. Prepared Start includes context,
+baseline, bounded spectral work and final validation; asset preparation is excluded.
+
+| Profile | Start median, ms | Actual FFT axes, ms | Retained copies |
+| --- | ---: | ---: | ---: |
+| Analytic | 24.3391 | 3.8504 | 2 |
+| Ulamok 16 mm | 724.3382 | 152.8127 | 36 |
+| Ulamok 4 mm, user box/gaps/cube | 15466.9751 | 10354.7242 | 36 |
+| Pryanik 1, original small box | 870.8717 | 4.0942 | 2 |
+| Pryanik 2, original small box | 1502.9021 | 4.7022 | 2 |
+| Pryanik 2, full box/4 mm/fixed | 2223.6807 | 169.9280 | 280 |
+
+Select **independent FFT lines within one correlation**. Ulamok 4 mm spends
+66.95% of Start in actual axis transforms. At four threads, require at least
+2.0x axis speedup (median <=5177.3621 ms) and 1.5x Start speedup (median
+<=10311.3168 ms), against both retained serial and the new build at one thread.
+The axis timer includes dispatch, plan construction, synchronization and polling.
+At precisely 2x axes, Amdahl's estimate is only about 1.504x overall before added
+overhead; existing raster parallelism may contribute separately. This is a
+feasibility estimate, not a speed claim. Do not lower targets after implementation.
+
+The [FFT target fixture](../../tests/fixtures/t010/fft-threading-targets.json)
+pins all settings, work limits, input/raw-result hashes and baseline medians.
+Retain all six profiles at 1/2/4/8 threads, one warmup and five sequential samples.
+One-thread Start regression is at most 10% on every profile; process peak growth
+is at most 32 MiB over each profile's retained serial maximum. Preserve the
+512 MiB host and 1.3-billion representation-work caps. Report admitted/tracked
+memory, actual process peak and logical caller reserve separately. The many-copy
+Pryanik reserve is 96,252,289 bytes; it is not allocated process RSS. Its fixed
+orientation/4 mm profile does not qualify the user's 2 mm/cube search. Timed
+quality remains separate from these one-candidate/one-pass/no-refinement runs.
+
+### Ownership, dispatch and accounting
+
+Compute owns one opaque, noncopyable `FftExecution`, retained by the existing
+`SpectralWorkspace` alongside its raster owner. Public seam:
+
+```cpp
+class FftExecution; // joins on destruction; thread_count(), reserved_bytes() noexcept
+std::optional<std::uint64_t> estimate_fft_execution_bytes(std::uint32_t) noexcept;
+std::variant<std::unique_ptr<FftExecution>, CorrelationFailure>
+make_fft_execution(std::uint32_t count, std::uint64_t available_bytes);
+// count 1 returns a null owner and reserves zero team bytes.
+// estimate_correlation_cpu(spec, std::uint32_t fft_threads = 1)
+// Both correlation calls append FftExecution* = nullptr after OperationControl.
+```
+
+The correlation estimate includes its FFT owner and N simultaneous copies of the
+existing pocketfft workspace bound (64 KiB plus 64 complex values per longest-axis
+element). Correlation enforces the same bound; its caller reservation excludes
+only that supplied FFT owner. Solver residency counts both teams, then subtracts
+the FFT owner exactly once when forming the correlation caller reservation.
+Startup combines the raster reservation with this threaded correlation estimate.
+Create the FFT owner lazily only after complete live-memory admission succeeds;
+failure never silently lowers the requested count.
+
+Each team has N-1 Windows background threads plus the coordinator. FFT ownership
+reserves 256 KiB fixed storage plus (N-1)*2 MiB, with the same explicit 1 MiB stack
+and qualified 1 MiB runtime margin as raster. Compile-time bounds cover descriptor,
+handle, synchronization and failure storage. Retaining both teams allows at most
+2N-1 live threads but at most N executing: raster and FFT dispatch never overlap.
+No shared global pool, nested library threads, queued batches or persistent plans.
+
+For axis a, order the other axes ascending and flatten their line coordinates
+with the lower axis fastest. Worker w owns [floor(L*w/N),floor(L*(w+1)/N)). Split
+that interval into rectangles that do not cross a lower-axis row, preserving the
+original three-dimensional byte strides. Each group has at most 64 lines and
+65,536 complex values, except one admitted line may itself be longer. Each call
+uses pocketfft with internal threading disabled; cache/vector switches stay fixed.
+Preserve all nine transform orderings, axis barriers, conjugation and inverse
+scaling on axis zero only. Multiplication, numerical checks and publication remain
+serial. Count one preserves the original whole-axis descriptor through the same
+low-level c2c helper, avoiding repeated uncached plan creation. This is direct
+serial dispatch, with no fallback or second numerical kernel.
+
+Only the coordinator invokes custom clocks, phase/profile sinks and publication.
+Workers poll user Stop and atomic operation abort between bounded groups; the
+coordinator polls between its groups and at most every 5 ms while waiting. Verify
+worker floating environments. Static per-worker failure slots preserve the
+originating error; failed/interrupted owners abort, join and become unusable before
+buffers or callbacks die. Partial thread creation follows the same rule. Measure
+the longest admitted group and actual Stop tail; preserve 250 ms acknowledgment
+and 5 s ordinary safe-stop gates, exact retained incumbents and late-work rejection.
+
+### Compatibility, verification and remaining scope
+
+Count one remains `serial-v1`; larger counts use
+`raster-rows256-fft-lines64-v1`. Existing saved result/project strings remain
+unchanged through Open/Save/export; new desktop Starts resolve current policy.
+An explicit stale raster-only CLI execution request retains the owned
+`CPU_RUNTIME_UNSUPPORTED` response, with current-policy/capability guidance.
+No extra legacy execution mode, schema version or solver path is introduced.
+
+First observe a genuine FFT-overlap red using private atomic evidence around the
+existing real c2c calls during an already-supported multi-thread solver request:
+the serial FFT records only one executing thread/call. Green must show overlapping
+real calls and distinct IDs, not queued tasks or a mock pool. Test direct integer
+binary/proximity oracles at 1/2/4/8 with asymmetric/non-power-of-two padding,
+nonzero origins, thin axes, group tails and axis-one row crossings. Preserve
+normalization/NaN/corruption rejection and independent final solid validation.
+
+Exercise combined owner/scratch limits immediately below and at admission,
+partial thread start, active worker allocation/fault, active Stop/deadline,
+parked shutdown and an immediate new operation. Assert coordinator callback
+affinity, bounded storage and exact incumbent retention. Qualify repeatability
+per build/count; report cross-count differences rather than assuming them away.
+Obtain focused critical review of the stable concurrency diff. Reuse unaffected
+T-011 and raster evidence, and run affected runtime/CLI/project regression gates.
+
+Expected remaining production scope is 500–650 lines; prerequisites added 291
+and removed 161. Reassess near 1,000 added production lines across this completion
+extension or another scope trigger. No generic executor, second solver, cache,
+SIMD/GPU work, new packing operators or increased caps. This decision authorizes
+implementation; measured parallel acceptance remains outstanding.

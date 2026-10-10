@@ -1,0 +1,663 @@
+{
+  "ticket": "T-010",
+  "acceptance": [
+    "T010-A3",
+    "T010-A4",
+    "T010-A6",
+    "T010-A7"
+  ],
+  "profile_version": 1,
+  "frozen_before_optimization": "2026-10-11",
+  "frozen_at_utc": "2026-10-10T22:16:47Z",
+  "baseline_revision": "68e3d6b74dc3fc180b882e8de0d30891e5b4114c",
+  "baseline_binary_sha256": "245b0484c09f1e5d11d65767c4e4f9d0cc0fdd68afcf401d548d6788c9867794",
+  "baseline_build_note": "Built before commit; the nine frozen source hashes match 68e3d6b. Embedded build metadata may retain c3b098b.",
+  "baseline_artifacts": ".local/t010/completion-20261010/serial-baseline-68e3d6b",
+  "baseline_compact_evidence_file": "compact-evidence.json",
+  "baseline_compact_evidence_sha256": "b86373cdc5ffd13e869a4f0f67b77033045a9bdee2df0410b57ae59368b17dfb",
+  "toolchain_profile": "local-windows-2026-20260921",
+  "host": {
+    "cpu": "12th Gen Intel(R) Core(TM) i5-12450H",
+    "exposed_logical_processors": 8,
+    "os": "Windows 11 Home 10.0.26200",
+    "power_plan": "Balanced"
+  },
+  "measurement": {
+    "build": "Release",
+    "scope": "prepared-start",
+    "thread_counts": [
+      1,
+      2,
+      4,
+      8
+    ],
+    "warmups": 1,
+    "timed_samples": 5,
+    "includes": "fresh job context, baseline, one spectral candidate/pass, final independent validation",
+    "excludes": "accepted asset preparation, persistence and export",
+    "execution": "Sequential processes/configurations; no concurrent build or benchmark.",
+    "phase_metric": "Median of each invocation sum of all actual FFT-axis elapsed times, including dispatch, plans, synchronization and cancellation polling; nested in correlation times.",
+    "memory_metric": "Maximum cumulative process peak working set including preparation/warmups; report conservative tracked/admitted bounds and logical caller reserves separately.",
+    "comparison": "Both qualifying speed targets must hold against retained serial and the new build at one thread. Compare only equivalent completed work; retain all failed samples and ordered poses.",
+    "reproducibility": "Same build/host/count fixed work must repeat; validate every output independently. Report cross-count differences and withhold speed claims for unequal work.",
+    "timed_quality": "Separate 60-second user-profile observations; never interpret less search as computational speed."
+  },
+  "common_settings": {
+    "spectral_candidate_evaluations": 1,
+    "spectral_search_passes": 1,
+    "refinement_evaluations": 0,
+    "host_cap_bytes": 536870912,
+    "representation_kernel_work_cap": 1300000000,
+    "seed_policy": "Native benchmark has no RNG input; user seed42 recorded for new practical profiles is unused."
+  },
+  "targets": {
+    "qualifying_profile": "ulamok4-limited",
+    "qualifying_thread_count": 4,
+    "minimum_fft_axes_speedup": 2.0,
+    "minimum_fixed_work_start_speedup": 1.5,
+    "retained_serial_fft_axes_ceiling_ms": 5177.3621,
+    "retained_serial_fixed_work_ceiling_ms": 10311.316733333333,
+    "maximum_one_thread_time_ratio": 1.1,
+    "one_thread_regression_scope": "Fixed-work Start for every listed profile against retained serial.",
+    "maximum_process_peak_increase_bytes": 33554432,
+    "memory_scope": "Every profile/count against its retained serial process peak.",
+    "stop_acknowledgement_max_ms": 250,
+    "ordinary_safe_stop_max_ms": 5000
+  },
+  "limits": "Pryanik many-copy profile uses fixed identity and explicit4mm; it does not qualify the user2mm/cube profile or optimal packing. Original raster evidence keeps its earlier revision/workload.",
+  "profiles": [
+    {
+      "id": "analytic",
+      "box_mm": [
+        38.0,
+        28.0,
+        20.0
+      ],
+      "pitch_mm": 1.0,
+      "clearance_mm": {
+        "pair": 0.125,
+        "wall": 0.25
+      },
+      "orientation": "fixed",
+      "minimum_valid_copies": 2,
+      "minimum_correlations": 2,
+      "caller_reserved_bytes": 0,
+      "serial_fixed_work_median_ms": 24.3391,
+      "serial_fft_axes_median_ms": 3.8504,
+      "serial_raster_median_ms": 1.0497,
+      "serial_process_peak_bytes": 7274496,
+      "serial_tracked_peak_bytes": 2383944,
+      "serial_ordered_best_found_sha256": "246d5d2cbbf111b3e13a3829c78a09818dd0cf40355bc9107344a04f199657c7",
+      "serial_raw_sha256": "3df989929919277e4a1f39b0e8db3ebca70e803ef94ed4a426eef53681d74cc4",
+      "work_limits": {
+        "baseline": {
+          "axis_cells": 1000000,
+          "candidates": 2,
+          "copies": 4096,
+          "geometry_vertex_visits": 200000000,
+          "geometry_work": 1300000000,
+          "orientations": 2048,
+          "passes": 2048,
+          "per_query": {
+            "vertex_visits": 5000000,
+            "work": 100000000,
+            "working_bytes": 134217728
+          },
+          "per_validation": {
+            "copies": 1000000,
+            "diagnostic_examples": 64,
+            "pair_tests": 50000000,
+            "work": 1300000000,
+            "working_bytes": 536870912
+          },
+          "reserved_bytes": 0,
+          "validation_pair_tests": 50000000,
+          "validation_work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "caller_reserved_bytes": 0,
+        "direct_terms": 200000000,
+        "per_correlation": {
+          "direct_terms": 200000000,
+          "padded_cells": 16777216,
+          "reserved_bytes": 0,
+          "working_bytes": 536870912
+        },
+        "per_representation": {
+          "cell_visits": 200000000,
+          "cells": 16777216,
+          "input_triangles": 5000000,
+          "reserved_bytes": 0,
+          "work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "proximity_terms": 200000000,
+        "refinement_evaluations": 0,
+        "representation_cell_visits": 200000000,
+        "representation_work": 1300000000,
+        "spectral": {
+          "axis_cells": 1000000,
+          "candidates": 1,
+          "copies": 4096,
+          "geometry_vertex_visits": 200000000,
+          "geometry_work": 1300000000,
+          "orientations": 2048,
+          "passes": 1,
+          "per_query": {
+            "vertex_visits": 5000000,
+            "work": 100000000,
+            "working_bytes": 134217728
+          },
+          "per_validation": {
+            "copies": 1000000,
+            "diagnostic_examples": 64,
+            "pair_tests": 50000000,
+            "work": 1300000000,
+            "working_bytes": 536870912
+          },
+          "reserved_bytes": 0,
+          "validation_pair_tests": 50000000,
+          "validation_work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "working_bytes": 536870912
+      },
+      "source_definition": "accepted analytic cuboid [-1,-1.5,-0.5] to [1,1.5,0.5] mm"
+    },
+    {
+      "id": "ulamok",
+      "source_path": "rc/items/ulamok_2kg_simplified.stl",
+      "box_mm": [
+        400.0,
+        350.0,
+        285.0
+      ],
+      "pitch_mm": 16.0,
+      "clearance_mm": {
+        "pair": 0.1,
+        "wall": 1.0
+      },
+      "orientation": "cube",
+      "minimum_valid_copies": 36,
+      "minimum_correlations": 48,
+      "caller_reserved_bytes": 0,
+      "serial_fixed_work_median_ms": 724.3382,
+      "serial_fft_axes_median_ms": 152.8127,
+      "serial_raster_median_ms": 417.9496,
+      "serial_process_peak_bytes": 6684672,
+      "serial_tracked_peak_bytes": 1959952,
+      "serial_ordered_best_found_sha256": "b6006a384cc3961d9cb41323a181f1c63a23881ac664c67f499be20b90113571",
+      "serial_raw_sha256": "ed37452a4f1df9ab584936270e18935b21e274b62c2ce13811be5d5a9c97fa79",
+      "work_limits": {
+        "baseline": {
+          "axis_cells": 1000000,
+          "candidates": 4096,
+          "copies": 4096,
+          "geometry_vertex_visits": 200000000,
+          "geometry_work": 1300000000,
+          "orientations": 2048,
+          "passes": 2048,
+          "per_query": {
+            "vertex_visits": 5000000,
+            "work": 100000000,
+            "working_bytes": 134217728
+          },
+          "per_validation": {
+            "copies": 1000000,
+            "diagnostic_examples": 64,
+            "pair_tests": 50000000,
+            "work": 1300000000,
+            "working_bytes": 536870912
+          },
+          "reserved_bytes": 0,
+          "validation_pair_tests": 50000000,
+          "validation_work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "caller_reserved_bytes": 0,
+        "direct_terms": 200000000,
+        "per_correlation": {
+          "direct_terms": 200000000,
+          "padded_cells": 16777216,
+          "reserved_bytes": 0,
+          "working_bytes": 536870912
+        },
+        "per_representation": {
+          "cell_visits": 200000000,
+          "cells": 16777216,
+          "input_triangles": 5000000,
+          "reserved_bytes": 0,
+          "work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "proximity_terms": 200000000,
+        "refinement_evaluations": 0,
+        "representation_cell_visits": 200000000,
+        "representation_work": 1300000000,
+        "spectral": {
+          "axis_cells": 1000000,
+          "candidates": 1,
+          "copies": 4096,
+          "geometry_vertex_visits": 200000000,
+          "geometry_work": 1300000000,
+          "orientations": 2048,
+          "passes": 1,
+          "per_query": {
+            "vertex_visits": 5000000,
+            "work": 100000000,
+            "working_bytes": 134217728
+          },
+          "per_validation": {
+            "copies": 1000000,
+            "diagnostic_examples": 64,
+            "pair_tests": 50000000,
+            "work": 1300000000,
+            "working_bytes": 536870912
+          },
+          "reserved_bytes": 0,
+          "validation_pair_tests": 50000000,
+          "validation_work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "working_bytes": 536870912
+      },
+      "source_sha256": "39bcc1c3a5849176fc83473ce191ec5106854ea68836aed412c7c93b11b5bb7e"
+    },
+    {
+      "id": "ulamok4-limited",
+      "source_path": "rc/items/ulamok_2kg_simplified.stl",
+      "box_mm": [
+        400.0,
+        340.0,
+        285.0
+      ],
+      "pitch_mm": 4.0,
+      "clearance_mm": {
+        "pair": 1.0,
+        "wall": 1.0
+      },
+      "orientation": "cube",
+      "minimum_valid_copies": 36,
+      "minimum_correlations": 48,
+      "caller_reserved_bytes": 0,
+      "serial_fixed_work_median_ms": 15466.9751,
+      "serial_fft_axes_median_ms": 10354.7242,
+      "serial_raster_median_ms": 2798.4120000000007,
+      "serial_process_peak_bytes": 85057536,
+      "serial_tracked_peak_bytes": 79962808,
+      "serial_ordered_best_found_sha256": "9e7345b553548d4e865a4b3063ffc6737c74cfb47b5db89d244017872fd0c656",
+      "serial_raw_sha256": "00a8d55d8fa076a14bb957d738f7387f7503824d572bd03b5aef1eb8d7f22e48",
+      "work_limits": {
+        "baseline": {
+          "axis_cells": 1000000,
+          "candidates": 4096,
+          "copies": 4096,
+          "geometry_vertex_visits": 200000000,
+          "geometry_work": 1300000000,
+          "orientations": 2048,
+          "passes": 2048,
+          "per_query": {
+            "vertex_visits": 5000000,
+            "work": 100000000,
+            "working_bytes": 134217728
+          },
+          "per_validation": {
+            "copies": 1000000,
+            "diagnostic_examples": 64,
+            "pair_tests": 50000000,
+            "work": 1300000000,
+            "working_bytes": 536870912
+          },
+          "reserved_bytes": 0,
+          "validation_pair_tests": 50000000,
+          "validation_work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "caller_reserved_bytes": 0,
+        "direct_terms": 200000000,
+        "per_correlation": {
+          "direct_terms": 200000000,
+          "padded_cells": 16777216,
+          "reserved_bytes": 0,
+          "working_bytes": 536870912
+        },
+        "per_representation": {
+          "cell_visits": 200000000,
+          "cells": 16777216,
+          "input_triangles": 5000000,
+          "reserved_bytes": 0,
+          "work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "proximity_terms": 200000000,
+        "refinement_evaluations": 0,
+        "representation_cell_visits": 200000000,
+        "representation_work": 1300000000,
+        "spectral": {
+          "axis_cells": 1000000,
+          "candidates": 1,
+          "copies": 4096,
+          "geometry_vertex_visits": 200000000,
+          "geometry_work": 1300000000,
+          "orientations": 2048,
+          "passes": 1,
+          "per_query": {
+            "vertex_visits": 5000000,
+            "work": 100000000,
+            "working_bytes": 134217728
+          },
+          "per_validation": {
+            "copies": 1000000,
+            "diagnostic_examples": 64,
+            "pair_tests": 50000000,
+            "work": 1300000000,
+            "working_bytes": 536870912
+          },
+          "reserved_bytes": 0,
+          "validation_pair_tests": 50000000,
+          "validation_work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "working_bytes": 536870912
+      },
+      "source_sha256": "39bcc1c3a5849176fc83473ce191ec5106854ea68836aed412c7c93b11b5bb7e"
+    },
+    {
+      "id": "pryanik1",
+      "source_path": "rc/items/pryanik_1.STL",
+      "box_mm": [
+        100.0,
+        100.0,
+        50.0
+      ],
+      "pitch_mm": 4.0,
+      "clearance_mm": {
+        "pair": 0.1,
+        "wall": 1.0
+      },
+      "orientation": "fixed",
+      "minimum_valid_copies": 2,
+      "minimum_correlations": 2,
+      "caller_reserved_bytes": 0,
+      "serial_fixed_work_median_ms": 870.8717,
+      "serial_fft_axes_median_ms": 4.0942,
+      "serial_raster_median_ms": 665.0536,
+      "serial_process_peak_bytes": 52867072,
+      "serial_tracked_peak_bytes": 11482506,
+      "serial_ordered_best_found_sha256": "e6be96df5014e13f0500ee688df2620b6f4ed55261ed406714035b4897e94be6",
+      "serial_raw_sha256": "a8e489e7d1972874a4c8fe833e05536a7144ab5c8e24aec401ef505e189d4fd7",
+      "work_limits": {
+        "baseline": {
+          "axis_cells": 1000000,
+          "candidates": 4096,
+          "copies": 4096,
+          "geometry_vertex_visits": 200000000,
+          "geometry_work": 1300000000,
+          "orientations": 2048,
+          "passes": 2048,
+          "per_query": {
+            "vertex_visits": 5000000,
+            "work": 100000000,
+            "working_bytes": 134217728
+          },
+          "per_validation": {
+            "copies": 1000000,
+            "diagnostic_examples": 64,
+            "pair_tests": 50000000,
+            "work": 1300000000,
+            "working_bytes": 536870912
+          },
+          "reserved_bytes": 0,
+          "validation_pair_tests": 50000000,
+          "validation_work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "caller_reserved_bytes": 0,
+        "direct_terms": 200000000,
+        "per_correlation": {
+          "direct_terms": 200000000,
+          "padded_cells": 16777216,
+          "reserved_bytes": 0,
+          "working_bytes": 536870912
+        },
+        "per_representation": {
+          "cell_visits": 200000000,
+          "cells": 16777216,
+          "input_triangles": 5000000,
+          "reserved_bytes": 0,
+          "work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "proximity_terms": 200000000,
+        "refinement_evaluations": 0,
+        "representation_cell_visits": 200000000,
+        "representation_work": 1300000000,
+        "spectral": {
+          "axis_cells": 1000000,
+          "candidates": 1,
+          "copies": 4096,
+          "geometry_vertex_visits": 200000000,
+          "geometry_work": 1300000000,
+          "orientations": 2048,
+          "passes": 1,
+          "per_query": {
+            "vertex_visits": 5000000,
+            "work": 100000000,
+            "working_bytes": 134217728
+          },
+          "per_validation": {
+            "copies": 1000000,
+            "diagnostic_examples": 64,
+            "pair_tests": 50000000,
+            "work": 1300000000,
+            "working_bytes": 536870912
+          },
+          "reserved_bytes": 0,
+          "validation_pair_tests": 50000000,
+          "validation_work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "working_bytes": 536870912
+      },
+      "source_sha256": "01f934646c4e3c112e6aeadb55a9a85d1d8882ba22246461c766808b2414be7b"
+    },
+    {
+      "id": "pryanik2",
+      "source_path": "rc/items/pryanik_2.STL",
+      "box_mm": [
+        100.0,
+        100.0,
+        50.0
+      ],
+      "pitch_mm": 4.0,
+      "clearance_mm": {
+        "pair": 0.1,
+        "wall": 1.0
+      },
+      "orientation": "fixed",
+      "minimum_valid_copies": 2,
+      "minimum_correlations": 2,
+      "caller_reserved_bytes": 0,
+      "serial_fixed_work_median_ms": 1502.9021,
+      "serial_fft_axes_median_ms": 4.7022,
+      "serial_raster_median_ms": 833.525,
+      "serial_process_peak_bytes": 83959808,
+      "serial_tracked_peak_bytes": 17641526,
+      "serial_ordered_best_found_sha256": "550d644db19e01829272ac446c3a38b2a59a24094bdc26294ef44e57a38e0bc7",
+      "serial_raw_sha256": "92c1e1c2a298c81f88113f22379c335d1a1c99a9d021c724239fed0f79b25b40",
+      "work_limits": {
+        "baseline": {
+          "axis_cells": 1000000,
+          "candidates": 4096,
+          "copies": 4096,
+          "geometry_vertex_visits": 200000000,
+          "geometry_work": 1300000000,
+          "orientations": 2048,
+          "passes": 2048,
+          "per_query": {
+            "vertex_visits": 5000000,
+            "work": 100000000,
+            "working_bytes": 134217728
+          },
+          "per_validation": {
+            "copies": 1000000,
+            "diagnostic_examples": 64,
+            "pair_tests": 50000000,
+            "work": 1300000000,
+            "working_bytes": 536870912
+          },
+          "reserved_bytes": 0,
+          "validation_pair_tests": 50000000,
+          "validation_work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "caller_reserved_bytes": 0,
+        "direct_terms": 200000000,
+        "per_correlation": {
+          "direct_terms": 200000000,
+          "padded_cells": 16777216,
+          "reserved_bytes": 0,
+          "working_bytes": 536870912
+        },
+        "per_representation": {
+          "cell_visits": 200000000,
+          "cells": 16777216,
+          "input_triangles": 5000000,
+          "reserved_bytes": 0,
+          "work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "proximity_terms": 200000000,
+        "refinement_evaluations": 0,
+        "representation_cell_visits": 200000000,
+        "representation_work": 1300000000,
+        "spectral": {
+          "axis_cells": 1000000,
+          "candidates": 1,
+          "copies": 4096,
+          "geometry_vertex_visits": 200000000,
+          "geometry_work": 1300000000,
+          "orientations": 2048,
+          "passes": 1,
+          "per_query": {
+            "vertex_visits": 5000000,
+            "work": 100000000,
+            "working_bytes": 134217728
+          },
+          "per_validation": {
+            "copies": 1000000,
+            "diagnostic_examples": 64,
+            "pair_tests": 50000000,
+            "work": 1300000000,
+            "working_bytes": 536870912
+          },
+          "reserved_bytes": 0,
+          "validation_pair_tests": 50000000,
+          "validation_work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "working_bytes": 536870912
+      },
+      "source_sha256": "6e69e7606566b608155d193c3db9baa920fff3507907f88ce12243887cfd62ac"
+    },
+    {
+      "id": "pryanik2-many4-fixed",
+      "source_path": "rc/items/pryanik_2.STL",
+      "box_mm": [
+        400.0,
+        340.0,
+        285.0
+      ],
+      "pitch_mm": 4.0,
+      "clearance_mm": {
+        "pair": 1.0,
+        "wall": 1.0
+      },
+      "orientation": "fixed",
+      "minimum_valid_copies": 280,
+      "minimum_correlations": 2,
+      "caller_reserved_bytes": 96252289,
+      "serial_fixed_work_median_ms": 2223.6807,
+      "serial_fft_axes_median_ms": 169.928,
+      "serial_raster_median_ms": 851.4653,
+      "serial_process_peak_bytes": 83955712,
+      "serial_tracked_peak_bytes": 171276301,
+      "serial_ordered_best_found_sha256": "37c521122663b237e39486eba6f4d1cee712982568c42322dcc571bce05da5cc",
+      "serial_raw_sha256": "a215c18a83599f453a6b209dbb69fbe01ba80d56af1ffd4292eae810aa07b3cd",
+      "work_limits": {
+        "baseline": {
+          "axis_cells": 1000000,
+          "candidates": 4096,
+          "copies": 4096,
+          "geometry_vertex_visits": 200000000,
+          "geometry_work": 1300000000,
+          "orientations": 2048,
+          "passes": 2048,
+          "per_query": {
+            "vertex_visits": 5000000,
+            "work": 100000000,
+            "working_bytes": 134217728
+          },
+          "per_validation": {
+            "copies": 1000000,
+            "diagnostic_examples": 64,
+            "pair_tests": 50000000,
+            "work": 1300000000,
+            "working_bytes": 536870912
+          },
+          "reserved_bytes": 0,
+          "validation_pair_tests": 50000000,
+          "validation_work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "caller_reserved_bytes": 96252289,
+        "direct_terms": 200000000,
+        "per_correlation": {
+          "direct_terms": 200000000,
+          "padded_cells": 16777216,
+          "reserved_bytes": 0,
+          "working_bytes": 536870912
+        },
+        "per_representation": {
+          "cell_visits": 200000000,
+          "cells": 16777216,
+          "input_triangles": 5000000,
+          "reserved_bytes": 0,
+          "work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "proximity_terms": 200000000,
+        "refinement_evaluations": 0,
+        "representation_cell_visits": 200000000,
+        "representation_work": 1300000000,
+        "spectral": {
+          "axis_cells": 1000000,
+          "candidates": 1,
+          "copies": 4096,
+          "geometry_vertex_visits": 200000000,
+          "geometry_work": 1300000000,
+          "orientations": 2048,
+          "passes": 1,
+          "per_query": {
+            "vertex_visits": 5000000,
+            "work": 100000000,
+            "working_bytes": 134217728
+          },
+          "per_validation": {
+            "copies": 1000000,
+            "diagnostic_examples": 64,
+            "pair_tests": 50000000,
+            "work": 1300000000,
+            "working_bytes": 536870912
+          },
+          "reserved_bytes": 0,
+          "validation_pair_tests": 50000000,
+          "validation_work": 1300000000,
+          "working_bytes": 536870912
+        },
+        "working_bytes": 536870912
+      },
+      "source_sha256": "6e69e7606566b608155d193c3db9baa920fff3507907f88ce12243887cfd62ac"
+    }
+  ]
+}
