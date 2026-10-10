@@ -83,7 +83,7 @@ export function App() {
   const accepted = state?.object?.report.state === 'accepted' && state.object.report.diagnostics.status === 'valid';
   const validationError = settingsError(settings);
   const result = state?.result ?? null;
-  const resultSettings = useMemo(() => result ? snapshotSettings(result) : null, [result]);
+  const resultSettings = useMemo(() => result ? snapshotSettings(result) : null, [result?.id, result?.document.solution_revision]);
   const pending = !!resultSettings && JSON.stringify(settings) !== JSON.stringify(resultSettings);
   const operation = state?.operation;
   const elapsed = operation?.completion_elapsed_seconds ?? (operation ? Math.max(0, ((operation.finished_at ? Date.parse(operation.finished_at) : now) - Date.parse(operation.started_at)) / 1000) : 0);
@@ -92,7 +92,9 @@ export function App() {
   const preview = result ? result.preview : state?.object?.preview ?? null;
   const displayedDimensions = useMemo(() => resultSettings?.box_dimensions_mm ?? (settings.box_dimensions_mm.every(v => Number.isFinite(v) && v > 0) ? settings.box_dimensions_mm : defaultSettings.box_dimensions_mm), [resultSettings, settings.box_dimensions_mm]);
   const report = state?.object?.report;
-  const displayPoses = useMemo<Results.Placement[]>(() => result ? result.document.placements : report?.state === 'accepted' ? [{ copy_id: 'object-preview', translation_mm: displayedDimensions.map(v => v / 2) as [number,number,number], quaternion_xyzw: [0,0,0,1], local_to_world: [[1,0,0,displayedDimensions[0]/2],[0,1,0,displayedDimensions[1]/2],[0,0,1,displayedDimensions[2]/2],[0,0,0,1]] }] : emptyPoses, [result, report, displayedDimensions]);
+  // Native polling clones unchanged snapshots. Their revision and physical
+  // dimensions, rather than transport object identities, own display updates.
+  const displayPoses = useMemo<Results.Placement[]>(() => result ? result.document.placements : report?.state === 'accepted' ? [{ copy_id: 'object-preview', translation_mm: displayedDimensions.map(v => v / 2) as [number,number,number], quaternion_xyzw: [0,0,0,1], local_to_world: [[1,0,0,displayedDimensions[0]/2],[0,1,0,displayedDimensions[1]/2],[0,0,1,displayedDimensions[2]/2],[0,0,0,1]] }] : emptyPoses, [result?.id, result?.document.solution_revision, report?.state, displayedDimensions[0], displayedDimensions[1], displayedDimensions[2]]);
   const selectedPose = poses.find(p => p.copy_id === selected);
   const setDimension = (index: number, value: number) => setSettings(s => { const dimensions: [number, number, number] = [...s.box_dimensions_mm]; dimensions[index] = value; return { ...s, box_dimensions_mm: dimensions }; });
   const importObject = () => run(() => bridge.importObject(units === 'custom' ? { units, scale_mm: scale } : { units }));
