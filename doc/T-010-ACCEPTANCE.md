@@ -66,7 +66,47 @@ production and fixture changes. Complete logs, exclusions and source/binary pins
 are indexed by `stage2-final-coverage.json` and `stage2-final-frozen/pins.json`.
 The Release benchmark builds successfully. Prerequisite production C++ changes
 are +291/-161 lines (net +130), excluding tests and the diagnostic benchmark.
-No new serial performance baseline or parallel-kernel target has yet been frozen.
+The following checkpoint freezes the subsequent serial baseline and targets.
+
+### FFT baseline and target freeze
+
+All 36 Release observations on `68e3d6b` (six profiles, one warmup plus five
+samples each) complete with independent native validation and identical work and
+ordered poses within each profile. Ulamok 4 mm has medians of 15,466.9751 ms for
+Start and 10,354.7242 ms for actual FFT axes; full-box Pryanik 2 at 4 mm/fixed
+identity retains 280 copies with a 2,223.6807 ms Start median. These are bounded
+one-candidate/one-pass runs, not full-search quality or 2 mm/cube qualification.
+
+Evidence: `serial-baseline-68e3d6b/` below the completion artifact directory;
+the manifest pins source, binary, inputs and all raw observations. Independent
+log review confirms six exits 0, empty stderr, native validity, reproducibility
+and matching raw hashes. [ADR 0016](../spec/decisions/0016-cpu-raster-threading.md#measured-fft-completion-decision-2026-10-11)
+and [numeric targets](../tests/fixtures/t010/fft-threading-targets.json) are frozen
+in `b46c9fb` before implementation: at four threads, at least 2x FFT and 1.5x
+Start speed versus retained and same-build serial, at most 10% one-thread Start
+regression and at most 32 MiB process-peak growth. Parallel acceptance is pending.
+
+### FFT functional checkpoint
+
+The frozen `fft-green-review/` sources pass independent critical concurrency and
+accounting review. The original real-call overlap regression exits 42 with four
+failed assertions; the new implementation overlaps actual FFT calls at two/four
+threads. Independent compute oracles and resource/control tests pass 23 cases /
+25,565 assertions in each build; selected solver cases pass 12/826 in Release and
+13/836 in Debug. Source/binary pins and carried-check identities are recorded in
+that directory's manifests and `evidence-summary.json`.
+The FFT production C++ delta is +531/-48 lines (net +483), excluding tests,
+CMake and the 25-line benchmark extension. Together with the prerequisites,
+this completion extension adds 822 production lines and removes 209 (net +613).
+
+The frozen Release engine also passes all 13 desktop protocol tests and two real
+runtime Stop/reuse cases in `integration-native-first/`, including current-policy
+execution and preservation of legacy result history. Marker-write/safe-stop times
+are 0.4232/48.3199 ms in voxelizing and 0.6896/99.0246 ms in FFT; marker-write time
+is not UI acknowledgement. One four-thread Ulamok feasibility observation takes
+5,841.4127 ms Start / 2,702.7248 ms FFT axes, retains the same native-valid 36 poses
+and uses 1,150,976 extra process bytes. `fft-smoke-4/` is a single observation,
+not the required repeated matrix or practical Stop qualification.
 
 ## Many-copy Pryanik repair (2026-10-10)
 

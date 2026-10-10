@@ -144,7 +144,7 @@ class DesktopTests(unittest.TestCase):
         result_path, result = self.solved()
         resolved = result["search"]["resolved_settings"]["resolved"]
         self.assertEqual(resolved["thread_count"], 2)
-        self.assertEqual(resolved["cpu_runtime"]["scheduling_policy"], "raster-rows256-v1")
+        self.assertEqual(resolved["cpu_runtime"]["scheduling_policy"], "raster-rows256-fft-lines64-v1")
         self.assertEqual(result["validation"]["status"], "valid")
         completed, _ = self.restore(result_path)
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
@@ -152,6 +152,35 @@ class DesktopTests(unittest.TestCase):
         restored = json.loads(restored_path.read_text(encoding="utf-8"))
         self.assertEqual(restored["search"], result["search"])
         self.assertEqual(restored["placements"], result["placements"])
+
+        # Stored execution history remains portable, including the older policy.
+        result["search"]["resolved_settings"]["resolved"]["cpu_runtime"]["scheduling_policy"] = "raster-rows256-v1"
+        for segment in result["search"]["run_segments"]:
+            segment["resolved_settings"]["resolved"]["cpu_runtime"]["scheduling_policy"] = "raster-rows256-v1"
+        result_path.write_text(json.dumps(result), encoding="utf-8")
+        completed, output = self.restore(result_path, "restore-legacy", stl=True)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        restored_path = pathlib.Path(json.loads(completed.stdout)["result"]["result_path"])
+        legacy = json.loads(restored_path.read_text(encoding="utf-8"))
+        self.assertEqual(legacy["search"], result["search"])
+        self.assertEqual(legacy["placements"], result["placements"])
+
+    def test_t010_stale_explicit_cpu_policy_requires_current_resolution(self):
+        self.request["thread_count"] = 2
+        settings_path, _ = self.prepared()
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        settings["resolved"]["cpu_runtime"]["scheduling_policy"] = "raster-rows256-v1"
+        settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        output = self.root / "stale-solve"
+        output.mkdir()
+        result_path = output / "result.json"
+        completed = run("solve", "--object-report", self.report, "--settings", settings_path, "--result", result_path)
+        self.assertNotEqual(completed.returncode, 0)
+        error = json.loads(completed.stdout)["error"]
+        self.assertEqual(error["code"], "CPU_RUNTIME_UNSUPPORTED")
+        self.assertEqual(error["details"]["current_policy"], "raster-rows256-fft-lines64-v1")
+        self.assertIn("desktop-prepare", error["details"]["capability_guidance"])
+        self.assertFalse(result_path.exists())
 
     def test_restore_without_search_preserves_history_and_checked_export(self):
         result_path, result = self.solved()

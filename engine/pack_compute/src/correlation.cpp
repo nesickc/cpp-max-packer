@@ -1,14 +1,5 @@
 #include "spectrapack/compute/correlation.hpp"
 
-#include "correlation_test_hook.hpp"
-
-// The audited workspace bound below relies on these pinned pocketfft modes.
-// A later cache/vector/thread change must update the bound and its tests first.
-#define POCKETFFT_CACHE_SIZE 0
-#define POCKETFFT_NO_MULTITHREADING
-#define POCKETFFT_NO_VECTORS
-#include <pocketfft_hdronly.h>
-
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -21,6 +12,8 @@
 #include <utility>
 
 #include "correlation_profile.hpp"
+#include "correlation_test_hook.hpp"
+#include "fft_execution_internal.hpp"
 
 namespace spectrapack::compute {
 
@@ -246,8 +239,19 @@ bool calculate_pocketfft_workspace(std::uint64_t longest_axis, std::uint64_t& by
 template <typename Environment>
 CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Environment> environment,
                              std::span<const std::uint8_t> kernel, const CorrelationLimits& limits,
-                             const runtime::OperationControl& control)
+                             const runtime::OperationControl& control, FftExecution* execution)
 {
+    bool complete {};
+    struct CloseOnFailure {
+        FftExecution* execution;
+        bool& complete;
+        ~CloseOnFailure()
+        {
+            if (!complete || std::uncaught_exceptions() != 0) {
+                detail::FftAccess::join(execution);
+            }
+        }
+    } close { execution, complete };
     constexpr bool binary = std::is_same_v<Environment, std::uint8_t>;
     std::uint64_t metadata {};
     if (!checked_add(limits.reserved_bytes, kCorrelationMetadataBytes, metadata) ||
@@ -367,7 +371,7 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
     }
 
     std::uint64_t complex_buffer_bytes {};
-    const auto estimated = estimate_correlation_cpu(spec);
+    const auto estimated = estimate_correlation_cpu(spec, execution ? execution->thread_count() : 1);
     if (const auto* issue = std::get_if<CorrelationFailure>(&estimated)) {
         return *issue;
     }
@@ -398,8 +402,12 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
         return *interrupted;
     }
     try {
+        detail::FftCallEvidence evidence;
+        auto* observed = detail::fft_call_evidence_sink ? &evidence : nullptr;
         std::vector<Complex> blocked(static_cast<std::size_t>(padded_count));
         std::vector<Complex> occupied(static_cast<std::size_t>(padded_count));
+        // Join a failed operation before either transform buffer is destroyed.
+        CloseOnFailure buffers_close { execution, complete };
         for (std::uint32_t z = 0; z != spec.environment_shape[2]; ++z) {
             for (std::uint32_t y = 0; y != spec.environment_shape[1]; ++y) {
                 for (std::uint32_t x = 0; x != spec.environment_shape[0]; ++x) {
@@ -425,24 +433,33 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
             }
         }
 
-        const pocketfft::shape_t shape { padded[0], padded[1], padded[2] };
-        const pocketfft::stride_t strides { static_cast<std::ptrdiff_t>(sizeof(Complex)),
-                                            static_cast<std::ptrdiff_t>(y_stride),
-                                            static_cast<std::ptrdiff_t>(z_stride) };
+        const auto transform = [&](unsigned which, std::size_t axis, bool forward, Complex* data,
+                                   double factor) -> std::optional<CorrelationFailure> {
+            std::optional<CorrelationFailure> issue;
+            detail::profile_fft_axis(binary, which, axis, [&] {
+                issue = detail::FftAccess::run(execution, padded, axis, forward, data, factor, control, observed);
+            });
+            if (observed) {
+                detail::fft_call_evidence_sink(detail::fft_call_evidence_context, evidence);
+            }
+            if (issue) {
+                issue->stats = stats;
+            }
+            return issue;
+        };
         for (std::size_t axis = 0; axis != 3; ++axis) {
-            const pocketfft::shape_t axes { axis };
             if (auto interrupted = interruption(stats)) {
                 return *interrupted;
             }
-            detail::profile_fft_axis(binary, 0, axis, [&] {
-                pocketfft::c2c(shape, strides, strides, axes, true, blocked.data(), blocked.data(), 1.0, 1);
-            });
+            if (auto issue = transform(0, axis, true, blocked.data(), 1.0)) {
+                return *issue;
+            }
             if (auto interrupted = interruption(stats)) {
                 return *interrupted;
             }
-            detail::profile_fft_axis(binary, 1, axis, [&] {
-                pocketfft::c2c(shape, strides, strides, axes, true, occupied.data(), occupied.data(), 1.0, 1);
-            });
+            if (auto issue = transform(1, axis, true, occupied.data(), 1.0)) {
+                return *issue;
+            }
             if (auto interrupted = interruption(stats)) {
                 return *interrupted;
             }
@@ -458,14 +475,12 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
         const double inverse_factor = (detail::numeric_fault == detail::NumericFault::bad_normalization ? 2.0 : 1.0) /
                                       static_cast<double>(padded_count);
         for (std::size_t axis = 0; axis != 3; ++axis) {
-            const pocketfft::shape_t axes { axis };
             if (auto interrupted = interruption(stats)) {
                 return *interrupted;
             }
-            detail::profile_fft_axis(binary, 2, axis, [&] {
-                pocketfft::c2c(shape, strides, strides, axes, false, blocked.data(), blocked.data(),
-                               axis == 0 ? inverse_factor : 1.0, 1);
-            });
+            if (auto issue = transform(2, axis, false, blocked.data(), axis == 0 ? inverse_factor : 1.0)) {
+                return *issue;
+            }
             if (auto interrupted = interruption(stats)) {
                 return *interrupted;
             }
@@ -573,6 +588,7 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
         if (auto interrupted = interruption(stats)) {
             return *interrupted;
         }
+        complete = true;
         return CorrelationOutcome(std::in_place_type<CorrelationResult>, translation_first, padded, values,
                                   NumericReport { max_integer_residual, mass_residual, maximum_probe_error }, stats);
     }
@@ -586,8 +602,12 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
 
 }  // namespace
 
-CorrelationEstimateOutcome estimate_correlation_cpu(const CorrelationSpec& spec)
+CorrelationEstimateOutcome estimate_correlation_cpu(const CorrelationSpec& spec, std::uint32_t fft_threads)
 {
+    const auto owner = estimate_fft_execution_bytes(fft_threads);
+    if (!owner) {
+        return CorrelationFailure { "CPU_THREAD_COUNT_UNSUPPORTED", "Unsupported FFT thread count.", {} };
+    }
     CorrelationEstimate estimate {};
     estimate.padded_cells = 1;
     for (std::size_t axis = 0; axis != 3; ++axis) {
@@ -613,7 +633,9 @@ CorrelationEstimateOutcome estimate_correlation_cpu(const CorrelationSpec& spec)
     if (!checked_multiply(estimate.padded_cells, 2 * sizeof(Complex) + sizeof(double), estimate.working_bytes) ||
         !calculate_pocketfft_workspace(*std::max_element(estimate.padded_shape.begin(), estimate.padded_shape.end()),
                                        workspace) ||
+        !checked_multiply(workspace, fft_threads, workspace) ||
         !checked_add(estimate.working_bytes, workspace, estimate.working_bytes) ||
+        !checked_add(estimate.working_bytes, *owner, estimate.working_bytes) ||
         !checked_add(estimate.working_bytes, kCorrelationMetadataBytes, estimate.working_bytes) ||
         !checked_add(estimate.working_bytes, sizeof(std::array<std::size_t, kMaximumProbeCount>),
                      estimate.working_bytes) ||
@@ -629,16 +651,16 @@ CorrelationEstimateOutcome estimate_correlation_cpu(const CorrelationSpec& spec)
 
 CorrelationOutcome correlate_binary_cpu(const CorrelationSpec& spec, std::span<const std::uint8_t> environment,
                                         std::span<const std::uint8_t> kernel, const CorrelationLimits& limits,
-                                        const runtime::OperationControl& control)
+                                        const runtime::OperationControl& control, FftExecution* execution)
 {
-    return correlate(spec, environment, kernel, limits, control);
+    return correlate(spec, environment, kernel, limits, control, execution);
 }
 
 CorrelationOutcome correlate_proximity_cpu(const CorrelationSpec& spec, std::span<const double> environment,
                                            std::span<const std::uint8_t> kernel, const CorrelationLimits& limits,
-                                           const runtime::OperationControl& control)
+                                           const runtime::OperationControl& control, FftExecution* execution)
 {
-    return correlate(spec, environment, kernel, limits, control);
+    return correlate(spec, environment, kernel, limits, control, execution);
 }
 
 }  // namespace spectrapack::compute

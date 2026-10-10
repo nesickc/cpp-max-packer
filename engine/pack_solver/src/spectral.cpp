@@ -1573,7 +1573,7 @@ std::uint32_t cpu_supported_thread_count() noexcept {
 #endif
 }
 std::string_view cpu_scheduling_policy(std::uint32_t count) noexcept {
-  return count == 1 ? "serial-v1" : "raster-rows256-v1";
+    return count == 1 ? "serial-v1" : "raster-rows256-fft-lines64-v1";
 }
 
 SpectralOutcome run_cpu_spectral(std::shared_ptr<const geometry::ValidationContext> context,

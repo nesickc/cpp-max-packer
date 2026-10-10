@@ -723,8 +723,15 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         !(thread_count == 1 &&
           settings["resolved"]["cpu_runtime"]["scheduling_policy"] ==
               "serial-v1")) {
-      return fail("CPU_RUNTIME_UNSUPPORTED",
-                  "CPU scheduling policy is unsupported by this build.", 3);
+        return fail("CPU_RUNTIME_UNSUPPORTED",
+                    "CPU scheduling policy is unsupported by this build. Resolve a new Start with desktop-prepare "
+                    "or use the returned current_policy for this thread count.",
+                    3,
+                    {
+                        { "current_policy",      solver::cpu_scheduling_policy(static_cast<std::uint32_t>(thread_count)) },
+                        { "capability_guidance",
+                         "Run desktop-prepare with current Start settings to resolve CPU runtime policy."                }
+        });
     }
     if (settings["compute"].contains("thread_count") && settings["compute"]["thread_count"] != thread_count) {
         return fail("THREAD_COUNT_MISMATCH", "Explicit request must equal actual resolved CPU count.", 3);

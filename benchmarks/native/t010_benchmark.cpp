@@ -50,6 +50,9 @@ struct Profile {
     std::uint64_t validation_calls {}, scoring_calls {}, first36_seed {}, first36_candidate {};
     std::optional<double> first_valid36_ms, first_published36_ms;
     std::array<std::array<std::array<double, 3>, 3>, 2> fft_axis_ms {};
+    unsigned fft_maximum_overlap {};
+    std::array<std::uint64_t, 8> fft_thread_ids {};
+    std::uint64_t fft_maximum_group_lines {}, fft_maximum_group_values {};
 };
 void baseline_sample(void* context, const sol::detail::BaselineProfileSample& sample) noexcept
 {
@@ -126,6 +129,12 @@ bench::Json profile_json(const Profile& profile)
     };
     output["nested_fft_axis_ms"] = profile.fft_axis_ms;
     output["fft_axis_order"] = "binary/proximity; environment-forward/kernel-forward/inverse; X/Y/Z";
+    output["fft_execution"] = {
+        { "maximum_real_call_overlap",    profile.fft_maximum_overlap      },
+        { "thread_ids",                   profile.fft_thread_ids           },
+        { "maximum_group_lines",          profile.fft_maximum_group_lines  },
+        { "maximum_group_complex_values", profile.fft_maximum_group_values }
+    };
     if (profile.validation_calls) {
         bench::Json orientations = bench::Json::array();
         std::uint64_t previous {};
@@ -544,6 +553,21 @@ int main(int argc, char** argv)
                 static_cast<Profile*>(context)->fft_axis_ms[sample.binary ? 0 : 1][sample.transform][sample.axis] +=
                     sample.elapsed_ms;
             };
+            spectrapack::compute::detail::fft_call_evidence_context = &profile;
+            spectrapack::compute::detail::fft_call_evidence_sink =
+                [](void* context, const spectrapack::compute::detail::FftCallEvidence& evidence) noexcept {
+                auto& profile = *static_cast<Profile*>(context);
+                profile.fft_maximum_overlap = std::max(profile.fft_maximum_overlap, evidence.maximum.load());
+                for (std::size_t worker = 0; worker != 8; ++worker) {
+                    if (evidence.thread_ids[worker].load()) {
+                        profile.fft_thread_ids[worker] = evidence.thread_ids[worker].load();
+                    }
+                    profile.fft_maximum_group_lines =
+                        std::max(profile.fft_maximum_group_lines, evidence.maximum_group_lines[worker]);
+                    profile.fft_maximum_group_values =
+                        std::max(profile.fft_maximum_group_values, evidence.maximum_group_values[worker]);
+                }
+            };
             const auto start = Clock::now();
             profile.start = start;
             double catalog_ms {};
@@ -575,6 +599,7 @@ int main(int argc, char** argv)
             sol::detail::pipeline_profile_sink = nullptr;
             geo::detail::field_profile_sink = nullptr;
             spectrapack::compute::detail::fft_axis_profile_sink = nullptr;
+            spectrapack::compute::detail::fft_call_evidence_sink = nullptr;
             if (!run.run.best) {
                 throw std::runtime_error("retained snapshot missing");
             }

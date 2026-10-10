@@ -245,6 +245,7 @@ struct WorkspaceState {
     std::optional<compute::CorrelationResult> ranked;
     std::optional<CpuFieldAdmissionEstimate> admission;
     std::unique_ptr<geometry::RasterExecution> raster;
+    std::unique_ptr<compute::FftExecution> fft;
     WorkspaceState(std::uint64_t allowance, std::uint64_t external, SpectralPipelineResult& attempt) :
         memory(allowance, external, attempt),
         poses(std::initializer_list<PoseIdentity> {}, &memory),
@@ -346,7 +347,8 @@ std::optional<std::uint64_t> owner_bytes(const PipelineOwners& owners) noexcept
     if (owners.workspace) {
         // Staged PMR vectors share the same bounded resource; its live bytes
         // include old+replacement capacity, IDs and all in-flight growth.
-        const auto team_bytes = owners.workspace->raster ? owners.workspace->raster->reserved_bytes() : 0;
+        const auto team_bytes = (owners.workspace->raster ? owners.workspace->raster->reserved_bytes() : 0) +
+                                (owners.workspace->fft ? owners.workspace->fft->reserved_bytes() : 0);
         if (!add(bytes, sizeof(WorkspaceState) + team_bytes +
                             owners.workspace->memory.bytes +
                             3 * sizeof(std::pmr::vector<PoseIdentity>) + 2 * sizeof(compute::CorrelationOutcome))) {
@@ -633,7 +635,8 @@ std::optional<std::uint64_t> SpectralWorkspace::resident_bytes() const noexcept
         return 0;
     }
     const auto& state = *storage_;
-    std::uint64_t bytes = sizeof(Storage) + state.memory.bytes + (state.raster ? state.raster->reserved_bytes() : 0);
+    std::uint64_t bytes = sizeof(Storage) + state.memory.bytes + (state.raster ? state.raster->reserved_bytes() : 0) +
+                          (state.fft ? state.fft->reserved_bytes() : 0);
     ResidencyLedger ledger;
     const auto include = [&](const auto& owner, std::uint64_t wrapper) {
         if (!owner) {
@@ -789,7 +792,8 @@ std::optional<RunFailureDetails> spectral_admission(const std::shared_ptr<const 
     if (*kernel_cells > limits.per_representation.max_cells) {
         return reject("FIELD_CELL_LIMIT", "kernel_cells", *kernel_cells, limits.per_representation.max_cells);
     }
-    const auto estimate = compute::estimate_correlation_cpu({ environment->shape, kernel, environment->first, {} });
+    const auto estimate = compute::estimate_correlation_cpu({ environment->shape, kernel, environment->first, {} },
+                                                            limits.cpu_thread_count);
     if (const auto* failure = std::get_if<compute::CorrelationFailure>(&estimate)) {
         return reject_unknown(failure->code);
     }
@@ -1504,10 +1508,37 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                 };
                 return result;
             }
-            correlation_limits.reserved_bytes = *live;
+            if (!state.fft && limits.cpu_thread_count > 1) {
+                const auto estimate = compute::estimate_correlation_cpu(spec, limits.cpu_thread_count);
+                const auto* fft = std::get_if<compute::CorrelationEstimate>(&estimate);
+                auto whole = *live;
+                if (!fft || !add(whole, fft->working_bytes) || whole > correlation_limits.max_working_bytes) {
+                    record_correlation_failure(
+                        result,
+                        fft ? compute::CorrelationFailure { "CORRELATION_MEMORY_LIMIT",
+                                                            "FFT buffers, teams and live caller exceed admission.",
+                                                            {} }
+                            : std::get<compute::CorrelationFailure>(estimate));
+                    return result;
+                }
+                auto owner =
+                    compute::make_fft_execution(limits.cpu_thread_count, correlation_limits.max_working_bytes - *live);
+                if (const auto* failure = std::get_if<compute::CorrelationFailure>(&owner)) {
+                    record_correlation_failure(result, *failure);
+                    return result;
+                }
+                state.fft = std::get<std::unique_ptr<compute::FftExecution>>(std::move(owner));
+                live = current_bytes(owners, limits);
+                if (!live || !observe(result, limits, *live)) {
+                    return result;
+                }
+            }
+            // The compute estimate owns its FFT team; all other live owners,
+            // including the parked raster team, remain in the caller reserve.
+            correlation_limits.reserved_bytes = *live - (state.fft ? state.fft->reserved_bytes() : 0);
             control.phase(runtime::Phase::planning_fft);
-            auto binary =
-                compute::correlate_binary_cpu(spec, occupancy, owners.kernel->cells(), correlation_limits, control);
+            auto binary = compute::correlate_binary_cpu(spec, occupancy, owners.kernel->cells(), correlation_limits,
+                                                        control, state.fft.get());
             ++result.stats.correlations;
             const auto& binary_stats = correlation_stats(binary);
             // The legacy correlation peak is its successfully checked preflight
@@ -1524,6 +1555,7 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                 return result;
             }
             if (!std::holds_alternative<compute::CorrelationResult>(binary)) {
+                state.fft.reset();
                 record_correlation_failure(result, std::get<compute::CorrelationFailure>(binary));
                 return result;
             }
@@ -1549,13 +1581,13 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                 };
                 return result;
             }
-            correlation_limits.reserved_bytes = *live;
+            correlation_limits.reserved_bytes = *live - (state.fft ? state.fft->reserved_bytes() : 0);
             correlation_limits.max_direct_terms =
                 std::min(limits.per_correlation.max_direct_terms,
                          remaining(limits.max_proximity_terms, result.stats.proximity_terms));
             control.phase(runtime::Phase::planning_fft);
-            auto ranked =
-                compute::correlate_proximity_cpu(spec, proximity, owners.kernel->cells(), correlation_limits, control);
+            auto ranked = compute::correlate_proximity_cpu(spec, proximity, owners.kernel->cells(), correlation_limits,
+                                                           control, state.fft.get());
             ++result.stats.correlations;
             const auto& ranked_stats = correlation_stats(ranked);
             result.admitted_bytes_upper_bound =
@@ -1570,6 +1602,7 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                 return result;
             }
             if (!std::holds_alternative<compute::CorrelationResult>(ranked)) {
+                state.fft.reset();
                 record_correlation_failure(result, std::get<compute::CorrelationFailure>(ranked));
                 return result;
             }
