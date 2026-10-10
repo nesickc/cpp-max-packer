@@ -148,6 +148,9 @@ the real validator. Only a returned valid handle advances working or the best.
 This includes true containment for STL concavities and excluded cavities.
 Full-prefix validation repeats work; T-006 records that cost without introducing
 a private incremental certificate or making a scalability claim.
+The dated [ADR 0016 completion extension](0016-cpu-raster-threading.md#practical-completion-extension-2026-10-10)
+revises analytic-box submissions to bounded batches through the same complete
+validator. STL submissions stay per-pose; retained historical evidence is unchanged.
 
 ## Incumbent, score and failure behavior
 

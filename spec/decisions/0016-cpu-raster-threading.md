@@ -203,3 +203,58 @@ and memory bandwidth overhead, thin-field imbalance, near-cap grant correctness,
 and Windows runtime margin qualification. They require evidence, not extra
 kernels, cap increases or weakened targets. No builds or new measurements were
 run for this ADR; checks were scoped source/contract and retained-evidence reads.
+
+## Practical completion extension (2026-10-10)
+
+The original raster decision and its measured evidence remain historical truth.
+User review authorizes completing useful whole-run CPU threading before new
+packing refinement. The scope checkpoint is in T-010. This extension first
+removes serial prerequisites; it does not select another parallel kernel before
+exclusive kernel measurements and numerical targets are frozen.
+
+### Baseline submission
+
+Use the existing baseline generator and one shared authoritative submission
+helper. Preserve orientation and X/Y/Z cell order. For an analytic box, submit
+the first new pose alone, then batches of at most 32 new poses. STL containers
+retain one new pose per submission and true containment. Each submission contains
+the unchanged committed prefix plus its pending poses and uses the existing
+complete `geometry::validate`; only its valid handle can change working/incumbent.
+There is no incremental validity certificate or alternate validator.
+
+Reserve the batch's candidate slots before submission and charge one evaluation
+per new pose at validator entry. Generated but unsubmitted poses consume no
+candidate evaluations. A geometrically invalid/nonresource-indeterminate batch
+may retry its pending poses individually through the same helper, with stable
+IDs and one newly charged evaluation per retry. Rejected-submission counts do
+not assert that every pose is individually invalid. Retried poses obey remaining
+caps. Resource, arithmetic/error, Stop and deadline outcomes do not retry and
+preserve the original cause, actual validation work and previous valid handle.
+
+Bound pending pose/ID ownership to 32 and include it in live-memory admission.
+Truncate generation to remaining candidate/copy slots. Flush on ordinary limits
+or orientation end only while the operation remains runnable; never flush after
+Stop/deadline/resource failure. Poll during generation and before validation.
+Increment search passes only after a complete orientation. Interrupted or
+fallback-budget-exhausted orientations remain incomplete.
+
+This revises ADR 0008's per-pose box submission, without changing physical
+validity, orientation permissions, clearances, geometry identity or wire schema.
+Batching/retry changes work-limited intermediate outcomes; old evidence keeps its
+original source revision and counters. Same-build fixed-work determinism remains
+required. Fresh final/restore/export validation still checks the full layout.
+Required red/green covers analytic 64-copy success within a cap that rejects old
+prefix repetition, first nonempty snapshot 1, failed-batch retries, exact partial
+caps, Stop before flush, and unchanged STL cavity behavior.
+
+### Measurement and subsequent decisions
+
+Permit only private null-sink instrumentation around actual serial FFT-axis
+calls, alongside existing full-correlation and field phase timers. Null sinks
+read no clock, callbacks are coordinator-owned and noexcept, and profiling adds
+no work, allocation, search or scheduling behavior to product calls.
+Measure active-empty versus active-306 footprint admission while accounting for
+the separately retained baseline handle, actual padded FFT buffers, field arrays
+and worker reserve. Source estimates alone cannot establish 2 mm support under
+512 MiB. Freeze the admission/trial-order change after that component evidence;
+resource failures remain terminal and may not be relabeled as a successful pass.
