@@ -1053,11 +1053,40 @@ PhysicalBounds physical_bounds(std::shared_ptr<const AcceptedSolid> solid,
   }
   CardinalRotation cardinal { transform->source_axis, transform->sign };
   const bool is_cardinal = transform->exact_cardinal;
+  if (!is_cardinal && solid->mesh().vertices.size() > max_vertex_visits) {
+      result.failure_code = "KERNEL_VERTEX_LIMIT";
+      result.failure_method = "physical-bounds";
+      return result;
+  }
   const std::uint64_t setup_work = is_cardinal ? 8 : 48;
   if (!budget.consume_work(setup_work)) {
     result.failure_code = "KERNEL_WORK_LIMIT";
     result.failure_method = "physical-bounds";
     return result;
+  }
+  if (is_cardinal) {
+      // Accepted local extrema are exact for signed permutations. Charge their
+      // fixed reads/checks instead of revisiting every mesh vertex per copy.
+      if (!budget.consume_work(24)) {
+          result.failure_code = "KERNEL_WORK_LIMIT";
+          result.failure_method = "physical-bounds";
+          return result;
+      }
+      const auto local = solid->bounds_mm();
+      for (int world = 0; world != 3; ++world) {
+          const int source = cardinal.source_axis[world], sign = cardinal.sign[world];
+          const double low = sign * (sign > 0 ? local.min[source] : local.max[source]);
+          const double high = sign * (sign > 0 ? local.max[source] : local.min[source]);
+          if (!std::isfinite(low) || !std::isfinite(high) || low > high) {
+              result.failure_code = "KERNEL_NUMERIC_RANGE";
+              result.failure_method = "physical-bounds";
+              return result;
+          }
+          result.bounds_mm.min[world] = low;
+          result.bounds_mm.max[world] = high;
+      }
+      result.exact_cardinal_extrema = result.finite = true;
+      return result;
   }
   std::array<std::array<Interval, 3>, 3> rotation{};
   if (!is_cardinal) {

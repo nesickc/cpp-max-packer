@@ -35,7 +35,7 @@ TEST_CASE("T006 physical bounds reports a partial-work failure without allocatio
   const auto solid = geo::test_support::accepted(
       geo::test_support::cuboid({-1, -1, -1}, {1, 1, 1}),
       geo::AssetRole::object);
-  const auto complete = geo::oriented_bounds(solid, {0, 0, 0, 1}, {});
+  const auto complete = geo::oriented_bounds(solid, { 0, 0, 1, 2 }, {});
   REQUIRE(std::holds_alternative<geo::OrientedBounds>(complete));
   const auto required = std::get<geo::OrientedBounds>(complete).stats.kernel_work;
   REQUIRE(required > 3);
@@ -46,7 +46,7 @@ TEST_CASE("T006 physical bounds reports a partial-work failure without allocatio
   bool threw = false;
   fail_allocations.store(true, std::memory_order_relaxed);
   try {
-    outcome.emplace(geo::oriented_bounds(solid, {0, 0, 0, 1}, limits));
+      outcome.emplace(geo::oriented_bounds(solid, { 0, 0, 1, 2 }, limits));
   } catch (const std::bad_alloc&) {
     threw = true;
   }
