@@ -1,10 +1,5 @@
 #include "spectrapack/solver/baseline.hpp"
 
-#include "allocation_fault.hpp"
-#include "baseline_internal.hpp"
-#include "orientation_cube.hpp"
-#include "storage_accounting.hpp"
-
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -17,6 +12,12 @@
 #include <utility>
 #include <variant>
 #include <vector>
+
+#include "allocation_fault.hpp"
+#include "baseline_internal.hpp"
+#include "orientation_cube.hpp"
+#include "pipeline_profile.hpp"
+#include "storage_accounting.hpp"
 
 namespace spectrapack::solver {
 namespace {
@@ -513,6 +514,7 @@ BaselineOutcome run_aabb_baseline_impl(
 
   try {
     Incumbent incumbent(context);
+    std::uint64_t profile_seed = UINT64_MAX;
     std::uint64_t incumbent_bytes = detail::kIncumbentFixedOwnerBytes;
     std::shared_ptr<const geometry::ValidatedSolution> admitted_solution;
     std::uint64_t base_with_incumbent = *base;
@@ -559,7 +561,12 @@ BaselineOutcome run_aabb_baseline_impl(
     const auto offer = [&](std::shared_ptr<const geometry::ValidatedSolution> solution,
                            std::uint64_t live) {
       auto scoring = query_limits(limits, out.stats, live);
-      const auto admitted = incumbent.offer(std::move(solution), scoring);
+      const auto admitted = [&] {
+          detail::BaselineProfileTimer profile(detail::BaselineProfilePhase::scoring, profile_seed,
+                                               out.stats.candidate_evaluations);
+          profile.result(solution->copies().size(), true, incumbent.best() ? incumbent.best()->score.count : 0);
+          return incumbent.offer(std::move(solution), scoring);
+      }();
       if (!record_geometry(out.stats, admitted.scoring_work, live, limits)) {
         out.termination_reason = TerminationReason::resource_limit;
         out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
@@ -613,8 +620,14 @@ BaselineOutcome run_aabb_baseline_impl(
         out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
         return out;
       }
-      auto checked =
-          geometry::validate(context, candidate, validation_limits(limits, out.stats, candidate_live), control);
+      auto checked = [&] {
+          detail::BaselineProfileTimer profile(detail::BaselineProfilePhase::validation, profile_seed,
+                                               out.stats.candidate_evaluations);
+          auto value =
+              geometry::validate(context, candidate, validation_limits(limits, out.stats, candidate_live), control);
+          profile.result(candidate->copies().size(), static_cast<bool>(value.validated_solution));
+          return value;
+      }();
       if (!record_validation(out.stats, checked.report, candidate_live, limits)) {
         out.termination_reason = TerminationReason::resource_limit;
         out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
@@ -687,12 +700,15 @@ BaselineOutcome run_aabb_baseline_impl(
     }
 
     for (std::size_t seed = 0; seed != seeds.size(); ++seed) {
-      const auto at_start = boundary(control);
-      if (at_start != Boundary::none) {
-        retain_best();
-        apply_boundary(out, at_start);
-        return out;
-      }
+        profile_seed = seed;
+        detail::BaselineProfileTimer orientation_profile(detail::BaselineProfilePhase::orientation, seed,
+                                                         out.stats.candidate_evaluations);
+        const auto at_start = boundary(control);
+        if (at_start != Boundary::none) {
+            retain_best();
+            apply_boundary(out, at_start);
+            return out;
+        }
       if (out.stats.search_passes >= limits.max_search_passes) {
         retain_best();
         out.termination_reason = TerminationReason::budget_exhausted;
@@ -902,8 +918,14 @@ BaselineOutcome run_aabb_baseline_impl(
             ++out.stats.candidate_evaluations;
             auto candidate =
                 std::get<std::shared_ptr<const geometry::Candidate>>(std::move(made));
-            auto checked =
-                geometry::validate(context, candidate, validation_limits(limits, out.stats, candidate_live), control);
+            auto checked = [&] {
+                detail::BaselineProfileTimer profile(detail::BaselineProfilePhase::validation, profile_seed,
+                                                     out.stats.candidate_evaluations);
+                auto value = geometry::validate(context, candidate,
+                                                validation_limits(limits, out.stats, candidate_live), control);
+                profile.result(candidate->copies().size(), static_cast<bool>(value.validated_solution));
+                return value;
+            }();
             if (!record_validation(out.stats, checked.report, candidate_live, limits)) {
               out.termination_reason = TerminationReason::resource_limit;
               out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
@@ -969,6 +991,7 @@ BaselineOutcome run_aabb_baseline_impl(
         return out;
       }
       ++out.stats.search_passes;
+      orientation_profile.result(working.size(), true);
 
       const auto after_grid = boundary(control);
       if (after_grid != Boundary::none) {
