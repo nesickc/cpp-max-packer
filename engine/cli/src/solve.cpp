@@ -49,6 +49,7 @@ struct FailureTiming {
 #ifdef SPECTRAPACK_CLI_TESTING
 std::atomic_uint64_t result_build_max_working_bytes_for_test {};
 std::atomic_uint64_t result_export_max_working_bytes_for_test {};
+std::atomic_uint64_t baseline_validation_max_kernel_work_for_test {};
 std::atomic<spectrapack::cli::test::PublicationHook> publication_hook_for_test {};
 std::atomic<void*> publication_hook_context_for_test {};
 std::atomic<spectrapack::cli::test::FinalizationHook> finalization_hook_for_test {};
@@ -527,7 +528,8 @@ Json command_diagnostics(const solver::SpectralOutcome& outcome, const solver::S
         { "phase_ceilings",
          { { "baseline",
               { { "candidate_evaluations", limits.baseline.max_candidate_evaluations },
-                { "search_passes", limits.baseline.max_search_passes } } },
+                { "search_passes", limits.baseline.max_search_passes },
+                { "validation_kernel_work", limits.baseline.max_validation_kernel_work } } },
             { "spectral",
               { { "candidate_evaluations", limits.spectral.max_candidate_evaluations },
                 { "search_passes", limits.spectral.max_search_passes } } } }         },
@@ -536,6 +538,9 @@ Json command_diagnostics(const solver::SpectralOutcome& outcome, const solver::S
             { "search_passes", outcome.run.stats.search_passes },
             { "baseline_candidate_evaluations", outcome.baseline_stats.candidate_evaluations },
             { "baseline_search_passes", outcome.baseline_stats.search_passes },
+            { "validation_kernel_work", outcome.run.stats.validation_kernel_work },
+            { "baseline_validation_kernel_work", outcome.baseline_stats.validation_kernel_work },
+            { "validation_aabb_pair_tests", outcome.run.stats.validation_aabb_pair_tests },
             { "spectral_correlations", outcome.spectral_stats.correlations },
             { "spectral_pages_examined", outcome.spectral_stats.pages_examined } }   },
         { "time_to_best_basis",         std::string(time_to_best_basis)              },
@@ -584,6 +589,10 @@ void set_result_build_max_working_bytes(std::uint64_t bytes) noexcept
 void set_result_export_max_working_bytes(std::uint64_t bytes) noexcept
 {
     result_export_max_working_bytes_for_test.store(bytes, std::memory_order_relaxed);
+}
+void set_baseline_validation_max_kernel_work(std::uint64_t work) noexcept
+{
+    baseline_validation_max_kernel_work_for_test.store(work, std::memory_order_relaxed);
 }
 }  // namespace spectrapack::cli::test
 #endif
@@ -745,6 +754,11 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     orientation.reset();
     const auto started = std::chrono::steady_clock::now();
     solver::SpectralLimits limits;
+#ifdef SPECTRAPACK_CLI_TESTING
+    if (const auto work = baseline_validation_max_kernel_work_for_test.load(std::memory_order_relaxed)) {
+        limits.baseline.max_validation_kernel_work = work;
+    }
+#endif
     limits.cpu_thread_count = static_cast<std::uint32_t>(thread_count);
     const auto& search = settings["search"];
     if (search["deterministic"].get<bool>()) {
@@ -950,7 +964,8 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     result_request.validation_limits.max_working_bytes = build_limit - build_live_bytes;
     auto cleanup_control = control;
     cleanup_control.stop = {};
-    cleanup_control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(5);
+    constexpr std::chrono::seconds cleanup_allowance { 5 };
+    cleanup_control.deadline = spectrapack::runtime::Clock::now() + cleanup_allowance;
 #ifdef SPECTRAPACK_CLI_TESTING
     if (const auto hook = finalization_hook_for_test.load()) {
         hook(finalization_hook_context_for_test.load(), cleanup_control, run_runtime);
@@ -1003,6 +1018,14 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
             details["phase"] = "result_publication";
         }
         details["diagnostics"] = diagnostics;
+        details["search_diagnostics"] = std::move(retained_diagnostics);
+        details["search_termination_reason"] = reason(termination_reason);
+        details["search_budget_seconds"] = time_budget;
+        details["retained_count"] = retained_solution->copies().size();
+        if (error.code == "DEADLINE_EXCEEDED") {
+            details["deadline_scope"] = "result_cleanup";
+            details["cleanup_allowance_seconds"] = cleanup_allowance.count();
+        }
         return fail(error.code, error.message, 3, std::move(details));
     }
     const auto& success = std::get<io::ExportSuccess>(published);
