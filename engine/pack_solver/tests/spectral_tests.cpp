@@ -1811,7 +1811,7 @@ TEST_CASE("AT-16 spectral wrapper accounts copied long ids during proposal valid
     CHECK(limited.run.retained_solution == long_initial);
     REQUIRE(limited.run.failure_details);
     CHECK(limited.run.failure_details->reason == solver::TerminationReason::resource_limit);
-    CHECK(limited.run.failure_details->cause_code == "FIELD_MEMORY_LIMIT");
+    CHECK(limited.run.failure_details->cause_code() == "FIELD_MEMORY_LIMIT");
 }
 
 TEST_CASE("AT-16 candidate id ownership bounds real spectral validation", "[solver][T010][AT-16][wrapper]")
@@ -2905,7 +2905,7 @@ TEST_CASE("AT-12 stage A preserves a throwing representation attempt", "[solver]
     REQUIRE_FALSE(allocation->complete);
     CHECK(allocation->diagnostic == exhausted.diagnostic);
     REQUIRE(allocation->failure_details);
-    CHECK(allocation->failure_details->cause_code == "FIELD_CELL_VISIT_LIMIT");
+    CHECK(allocation->failure_details->cause_code() == "FIELD_CELL_VISIT_LIMIT");
     CHECK(allocation->stats.representation_cell_visits == exhausted.stats.representation_cell_visits);
     CHECK(allocation->stats.representation_kernel_work == exhausted.stats.representation_kernel_work);
     CHECK(allocation->working_bytes_peak == exhausted.working_bytes_peak);
@@ -3196,7 +3196,7 @@ TEST_CASE("AT-12 pipeline refuses cap below retained payload plus new fields", "
     CHECK_FALSE(refused.complete);
     REQUIRE(refused.failure_details);
     CHECK(refused.failure_details->reason == solver::TerminationReason::resource_limit);
-    CHECK(refused.failure_details->cause_code == "FIELD_MEMORY_LIMIT");
+    CHECK(refused.failure_details->cause_code() == "FIELD_MEMORY_LIMIT");
     CHECK(refused.working_bytes_peak <= capped.max_working_bytes);
     CHECK(!refused.ranked_candidates);
     CHECK(geo::revalidate(checked.validated_solution).validated_solution);
@@ -3584,7 +3584,7 @@ TEST_CASE("T010 correlation entry Stop cannot retain an unenforced admission", "
         REQUIRE_FALSE(stopped.complete);
         REQUIRE_FALSE(stopped.field_admission);
         REQUIRE(stopped.failure_details);
-        CHECK(stopped.failure_details->cause_code == "OPERATION_CANCELLED");
+        CHECK(stopped.failure_details->cause_code() == "OPERATION_CANCELLED");
         CHECK(stopped.stats.correlations == stop_at);
         CHECK(!stopped.ranked_candidates);
         // This fixture's completed field preparations are smaller than the
@@ -3613,6 +3613,65 @@ TEST_CASE("T010 correlation entry Stop cannot retain an unenforced admission", "
             CHECK(retry.field_admission->working_bytes_upper_bound < fft_bytes);
         }
     }
+}
+
+TEST_CASE("SOL-06 returned failure owns validation cause through allocation-free transfers",
+          "[solver][T011][allocation][diagnostic-ownership]")
+{
+    const auto initial = native_solution(cube_context(), {
+                                                             { "retained", { 1, 1, 1 }, { 0, 0, 0, 1 } }
+    });
+    const std::string expected = "VALIDATION_COPY_ID_WORK_LIMIT";
+    solver::BaselineOutcome source;
+    source.retained_solution = initial;
+    source.termination_reason = solver::TerminationReason::resource_limit;
+    {
+        geo::ValidationReport report;
+        report.code = expected;
+        source.failure_details = solver::RunFailureDetails {
+            solver::TerminationReason::resource_limit, "baseline_validation", report.code, {}, {}
+        };
+        report.code.assign(report.code.size(), 'x');
+        REQUIRE(source.failure_details->cause_code() == expected);
+    }
+    const std::vector<std::string> churn(128, std::string(expected.size(), 'y'));
+    std::optional<solver::BaselineOutcome> copied, moved;
+    const auto attempts = test_allocation_attempts.load(std::memory_order_relaxed);
+    {
+        AllocationFailureReset reset;
+        fail_test_allocations.store(true, std::memory_order_relaxed);
+        copied.emplace(source);
+        moved.emplace(std::move(*copied));
+        source.failure_details.reset();
+    }
+    CHECK(test_allocation_attempts.load(std::memory_order_relaxed) == attempts);
+    REQUIRE(moved);
+    CHECK(moved->retained_solution == initial);
+    CHECK(moved->termination_reason == solver::TerminationReason::resource_limit);
+    REQUIRE(moved->failure_details);
+    CHECK(moved->failure_details->phase == "baseline_validation");
+    CHECK(moved->failure_details->cause_code() == expected);
+}
+
+TEST_CASE("SOL-06 diagnostic cause capacity preserves boundaries and explicit overflow",
+          "[solver][T011][allocation][diagnostic-ownership]")
+{
+    STATIC_REQUIRE(std::is_nothrow_copy_constructible_v<solver::RunFailureDetails>);
+    STATIC_REQUIRE(std::is_nothrow_move_constructible_v<solver::RunFailureDetails>);
+    const std::string exact(64, 'C'), over(65, 'D');
+    std::optional<solver::RunFailureDetails> boundary, overflow;
+    const auto attempts = test_allocation_attempts.load(std::memory_order_relaxed);
+    {
+        AllocationFailureReset reset;
+        fail_test_allocations.store(true, std::memory_order_relaxed);
+        boundary.emplace(solver::TerminationReason::resource_limit, "preflight", exact, std::nullopt, std::nullopt);
+        overflow.emplace(solver::TerminationReason::resource_limit, "preflight", over, std::nullopt, std::nullopt);
+    }
+    CHECK(test_allocation_attempts.load(std::memory_order_relaxed) == attempts);
+    REQUIRE(boundary);
+    REQUIRE(overflow);
+    CHECK(boundary->cause_code() == exact);
+    CHECK(overflow->cause_code() == "DIAGNOSTIC_CAUSE_CODE_OVERFLOW");
 }
 
 TEST_CASE("AT-16 compact public failures and lazy pages transfer without allocation",
@@ -3668,7 +3727,7 @@ TEST_CASE("AT-16 compact public failures and lazy pages transfer without allocat
     CHECK(destination->spectral_stats.correlations == 2);
     REQUIRE(destination->run.failure_details);
     CHECK(destination->run.failure_details->phase == "mask");
-    CHECK(destination->run.failure_details->cause_code == "FIELD_CELL_VISIT_LIMIT");
+    CHECK(destination->run.failure_details->cause_code() == "FIELD_CELL_VISIT_LIMIT");
     REQUIRE(destination->run.failure_details->resource);
     CHECK(destination->run.failure_details->resource->resource == "cell_visits");
     CHECK(destination->run.failure_details->resource->required == 6);
@@ -3730,7 +3789,7 @@ TEST_CASE("AT-16 public spectral run contains persistent failure reached inside 
     CHECK(outcome->run.termination_reason == solver::TerminationReason::resource_limit);
     CHECK(outcome->run.retained_solution == initial);
     REQUIRE(outcome->run.failure_details);
-    CHECK(outcome->run.failure_details->cause_code == "FIELD_CELL_VISIT_LIMIT");
+    CHECK(outcome->run.failure_details->cause_code() == "FIELD_CELL_VISIT_LIMIT");
     CHECK(outcome->run.stats.candidate_evaluations == 0);
     CHECK(outcome->spectral_stats.representation_cell_visits == 5);
     REQUIRE(published);
@@ -3787,7 +3846,7 @@ TEST_CASE("AT-16 public field diagnostic publication contains transient allocati
         CHECK(outcome->run.termination_reason == solver::TerminationReason::resource_limit);
         CHECK(outcome->run.retained_solution == initial);
         REQUIRE(outcome->run.failure_details);
-        CHECK(outcome->run.failure_details->cause_code == "FIELD_CELL_VISIT_LIMIT");
+        CHECK(outcome->run.failure_details->cause_code() == "FIELD_CELL_VISIT_LIMIT");
         CHECK(outcome->run.stats.candidate_evaluations == 0);
         CHECK(outcome->spectral_stats.representation_cell_visits == 5);
         REQUIRE(published);
@@ -3948,7 +4007,7 @@ TEST_CASE("AT-16 lazy ranked page allocation failure leaves reusable native work
     REQUIRE(failed);
     REQUIRE_FALSE(failed->complete);
     REQUIRE(failed->failure_details);
-    CHECK(failed->failure_details->cause_code == "FIELD_ALLOCATION_FAILURE");
+    CHECK(failed->failure_details->cause_code() == "FIELD_ALLOCATION_FAILURE");
     CHECK_FALSE(failed->ranked_candidates);
     CHECK(failed->stats.correlations == 0);
     CHECK(workspace.layout_revision() == revision);
@@ -4216,7 +4275,7 @@ TEST_CASE("AT-16 partial ranked page allocation reports actual owners and preser
         CAPTURE(ordinal, out->working_bytes_peak, measured.working_bytes_peak);
         REQUIRE_FALSE(out->complete);
         REQUIRE(out->failure_details);
-        CHECK(out->failure_details->cause_code == "FIELD_ALLOCATION_FAILURE");
+        CHECK(out->failure_details->cause_code() == "FIELD_ALLOCATION_FAILURE");
         CHECK(out->stats.correlations == 0);
         CHECK(workspace.layout_revision() == revision);
         CHECK(workspace.resident_bytes() == resident);

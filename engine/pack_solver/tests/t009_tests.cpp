@@ -85,7 +85,7 @@ TEST_CASE("T009 unrepresentable admission demand omits an exact resource quantit
     }),
                                                         { { 0, 0, 0 }, 1 }, limits);
     REQUIRE(memory);
-    CHECK(memory->cause_code == "SPECTRAL_MEMORY_OVERFLOW");
+    CHECK(memory->cause_code() == "SPECTRAL_MEMORY_OVERFLOW");
     CHECK_FALSE(memory->resource);
 
     limits = {};
@@ -95,7 +95,7 @@ TEST_CASE("T009 unrepresentable admission demand omits an exact resource quantit
     }),
                                                        { { 0, 0, 0 }, 1 }, limits);
     REQUIRE(range);
-    CHECK(range->cause_code == "SPECTRAL_PROXIMITY_RANGE");
+    CHECK(range->cause_code() == "SPECTRAL_PROXIMITY_RANGE");
     CHECK_FALSE(range->resource);
 }
 TEST_CASE("T009 proximity matches every cell of empty full and asymmetric fields", "[solver][T009]")
@@ -151,7 +151,7 @@ TEST_CASE("T009 nested preparation preserves the resource cause", "[solver][T009
     REQUIRE(value.failure_details);
     CHECK(value.failure_details->reason == sol::TerminationReason::resource_limit);
     CHECK(value.failure_details->phase == "prepare");
-    CHECK(value.failure_details->cause_code == "FIELD_INPUT_TRIANGLE_LIMIT");
+    CHECK(value.failure_details->cause_code() == "FIELD_INPUT_TRIANGLE_LIMIT");
 }
 
 TEST_CASE("T009 forwarded kernel work failure retains the physical incumbent as a resource", "[solver][T009]")
@@ -172,7 +172,7 @@ TEST_CASE("T009 forwarded kernel work failure retains the physical incumbent as 
     CHECK(result.run.termination_reason == sol::TerminationReason::resource_limit);
     REQUIRE(result.run.failure_details);
     CHECK(result.run.failure_details->phase == "prepare");
-    CHECK(result.run.failure_details->cause_code == "KERNEL_WORK_LIMIT");
+    CHECK(result.run.failure_details->cause_code() == "KERNEL_WORK_LIMIT");
 }
 TEST_CASE("T009 geometry admission estimate covers actual prepared and placed residency", "[solver][T009]")
 {

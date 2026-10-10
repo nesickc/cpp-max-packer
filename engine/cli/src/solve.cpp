@@ -552,7 +552,10 @@ Json command_diagnostics(const solver::SpectralOutcome& outcome, const solver::S
 
 Json failure_details(const solver::RunFailureDetails& failure)
 {
-    Json value { { "phase", failure.phase }, { "cause_code", failure.cause_code } };
+    Json value {
+        { "phase",      failure.phase        },
+        { "cause_code", failure.cause_code() }
+    };
     if (failure.resource) {
         value["resource"] = { { "name", failure.resource->resource },
                               { "required", std::to_string(failure.resource->required) },

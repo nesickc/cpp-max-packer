@@ -11,7 +11,7 @@ and outcome finalizers. SOL-05/SOL-06, resource caps and incumbent validity rema
 1. Carry static-lifetime `std::string_view` descriptors through `KernelFailure`
    (code/method), `RepresentationFailure` (code/message plus optional static method),
    `CorrelationFailure` and `CatalogFailure` (code/message), `ResourceLimitDetails` (resource), and
-   `RunFailureDetails` (phase/cause). Numeric fields and failure classification
+   `RunFailureDetails` (phase/resource). Numeric fields and failure classification
    remain. `CatalogFailure` additionally carries the observed raw-capacity byte
    peak, initialized to zero and updated only after successful allocation, so a
    later result-transfer failure does not lose the freed buffer's high-water mark.
@@ -19,6 +19,16 @@ and outcome finalizers. SOL-05/SOL-06, resource caps and incumbent validity rema
    Correlation's native-only arbitrary exception prose becomes the stable message
    `Correlation operation failed.`; its code and stats remain. Dynamic import,
    repair and validation reports retain owned payloads.
+   The 2026-10-10 many-copy regression exposed a validation report's owned code
+   borrowed by `RunFailureDetails` after the report had been destroyed. Its cause
+   now uses inline owned storage of 64 bytes plus a length, with a noexcept
+   constructor and an accessor that computes a view from that storage. Default
+   copies/moves copy bytes; never store a view into the value itself. Preserve
+   exact codes up to capacity; longer inputs report the explicit stable code
+   `DIAGNOSTIC_CAUSE_CODE_OVERFLOW`, without silent truncation. All current
+   production codes must fit. Phase/resource retain their static-lifetime
+   contract. Existing sizeof-based metadata admission includes the larger value;
+   no heap allocation, general string utility or wire/schema change is introduced.
 2. These failure values and empty solver outcomes require no heap allocation.
    Remove diagnostic-copy recovery layers and their string/proxy accounting.
    Ordinary value returns must retain the exact latest validated handles and
