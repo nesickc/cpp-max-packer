@@ -86,7 +86,8 @@ spun. Keep original nested cause/phase in a bounded recovery summary.
   A single thread cannot remove shared grid storage or total work. Join/recreate
   execution owners before switching counts. An allocator failure uses the same
   finite ladder and is never itself evidence that a repeated allocation will fit.
-- Timed work: existing finite work defaults become grant quanta, while actual
+- Timed work: existing finite work defaults become grant quanta, with the seed
+  phase allocation clarified below, while actual
   cumulative counters never reset. At a completed stage/page boundary the
   coordinator can grant the next quantum while the original deadline remains;
   record cumulative granted ceilings independently from work consumed. A failed
@@ -122,6 +123,81 @@ Validation still returns indeterminate on exhausted resources. A candidate may
 be reconsidered only after the same finite resource-change policy; a complete
 native-valid pass is required. Preserve all attempt counts and reject unresolved
 candidates. Do not introduce a second validator or weaken its checks.
+
+### Timed phase handoff closure (2026-10-11)
+
+The coordinating primary accepts the following minimal closure before widening
+baseline/stagger loops. A grant is permission for bounded work, not a requirement
+to retry the same phase. Baseline and stagger each receive **one finite seed-phase
+grant** in this tranche. Their existing loop limits, including stagger's 1,024
+proposal guard, remain local. On positively identified allowance exhaustion,
+the timed coordinator records that phase as deferred and advances once to the
+next existing affordable phase. It does not restart the seed phase or add
+continuation state inside its loops. Preserve each phase's actual work, partial
+native-valid result and interruption summary; deferred is not completed/exhausted.
+
+The ongoing timed spectral coordinator renews nonzero candidate, pass and
+refinement allowances at completed work boundaries using checked next-quantum
+grants. Likewise ensure enough aggregate physical-query/scoring kernel-work and
+vertex-visit headroom for the next configured operation allowance. Grant only
+when remaining headroom is insufficient; use `consumed + quantum` (or a larger
+configured next-operation allowance), record the old/new ceiling and never reset
+consumed work. Renew headroom before the existing guards can mistake it for
+whole-job completion, including counters already consumed by stagger. A zero
+allowance remains an explicit disabled path. This creates no extra trials or
+restarts beyond the existing empty/retained trials. Natural exhaustion can still
+finish early. Structural bounds and explicit fixed-work limits never renew.
+
+An individual physical query or secondary-scoring allowance may defer the
+affected proposal/orientation/secondary score immediately; no additional query
+retry loop is required. If reconsidered, the existing finite changed-resource
+rule applies. A count improvement already admitted by `Incumbent::offer` remains
+authoritative even when secondary score evidence is unavailable under its existing
+contract. A still-unvalidated candidate stays rejected. Exhausted native validation
+retries also defer that candidate when affordable alternatives remain. Defer once
+per logical work item; do not repeat it after an unchanged denial or relabel a
+run with deferred work as natural exhaustive search.
+
+Classify from explicit nested causes, not `resource_limit` or a substring alone.
+Known work cases include `PHYSICAL_WORK_LIMIT`, `PHYSICAL_VERTEX_LIMIT`,
+`PHYSICAL_PASS_LIMIT`, `PHYSICAL_CANDIDATE_LIMIT`, `STAGGER_CANDIDATE_LIMIT` and
+the exact native validation kernel-work/AABB-pair allowance codes. A finite
+memory denial/allocation failure may similarly abandon a seed phase after its
+temporary owners unwind and another path passes its own complete admission.
+Generic `PHYSICAL_RESOURCE_LIMIT`, `PHYSICAL_SCORE_RESOURCE` and
+`OfferIssue::resource_limit` can also represent arithmetic/accounting failure;
+add a small precise cause at those producers when needed rather than blindly
+deferring them. Counter overflow, arithmetic capacity, invalid ownership/input,
+numerical/FPU and observer errors remain terminal. Poll Stop/deadline before
+handoff; their existing precedence is unchanged. Preserve the transient cause
+in recovery evidence instead of leaving a stale terminal failure on a resumed run.
+
+The handoff must keep the exact best snapshot and any raw native-valid handle
+across the next phase's assignment to `outcome.run`; aggregate work is not reset.
+Stagger's existing entry accepts a snapshot only. If none is available, skip that
+seed phase rather than restart bootstrap or lose a raw valid handle; restore the
+central incumbent through the existing offer path. With no valid handle at all,
+the existing spectral empty-trial validation may establish and offer a valid empty
+incumbent before continuing. A missing handle is not proof of empty validity.
+If that validation or necessary snapshot storage cannot be admitted, terminate
+honestly, preserving any earlier raw handle; never synthesize a valid empty result.
+
+This clarifies new timed policy version 1 before its release; legacy and explicit
+fixed-work interpretation, saved poses and ordering remain unchanged. Tests must
+force baseline and stagger allowance denials separately, then demonstrate real
+downstream FFT candidate evaluation and native validation in the same job with
+the original incumbent retained or improved. Cover candidate/pass/refinement and
+query headroom with small quanta; cumulative counters and grant records must
+advance without repeated unchanged work. Include raw/no-incumbent handoff,
+unaffordable bootstrap, Stop/deadline and non-resource errors, and preserve fixed
+red/green comparisons. No fake candidate/validator substitutes establish success.
+
+Expected incremental scope is about 60–120 handwritten coordinator/diagnostic
+lines beyond the prior checkpoint, giving roughly 820–980 non-schema production
+additions, or 1,220–1,380 including the currently counted source schemas. These
+are estimates; no baseline/stagger renewal subsystem is authorized by this closure.
+Report a materially larger requirement before widening loops. Full practical,
+desktop, compatibility and critical-review gates remain unchanged.
 
 ## Timed ordering, fixed work and compatibility
 
