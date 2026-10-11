@@ -13,12 +13,15 @@ full T-014/T-015/T-021, repair, durable jobs and the remaining milestones stay o
 This instruction supersedes the older repair-before-refinement/live-viewer order
 for this package. Preserve existing threading evidence and unrelated local agent edits.
 
-The PR-review follow-up requests flat-shaded previews in the current package and a
-[bounded production/test DRY pass](MILESTONES.md#next-bounded-pass-production-and-test-dry-cleanup)
-at the start of the next delivery after PR #15 merges. That pass consolidates
-accounting/query mechanics and test setup, and separates fast/qualification runners
-without dropping required coverage. Its branch is only proposed; no dependent
-implementation starts before the merge.
+The latest 2026-10-11 user instruction makes
+[T015-P2 hardware-aware budgets and resource recovery](T-015.md#t015-p2-hardware-aware-budgets-and-resource-recovery)
+the next functional delivery after PR #15 merges. Recoverable resource pressure
+must not prematurely end the whole search. This takes priority over further
+packing heuristics, cosmetic work and the
+[production/test DRY pass](MILESTONES.md#next-bounded-pass-production-and-test-dry-cleanup).
+The DRY review remains useful planning evidence, but its implementation is deferred
+until resource recovery is accepted. Neither dependent branch starts before its
+prerequisite merge. Flat-shaded previews remain part of the current PR.
 
 The user authorizes incremental commits and pushes to feature branches. Each delivery task has its own ticket and branch. An explicitly included work package shares its owning ticket's branch, PR and acceptance ledger. Once a feature is ready, the agent may open its pull/merge request targeting `main`; the user reviews/tests it and merges it. Dependent work waits for that merge; branches are not stacked and the agent does not merge them automatically.
 
@@ -39,6 +42,7 @@ The spec's `T-001`–`T-008` are initial implementation tasks; `AT-01`–`AT-17`
 | [T-011 serial runtime foundations](T-011.md) | `feature/SOL-08-cpu-runtime` | Merged through PR #13 at `977c27c`; final local T011-A1–A7 and carried T009-A2/A3/A6 evidence retained |
 | [T-010 measured CPU threading](T-010.md) | `feature/SOL-08-cpu-threading` | Merged PR #14 at `858940a`; bounded local A1–A7 evidence retained. Latest hosted native gate: 570/571 pass, one refinement-counter case fails. No new threading qualification claimed |
 | [T015-P1 quality and count-only live results](T-015.md#t015-p1-known-object-quality-and-count-only-live-publication) | `feature/SOL-04-pryanik-live-count` | Locally verified bounded extraction after merged T-010; user review/merge pending; parent-ticket gates stay open |
+| [T015-P2 hardware-aware budgets and resource recovery](T-015.md#t015-p2-hardware-aware-budgets-and-resource-recovery) | `feature/SOL-05-resource-recovery` (proposed) | Next functional priority; requires merged PR #15; DRY and additional strategy work wait |
 
 [Delivery milestones](MILESTONES.md) define T-009–T-023 and their merged
 prerequisites. Each delivery ticket has a planned feature branch, requirements
