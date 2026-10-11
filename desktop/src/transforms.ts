@@ -20,7 +20,7 @@ export function packingMesh(geometry: BufferGeometry, poses: Results.Placement[]
     if (geometry.boundingBox) geometry.computeBoundingBox();
   }
   const visible = poses.filter(p => !hidden.has(p.copy_id));
-  const mesh = new InstancedMesh(geometry, new MeshStandardMaterial({ color: '#52caba', roughness: .42, metalness: .12 }), Math.max(visible.length, 1));
+  const mesh = new InstancedMesh(geometry, new MeshStandardMaterial({ color: '#52caba', roughness: .42, metalness: .12, flatShading: true }), Math.max(visible.length, 1));
   mesh.count = visible.length;
   visible.forEach((pose, index) => mesh.setMatrixAt(index, poseMatrix(pose)));
   mesh.instanceMatrix.needsUpdate = true;

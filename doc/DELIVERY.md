@@ -13,6 +13,13 @@ full T-014/T-015/T-021, repair, durable jobs and the remaining milestones stay o
 This instruction supersedes the older repair-before-refinement/live-viewer order
 for this package. Preserve existing threading evidence and unrelated local agent edits.
 
+The PR-review follow-up requests flat-shaded previews in the current package and a
+[bounded production/test DRY pass](MILESTONES.md#next-bounded-pass-production-and-test-dry-cleanup)
+at the start of the next delivery after PR #15 merges. That pass consolidates
+accounting/query mechanics and test setup, and separates fast/qualification runners
+without dropping required coverage. Its branch is only proposed; no dependent
+implementation starts before the merge.
+
 The user authorizes incremental commits and pushes to feature branches. Each delivery task has its own ticket and branch. An explicitly included work package shares its owning ticket's branch, PR and acceptance ledger. Once a feature is ready, the agent may open its pull/merge request targeting `main`; the user reviews/tests it and merges it. Dependent work waits for that merge; branches are not stacked and the agent does not merge them automatically.
 
 The spec's `T-001`–`T-008` are initial implementation tasks; `AT-01`–`AT-17` are acceptance gates that often span several tasks. A branch name links the work to its primary gate without claiming that entire gate is complete. The first branch delivers a foundation slice of QA-01; its remaining product fixtures and benchmark obligations stay in the test plan.
