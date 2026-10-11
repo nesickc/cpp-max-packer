@@ -217,9 +217,8 @@ int run_engine(int argc, Character** argv) {
               std::uint64_t available {};
               const auto [end, cause] =
                   std::from_chars(converted->data(), converted->data() + converted->size(), available);
-              if (cause != std::errc {} || end != converted->data() + converted->size() || available == 0 ||
-                  available > (512ULL << 20)) {
-                  return machine_error("INVALID_REQUEST", "--available-host-bytes must be an integer in [1,536870912].",
+              if (cause != std::errc {} || end != converted->data() + converted->size() || available == 0) {
+                  return machine_error("INVALID_REQUEST", "--available-host-bytes must be a positive uint64 integer.",
                                        2);
               }
               request.max_working_bytes = available;

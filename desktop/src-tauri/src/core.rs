@@ -634,20 +634,22 @@ impl Core {
         Ok(Some(value))
     }
     fn auxiliary_host_allowance(&self) -> Outcome<u64> {
-        const CAP: u64 = 512 << 20;
+        const LEGACY_CAP: u64 = 512 << 20;
         const ADAPTER: u64 = 16 << 20;
-        let (retained, session_live) = {
+        let (retained, session_live, cap) = {
             let mut native = self.native.lock().unwrap();
             if let Some(child) = native.as_mut() {
                 if child.is_alive()? {
-                    (child.retained_native_bytes.filter(|bytes|*bytes<=CAP)
-                        .ok_or_else(||error("MEMORY_LIMIT","Retained native residency is unavailable; helper admission cannot proceed."))?,true)
+                    let cap = child.admitted_host_cap_bytes.filter(|cap| *cap > 0)
+                        .ok_or_else(|| error("MEMORY_LIMIT", "Native admitted host ceiling is unavailable."))?;
+                    (child.retained_native_bytes.filter(|bytes|*bytes<=cap)
+                        .ok_or_else(||error("MEMORY_LIMIT","Retained native residency is unavailable; helper admission cannot proceed."))?,true,cap)
                 } else {
                     native.take();
-                    (0, false)
+                    (0, false, LEGACY_CAP)
                 }
             } else {
-                (0, false)
+                (0, false, LEGACY_CAP)
             }
         };
         let inner = self.inner.lock().unwrap();
@@ -661,7 +663,7 @@ impl Core {
             .and_then(|bytes| bytes.checked_add(ADAPTER))
             .and_then(|bytes| bytes.checked_add(if session_live { ADAPTER } else { 0 }))
             .ok_or_else(|| error("MEMORY_LIMIT", "Helper retained-owner admission overflows."))?;
-        CAP.checked_sub(live)
+        cap.checked_sub(live)
             .filter(|bytes| *bytes > 0)
             .ok_or_else(|| {
                 error(
@@ -721,7 +723,7 @@ impl Core {
             method,
             operation,
             params,
-            |sequence, phase, _| {
+            |sequence, phase, _, resource| {
                 if let Some(operation_id) = operation {
                     let mut inner = self.inner.lock().unwrap();
                     if let Some(active) = inner.state.operation.as_mut() {
@@ -732,6 +734,9 @@ impl Core {
                             active.sequence = Some(sequence);
                             if active.phase != "stopping" {
                                 active.phase = phase.into();
+                            }
+                            if let (Some(cpu), Some(resource)) = (inner.state.cpu_runtime.as_mut(), resource) {
+                                cpu["resource_status"] = serde_json::to_value(resource).unwrap();
                             }
                             inner.state.revision += 1;
                         }

@@ -22,6 +22,7 @@
 
 #include "../../pack_compute/src/correlation_test_hook.hpp"
 #include "../../pack_geometry/src/field_kernel.hpp"
+#include "../../pack_geometry/src/raster_execution_internal.hpp"
 #include "../../pack_geometry/tests/validation_fixtures.hpp"
 #include "../src/allocation_fault.hpp"
 #include "../src/baseline_internal.hpp"
@@ -922,6 +923,525 @@ TEST_CASE("AT-12 CPU spectral accepts a real L-prism improvement", "[solver][T00
     CHECK(outcome.run.best->solution->copies()[0].rotation_xyzw == geo::Quaternion { 0, 0, 0, 1 });
     CHECK(outcome.run.best->solution->copies()[1].translation_mm == geo::Vec3 { 2.25, 1.25, .5 });
     CHECK(outcome.run.best->solution->copies()[1].rotation_xyzw == geo::Quaternion { 0, 0, 1, 0 });
+}
+
+TEST_CASE("AT-16 T015 timed recovery reuses completed binary FFT after a proximity allowance denial",
+          "[solver][T015-P2][recovery]")
+{
+    const auto context = default_fixed_context();
+    const auto catalog =
+        std::get<solver::OrientationCatalog>(solver::make_orientation_catalog(context->constraints().orientations, 1));
+    solver::detail::SpectralWorkspace workspace;
+    solver::SpectralLimits limits;
+    limits.resource_mode = solver::ResourceMode::timed;
+    const auto reference = solver::detail::build_spectral_pipeline(context, { {}, .25 }, limits, {}, catalog);
+    REQUIRE(reference.complete);
+    REQUIRE(reference.stats.proximity_terms > 1);
+    limits.max_proximity_terms = reference.stats.proximity_terms - 1;
+    const auto denied =
+        solver::detail::build_spectral_pipeline(workspace, context, { {}, .25 }, limits, {}, catalog, {});
+    CAPTURE(denied.diagnostic);
+    REQUIRE_FALSE(denied.complete);
+    REQUIRE(denied.stats.correlations == 2);
+    limits.max_proximity_terms = 200'000'000;
+    const auto resumed =
+        solver::detail::build_spectral_pipeline(workspace, context, { {}, .25 }, limits, {}, catalog, {});
+    CAPTURE(resumed.diagnostic);
+    REQUIRE(resumed.complete);
+    REQUIRE(resumed.ranked_candidates);
+    CHECK(resumed.stats.correlations == 1);
+    CHECK(resumed.stats.direct_terms < reference.stats.direct_terms);
+    CHECK_FALSE(resumed.ranked_candidates->empty());
+    const auto& proposal = resumed.ranked_candidates->front();
+    const auto candidate = geo::make_candidate(
+        context, {
+                     { "recovered",
+                      { .25 * proposal.translation[0], .25 * proposal.translation[1], .25 * proposal.translation[2] },
+                      catalog.quaternions[proposal.orientation_index] }
+    });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(candidate));
+    const auto checked = geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(candidate));
+    REQUIRE(checked.validated_solution);
+    CHECK(checked.report.validity == geo::Validity::valid);
+}
+
+TEST_CASE("AT-16 T015 parallel raster work denial recreates its closed owner before FFT evaluation",
+          "[solver][T015-P2][recovery][raster-retry]")
+{
+    const auto context = default_fixed_context();
+    const auto catalog =
+        std::get<solver::OrientationCatalog>(solver::make_orientation_catalog(context->constraints().orientations, 1));
+    solver::detail::SpectralWorkspace workspace;
+    solver::SpectralLimits limits;
+    limits.resource_mode = solver::ResourceMode::timed;
+    limits.cpu_thread_count = std::min(2U, solver::cpu_supported_thread_count());
+    const auto reference = solver::detail::build_spectral_pipeline(context, { {}, .25 }, limits, {}, catalog);
+    REQUIRE(reference.complete);
+    limits.max_representation_kernel_work = reference.stats.representation_kernel_work / 2;
+    const auto denied =
+        solver::detail::build_spectral_pipeline(workspace, context, { {}, .25 }, limits, {}, catalog, {});
+    REQUIRE_FALSE(denied.complete);
+    REQUIRE(denied.failure_details);
+    CHECK(denied.failure_details->cause_code() == "FIELD_KERNEL_WORK_LIMIT");
+    limits.max_representation_kernel_work = 1'300'000'000;
+    const auto resumed =
+        solver::detail::build_spectral_pipeline(workspace, context, { {}, .25 }, limits, {}, catalog, {});
+    CAPTURE(resumed.diagnostic, resumed.failure_details ? resumed.failure_details->cause_code() : "");
+    REQUIRE(resumed.complete);
+    REQUIRE(resumed.ranked_candidates);
+    REQUIRE_FALSE(resumed.ranked_candidates->empty());
+    const auto& proposal = resumed.ranked_candidates->front();
+    const auto made = geo::make_candidate(
+        context, {
+                     { "recovered-raster",
+                      { .25 * proposal.translation[0], .25 * proposal.translation[1], .25 * proposal.translation[2] },
+                      catalog.quaternions[proposal.orientation_index] }
+    });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(made));
+    CHECK(geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(made)).validated_solution);
+}
+
+TEST_CASE("AT-16 T015 timed work grants produce native validated FFT candidates in the same job",
+          "[solver][T015-P2][recovery]")
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .125;
+    const auto context = l_context({ 3.75, 2.75, 1.5 }, constraints);
+    solver::SpectralLimits limits;
+    limits.resource_mode = solver::ResourceMode::timed;
+    limits.baseline.max_candidate_evaluations = 1;
+    limits.baseline.max_search_passes = 1;
+    limits.baseline.max_copies = 1;
+    limits.spectral.max_copies = 2;
+    limits.max_proximity_terms = 10'000;
+    solver::RunControl control;
+    control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
+    const auto outcome = solver::run_cpu_spectral(context, { {}, .25 }, limits, control);
+    CAPTURE(outcome.run.diagnostic_code, outcome.spectral_stats.direct_terms, outcome.spectral_stats.proximity_terms);
+    REQUIRE(outcome.run.best);
+    CHECK(outcome.stagger.best_count_after == 1);
+    CHECK(outcome.resource_recovery.grants > 0);
+    CHECK(outcome.resource_recovery.fft_candidate_evaluations > 0);
+    CHECK(outcome.resource_recovery.native_validations > 0);
+    REQUIRE(outcome.run.best->solution->copies().size() == 2);
+    auto candidate = geo::make_candidate(context, outcome.run.best->solution->copies());
+    REQUIRE(geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(candidate)).validated_solution);
+}
+
+TEST_CASE("AT-16 T015 Stop and deadline close raster owners without restarting recovery",
+          "[solver][T015-P2][recovery][raster-stop]")
+{
+    for (const bool deadline : { false, true }) {
+        struct State {
+            std::stop_source stop;
+            std::atomic_bool expired {};
+            std::atomic_uint starts {}, dispatches {}, joins {};
+            bool deadline {};
+        } state;
+        state.deadline = deadline;
+        struct Reset {
+            ~Reset() { geo::detail::set_raster_test_options({}); }
+        } reset;
+        geo::detail::set_raster_test_options({ [](void* raw, geo::detail::RasterPoint point, std::uint32_t) noexcept {
+            auto& state = *static_cast<State*>(raw);
+            if (point == geo::detail::RasterPoint::started) {
+                ++state.starts;
+            }
+            if (point == geo::detail::RasterPoint::joined) {
+                ++state.joins;
+            }
+            if (point == geo::detail::RasterPoint::dispatch) {
+                ++state.dispatches;
+                if (state.deadline) {
+                    state.expired = true;
+                }
+                else {
+                    state.stop.request_stop();
+                }
+            }
+        }, &state });
+        solver::SpectralLimits limits;
+        limits.resource_mode = solver::ResourceMode::timed;
+        limits.cpu_thread_count = std::min(2U, solver::cpu_supported_thread_count());
+        limits.baseline.max_candidate_evaluations = 1;
+        limits.baseline.max_search_passes = 1;
+        limits.baseline.max_copies = 1;
+        solver::RunControl control;
+        control.stop = state.stop.get_token();
+        control.deadline = spectrapack::runtime::Clock::time_point { std::chrono::seconds(1) };
+        control.now_context = &state;
+        control.now_fn = [](void* raw) noexcept {
+            return spectrapack::runtime::Clock::time_point { std::chrono::seconds(
+                static_cast<State*>(raw)->expired ? 1 : 0) };
+        };
+        const auto outcome = solver::run_cpu_spectral(default_fixed_context(), { {}, .25 }, limits, control);
+        CAPTURE(deadline);
+        CHECK(outcome.run.termination_reason ==
+              (deadline ? solver::TerminationReason::budget_exhausted : solver::TerminationReason::user_stopped));
+        CHECK(state.starts == limits.cpu_thread_count - 1);
+        CHECK(state.joins == state.starts);
+        CHECK(state.dispatches == 1);
+        CHECK(outcome.resource_recovery.grants == 0);
+        CHECK(outcome.resource_recovery.recoveries == 0);
+        REQUIRE(outcome.run.best);
+        CHECK(outcome.run.best->solution->copies().size() == 1);
+    }
+}
+
+TEST_CASE("AT-16 T015 memory recovery evicts parked workers before real FFT candidates and count improvement",
+          "[solver][T015-P2][recovery]")
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .125;
+    const auto context = l_context({ 3.75, 2.75, 1.5 }, constraints);
+    solver::SpectralLimits limits;
+    limits.resource_mode = solver::ResourceMode::timed;
+    limits.cpu_thread_count = std::min(2U, solver::cpu_supported_thread_count());
+    limits.baseline.max_candidate_evaluations = 1;
+    limits.baseline.max_search_passes = 1;
+    limits.baseline.max_copies = 1;
+    limits.spectral.max_copies = 2;
+    solver::RunControl control;
+    control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
+    unsigned entries {};
+    struct Reset {
+        ~Reset() { spectrapack::compute::detail::set_correlation_entry_hook_for_test(nullptr, nullptr); }
+    } reset;
+    spectrapack::compute::detail::set_correlation_entry_hook_for_test(
+        [](const spectrapack::compute::CorrelationSpec&, void* raw) noexcept {
+        if (++*static_cast<unsigned*>(raw) == 1) {
+            fail_after_test_allocations = 0;
+        }
+    }, &entries);
+    const auto outcome = solver::run_cpu_spectral(context, { {}, .25 }, limits, control);
+    CAPTURE(outcome.run.diagnostic_code, entries, outcome.resource_recovery.deferred);
+    REQUIRE(outcome.run.best);
+    CHECK(outcome.stagger.best_count_after == 1);
+    CHECK(outcome.resource_recovery.recoveries > 0);
+    CHECK(outcome.resource_recovery.fft_candidate_evaluations > 0);
+    CHECK(outcome.resource_recovery.native_validations > 0);
+    REQUIRE(outcome.run.best->solution->copies().size() == 2);
+    auto candidate = geo::make_candidate(context, outcome.run.best->solution->copies());
+    REQUIRE(geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(candidate)).validated_solution);
+}
+
+TEST_CASE("AT-16 T015 cumulative validation denial grants work and reconsiders the same native candidate",
+          "[solver][T015-P2][recovery][validation-grant]")
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .125;
+    const auto context = l_context({ 3.75, 2.75, 1.5 }, constraints);
+    solver::SpectralLimits limits;
+    limits.resource_mode = solver::ResourceMode::timed;
+    limits.baseline.max_candidate_evaluations = 1;
+    limits.baseline.max_search_passes = 1;
+    limits.baseline.max_copies = 1;
+    limits.spectral.max_copies = 2;
+    solver::RunControl control;
+    control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
+    const auto reference = solver::run_cpu_spectral(context, { {}, .25 }, limits, control);
+    REQUIRE(reference.run.best);
+    REQUIRE(reference.run.best->solution->copies().size() == 2);
+    const auto spectral_work =
+        reference.run.stats.validation_kernel_work - reference.baseline_stats.validation_kernel_work;
+    limits.spectral.max_validation_kernel_work = reference.stagger.work.validation_kernel_work +
+                                                 (spectral_work - reference.stagger.work.validation_kernel_work) / 2;
+    const auto recovered = solver::run_cpu_spectral(context, { {}, .25 }, limits, control);
+    CAPTURE(recovered.run.diagnostic_code, limits.spectral.max_validation_kernel_work);
+    CHECK(recovered.resource_recovery.grants > 0);
+    CHECK(recovered.run.stats.indeterminate_candidates > 0);
+    CHECK(recovered.run.stats.validation_kernel_work > reference.run.stats.validation_kernel_work);
+    CHECK(recovered.resource_recovery.native_validations > recovered.resource_recovery.fft_candidate_evaluations);
+    REQUIRE(recovered.run.best);
+    REQUIRE(recovered.run.best->solution->copies().size() == 2);
+    CHECK(geo::revalidate(recovered.run.best->solution).validated_solution);
+    for (const bool deadline : { false, true }) {
+        struct Interrupt {
+            std::stop_source stop;
+            bool expired {}, deadline {};
+            std::uint64_t validations {};
+        } interrupt;
+        interrupt.deadline = deadline;
+        limits.resource_status_context = &interrupt;
+        limits.resource_status_sink = [](void* raw, std::uint64_t, const solver::ResourceRecovery& recovery) noexcept {
+            if (recovery.transition_count &&
+                recovery.transitions[recovery.transition_count - 1].phase == "validation") {
+                auto& interrupt = *static_cast<Interrupt*>(raw);
+                interrupt.validations = recovery.native_validations;
+                if (interrupt.deadline) {
+                    interrupt.expired = true;
+                }
+                else {
+                    interrupt.stop.request_stop();
+                }
+            }
+        };
+        auto interrupted_control = control;
+        interrupted_control.stop = interrupt.stop.get_token();
+        interrupted_control.now_context = &interrupt;
+        interrupted_control.now_fn = [](void* raw) noexcept {
+            return static_cast<Interrupt*>(raw)->expired ? spectrapack::runtime::Clock::time_point::max()
+                                                         : spectrapack::runtime::Clock::now();
+        };
+        const auto stopped = solver::run_cpu_spectral(context, { {}, .25 }, limits, interrupted_control);
+        CHECK(stopped.run.termination_reason ==
+              (deadline ? solver::TerminationReason::budget_exhausted : solver::TerminationReason::user_stopped));
+        CHECK(interrupt.validations > 0);
+        CHECK(stopped.resource_recovery.native_validations == interrupt.validations);
+        REQUIRE(stopped.run.best);
+        CHECK(stopped.run.best->solution->copies().size() == 1);
+    }
+}
+
+TEST_CASE("AT-16 T015 timed candidate and pass quanta continue real FFT work while fixed caps remain hard",
+          "[solver][T015-P2][recovery][controller-grants]")
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .125;
+    const auto context = l_context({ 3.75, 2.75, 1.5 }, constraints);
+    solver::SpectralLimits limits;
+    limits.baseline.max_candidate_evaluations = 1;
+    limits.baseline.max_search_passes = 1;
+    limits.baseline.max_copies = 1;
+    limits.spectral.max_candidate_evaluations = 1;
+    limits.spectral.max_search_passes = 2;
+    limits.spectral.max_copies = 2;
+    solver::RunControl control;
+    control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
+    for (const auto mode : { solver::ResourceMode::fixed_work, solver::ResourceMode::timed }) {
+        limits.resource_mode = mode;
+        const auto outcome = solver::run_cpu_spectral(context, { {}, .25 }, limits, control);
+        REQUIRE(outcome.run.best);
+        if (mode == solver::ResourceMode::timed) {
+            CHECK(outcome.resource_recovery.grants >= 2);
+            CHECK(outcome.resource_recovery.fft_candidate_evaluations > 0);
+            CHECK(outcome.run.best->solution->copies().size() == 2);
+        }
+        else {
+            CHECK(outcome.resource_recovery.grants == 0);
+            CHECK(outcome.resource_recovery.fft_candidate_evaluations == 0);
+            CHECK(outcome.run.best->solution->copies().size() == 1);
+        }
+    }
+}
+
+TEST_CASE("AT-16 T015 timed baseline denial hands a raw valid incumbent to real FFT work",
+          "[solver][T015-P2][recovery][phase-handoff]")
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .125;
+    const auto context = l_context({ 3.75, 2.75, 1.5 }, constraints);
+    const auto initial = native_solution(context, {
+                                                      { "original", { 1, 1, .5 }, { 0, 0, 0, 1 } }
+    });
+    solver::SpectralLimits limits;
+    limits.baseline.max_working_bytes = 1;  // Baseline cannot even store its snapshot; the raw handle remains valid.
+    limits.spectral.max_copies = 2;
+    solver::RunControl control;
+    control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
+    for (const auto mode : { solver::ResourceMode::fixed_work, solver::ResourceMode::timed }) {
+        limits.resource_mode = mode;
+        const auto outcome = solver::run_cpu_spectral(context, { {}, .25 }, limits, control, {}, initial);
+        CAPTURE(outcome.run.diagnostic_code);
+        const auto retained = outcome.run.best ? outcome.run.best->solution : outcome.run.retained_solution;
+        REQUIRE(retained);
+        CHECK(geo::revalidate(retained).validated_solution);
+        if (mode == solver::ResourceMode::timed) {
+            CHECK(outcome.resource_recovery.deferred >= 1);
+            CHECK(outcome.resource_recovery.fft_candidate_evaluations > 0);
+            CHECK(outcome.resource_recovery.native_validations > 0);
+            CHECK(retained->copies().size() == 2);
+        }
+        else {
+            CHECK(retained == initial);
+            CHECK(outcome.resource_recovery.fft_candidate_evaluations == 0);
+            CHECK(outcome.run.termination_reason == solver::TerminationReason::resource_limit);
+        }
+    }
+}
+
+TEST_CASE("AT-16 T015 timed stagger validation denial defers the seed and validates FFT candidates",
+          "[solver][T015-P2][recovery][phase-handoff]")
+{
+    auto mesh = geo::test_support::cuboid({ -.5, -.5, 0 }, { .5, .5, 1 });
+    for (auto& vertex : mesh.vertices) {
+        const double alpha = vertex[0], beta = vertex[1];
+        vertex[0] = alpha - beta;
+        vertex[1] = alpha + beta;
+    }
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .125;
+    constraints.orientations.mode = geo::OrientationMode::fixed;
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(geo::make_validation_context(
+        geo::test_support::accepted(mesh, geo::AssetRole::object), geo::BoxDimensions { 5.5, 4, 1.5 }, constraints));
+    solver::SpectralLimits limits;
+    limits.spectral.max_candidate_evaluations = limits.spectral.max_search_passes = 1;
+    const auto reference = solver::run_cpu_spectral(context, { {}, .25 }, limits, {});
+    REQUIRE(reference.stagger.work.validation_kernel_work > 2);
+    REQUIRE(reference.run.best);
+    REQUIRE(reference.run.best->score.count == 4);
+    limits.spectral.max_validation_kernel_work = reference.stagger.work.validation_kernel_work / 2;
+    solver::RunControl control;
+    control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
+    for (const auto mode : { solver::ResourceMode::fixed_work, solver::ResourceMode::timed }) {
+        limits.resource_mode = mode;
+        const auto outcome = solver::run_cpu_spectral(context, { {}, .25 }, limits, control);
+        CAPTURE(outcome.run.diagnostic_code, outcome.stagger.work.validation_kernel_work);
+        REQUIRE(outcome.run.best);
+        CHECK(outcome.run.best->score.count >= 2);
+        CHECK(geo::revalidate(outcome.run.best->solution).validated_solution);
+        CHECK(outcome.stagger.state == solver::StaggerState::interrupted);
+        if (mode == solver::ResourceMode::timed) {
+            CHECK(outcome.resource_recovery.deferred >= 1);
+            CHECK(outcome.resource_recovery.fft_candidate_evaluations > 0);
+            CHECK(outcome.resource_recovery.native_validations > 0);
+            CHECK(outcome.run.stats.validation_kernel_work >
+                  outcome.baseline_stats.validation_kernel_work + outcome.stagger.work.validation_kernel_work);
+        }
+        else {
+            CHECK(outcome.resource_recovery.fft_candidate_evaluations == 0);
+            CHECK(outcome.run.termination_reason == solver::TerminationReason::resource_limit);
+        }
+    }
+}
+
+TEST_CASE("AT-16 T015 timed handoff bootstraps only a native-valid empty layout and honors interruption",
+          "[solver][T015-P2][recovery][phase-handoff]")
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .125;
+    const auto context = l_context({ 3.75, 2.75, 1.5 }, constraints);
+    solver::SpectralLimits limits;
+    limits.resource_mode = solver::ResourceMode::timed;
+    limits.baseline.max_working_bytes = 1;
+    limits.spectral.max_copies = 2;
+    solver::RunControl control;
+    control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
+    const auto recovered = solver::run_cpu_spectral(context, { {}, .25 }, limits, control);
+    REQUIRE(recovered.run.best);
+    CHECK(recovered.run.best->score.count == 2);
+    CHECK(recovered.resource_recovery.fft_candidate_evaluations > 0);
+    CHECK(geo::revalidate(recovered.run.best->solution).validated_solution);
+    auto impossible = limits;
+    impossible.spectral.per_validation.max_working_bytes = 1;
+    const auto refused = solver::run_cpu_spectral(context, { {}, .25 }, impossible, control);
+    CHECK_FALSE(refused.run.best);
+    CHECK_FALSE(refused.run.retained_solution);
+    CHECK(refused.run.termination_reason == solver::TerminationReason::resource_limit);
+    CHECK(refused.resource_recovery.fft_candidate_evaluations == 0);
+    const auto initial = native_solution(context, {
+                                                      { "original", { 1, 1, .5 }, { 0, 0, 0, 1 } }
+    });
+    for (const bool deadline : { false, true }) {
+        struct Interrupt {
+            std::stop_source stop;
+            bool expired {}, deadline {};
+        } interrupt;
+        interrupt.deadline = deadline;
+        limits.resource_status_context = &interrupt;
+        limits.resource_status_sink = [](void* raw, std::uint64_t, const solver::ResourceRecovery& recovery) noexcept {
+            if (recovery.deferred) {
+                auto& state = *static_cast<Interrupt*>(raw);
+                if (state.deadline) {
+                    state.expired = true;
+                }
+                else {
+                    state.stop.request_stop();
+                }
+            }
+        };
+        control.stop = interrupt.stop.get_token();
+        control.now_context = &interrupt;
+        control.now_fn = [](void* raw) noexcept {
+            return static_cast<Interrupt*>(raw)->expired ? spectrapack::runtime::Clock::time_point::max()
+                                                         : spectrapack::runtime::Clock::now();
+        };
+        const auto stopped = solver::run_cpu_spectral(context, { {}, .25 }, limits, control, {}, initial);
+        CHECK(stopped.run.termination_reason ==
+              (deadline ? solver::TerminationReason::budget_exhausted : solver::TerminationReason::user_stopped));
+        CHECK(stopped.run.retained_solution == initial);
+        CHECK(stopped.resource_recovery.fft_candidate_evaluations == 0);
+    }
+    solver::SpectralLimits observer_limits;
+    observer_limits.resource_mode = solver::ResourceMode::timed;
+    solver::RunControl observer_control;
+    observer_control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
+    const auto observer_failure =
+        solver::run_cpu_spectral(context, { {}, .25 }, observer_limits, observer_control, [](solver::SnapshotHandle) {
+        throw std::runtime_error("observer failure");
+    }, initial);
+    CHECK(observer_failure.run.termination_reason == solver::TerminationReason::error);
+    CHECK(observer_failure.run.diagnostic_code == "PHYSICAL_OBSERVER_ERROR");
+    CHECK(observer_failure.resource_recovery.deferred == 0);
+    CHECK(observer_failure.resource_recovery.fft_candidate_evaluations == 0);
+}
+
+TEST_CASE("AT-16 T015 timed refinement and query quanta retain native validity",
+          "[solver][T015-P2][recovery][controller-grants]")
+{
+    const geo::Quaternion identity { 0, 0, 0, 1 };
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .125;
+    const auto context = cuboid_context({ -.5, -.5, -.5 }, { .5, .5, .5 }, { 1, 1, 3.25 }, { identity }, constraints);
+    solver::SpectralLimits limits;
+    limits.resource_mode = solver::ResourceMode::timed;
+    limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
+    limits.spectral.max_copies = 3;
+    limits.spectral.max_search_passes = 1;
+    limits.max_refinement_evaluations = 1;
+    limits.spectral.max_geometry_kernel_work = 1;
+    limits.spectral.max_geometry_vertex_visits = 1;
+    solver::RunControl control;
+    control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
+    const auto outcome = solver::run_cpu_spectral(context, { {}, .5 }, limits, control);
+    CAPTURE(outcome.run.diagnostic_code);
+    REQUIRE(outcome.run.best);
+    CHECK(outcome.run.best->score.count == 3);
+    CHECK(outcome.spectral_stats.refinement_evaluations > 1);
+    CHECK(outcome.resource_recovery.grants > 0);
+    CHECK(geo::revalidate(outcome.run.best->solution).validated_solution);
+}
+
+TEST_CASE("AT-16 T015 unaffordable FFT allocation stops after finite changed configurations",
+          "[solver][T015-P2][recovery][unaffordable]")
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .125;
+    const auto context = l_context({ 3.75, 2.75, 1.5 }, constraints);
+    solver::SpectralLimits limits;
+    limits.resource_mode = solver::ResourceMode::timed;
+    limits.cpu_thread_count = std::min(2U, solver::cpu_supported_thread_count());
+    limits.baseline.max_candidate_evaluations = 1;
+    limits.baseline.max_search_passes = 1;
+    limits.baseline.max_copies = 1;
+    limits.max_refinement_evaluations = 0;
+    unsigned entries {};
+    struct Reset {
+        ~Reset() { spectrapack::compute::detail::set_correlation_entry_hook_for_test(nullptr, nullptr); }
+    } reset;
+    spectrapack::compute::detail::set_correlation_entry_hook_for_test(
+        [](const spectrapack::compute::CorrelationSpec&, void* raw) noexcept {
+        ++*static_cast<unsigned*>(raw);
+        fail_after_test_allocations = 0;
+    }, &entries);
+    solver::RunControl control;
+    control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
+    const auto outcome = solver::run_cpu_spectral(context, { {}, .25 }, limits, control);
+    CHECK(entries >= 1);
+    CHECK(entries <= 6);  // At most three changed configurations for each of the two catalog orientations.
+    CHECK(outcome.run.termination_reason == solver::TerminationReason::resource_limit);
+    const auto orientation_denials =
+        std::count_if(outcome.resource_recovery.transitions.begin(),
+                      outcome.resource_recovery.transitions.begin() + outcome.resource_recovery.transition_count,
+                      [](const auto& event) {
+        return event.action == "defer_operation";
+    });
+    CHECK(orientation_denials == 2);
+    CHECK(outcome.resource_recovery.fft_candidate_evaluations == 0);
+    REQUIRE(outcome.run.failure_details);
+    CHECK(outcome.run.failure_details->cause_code() == "CORRELATION_ALLOCATION");
+    REQUIRE(outcome.run.best);
+    CHECK(outcome.run.best->solution->copies().size() == 1);
 }
 
 TEST_CASE("AT-12 CPU spectral repeats the L-prism improvement deterministically", "[solver][T007][AT-12][determinism]")

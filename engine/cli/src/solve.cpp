@@ -6,6 +6,7 @@
 
 #include "count_publication.hpp"
 #include "host_admission.hpp"
+#include "resource_policy.hpp"
 #include "result_publication.hpp"
 #include "settings_reader.hpp"
 #include "timeline.hpp"
@@ -522,10 +523,39 @@ Json export_admission_details(uint64_t limit, uint64_t live, const ExportResidua
 #endif
 }
 
+Json resource_diagnostics(const solver::ResourceRecovery& recovery)
+{
+    Json transitions = Json::array();
+    for (std::size_t index = 0; index != recovery.transition_count; ++index) {
+        const auto& event = recovery.transitions[index];
+        transitions.push_back({
+            { "sequence", std::to_string(event.sequence) },
+            { "cause",    event.cause.data()             },
+            { "phase",    event.phase                    },
+            { "action",   event.action                   },
+            { "before",   std::to_string(event.before)   },
+            { "after",    std::to_string(event.after)    },
+            { "consumed", std::to_string(event.consumed) }
+        });
+    }
+    return {
+        { "version",                   1                                                  },
+        { "actual_final_threads",      recovery.actual_final_threads                      },
+        { "grants",                    std::to_string(recovery.grants)                    },
+        { "recoveries",                std::to_string(recovery.recoveries)                },
+        { "deferred",                  std::to_string(recovery.deferred)                  },
+        { "fft_candidate_evaluations", std::to_string(recovery.fft_candidate_evaluations) },
+        { "native_validations",        std::to_string(recovery.native_validations)        },
+        { "omitted_records",           std::to_string(recovery.omitted)                   },
+        { "transitions",               std::move(transitions)                             }
+    };
+}
+
 Json command_diagnostics(const solver::SpectralOutcome& outcome, const solver::SpectralLimits& limits,
                          uint64_t caller_reserved, std::string_view time_to_best_basis)
 {
     return {
+        { "resource_recovery",          resource_diagnostics(outcome.resource_recovery)                 },
         { "phase_ceilings",
          { { "baseline",
               { { "candidate_evaluations", limits.baseline.max_candidate_evaluations },
@@ -667,7 +697,10 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
                 { "no_nonempty_incumbent", true }
         });
     }
-    constexpr std::uint64_t host_cap = 512ULL << 20;
+    const auto host_cap =
+        settings["resolved"].contains("resource_policy")
+            ? *spectrapack::cli::decimal_bytes(settings["resolved"]["resource_policy"]["host_cap_bytes"])
+            : 512ULL << 20;
     std::uint64_t loading_reserve = run_runtime.retained_reserve_bytes;
     const auto loading_request_bytes = request_resident_bytes(request, run_runtime.adapter_reserve_bytes);
     if (!loading_request_bytes || !add_bytes(loading_reserve, *loading_request_bytes) ||
@@ -792,6 +825,8 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     }
 #endif
     limits.cpu_thread_count = static_cast<std::uint32_t>(thread_count);
+    limits.resource_status_sink = run_runtime.resource_status_sink;
+    limits.resource_status_context = run_runtime.resource_status_context;
     const auto& search = settings["search"];
     if (search["deterministic"].get<bool>()) {
         const auto candidates = search["work_budget"]["max_candidate_evaluations"].get<uint64_t>();
@@ -800,6 +835,16 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         limits.spectral.max_candidate_evaluations = candidates - limits.baseline.max_candidate_evaluations;
         limits.baseline.max_search_passes = passes / 2 + passes % 2;
         limits.spectral.max_search_passes = passes - limits.baseline.max_search_passes;
+    }
+    const auto partition = limits;
+    if (settings["resolved"].contains("resource_policy") &&
+        (!spectrapack::cli::apply_resource_policy(settings["resolved"]["resource_policy"], limits) ||
+         (search["deterministic"].get<bool>() &&
+          (limits.baseline.max_candidate_evaluations != partition.baseline.max_candidate_evaluations ||
+           limits.spectral.max_candidate_evaluations != partition.spectral.max_candidate_evaluations ||
+           limits.baseline.max_search_passes != partition.baseline.max_search_passes ||
+           limits.spectral.max_search_passes != partition.spectral.max_search_passes)))) {
+        return fail("UNSUPPORTED_RESOURCE_POLICY", "Resolved caps must match the effective fixed-work partition.", 3);
     }
     std::optional<std::chrono::steady_clock::time_point> deadline;
     if (!search["deterministic"].get<bool>()) {
@@ -837,8 +882,13 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         if (!std::holds_alternative<std::shared_ptr<const geo::Candidate>>(empty)) {
             return fail("SOLVE_FAILED", "Initial empty candidate could not be created.", 3);
         }
-        const auto checked = geo::validate(std::get<std::shared_ptr<const geo::ValidationContext>>(context_value),
-                                           std::get<std::shared_ptr<const geo::Candidate>>(empty), {}, control);
+        auto empty_limits = limits.spectral.per_validation;
+        empty_limits.max_working_bytes =
+            std::min(empty_limits.max_working_bytes,
+                     limits.max_working_bytes - std::min(limits.max_working_bytes, caller_reserve));
+        const auto checked =
+            geo::validate(std::get<std::shared_ptr<const geo::ValidationContext>>(context_value),
+                          std::get<std::shared_ptr<const geo::Candidate>>(empty), empty_limits, control);
         if (!checked.validated_solution || checked.report.validity != geo::Validity::valid) {
             return fail("SOLVE_FAILED", "Initial empty candidate did not pass native validation.", 3);
         }
@@ -869,6 +919,10 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
             }
         }
     }, std::move(initial));
+    if (run_runtime.admitted_host_cap_bytes && outcome.admitted_host_cap_bytes) {
+        *run_runtime.admitted_host_cap_bytes = outcome.admitted_host_cap_bytes;
+        limits.max_working_bytes = outcome.admitted_host_cap_bytes;
+    }
     if (run_runtime.publication_sink && outcome.run.retained_solution) {
         const auto terminal =
             std::make_shared<const solver::NativeSnapshot>(solver::NativeSnapshot { 0, outcome.run.retained_solution });
@@ -892,6 +946,9 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     Json retained_diagnostics {
         { "diagnostic_code", std::string(outcome.run.diagnostic_code) }
     };
+    if (limits.resource_mode != solver::ResourceMode::legacy) {
+        retained_diagnostics["resource_recovery"] = resource_diagnostics(outcome.resource_recovery);
+    }
     if (outcome.run.failure_details) {
         retained_diagnostics["failure"] = failure_details(*outcome.run.failure_details);
     }

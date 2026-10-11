@@ -3,6 +3,7 @@
 
 #include "desktop.hpp"
 #include "packing_wire.hpp"
+#include "resource_policy.hpp"
 #include "runtime_record_bound.hpp"
 #include "runtime_wire.hpp"
 #include "solve.hpp"
@@ -137,6 +138,7 @@ struct PreparedAsset {
     std::uint64_t bytes {};
 };
 struct Session {
+    std::uint64_t host_cap { kHostCap };
     std::mutex wire_mutex, state_mutex, serialization_mutex;
     std::condition_variable wire_ready;
     std::deque<std::string> wire_records;
@@ -147,10 +149,16 @@ struct Session {
     HANDLE input_thread {};
     HANDLE write_thread {};
     struct PhasePacket {
+        struct ResourceStatus {
+            std::uint64_t cap {}, recoveries {};
+            std::uint32_t threads {};
+            std::array<char, 96> cause {}, action {};
+        };
         std::array<char, 129> request {}, operation {};
         std::uint64_t sequence {};
         runtime::Phase phase;
         double seconds {};
+        std::optional<ResourceStatus> resource;
     };
     std::optional<PhasePacket> pending_phase;
     struct PackingBinding {
@@ -280,17 +288,26 @@ struct Session {
                         wire_ready.notify_all();
                     }
                     else if (phase) {
-                        bytes = cli::encode_runtime_record(
-                            Json {
-                                { "runtime_version",        1                             },
-                                { "request_id",             phase->request.data()         },
-                                { "operation_id",           phase->operation.data()       },
-                                { "kind",                   "phase"                       },
-                                { "sequence",               phase->sequence               },
-                                { "phase",                  cli::phase_name(phase->phase) },
-                                { "native_elapsed_seconds", phase->seconds                }
-                        },
-                            true, 1024);
+                        Json record {
+                            { "runtime_version",        1                             },
+                            { "request_id",             phase->request.data()         },
+                            { "operation_id",           phase->operation.data()       },
+                            { "kind",                   "phase"                       },
+                            { "sequence",               phase->sequence               },
+                            { "phase",                  cli::phase_name(phase->phase) },
+                            { "native_elapsed_seconds", phase->seconds                }
+                        };
+                        if (phase->resource) {
+                            const auto& status = *phase->resource;
+                            record["resource_status"] = {
+                                { "admitted_host_cap_bytes", std::to_string(status.cap)        },
+                                { "actual_threads",          status.threads                    },
+                                { "recovery_count",          std::to_string(status.recoveries) },
+                                { "last_cause",              status.cause.data()               },
+                                { "last_action",             status.action.data()              }
+                            };
+                        }
+                        bytes = cli::encode_runtime_record(record, true, 2048);
                     }
                     if (bytes.empty()) {
                         continue;
@@ -462,6 +479,8 @@ struct PhaseContext {
     const Json& request;
     runtime::Clock::time_point start;
     std::uint64_t sequence {};
+    runtime::Phase current { runtime::Phase::preparing };
+    std::optional<Session::PhasePacket::ResourceStatus> resource;
     static void publish(void* raw, runtime::Phase phase) noexcept
     {
         auto& context = *static_cast<PhaseContext*>(raw);
@@ -472,8 +491,26 @@ struct PhaseContext {
         std::copy(operation.begin(), operation.end(), packet.operation.begin());
         packet.sequence = ++context.sequence;
         packet.phase = phase;
+        context.current = phase;
+        packet.resource = context.resource;
         packet.seconds = std::chrono::duration<double>(runtime::Clock::now() - context.start).count();
         context.session.phase(packet);
+    }
+    static void resource_status(void* raw, std::uint64_t cap, const solver::ResourceRecovery& recovery) noexcept
+    {
+        auto& context = *static_cast<PhaseContext*>(raw);
+        Session::PhasePacket::ResourceStatus status;
+        status.cap = cap;
+        status.threads = recovery.actual_final_threads;
+        status.recoveries = recovery.recoveries + recovery.grants;
+        if (recovery.transition_count) {
+            const auto& last = recovery.transitions[recovery.transition_count - 1];
+            std::copy_n(last.cause.begin(), std::min(last.cause.size(), status.cause.size() - 1), status.cause.begin());
+            std::copy_n(last.action.begin(), std::min(last.action.size(), status.action.size() - 1),
+                        status.action.begin());
+        }
+        context.resource = status;
+        publish(raw, context.current);
     }
 };
 std::optional<std::uint64_t> retained_other_bytes(const Session& session, const PreparedAsset* active = nullptr,
@@ -492,7 +529,7 @@ std::optional<std::uint64_t> retained_other_bytes(const Session& session, const 
         solids[solid_count++] = active->verified->solid().get();
     }
     const auto charge = [&](std::optional<std::uint64_t> bytes) {
-        if (!bytes || *bytes > kHostCap - total) {
+        if (!bytes || total > session.host_cap || *bytes > session.host_cap - total) {
             return false;
         }
         total += *bytes;
@@ -589,15 +626,16 @@ private:
 };
 std::variant<Json, io::Error> create_preview(PreparedAsset& prepared, const std::filesystem::path& output,
                                              const runtime::OperationControl& control, std::uint64_t other_reserve,
-                                             bool already_charged)
+                                             bool already_charged, std::uint64_t host_cap)
 {
     control.phase(runtime::Phase::preparing);
     const auto pins = prepared.verified->resident_buffer_bytes();
-    if (!pins || (!already_charged && *pins > kHostCap - other_reserve)) {
+    if (!pins || other_reserve > host_cap || (!already_charged && *pins > host_cap - other_reserve)) {
         return error("MEMORY_LIMIT", "Pinned preview inputs exceed remaining host allowance.");
     }
     geo::RepresentationLimits display_limits;
-    display_limits.reserved_bytes = other_reserve + *pins;
+    display_limits.max_working_bytes = host_cap;
+    display_limits.reserved_bytes = already_charged ? other_reserve : other_reserve + *pins;
     if (!prepared.display) {
         const auto made = geo::make_display_lod(prepared.verified->solid(), {}, display_limits, control);
         if (const auto* failure = std::get_if<geo::RepresentationFailure>(&made)) {
@@ -614,8 +652,8 @@ std::variant<Json, io::Error> create_preview(PreparedAsset& prepared, const std:
     const auto source_bytes = prepared.verified->solid()->resident_buffer_bytes();
     const auto display_resident = prepared.display->resident_buffer_bytes();
     if (!source_bytes || !display_resident ||
-        (!already_charged && (*source_bytes > kHostCap - display_limits.reserved_bytes ||
-                              *display_resident > kHostCap - display_limits.reserved_bytes - *source_bytes))) {
+        (!already_charged && (*source_bytes > host_cap - display_limits.reserved_bytes ||
+                              *display_resident > host_cap - display_limits.reserved_bytes - *source_bytes))) {
         return error("MEMORY_LIMIT", "Preview owners exceed remaining host allowance.");
     }
     const auto live =
@@ -629,7 +667,7 @@ std::variant<Json, io::Error> create_preview(PreparedAsset& prepared, const std:
         return error("MEMORY_LIMIT", "Preview face storage is not representable.");
     }
     serialized += 13 * mesh.triangles.size();
-    if (serialized > (64ULL << 20) || serialized > kHostCap - live) {
+    if (live > host_cap || serialized > (64ULL << 20) || serialized > host_cap - live) {
         return error("MEMORY_LIMIT", "Preview serialization exceeds remaining host allowance.");
     }
     bytes.reserve(static_cast<std::size_t>(serialized));
@@ -684,8 +722,8 @@ std::variant<Json, io::Error> create_preview(PreparedAsset& prepared, const std:
     const auto accepted_bytes = prepared.verified->solid()->resident_buffer_bytes();
     const auto pinned_bytes = prepared.verified->resident_buffer_bytes();
     const auto display_bytes = prepared.display->resident_buffer_bytes();
-    if (!accepted_bytes || !pinned_bytes || !display_bytes || *accepted_bytes > kHostCap ||
-        *pinned_bytes > kHostCap - *accepted_bytes || *display_bytes > kHostCap - *accepted_bytes - *pinned_bytes) {
+    if (!accepted_bytes || !pinned_bytes || !display_bytes || *accepted_bytes > host_cap ||
+        *pinned_bytes > host_cap - *accepted_bytes || *display_bytes > host_cap - *accepted_bytes - *pinned_bytes) {
         return error("MEMORY_LIMIT", "Prepared asset exceeds session host cap.");
     }
     prepared.bytes = *accepted_bytes + *pinned_bytes + *display_bytes;
@@ -765,6 +803,16 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
             return io::error_json(failure);
         };
         if (method == "prepare") {
+            if (!session.asset && !session.previous_asset && !session.retained_solution) {
+                const auto cap = cli::resolve_host_cap(cli::sample_available_ram());
+                if (!cap) {
+                    return response(
+                        request, false,
+                        io::error_json(error("MEMORY_SAMPLE_UNAVAILABLE",
+                                             "Available physical RAM could not be resolved for preparation.")));
+                }
+                session.host_cap = *cap;
+            }
             if (session.previous_asset) {
                 return response(request, false,
                                 io::error_json(error("ASSET_BUSY",
@@ -787,7 +835,7 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
             const auto report = std::filesystem::u8path(params.at("object_report").get<std::string>());
             const auto loaded = io::load_accepted_asset(report, control,
                                                         {
-                                                            kHostCap - other_reserve, { 16, 256 }
+                                                            session.host_cap - other_reserve, { 16, 256 }
             },
                                                         session.asset ? session.asset->verified : Asset {});
             if (const auto* failure = std::get_if<io::Error>(&loaded)) {
@@ -803,14 +851,14 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
                     request, false,
                     io::error_json(error("ASSET_MISMATCH", "Only accepted object authority can be prepared.")));
             }
-            auto preview = create_preview(prepared, output, control, other_reserve, reused);
+            auto preview = create_preview(prepared, output, control, other_reserve, reused, session.host_cap);
             if (const auto* failure = std::get_if<io::Error>(&preview)) {
                 return response(request, false, io::error_json(*failure));
             }
-            if (!reused && ((session.asset && session.asset->bytes > kHostCap - prepared.bytes) ||
+            if (!reused && ((session.asset && session.asset->bytes > session.host_cap - prepared.bytes) ||
                             (session.previous_asset &&
                              session.previous_asset->bytes >
-                                 kHostCap - prepared.bytes - (session.asset ? session.asset->bytes : 0)))) {
+                                 session.host_cap - prepared.bytes - (session.asset ? session.asset->bytes : 0)))) {
                 return response(request, false,
                                 io::error_json(error("MEMORY_LIMIT",
                                                      "Transactional asset replacement exceeds unchanged host cap.")));
@@ -871,6 +919,19 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
             control.deadline = clock.deadline;
             const auto output = std::filesystem::u8path(params.at("result_path").get<std::string>());
             const auto resolved_thread_count = settings.at("resolved").at("thread_count").get<std::uint64_t>();
+            const auto admitted_cap =
+                settings["resolved"].contains("resource_policy")
+                    ? *cli::decimal_bytes(settings["resolved"]["resource_policy"]["host_cap_bytes"])
+                    : kHostCap;
+            const auto resident = retained_other_bytes(session);
+            if (!resident || *resident > admitted_cap) {
+                return response(
+                    request, false,
+                    io::error_json(
+                        error("MEMORY_LIMIT",
+                              "Existing native owners and adapter reserves exceed the requested Start ceiling.")));
+            }
+            session.host_cap = admitted_cap;
             settings = Json();
             cli::SolveRuntime runtime_run;
             runtime_run.diagnostic_limits = { 16, 256 };
@@ -879,6 +940,9 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
             runtime_run.elapsed_before_native_seconds = clock.earlier_seconds;
             runtime_run.preparation_reused = true;
             runtime_run.initialize_valid_empty = marker.has_value();
+            runtime_run.resource_status_sink = PhaseContext::resource_status;
+            runtime_run.resource_status_context = control.phase_context;
+            runtime_run.admitted_host_cap_bytes = &session.host_cap;
             runtime_run.stop_monitor_status = [](void* raw) {
                 return cli::StopMonitorResult { static_cast<MarkerWatcher*>(raw)->failed(), std::nullopt };
             };
@@ -1192,6 +1256,7 @@ int run_desktop_session(std::string engine_version, std::string engine_commit)
                              : io::error_json(error("ASSET_TOKEN_EXPIRED", "No native asset has that token.")));
                 if (const auto bytes = retained_other_bytes(session, nullptr, false)) {
                     reply["retained_native_bytes"] = *bytes;
+                    reply["admitted_host_cap_bytes"] = session.host_cap;
                 }
                 session.last_request_id = request_id;
                 session.last_canonical.replace(std::move(canonical));
@@ -1211,6 +1276,7 @@ int run_desktop_session(std::string engine_version, std::string engine_commit)
                     std::lock_guard lock(session.state_mutex);
                     if (const auto bytes = retained_other_bytes(session, nullptr, false)) {
                         reply["retained_native_bytes"] = *bytes;
+                        reply["admitted_host_cap_bytes"] = session.host_cap;
                     }
                     session.last_request_id = request_id;
                     session.last_canonical.replace(std::move(canonical));

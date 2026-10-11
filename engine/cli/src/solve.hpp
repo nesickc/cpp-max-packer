@@ -12,6 +12,9 @@
 #include <variant>
 #include <vector>
 
+namespace spectrapack::solver {
+struct ResourceRecovery;
+}
 namespace spectrapack::cli {
 struct SolveRequest {
     io::ValidatedDocument settings;
@@ -46,6 +49,9 @@ struct SolveRuntime {
     bool preserve_previous_on_empty { true };
     std::uint64_t adapter_reserve_bytes {};
     bool initialize_valid_empty {};
+    void (*resource_status_sink)(void*, std::uint64_t, const solver::ResourceRecovery&) noexcept {};
+    void* resource_status_context {};
+    std::uint64_t* admitted_host_cap_bytes {};
     // Adapters own monitor lifetime. CLI may join here; session samples its
     // still-active monitor and joins only after terminal publication.
     StopMonitorResult (*stop_monitor_status)(void*) {};

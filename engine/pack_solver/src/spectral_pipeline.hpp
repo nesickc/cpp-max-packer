@@ -77,6 +77,7 @@ public:
     // already held by the coordinator. Overflow/missing ownership fails closed.
     [[nodiscard]] std::optional<std::uint64_t> resident_bytes() const noexcept;
     [[nodiscard]] std::uint64_t layout_revision() const noexcept;
+    [[nodiscard]] bool release_disposable() noexcept;
 
 private:
     struct Storage;

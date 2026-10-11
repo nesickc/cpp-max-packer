@@ -1416,8 +1416,10 @@ RepresentationLimits operation_limits(const RepresentationLimits& creation, cons
     RepresentationLimits result = requested;
     result.max_working_bytes = std::min(creation.max_working_bytes, requested.max_working_bytes);
     result.max_cells = std::min(creation.max_cells, requested.max_cells);
-    result.max_kernel_work = std::min(creation.max_kernel_work, requested.max_kernel_work);
-    result.max_cell_visits = std::min(creation.max_cell_visits, requested.max_cell_visits);
+    if (!creation.renewable_work_limits) {
+        result.max_kernel_work = std::min(creation.max_kernel_work, requested.max_kernel_work);
+        result.max_cell_visits = std::min(creation.max_cell_visits, requested.max_cell_visits);
+    }
     result.max_input_triangles = std::min(creation.max_input_triangles, requested.max_input_triangles);
     return result;
 }

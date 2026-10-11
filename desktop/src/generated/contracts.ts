@@ -200,6 +200,7 @@ export interface Search {
 export interface Compute {
   backend: "auto" | "cpu" | "vulkan";
   thread_count?: number;
+  host_memory_limit_bytes?: string;
 }
 export interface Resolved {
   settings_version: 1;
@@ -220,6 +221,7 @@ export interface Resolved {
       version: 1;
       scheduling_policy: string;
     };
+    resource_policy?: ResourcePolicy;
   };
 }
 export interface ContentRef {
@@ -229,6 +231,65 @@ export interface ContentRef {
 export interface StlRef {
   kind: "stl_volume";
   asset: ContentRef;
+}
+export interface ResourcePolicy {
+  version: 1;
+  available_ram_bytes: string;
+  host_cap_bytes: string;
+  work_mode: "timed" | "fixed_work";
+  search_order: "catalog-merge-v1" | "completed-page-round-robin-v1";
+  limits: {
+    max_working_bytes: string;
+    max_representation_kernel_work: string;
+    max_representation_cell_visits: string;
+    max_direct_terms: string;
+    max_proximity_terms: string;
+    max_refinement_evaluations: string;
+    baseline_max_candidate_evaluations: string;
+    baseline_max_search_passes: string;
+    baseline_max_orientations: string;
+    baseline_max_copies: string;
+    baseline_max_axis_cells: string;
+    baseline_max_working_bytes: string;
+    baseline_max_geometry_kernel_work: string;
+    baseline_max_geometry_vertex_visits: string;
+    baseline_max_validation_kernel_work: string;
+    baseline_max_validation_aabb_pair_tests: string;
+    baseline_per_query_max_working_bytes: string;
+    baseline_per_query_max_kernel_work: string;
+    baseline_per_query_max_vertex_visits: string;
+    baseline_per_validation_max_copy_count: string;
+    baseline_per_validation_max_working_bytes: string;
+    baseline_per_validation_max_aabb_pair_tests: string;
+    baseline_per_validation_max_kernel_work: string;
+    baseline_per_validation_max_diagnostic_examples: string;
+    spectral_max_candidate_evaluations: string;
+    spectral_max_search_passes: string;
+    spectral_max_orientations: string;
+    spectral_max_copies: string;
+    spectral_max_axis_cells: string;
+    spectral_max_working_bytes: string;
+    spectral_max_geometry_kernel_work: string;
+    spectral_max_geometry_vertex_visits: string;
+    spectral_max_validation_kernel_work: string;
+    spectral_max_validation_aabb_pair_tests: string;
+    spectral_per_query_max_working_bytes: string;
+    spectral_per_query_max_kernel_work: string;
+    spectral_per_query_max_vertex_visits: string;
+    spectral_per_validation_max_copy_count: string;
+    spectral_per_validation_max_working_bytes: string;
+    spectral_per_validation_max_aabb_pair_tests: string;
+    spectral_per_validation_max_kernel_work: string;
+    spectral_per_validation_max_diagnostic_examples: string;
+    per_representation_max_working_bytes: string;
+    per_representation_max_cells: string;
+    per_representation_max_kernel_work: string;
+    per_representation_max_cell_visits: string;
+    per_representation_max_input_triangles: string;
+    per_correlation_max_working_bytes: string;
+    per_correlation_max_padded_cells: string;
+    per_correlation_max_direct_terms: string;
+  };
 }
 
 }
@@ -648,6 +709,1277 @@ export interface Clearance {
 export interface Diagnostics1 {
   diagnostic_code: string;
   failure?: Failure;
+  resource_recovery?: {
+    version: 1;
+    actual_final_threads: number;
+    grants: string;
+    recoveries: string;
+    deferred: string;
+    fft_candidate_evaluations: string;
+    native_validations: string;
+    omitted_records: string;
+    /**
+     * @maxItems 16
+     */
+    transitions:
+      | []
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ];
+  };
 }
 /**
  * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
@@ -708,6 +2040,7 @@ export interface Resolved {
       version: 1;
       scheduling_policy: string;
     };
+    resource_policy?: ResourcePolicy;
   };
 }
 export interface Box {
@@ -736,6 +2069,66 @@ export interface Search {
 export interface Compute {
   backend: "auto" | "cpu" | "vulkan";
   thread_count?: number;
+  host_memory_limit_bytes?: string;
+}
+export interface ResourcePolicy {
+  version: 1;
+  available_ram_bytes: string;
+  host_cap_bytes: string;
+  work_mode: "timed" | "fixed_work";
+  search_order: "catalog-merge-v1" | "completed-page-round-robin-v1";
+  limits: {
+    max_working_bytes: string;
+    max_representation_kernel_work: string;
+    max_representation_cell_visits: string;
+    max_direct_terms: string;
+    max_proximity_terms: string;
+    max_refinement_evaluations: string;
+    baseline_max_candidate_evaluations: string;
+    baseline_max_search_passes: string;
+    baseline_max_orientations: string;
+    baseline_max_copies: string;
+    baseline_max_axis_cells: string;
+    baseline_max_working_bytes: string;
+    baseline_max_geometry_kernel_work: string;
+    baseline_max_geometry_vertex_visits: string;
+    baseline_max_validation_kernel_work: string;
+    baseline_max_validation_aabb_pair_tests: string;
+    baseline_per_query_max_working_bytes: string;
+    baseline_per_query_max_kernel_work: string;
+    baseline_per_query_max_vertex_visits: string;
+    baseline_per_validation_max_copy_count: string;
+    baseline_per_validation_max_working_bytes: string;
+    baseline_per_validation_max_aabb_pair_tests: string;
+    baseline_per_validation_max_kernel_work: string;
+    baseline_per_validation_max_diagnostic_examples: string;
+    spectral_max_candidate_evaluations: string;
+    spectral_max_search_passes: string;
+    spectral_max_orientations: string;
+    spectral_max_copies: string;
+    spectral_max_axis_cells: string;
+    spectral_max_working_bytes: string;
+    spectral_max_geometry_kernel_work: string;
+    spectral_max_geometry_vertex_visits: string;
+    spectral_max_validation_kernel_work: string;
+    spectral_max_validation_aabb_pair_tests: string;
+    spectral_per_query_max_working_bytes: string;
+    spectral_per_query_max_kernel_work: string;
+    spectral_per_query_max_vertex_visits: string;
+    spectral_per_validation_max_copy_count: string;
+    spectral_per_validation_max_working_bytes: string;
+    spectral_per_validation_max_aabb_pair_tests: string;
+    spectral_per_validation_max_kernel_work: string;
+    spectral_per_validation_max_diagnostic_examples: string;
+    per_representation_max_working_bytes: string;
+    per_representation_max_cells: string;
+    per_representation_max_kernel_work: string;
+    per_representation_max_cell_visits: string;
+    per_representation_max_input_triangles: string;
+    per_correlation_max_working_bytes: string;
+    per_correlation_max_padded_cells: string;
+    per_correlation_max_direct_terms: string;
+  };
 }
 /**
  * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
@@ -1573,6 +2966,7 @@ export interface Resolved {
       version: 1;
       scheduling_policy: string;
     };
+    resource_policy?: ResourcePolicy;
   };
 }
 export interface ContentRef {
@@ -1609,6 +3003,66 @@ export interface Search {
 export interface Compute {
   backend: "auto" | "cpu" | "vulkan";
   thread_count?: number;
+  host_memory_limit_bytes?: string;
+}
+export interface ResourcePolicy {
+  version: 1;
+  available_ram_bytes: string;
+  host_cap_bytes: string;
+  work_mode: "timed" | "fixed_work";
+  search_order: "catalog-merge-v1" | "completed-page-round-robin-v1";
+  limits: {
+    max_working_bytes: string;
+    max_representation_kernel_work: string;
+    max_representation_cell_visits: string;
+    max_direct_terms: string;
+    max_proximity_terms: string;
+    max_refinement_evaluations: string;
+    baseline_max_candidate_evaluations: string;
+    baseline_max_search_passes: string;
+    baseline_max_orientations: string;
+    baseline_max_copies: string;
+    baseline_max_axis_cells: string;
+    baseline_max_working_bytes: string;
+    baseline_max_geometry_kernel_work: string;
+    baseline_max_geometry_vertex_visits: string;
+    baseline_max_validation_kernel_work: string;
+    baseline_max_validation_aabb_pair_tests: string;
+    baseline_per_query_max_working_bytes: string;
+    baseline_per_query_max_kernel_work: string;
+    baseline_per_query_max_vertex_visits: string;
+    baseline_per_validation_max_copy_count: string;
+    baseline_per_validation_max_working_bytes: string;
+    baseline_per_validation_max_aabb_pair_tests: string;
+    baseline_per_validation_max_kernel_work: string;
+    baseline_per_validation_max_diagnostic_examples: string;
+    spectral_max_candidate_evaluations: string;
+    spectral_max_search_passes: string;
+    spectral_max_orientations: string;
+    spectral_max_copies: string;
+    spectral_max_axis_cells: string;
+    spectral_max_working_bytes: string;
+    spectral_max_geometry_kernel_work: string;
+    spectral_max_geometry_vertex_visits: string;
+    spectral_max_validation_kernel_work: string;
+    spectral_max_validation_aabb_pair_tests: string;
+    spectral_per_query_max_working_bytes: string;
+    spectral_per_query_max_kernel_work: string;
+    spectral_per_query_max_vertex_visits: string;
+    spectral_per_validation_max_copy_count: string;
+    spectral_per_validation_max_working_bytes: string;
+    spectral_per_validation_max_aabb_pair_tests: string;
+    spectral_per_validation_max_kernel_work: string;
+    spectral_per_validation_max_diagnostic_examples: string;
+    per_representation_max_working_bytes: string;
+    per_representation_max_cells: string;
+    per_representation_max_kernel_work: string;
+    per_representation_max_cell_visits: string;
+    per_representation_max_input_triangles: string;
+    per_correlation_max_working_bytes: string;
+    per_correlation_max_padded_cells: string;
+    per_correlation_max_direct_terms: string;
+  };
 }
 /**
  * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1BenchmarkSummarySchemaJson`'s JSON-Schema
@@ -1732,6 +3186,7 @@ export interface Settings {
   seed: string;
   thread_count?: number;
   budget_scope?: "search_only" | "total_start";
+  host_memory_limit_bytes?: string;
 }
 export interface Clearance {
   pair: number;
@@ -1762,6 +3217,7 @@ export interface State {
      * via the `definition` "c".
      */
     working_set_estimate_bytes?: number;
+    resource_status?: ResourceStatus;
   };
   live_result?: LiveResult | null;
 }
@@ -2182,6 +3638,1277 @@ export interface ContentRef {
 export interface Diagnostics1 {
   diagnostic_code: string;
   failure?: Failure;
+  resource_recovery?: {
+    version: 1;
+    actual_final_threads: number;
+    grants: string;
+    recoveries: string;
+    deferred: string;
+    fft_candidate_evaluations: string;
+    native_validations: string;
+    omitted_records: string;
+    /**
+     * @maxItems 16
+     */
+    transitions:
+      | []
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ]
+      | [
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          },
+          {
+            sequence: string;
+            before: string;
+            after: string;
+            consumed: string;
+            cause: string;
+            phase: string;
+            action: string;
+          }
+        ];
+  };
 }
 /**
  * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
@@ -2246,6 +4973,7 @@ export interface Resolved {
       version: 1;
       scheduling_policy: string;
     };
+    resource_policy?: ResourcePolicy;
   };
 }
 export interface Box {
@@ -2274,6 +5002,66 @@ export interface Search {
 export interface Compute {
   backend: "auto" | "cpu" | "vulkan";
   thread_count?: number;
+  host_memory_limit_bytes?: string;
+}
+export interface ResourcePolicy {
+  version: 1;
+  available_ram_bytes: string;
+  host_cap_bytes: string;
+  work_mode: "timed" | "fixed_work";
+  search_order: "catalog-merge-v1" | "completed-page-round-robin-v1";
+  limits: {
+    max_working_bytes: string;
+    max_representation_kernel_work: string;
+    max_representation_cell_visits: string;
+    max_direct_terms: string;
+    max_proximity_terms: string;
+    max_refinement_evaluations: string;
+    baseline_max_candidate_evaluations: string;
+    baseline_max_search_passes: string;
+    baseline_max_orientations: string;
+    baseline_max_copies: string;
+    baseline_max_axis_cells: string;
+    baseline_max_working_bytes: string;
+    baseline_max_geometry_kernel_work: string;
+    baseline_max_geometry_vertex_visits: string;
+    baseline_max_validation_kernel_work: string;
+    baseline_max_validation_aabb_pair_tests: string;
+    baseline_per_query_max_working_bytes: string;
+    baseline_per_query_max_kernel_work: string;
+    baseline_per_query_max_vertex_visits: string;
+    baseline_per_validation_max_copy_count: string;
+    baseline_per_validation_max_working_bytes: string;
+    baseline_per_validation_max_aabb_pair_tests: string;
+    baseline_per_validation_max_kernel_work: string;
+    baseline_per_validation_max_diagnostic_examples: string;
+    spectral_max_candidate_evaluations: string;
+    spectral_max_search_passes: string;
+    spectral_max_orientations: string;
+    spectral_max_copies: string;
+    spectral_max_axis_cells: string;
+    spectral_max_working_bytes: string;
+    spectral_max_geometry_kernel_work: string;
+    spectral_max_geometry_vertex_visits: string;
+    spectral_max_validation_kernel_work: string;
+    spectral_max_validation_aabb_pair_tests: string;
+    spectral_per_query_max_working_bytes: string;
+    spectral_per_query_max_kernel_work: string;
+    spectral_per_query_max_vertex_visits: string;
+    spectral_per_validation_max_copy_count: string;
+    spectral_per_validation_max_working_bytes: string;
+    spectral_per_validation_max_aabb_pair_tests: string;
+    spectral_per_validation_max_kernel_work: string;
+    spectral_per_validation_max_diagnostic_examples: string;
+    per_representation_max_working_bytes: string;
+    per_representation_max_cells: string;
+    per_representation_max_kernel_work: string;
+    per_representation_max_cell_visits: string;
+    per_representation_max_input_triangles: string;
+    per_correlation_max_working_bytes: string;
+    per_correlation_max_padded_cells: string;
+    per_correlation_max_direct_terms: string;
+  };
 }
 /**
  * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
@@ -2998,6 +5786,13 @@ export interface Error {
   };
   recoverable: boolean;
 }
+export interface ResourceStatus {
+  admitted_host_cap_bytes: string;
+  actual_threads: number;
+  recovery_count: string;
+  last_cause: string;
+  last_action: string;
+}
 export interface LiveResult {
   publication_version: 1;
   session_id: string;
@@ -3149,6 +5944,7 @@ export interface Settings {
   seed: string;
   thread_count?: number;
   budget_scope?: "search_only" | "total_start";
+  host_memory_limit_bytes?: string;
 }
 export interface Clearance {
   pair: number;
@@ -3199,6 +5995,7 @@ export interface Resolved {
       version: 1;
       scheduling_policy: string;
     };
+    resource_policy?: ResourcePolicy;
   };
 }
 export interface ContentRef {
@@ -3231,6 +6028,66 @@ export interface Search {
 export interface Compute {
   backend: "auto" | "cpu" | "vulkan";
   thread_count?: number;
+  host_memory_limit_bytes?: string;
+}
+export interface ResourcePolicy {
+  version: 1;
+  available_ram_bytes: string;
+  host_cap_bytes: string;
+  work_mode: "timed" | "fixed_work";
+  search_order: "catalog-merge-v1" | "completed-page-round-robin-v1";
+  limits: {
+    max_working_bytes: string;
+    max_representation_kernel_work: string;
+    max_representation_cell_visits: string;
+    max_direct_terms: string;
+    max_proximity_terms: string;
+    max_refinement_evaluations: string;
+    baseline_max_candidate_evaluations: string;
+    baseline_max_search_passes: string;
+    baseline_max_orientations: string;
+    baseline_max_copies: string;
+    baseline_max_axis_cells: string;
+    baseline_max_working_bytes: string;
+    baseline_max_geometry_kernel_work: string;
+    baseline_max_geometry_vertex_visits: string;
+    baseline_max_validation_kernel_work: string;
+    baseline_max_validation_aabb_pair_tests: string;
+    baseline_per_query_max_working_bytes: string;
+    baseline_per_query_max_kernel_work: string;
+    baseline_per_query_max_vertex_visits: string;
+    baseline_per_validation_max_copy_count: string;
+    baseline_per_validation_max_working_bytes: string;
+    baseline_per_validation_max_aabb_pair_tests: string;
+    baseline_per_validation_max_kernel_work: string;
+    baseline_per_validation_max_diagnostic_examples: string;
+    spectral_max_candidate_evaluations: string;
+    spectral_max_search_passes: string;
+    spectral_max_orientations: string;
+    spectral_max_copies: string;
+    spectral_max_axis_cells: string;
+    spectral_max_working_bytes: string;
+    spectral_max_geometry_kernel_work: string;
+    spectral_max_geometry_vertex_visits: string;
+    spectral_max_validation_kernel_work: string;
+    spectral_max_validation_aabb_pair_tests: string;
+    spectral_per_query_max_working_bytes: string;
+    spectral_per_query_max_kernel_work: string;
+    spectral_per_query_max_vertex_visits: string;
+    spectral_per_validation_max_copy_count: string;
+    spectral_per_validation_max_working_bytes: string;
+    spectral_per_validation_max_aabb_pair_tests: string;
+    spectral_per_validation_max_kernel_work: string;
+    spectral_per_validation_max_diagnostic_examples: string;
+    per_representation_max_working_bytes: string;
+    per_representation_max_cells: string;
+    per_representation_max_kernel_work: string;
+    per_representation_max_cell_visits: string;
+    per_representation_max_input_triangles: string;
+    per_correlation_max_working_bytes: string;
+    per_correlation_max_padded_cells: string;
+    per_correlation_max_direct_terms: string;
+  };
 }
 export interface Publication {
   version: 1;

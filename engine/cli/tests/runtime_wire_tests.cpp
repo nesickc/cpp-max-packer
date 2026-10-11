@@ -1,6 +1,43 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "resource_policy.hpp"
 #include "runtime_wire.hpp"
+
+TEST_CASE("T015 hardware admission resolves half available RAM and only downward user ceilings", "[runtime][T015-P2]")
+{
+    namespace cli = spectrapack::cli;
+    CHECK(cli::resolve_host_cap(1'001) == 500);
+    CHECK(cli::resolve_host_cap(1'001, 900) == 500);
+    CHECK(cli::resolve_host_cap(1'001, 100) == 100);
+    CHECK_FALSE(cli::resolve_host_cap(std::nullopt));
+    CHECK_FALSE(cli::resolve_host_cap(1));
+    CHECK_FALSE(cli::resolve_host_cap(1'001, 0));
+    CHECK(cli::resolve_host_cap(UINT64_MAX) == UINT64_MAX / 2);
+    CHECK_FALSE(cli::decimal_bytes("18446744073709551616"));
+}
+
+TEST_CASE("T015 fixed resolution serializes effective partitions and replays every numeric cap", "[runtime][T015-P2]")
+{
+    namespace cli = spectrapack::cli;
+    spectrapack::solver::SpectralLimits effective;
+    effective.baseline.max_candidate_evaluations = 33;
+    effective.spectral.max_candidate_evaluations = 32;
+    effective.baseline.max_search_passes = 8;
+    effective.spectral.max_search_passes = 7;
+    effective.per_representation.max_kernel_work = 20'000;
+    const auto policy = cli::resolve_resource_policy(10'000, 4'000, true, effective);
+    CHECK(policy["limits"]["baseline_max_candidate_evaluations"] == "33");
+    spectrapack::solver::SpectralLimits replay;
+    REQUIRE(cli::apply_resource_policy(policy, replay));
+    CHECK(replay.resource_mode == spectrapack::solver::ResourceMode::fixed_work);
+    CHECK_FALSE(replay.available_ram);
+    cli::visit_resource_limits(replay, [&](const std::string& name, auto value) {
+        CHECK(cli::decimal_bytes(policy["limits"][name]) == value);
+        if (name.ends_with("max_working_bytes")) {
+            CHECK(value == 4'000);
+        }
+    });
+}
 
 TEST_CASE("T011 full legal runtime record keeps bounded capacity including delimiter", "[runtime][T-011]")
 {

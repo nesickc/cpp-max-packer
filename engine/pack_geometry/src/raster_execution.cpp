@@ -131,6 +131,7 @@ RasterExecution::RasterExecution(std::uint32_t count) : storage_(std::make_uniqu
 #endif
 }
 RasterExecution::~RasterExecution() = default;
+bool RasterExecution::closed() const noexcept { return storage_->shutdown; }
 std::uint64_t RasterExecution::reserved_bytes() const noexcept
 {
     return *estimate_raster_execution_bytes(storage_->batch.count);
