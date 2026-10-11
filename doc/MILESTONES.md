@@ -1,5 +1,13 @@
 # Delivery milestones after T-008
 
+**2026-10-11 priority override:** T-011 and T-010 are merged (PR #13 `977c27c`,
+PR #14 `858940a`). The next delivery is the bounded
+[T015-P1](T-015.md#t015-p1-known-object-quality-and-count-only-live-publication)
+known-object quality/count-only-live package, requiring only merged T-010.
+This user instruction supersedes the older ordering below for that package;
+full T-014, T-015 and T-021 gates and other prerequisites remain open. Latest
+PR #14 CI failed one of 571 native cases; local threading evidence is unchanged.
+
 Status: updated 2026-10-09. T-008 merged through PR #10 at `a05fa2c`;
 T-009 merged through PR #12 at `b82117a` under its recorded scope revision.
 T-011 foundations pass local acceptance and await PR/user review; T-010 threading

@@ -1,5 +1,18 @@
 # Feature delivery
 
+## Active priority override, 2026-10-11
+
+PR #14 is merged into `main` at `858940a`. Its latest Windows CI has one
+failing native test (570/571 pass; two refinement-counter assertions), not a
+green hosted qualification. The user's next priority is the bounded
+[T015-P1 package](T-015.md#t015-p1-known-object-quality-and-count-only-live-publication)
+on `feature/SOL-04-pryanik-live-count`, started from that merged commit. It owns
+one known-object packing improvement, permitted translation work from T-014,
+and count-increase-only live publication from T-021. Only T-010 is its prerequisite;
+full T-014/T-015/T-021, repair, durable jobs and the remaining milestones stay open.
+This instruction supersedes the older repair-before-refinement/live-viewer order
+for this package. Preserve existing threading evidence and unrelated local agent edits.
+
 The user authorizes incremental commits and pushes to feature branches. Each delivery task has its own ticket and branch. An explicitly included work package shares its owning ticket's branch, PR and acceptance ledger. Once a feature is ready, the agent may open its pull/merge request targeting `main`; the user reviews/tests it and merges it. Dependent work waits for that merge; branches are not stacked and the agent does not merge them automatically.
 
 The spec's `T-001`–`T-008` are initial implementation tasks; `AT-01`–`AT-17` are acceptance gates that often span several tasks. A branch name links the work to its primary gate without claiming that entire gate is complete. The first branch delivers a foundation slice of QA-01; its remaining product fixtures and benchmark obligations stay in the test plan.
@@ -17,12 +30,13 @@ The spec's `T-001`–`T-008` are initial implementation tasks; `AT-01`–`AT-17`
 | [T-008 desktop workflow](T-008.md) | `feature/AT-15-desktop-workflow` | Merged through PR #10 at `a05fa2c`; bounded first-journey evidence and remaining full-v1 gates are recorded in the ticket |
 | [T-009 CPU field scalability](T-009.md) | `feature/SOL-05-cpu-field-scalability` | Merged through PR #12 at `b82117a`; bounded local gates and three retained-result desktop journeys pass. Reviewed scope revision carries successful practical spectral/STL support into T-010 without raising caps |
 | [T-011 serial runtime foundations](T-011.md) | `feature/SOL-08-cpu-runtime` | Merged through PR #13 at `977c27c`; final local T011-A1–A7 and carried T009-A2/A3/A6 evidence retained |
-| [T-010 measured CPU threading](T-010.md) | `feature/SOL-08-cpu-threading` | Bounded local A1–A7 complete: native `3d3343e` passes 144 final FFT observations and critical review; CSS-only `8950fea` reduces measured busy UI overhead. Four-thread Ulamok Start/FFT gains 2.622x/3.724x. PR #14 returns to review; new-head CI and user merge pending. Unrestricted many-copy search and live incumbents remain later work |
+| [T-010 measured CPU threading](T-010.md) | `feature/SOL-08-cpu-threading` | Merged PR #14 at `858940a`; bounded local A1–A7 evidence retained. Latest hosted native gate: 570/571 pass, one refinement-counter case fails. No new threading qualification claimed |
+| [T015-P1 quality and count-only live results](T-015.md#t015-p1-known-object-quality-and-count-only-live-publication) | `feature/SOL-04-pryanik-live-count` | Active bounded extraction after merged T-010; remaining parent-ticket gates stay open |
 
 [Delivery milestones](MILESTONES.md) define T-009–T-023 and their merged
 prerequisites. Each delivery ticket has a planned feature branch, requirements
-and observable acceptance. T-010 is the current delivery; later dependent
-branches wait for the preceding user merge.
+and observable acceptance. T015-P1 is the current delivery under the priority
+override above; later dependent branches wait for the preceding user merge.
 The user-approved [ADR 0014](../spec/decisions/0014-runtime-delivery-split.md) splits
 the former combined ticket: **T-009 → T-011 foundations → T-010 threading → T-012**.
 Every acceptance ID and performance target remains. Keep existing branch/history
