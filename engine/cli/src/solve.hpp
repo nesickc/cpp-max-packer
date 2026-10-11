@@ -59,5 +59,6 @@ using FinalizationHook = void (*)(void*, runtime::OperationControl&, const Solve
 void set_finalization_hook(FinalizationHook hook, void* context) noexcept;
 void set_result_build_max_working_bytes(std::uint64_t bytes) noexcept;
 void set_result_export_max_working_bytes(std::uint64_t bytes) noexcept;
+void set_baseline_validation_max_kernel_work(std::uint64_t work) noexcept;
 }  // namespace spectrapack::cli::test
 #endif

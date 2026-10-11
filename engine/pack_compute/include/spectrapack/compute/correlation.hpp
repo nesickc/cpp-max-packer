@@ -3,6 +3,8 @@
 #include <array>
 #include <cstdint>
 #include <initializer_list>
+#include <memory>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <variant>
@@ -26,7 +28,8 @@ struct CorrelationSpec {
 
 struct CorrelationLimits {
     std::uint64_t max_working_bytes { 512ULL << 20 };
-    // Memory already live in the caller; included in both the limit check and reported peak.
+    // Memory already live in the caller, excluding only the supplied FFT owner
+    // (included by the correlation estimate); included in admission and peak.
     std::uint64_t reserved_bytes {};
     std::uint64_t max_padded_cells { 16'777'216 };
     std::uint64_t max_direct_terms { 200'000'000 };
@@ -69,21 +72,48 @@ struct CorrelationResult {
 
 using CorrelationOutcome = std::variant<CorrelationResult, CorrelationFailure>;
 
+namespace detail {
+struct FftAccess;
+}
+// One coordinator owns this operation and serializes calls. Destruction joins
+// its parked workers; a failed/interrupted execution cannot be reused.
+class FftExecution {
+public:
+    ~FftExecution();
+    FftExecution(const FftExecution&) = delete;
+    FftExecution& operator=(const FftExecution&) = delete;
+    [[nodiscard]] std::uint32_t thread_count() const noexcept;
+    [[nodiscard]] std::uint64_t reserved_bytes() const noexcept;
+
+private:
+    struct Storage;
+    std::unique_ptr<Storage> storage_;
+    explicit FftExecution(std::uint32_t);
+    friend struct detail::FftAccess;
+    friend std::variant<std::unique_ptr<FftExecution>, CorrelationFailure> make_fft_execution(std::uint32_t,
+                                                                                              std::uint64_t);
+};
+[[nodiscard]] std::optional<std::uint64_t> estimate_fft_execution_bytes(std::uint32_t) noexcept;
+[[nodiscard]] std::variant<std::unique_ptr<FftExecution>, CorrelationFailure> make_fft_execution(
+    std::uint32_t count, std::uint64_t available_bytes);
+
 struct CorrelationEstimate {
     Shape3 padded_shape;
     std::uint64_t padded_cells {}, working_bytes {};
 };
 using CorrelationEstimateOutcome = std::variant<CorrelationEstimate, CorrelationFailure>;
-[[nodiscard]] CorrelationEstimateOutcome estimate_correlation_cpu(const CorrelationSpec&);
+[[nodiscard]] CorrelationEstimateOutcome estimate_correlation_cpu(const CorrelationSpec&,
+                                                                  std::uint32_t fft_threads = 1);
 
 [[nodiscard]] CorrelationOutcome correlate_binary_cpu(const CorrelationSpec&, std::span<const std::uint8_t> environment,
                                                       std::span<const std::uint8_t> kernel,
                                                       const CorrelationLimits& = {},
-                                                      const runtime::OperationControl& = {});
+                                                      const runtime::OperationControl& = {}, FftExecution* = nullptr);
 
 [[nodiscard]] CorrelationOutcome correlate_proximity_cpu(const CorrelationSpec&, std::span<const double> environment,
                                                          std::span<const std::uint8_t> kernel,
                                                          const CorrelationLimits& = {},
-                                                         const runtime::OperationControl& = {});
+                                                         const runtime::OperationControl& = {},
+                                                         FftExecution* = nullptr);
 
 }  // namespace spectrapack::compute

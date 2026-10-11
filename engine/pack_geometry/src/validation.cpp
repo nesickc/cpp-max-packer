@@ -1,13 +1,14 @@
-#include "validation_internal.hpp"
-#include "validation_kernel.hpp"
-
-#include <cmath>
 #include <algorithm>
+#include <cmath>
 #include <initializer_list>
 #include <limits>
+#include <new>
 #include <string_view>
-#include <vector>
 #include <utility>
+#include <vector>
+
+#include "validation_internal.hpp"
+#include "validation_kernel.hpp"
 
 namespace spectrapack::geometry {
 namespace {
@@ -263,7 +264,9 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
         return reject(Validity::indeterminate, "VALIDATION_COPY_LIMIT", "Copy count exceeds the validation limit.",
                       ValidationCheck::input);
     }
-    if (candidate->copies().size() > limits.max_working_bytes / sizeof(std::shared_ptr<const kernel::PlacedSolid>)) {
+    constexpr auto per_copy_storage =
+        sizeof(std::shared_ptr<const kernel::PosedBounds>) + sizeof(std::shared_ptr<const kernel::PlacedSolid>);
+    if (candidate->copies().size() > limits.max_working_bytes / per_copy_storage) {
         return reject(Validity::indeterminate, "VALIDATION_MEMORY_LIMIT",
                       "Placement storage exceeds the validation working-memory limit.", ValidationCheck::input);
     }
@@ -303,10 +306,11 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
                           ValidationCheck::orientation, { pose.copy_id });
     }
     outcome.report.checks[1] = { ValidationCheck::orientation, CheckState::complete, "quaternion-permission" };
-    const auto object = kernel::prepare(expected_context->object(), budget);
-    if (!object)
-        return reject(Validity::indeterminate, std::string(object.failure.code), "Object preparation was unresolved.",
-                      ValidationCheck::pair_solids);
+    if (!budget.consume_work(1)) {
+        return reject(Validity::indeterminate, "VALIDATION_KERNEL_WORK_LIMIT", "Validation setup work was exhausted.",
+                      ValidationCheck::input);
+    }
+    kernel::PrepareResult object;
     std::shared_ptr<const kernel::PlacedSolid> container;
     if (const auto* solid = std::get_if<std::shared_ptr<const AcceptedSolid>>(&expected_context->container())) {
         const auto prepared = kernel::prepare(*solid, budget);
@@ -336,33 +340,63 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
         return reject(Validity::indeterminate, "VALIDATION_NUMERIC_RANGE",
                       "Validation scale cannot be represented finitely.", ValidationCheck::input);
     outcome.report.epsilon_mm = std::max(1e-6, scaled_diagonal);
-    const auto placement_bytes =
-        static_cast<std::uint64_t>(candidate->copies().size()) * sizeof(std::shared_ptr<const kernel::PlacedSolid>);
-    if (!budget.reserve_bytes(placement_bytes))
+    const auto placement_bytes = static_cast<std::uint64_t>(candidate->copies().size()) * per_copy_storage;
+    if (!budget.reserve_bytes(sizeof(std::vector<std::shared_ptr<const kernel::PosedBounds>>) +
+                              sizeof(std::vector<std::shared_ptr<const kernel::PlacedSolid>>)) ||
+        !budget.reserve_bytes(placement_bytes)) {
         return reject(Validity::indeterminate, "VALIDATION_MEMORY_LIMIT", "Placement storage limit was exhausted.",
                       ValidationCheck::input);
+    }
+    std::vector<std::shared_ptr<const kernel::PosedBounds>> descriptors;
     std::vector<std::shared_ptr<const kernel::PlacedSolid>> placed;
-    placed.reserve(candidate->copies().size());
+    try {
+        placed.resize(candidate->copies().size());
+        descriptors.reserve(candidate->copies().size());
+    }
+    catch (const std::bad_alloc&) {
+        return reject(Validity::indeterminate, "KERNEL_ALLOCATION_FAILURE", "Placement allocation failed.",
+                      ValidationCheck::input);
+    }
     for (const auto& pose : candidate->copies()) {
-        const auto result = kernel::place(object.solid, pose.translation_mm, pose.rotation_xyzw, budget);
+        const auto result =
+            kernel::posed_bounds(expected_context->object(), pose.translation_mm, pose.rotation_xyzw, budget);
         if (!result) {
             return reject(Validity::indeterminate, std::string(result.failure.code), "Placement was unresolved.",
                           ValidationCheck::pair_solids, { pose.copy_id });
         }
-        placed.push_back(result.solid);
+        descriptors.push_back(result.bounds);
     }
+    kernel::KernelFailure materialization_failure;
+    const auto materialize = [&](std::size_t index) {
+        if (placed[index]) {
+            return true;
+        }
+        // Shell witnesses and transformed vertex arrays are needed only by the
+        // full classifiers. One prepared owner is shared by all lazy instances.
+        if (!object) {
+            object = kernel::prepare(expected_context->object(), budget);
+            if (!object) {
+                materialization_failure = object.failure;
+                return false;
+            }
+        }
+        const auto& pose = candidate->copies()[index];
+        const auto result = kernel::place(object.solid, pose.translation_mm, pose.rotation_xyzw, budget);
+        if (!result) {
+            materialization_failure = result.failure;
+            return false;
+        }
+        placed[index] = result.solid;
+        return true;
+    };
     for (std::size_t first = 0; first != placed.size(); ++first)
         for (std::size_t second = 0; second != first; ++second) {
             if (outcome.report.aabb_pair_tests >= limits.max_aabb_pair_tests)
                 return reject(Validity::indeterminate, "VALIDATION_AABB_PAIR_LIMIT",
                               "AABB pair-test limit was exhausted.", ValidationCheck::broad_phase);
             ++outcome.report.aabb_pair_tests;
-            if (kernel::separated_by_bounds(*placed[first], *placed[second],
-                                            expected_context->constraints().pair_clearance_mm, budget)) {
-                continue;
-            }
-            const auto certificate = kernel::cardinal_bounds_clearance_certificate(
-                *placed[first], *placed[second], expected_context->constraints().pair_clearance_mm, budget);
+            const auto certificate = kernel::bounds_pair_certificate(
+                *descriptors[first], *descriptors[second], expected_context->constraints().pair_clearance_mm, budget);
             if (certificate) {
                 outcome.report.checks[3].method = certificate->method;
                 if (certificate->material_overlap == kernel::Decision::indeterminate ||
@@ -372,6 +406,11 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
                                   "Pair clearance bound was unresolved.", ValidationCheck::pair_solids,
                                   { candidate->copies()[first].copy_id, candidate->copies()[second].copy_id });
                 continue;
+            }
+            if (!materialize(first) || !materialize(second)) {
+                return reject(Validity::indeterminate, std::string(materialization_failure.code),
+                              "Pair placement was unresolved.", ValidationCheck::pair_solids,
+                              { candidate->copies()[first].copy_id, candidate->copies()[second].copy_id });
             }
             const auto pair = kernel::classify_pair(*placed[first], *placed[second],
                                                     expected_context->constraints().pair_clearance_mm, budget);
@@ -389,11 +428,23 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
     outcome.report.checks[2].state = CheckState::complete;
     outcome.report.checks[3].state = CheckState::complete;
     for (std::size_t index = 0; index != placed.size(); ++index) {
+        std::optional<kernel::ContainmentResult> containment_certificate;
+        if (!container) {
+            containment_certificate = kernel::bounds_box_certificate(
+                *descriptors[index], std::get<BoxDimensions>(expected_context->container()),
+                expected_context->constraints().wall_clearance_mm, budget);
+        }
+        if (!containment_certificate && !materialize(index)) {
+            return reject(Validity::indeterminate, std::string(materialization_failure.code),
+                          "Containment placement was unresolved.", ValidationCheck::containment,
+                          { candidate->copies()[index].copy_id });
+        }
         const auto containment =
-            container ? kernel::classify_stl(*placed[index], *container,
-                                             expected_context->constraints().wall_clearance_mm, budget)
-                      : kernel::classify_box(*placed[index], std::get<BoxDimensions>(expected_context->container()),
-                                             expected_context->constraints().wall_clearance_mm, budget);
+            containment_certificate ? *containment_certificate
+            : container ? kernel::classify_stl(*placed[index], *container,
+                                               expected_context->constraints().wall_clearance_mm, budget)
+                        : kernel::classify_box(*placed[index], std::get<BoxDimensions>(expected_context->container()),
+                                               expected_context->constraints().wall_clearance_mm, budget);
         outcome.report.checks[4].method = containment.method;
         if (containment.difference_empty == kernel::Decision::no || containment.wall_gap == kernel::Threshold::below)
             return reject(Validity::invalid, containment.code.empty() ? "VALIDATION_CONTAINER" : containment.code,

@@ -15,8 +15,10 @@ struct PlacedRawWindowPlan {
 [[nodiscard]] std::variant<PlacedRawWindowPlan, RepresentationFailure> plan_placed_raw_window(
     const validation_kernel::PlacedSolid&, const GridWindow&, validation_kernel::Budget&);
 [[nodiscard]] RepresentationOutcome<CellField> voxelize_placed_with_policy(
-    std::shared_ptr<const VoxelGeometry>, GridWindow, const CopyPose&, double, const RepresentationLimits&,
-    RepresentationAttemptStats&, const runtime::OperationControl&, PlacedFieldPolicy);
+    std::shared_ptr<const VoxelGeometry>, GridWindow, const CopyPose &, double,
+    const RepresentationLimits &, RepresentationAttemptStats &,
+    const runtime::OperationControl &, PlacedFieldPolicy,
+    RasterExecution * = nullptr);
 inline RepresentationOutcome<CellField> voxelize_placed_full_window_reference(
     std::shared_ptr<const VoxelGeometry> geometry, GridWindow window, const CopyPose& pose, double clearance,
     const RepresentationLimits& limits, RepresentationAttemptStats& attempt,

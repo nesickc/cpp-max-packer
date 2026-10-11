@@ -121,6 +121,37 @@ One shared allowance covers a pass; report actual usage and bounded diagnostics.
 Default limits are provisional until practical qualification, and explicit small
 limits must reproduce uncertainty without publishing a handle.
 
+### Bounds before instance expansion (T-010 follow-up, 2026-10-10)
+
+For many copies of one detailed accepted solid, compute a private lightweight
+posed descriptor before allocating transformed per-vertex arrays. Its bounds
+come from the accepted solid and physical pose in the current validation pass.
+Reuse exact signed-permutation extrema for cardinal positive-clearance pair and
+analytic-box proofs; use outward conservative bounds only as sufficient proofs
+of separation or containment. An inconclusive enclosing bound cannot reject a
+valid sparse shape. Zero-clearance contact and arbitrary STL containment retain
+their existing full classifiers and cavity/enclosure checks.
+
+Keep the descriptor type distinct from a fully materialized placed solid. Full
+classifiers must never receive an empty or partial vertex representation. Lazily
+materialize each required copy at most once in the pass, sharing the existing
+immutable prepared object. Charge descriptor/owner storage, proof scratch and
+work before use, with the same cumulative limits and cancellation control.
+After input/orientation checks, every pass charges one fixed setup work unit,
+including empty layouts and fresh revalidation. Deferred mesh preparation must
+not turn an empty bootstrap into free completion under a zero-work allowance.
+Resource or arithmetic failure yields indeterminate; it is not an inconclusive
+geometric proof that permits an uncharged retry.
+
+Final, restore and export validation independently recompute these proofs. This
+change reorders existing geometry proofs, without trusting solver bounds or a
+previous verdict. It introduces no new public API, wire schema, accepted-solid
+identity, physical tolerance or clearance semantics. Persistent spatial indexes
+and incremental search validation remain outside this bounded change.
+Report `homogeneous-rational-interval-v3` to distinguish the changed validation
+strategy and resource evidence. Historical v2 reports/baselines keep their original
+revision; the existing string-valued result field needs no schema migration.
+
 Use independent analytic fixtures and rational expectations for contact, tiny
 overlap, enclosure, cavities, U-bridge containment, Euclidean clearance, rotated
 poses and large translations. The public native API gates immutable snapshot and

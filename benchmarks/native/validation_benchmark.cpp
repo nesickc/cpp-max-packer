@@ -18,7 +18,12 @@
 namespace geo = spectrapack::geometry;
 using Json = nlohmann::json;
 namespace {
-struct Options { std::filesystem::path repo_root; int samples{3}; int warmup{1}; };
+struct Options {
+    std::filesystem::path repo_root;
+    int samples { 3 }, warmup { 1 };
+    bool pryanik_many {};
+    std::uint64_t caller_bytes {};
+};
 struct Workload {
   std::string name, case_name, object_path, container_path;
   std::vector<geo::CopyPose> poses;
@@ -37,12 +42,28 @@ Options options(int argc, char** argv) {
   Options out; bool root{};
   for (int i=1;i<argc;++i) {
     const std::string arg=argv[i];
-    if ((arg=="--repo-root" || arg=="--samples" || arg=="--warmup") && i+1<argc) {
-      const std::string value=argv[++i];
-      if (arg=="--repo-root") { out.repo_root=value; root=true; }
-      else if (arg=="--samples") out.samples=bounded(value,1,20);
-      else out.warmup=bounded(value,0,10);
-    } else throw std::invalid_argument("usage: spectrapack_validation_benchmark --repo-root PATH [--samples 1..20] [--warmup 0..10]");
+    if (arg == "--pryanik-many") {
+        out.pryanik_many = true;
+        continue;
+    }
+    if ((arg == "--repo-root" || arg == "--samples" || arg == "--warmup" || arg == "--caller-bytes") && i + 1 < argc) {
+        const std::string value = argv[++i];
+        if (arg == "--repo-root") {
+            out.repo_root = value;
+            root = true;
+        }
+        else if (arg == "--caller-bytes") {
+            out.caller_bytes = std::stoull(value);
+        }
+        else if (arg == "--samples")
+            out.samples = bounded(value, 1, 20);
+        else
+            out.warmup = bounded(value, 0, 10);
+    }
+    else {
+        throw std::invalid_argument(
+            "usage: spectrapack_validation_benchmark --repo-root PATH [--samples 1..20] [--warmup 0..10]");
+    }
   }
   if (!root) throw std::invalid_argument("--repo-root is required");
   return out;
@@ -120,22 +141,176 @@ void add( std::vector<Workload>& out, std::string name, std::string case_name, s
   const auto value=std::get<std::shared_ptr<const geo::ValidationContext>>(std::move(context)); auto candidate=geo::make_candidate(value,poses); if(!std::holds_alternative<std::shared_ptr<const geo::Candidate>>(candidate)) throw std::runtime_error("candidate failed");
   out.push_back({std::move(name),std::move(case_name),std::move(object_path),std::move(container_path),std::move(poses),{1,1,{}},value,std::get<std::shared_ptr<const geo::Candidate>>(std::move(candidate)),expected});
 }
+
+Json pryanik_many(const Options& options)
+{
+    constexpr std::uint64_t host_cap = 512ULL << 20;
+    if (options.caller_bytes >= host_cap) {
+        throw std::invalid_argument("caller allowance exceeds host cap");
+    }
+    const auto solid = accepted(options.repo_root / "rc/items/pryanik_2.STL", geo::AssetRole::object);
+    const auto bounds = solid->bounds_mm();
+    geo::Constraints constraints { 1, 1, {} };
+    constraints.orientations.mode = geo::OrientationMode::cube;
+    const auto made = geo::make_validation_context(solid, geo::BoxDimensions { 400, 340, 285 }, constraints);
+    if (!std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made)) {
+        throw std::runtime_error("many-copy context failed");
+    }
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+    std::vector<geo::CopyPose> poses;
+    for (int z = 0; z != 14; ++z) {
+        for (int y = 0; y != 5; ++y) {
+            for (int x = 0; x != 4; ++x) {
+                poses.push_back({
+                    "copy-" + std::to_string(poses.size()),
+                    { 1 - bounds.min[0] + x * (bounds.max[0] - bounds.min[0] + 1),
+                                                     1 - bounds.min[1] + y * (bounds.max[1] - bounds.min[1] + 1),
+                                                     1 - bounds.min[2] + z * (bounds.max[2] - bounds.min[2] + 1) },
+                    { 0, 0, 0, 1 }
+                });
+            }
+        }
+    }
+    geo::ValidationLimits limits;
+    limits.max_working_bytes = host_cap - options.caller_bytes;
+    Json rows = Json::array(), all_poses = Json::array();
+    for (const auto count : { 1, 8, 32, 128, 280 }) {
+        const auto candidate =
+            geo::make_candidate(context, std::vector<geo::CopyPose>(poses.begin(), poses.begin() + count));
+        if (!std::holds_alternative<std::shared_ptr<const geo::Candidate>>(candidate)) {
+            throw std::runtime_error("many-copy candidate failed");
+        }
+        const auto requested = std::get<std::shared_ptr<const geo::Candidate>>(candidate);
+        Json first_report;
+        for (int iteration = 0; iteration != options.warmup + options.samples; ++iteration) {
+            spectrapack::runtime::OperationControl control;
+            const auto start = std::chrono::steady_clock::now();
+            control.deadline = start + std::chrono::seconds(5);
+            const auto result = geo::validate(context, requested, limits, control);
+            const auto elapsed =
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+            bool identical = result.validated_solution && result.validated_solution->context() == context &&
+                             result.validated_solution->copies().size() == requested->copies().size();
+            if (identical) {
+                for (std::size_t index = 0; index != requested->copies().size(); ++index) {
+                    const auto& actual = result.validated_solution->copies()[index];
+                    const auto& expected = requested->copies()[index];
+                    identical = identical && actual.copy_id == expected.copy_id &&
+                                actual.translation_mm == expected.translation_mm &&
+                                actual.rotation_xyzw == expected.rotation_xyzw;
+                }
+            }
+            const auto report = report_json(result.report);
+            const bool deterministic = iteration == 0 || report == first_report;
+            if (iteration == 0) {
+                first_report = report;
+            }
+            rows.push_back({
+                { "count",                             count                                                                      },
+                { "elapsed_ms",                        elapsed                                                                    },
+                { "report",                            report_json(result.report)                                                 },
+                { "phase",                             iteration < options.warmup ? "warmup" : "sample"                           },
+                { "iteration",                         iteration                                                                  },
+                { "poses_identical",                   identical                                                                  },
+                { "deterministic_report",              deterministic                                                              },
+                { "validated_count",                   result.validated_solution ? result.validated_solution->copies().size() : 0 },
+                { "caller_plus_validation_peak_bytes", options.caller_bytes + result.report.working_bytes_peak                    },
+                { "old_cardinal_vertex_array_bytes",   168ULL * solid->mesh().vertices.size() * count                             }
+            });
+        }
+    }
+    for (const auto& pose : poses) {
+        all_poses.push_back({
+            { "copy_id",         pose.copy_id                        },
+            { "translation_mm",  vector_json(pose.translation_mm)    },
+            { "quaternion_xyzw", quaternion_json(pose.rotation_xyzw) }
+        });
+    }
+    return {
+        { "kind",                 "fresh-pryanik2-many-validation" },
+        { "caller_bytes",         options.caller_bytes             },
+        { "host_cap_bytes",       host_cap                         },
+        { "validation_cap_bytes", limits.max_working_bytes         },
+        { "warmup",               options.warmup                   },
+        { "samples",              options.samples                  },
+        { "kernel_work_cap",      limits.max_kernel_work           },
+        { "pair_test_cap",        limits.max_aabb_pair_tests       },
+        { "deadline_seconds",     5                                },
+        { "triangles",            solid->mesh().triangles.size()   },
+        { "vertices",             solid->mesh().vertices.size()    },
+        { "box_mm",               { 400, 340, 285 }                },
+        { "pair_mm",              1                                },
+        { "wall_mm",              1                                },
+        { "poses",                all_poses                        },
+        { "rows",                 rows                             }
+    };
+}
 }  // namespace
 
 int main(int argc,char** argv) { try {
-  const auto o=options(argc,argv); const auto setup_start=std::chrono::steady_clock::now();
-  const std::vector<std::string> items={"rc/items/pryanik_1.STL","rc/items/pryanik_2.STL","rc/items/ulamok_2kg_simplified.stl"};
-  const std::vector<std::string> containers={"rc/containers/10_kg_np.stl","rc/containers/15_kg_np_long.stl","rc/containers/20_kg_np.stl","rc/containers/30_kg_np.stl","rc/containers/30_kg_np_cubic.stl","rc/containers/5_kg_np.stl"};
-  std::vector<std::shared_ptr<const geo::AcceptedSolid>> item_solids, container_solids; for(const auto& p:items) item_solids.push_back(accepted(o.repo_root/p,geo::AssetRole::object)); for(const auto& p:containers) container_solids.push_back(accepted(o.repo_root/p,geo::AssetRole::container));
-  std::vector<Workload> workloads;
-  for(std::size_t i=0;i<items.size();++i) for(std::size_t c=0;c<containers.size();++c) {
-    const auto ob=item_solids[i]->bounds_mm(), cb=container_solids[c]->bounds_mm(); const auto mid=center(ob,cb); auto pair=mid; pair[1]=cb.min[1]+(cb.max[1]-cb.min[1])/3-(ob.min[1]+ob.max[1])/2; auto pair2=pair; pair2[1]=cb.min[1]+2*(cb.max[1]-cb.min[1])/3-(ob.min[1]+ob.max[1])/2;
-    add(workloads,"centered_single","centered_single",items[i],containers[c],item_solids[i],container_solids[c],{{"copy-0",mid,{0,0,0,1}}},geo::Validity::valid);
-    add(workloads,"separated_pair","separated_pair",items[i],containers[c],item_solids[i],container_solids[c],{{"copy-0",pair,{0,0,0,1}},{"copy-1",pair2,{0,0,0,1}}},geo::Validity::valid);
-    add(workloads,"coincident_pair","coincident_pair",items[i],containers[c],item_solids[i],container_solids[c],{{"copy-0",mid,{0,0,0,1}},{"copy-1",mid,{0,0,0,1}}},geo::Validity::invalid);
-    auto outside=mid; outside[0]=cb.min[0]-ob.max[0]-1; add(workloads,"outside_min_x","outside_min_x",items[i],containers[c],item_solids[i],container_solids[c],{{"copy-0",outside,{0,0,0,1}}},geo::Validity::invalid);
-    auto short_gap=mid; short_gap[0]=cb.min[0]-ob.min[0]+.5; add(workloads,"short_wall_gap","short_wall_gap",items[i],containers[c],item_solids[i],container_solids[c],{{"copy-0",short_gap,{0,0,0,1}}},geo::Validity::invalid);
-  }
+        const auto o = options(argc, argv);
+        if (o.pryanik_many) {
+            std::cout << pryanik_many(o).dump(2) << '\n';
+            return 0;
+        }
+        const auto setup_start = std::chrono::steady_clock::now();
+        const std::vector<std::string> items = { "rc/items/pryanik_1.STL", "rc/items/pryanik_2.STL",
+                                                 "rc/items/ulamok_2kg_simplified.stl" };
+        const std::vector<std::string> containers = {
+            "rc/containers/10_kg_np.stl", "rc/containers/15_kg_np_long.stl",  "rc/containers/20_kg_np.stl",
+            "rc/containers/30_kg_np.stl", "rc/containers/30_kg_np_cubic.stl", "rc/containers/5_kg_np.stl"
+        };
+        std::vector<std::shared_ptr<const geo::AcceptedSolid>> item_solids, container_solids;
+        for (const auto& p : items)
+            item_solids.push_back(accepted(o.repo_root / p, geo::AssetRole::object));
+        for (const auto& p : containers)
+            container_solids.push_back(accepted(o.repo_root / p, geo::AssetRole::container));
+        std::vector<Workload> workloads;
+        for (std::size_t i = 0; i < items.size(); ++i)
+            for (std::size_t c = 0; c < containers.size(); ++c) {
+                const auto ob = item_solids[i]->bounds_mm(), cb = container_solids[c]->bounds_mm();
+                const auto mid = center(ob, cb);
+                auto pair = mid;
+                pair[1] = cb.min[1] + (cb.max[1] - cb.min[1]) / 3 - (ob.min[1] + ob.max[1]) / 2;
+                auto pair2 = pair;
+                pair2[1] = cb.min[1] + 2 * (cb.max[1] - cb.min[1]) / 3 - (ob.min[1] + ob.max[1]) / 2;
+                add(workloads, "centered_single", "centered_single", items[i], containers[c], item_solids[i],
+                    container_solids[c],
+                    {
+                        { "copy-0", mid, { 0, 0, 0, 1 } }
+                },
+                    geo::Validity::valid);
+                add(workloads, "separated_pair", "separated_pair", items[i], containers[c], item_solids[i],
+                    container_solids[c],
+                    {
+                        { "copy-0", pair,  { 0, 0, 0, 1 } },
+                        { "copy-1", pair2, { 0, 0, 0, 1 } }
+                },
+                    geo::Validity::valid);
+                add(workloads, "coincident_pair", "coincident_pair", items[i], containers[c], item_solids[i],
+                    container_solids[c],
+                    {
+                        { "copy-0", mid, { 0, 0, 0, 1 } },
+                        { "copy-1", mid, { 0, 0, 0, 1 } }
+                },
+                    geo::Validity::invalid);
+                auto outside = mid;
+                outside[0] = cb.min[0] - ob.max[0] - 1;
+                add(workloads, "outside_min_x", "outside_min_x", items[i], containers[c], item_solids[i],
+                    container_solids[c],
+                    {
+                        { "copy-0", outside, { 0, 0, 0, 1 } }
+                },
+                    geo::Validity::invalid);
+                auto short_gap = mid;
+                short_gap[0] = cb.min[0] - ob.min[0] + .5;
+                add(workloads, "short_wall_gap", "short_wall_gap", items[i], containers[c], item_solids[i],
+                    container_solids[c],
+                    {
+                        { "copy-0", short_gap, { 0, 0, 0, 1 } }
+                },
+                    geo::Validity::invalid);
+            }
   const auto cube=analytic_cube(); auto context=geo::make_validation_context(cube,geo::BoxDimensions{14.0,14.0,14.0},{1,1,{}}); if(!std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(context)) throw std::runtime_error("analytic context failed"); std::vector<geo::CopyPose> poses; for(int z=0;z<4;++z) for(int y=0;y<4;++y) for(int x=0;x<4;++x) poses.push_back({"copy-"+std::to_string(poses.size()),{2.0+3.0*x,2.0+3.0*y,2.0+3.0*z},{0.0,0.0,0.0,1.0}}); auto candidate=geo::make_candidate(std::get<std::shared_ptr<const geo::ValidationContext>>(context),poses); if(!std::holds_alternative<std::shared_ptr<const geo::Candidate>>(candidate)) throw std::runtime_error("analytic candidate failed"); workloads.push_back({"analytic_separated_64","analytic_separated_64","analytic_unit_cube","analytic_box_14",poses,{1,1,{}},std::get<std::shared_ptr<const geo::ValidationContext>>(context),std::get<std::shared_ptr<const geo::Candidate>>(candidate),geo::Validity::valid});
   if(workloads.size()!=91) throw std::runtime_error("workload matrix must contain exactly 91 cases"); const double setup_ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-setup_start).count(); Json output={{"schema_version",1},{"benchmark_kind","native_validation"},{"compiler",
 #if defined(_MSC_VER)

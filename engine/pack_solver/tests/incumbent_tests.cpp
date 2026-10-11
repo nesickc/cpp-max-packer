@@ -133,6 +133,41 @@ TEST_CASE("T006 incumbent charges one cumulative scoring cap across every copy",
   CHECK_FALSE(result.best->score.enclosing_xy_span_sum_mm);
 }
 
+TEST_CASE("SOL-01 many cardinal copies retain complete scores without mesh rescans", "[bounds_first][SOL-01]")
+{
+    const auto made =
+        geo::make_validation_context(geo::test_support::accepted(geo::test_support::u_prism(), geo::AssetRole::object),
+                                     geo::BoxDimensions { 20, 24, 32 }, { 1, 1, {} });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+    std::vector<geo::CopyPose> poses;
+    for (int z = 0; z != 14; ++z) {
+        for (int y = 0; y != 5; ++y) {
+            for (int x = 0; x != 4; ++x) {
+                poses.push_back({
+                    "copy-" + std::to_string(poses.size()),
+                    { 2.5 + 4 * x, 2.5 + 4 * y, 1.5 + 2 * z },
+                    { 0, 0, 0, 1 }
+                });
+            }
+        }
+    }
+    solver::Incumbent incumbent(context);
+    geo::PhysicalQueryLimits limits;
+    limits.max_vertex_visits = 0;
+    const auto outcome = incumbent.offer(validated(context, poses), limits);
+    REQUIRE(outcome.best);
+    CHECK(outcome.status == solver::OfferStatus::accepted);
+    CHECK(outcome.issue == solver::OfferIssue::none);
+    CHECK(outcome.best->score.count == 280);
+    REQUIRE(outcome.best->score.enclosing_z_span_mm);
+    REQUIRE(outcome.best->score.enclosing_xy_span_sum_mm);
+    CHECK(*outcome.best->score.enclosing_z_span_mm == 27);
+    CHECK(*outcome.best->score.enclosing_xy_span_sum_mm == 34);
+    CHECK(outcome.scoring_work.vertex_visits == 0);
+    CHECK(outcome.scoring_work.kernel_work > 0);
+}
+
 TEST_CASE("T006 incumbent admits a higher count when secondary scoring is unavailable",
           "[solver][T006][AT-16]") {
   const auto context = cube_context();

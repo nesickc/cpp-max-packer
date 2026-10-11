@@ -212,7 +212,7 @@ def validation_report(count):
         "validity": "valid", "code": "VALID",
         "message": "All requested physical checks completed.",
         "epsilon_mm": 1e-6,
-        "kernel_revision": "homogeneous-rational-interval-v2",
+        "kernel_revision": "homogeneous-rational-interval-v3",
         "aabb_pair_tests": count * (count - 1) // 2,
         "kernel_work": 1000 + count * 10,
         "working_bytes_peak": 4096 + count * 64,

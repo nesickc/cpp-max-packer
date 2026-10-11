@@ -85,7 +85,7 @@ class Session:
 
 class RuntimeTests(unittest.TestCase):
     def test_finalization_deadline_preserves_nonempty_authority_and_previous_result(self):
-        """GEO-06 / UI-03 / DATA-01 / T011-A4: cleanup failure cannot become empty success."""
+        """T011-A4 / SOL-06: resource refusal then cleanup expiry preserves authority and both causes."""
         if MEMORY_HELPER is None:
             self.skipTest('test-only finalization clock supplied by the native acceptance harness')
         with tempfile.TemporaryDirectory() as temporary:
@@ -97,7 +97,7 @@ class RuntimeTests(unittest.TestCase):
             self.assertEqual(imported.returncode, 0, imported.stdout+imported.stderr)
             fixture = fixtures.SolveSubprocessTests(); fixture.object_report_path = report
             settings = fixture.settings(dimensions=(64, 64, 64), candidates=1, passes=1)
-            session = Session([str(MEMORY_HELPER), 'session-finalization-expiry', str(root)])
+            session = Session([str(MEMORY_HELPER), 'session-resource-finalization-expiry', str(root)])
             try:
                 preview = root/'preview'; preview.mkdir()
                 prepared, _ = session.request({'runtime_version': 1, 'request_id': 'prepare',
@@ -116,6 +116,9 @@ class RuntimeTests(unittest.TestCase):
                 self.assertTrue(before['ok'], before)
                 previous = output.read_bytes()
                 self.assertGreater(json.loads(previous)['count'], 0)
+                settings['container']['dimensions_mm'] = [128, 64, 64]
+                settings['search'] = {'preset': 'subprocess', 'seed': '0', 'deterministic': False,
+                                      'budget_scope': 'total_start', 'budget_seconds': 60}
                 (root/'expire-finalization').write_bytes(b'expire')
                 failed, phases = run('expired-finalization')
                 retained = json.loads((root/'retained.json').read_text())
@@ -131,7 +134,19 @@ class RuntimeTests(unittest.TestCase):
                 self.assertFalse(error['details']['no_nonempty_incumbent'], error)
                 self.assertFalse(error['details']['runtime']['no_nonempty_incumbent'], error)
                 self.assertEqual(error['details']['phase'], 'result_publication', error)
-                self.assertIn('diagnostics', error['details'])
+                details = error['details']
+                self.assertEqual(details['diagnostics']['diagnostic_code'], 'PHYSICAL_VALIDATION_RESOURCE', error)
+                self.assertEqual(details['runtime']['budget_scope'], 'total_start', error)
+                self.assertEqual(details['runtime']['deadline_overrun_seconds'], 0, error)
+                self.assertEqual(details['deadline_scope'], 'result_cleanup', error)
+                self.assertEqual(details['cleanup_allowance_seconds'], 5, error)
+                self.assertEqual(details['search_termination_reason'], 'resource_limit', error)
+                self.assertEqual(details['search_budget_seconds'], 60, error)
+                self.assertEqual(details['retained_count'], retained['count'], error)
+                self.assertGreater(details['diagnostics']['work']['baseline_validation_kernel_work'], 0, error)
+                cause = details['search_diagnostics']['failure']
+                self.assertEqual(cause['phase'], 'baseline_validation', error)
+                self.assertTrue(cause['cause_code'].endswith('_WORK_LIMIT'), error)
             finally:
                 session.close()
 

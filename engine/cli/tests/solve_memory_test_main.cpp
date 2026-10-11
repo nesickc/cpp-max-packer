@@ -13,14 +13,25 @@
 
 int main(int argc, char** argv)
 {
-    if (argc == 3 && std::string_view(argv[1]) == "session-finalization-expiry") {
-        auto directory = std::filesystem::u8path(argv[2]);
+    if (argc == 3 && (std::string_view(argv[1]) == "session-finalization-expiry" ||
+                      std::string_view(argv[1]) == "session-resource-finalization-expiry")) {
+        struct Expiry {
+            std::filesystem::path directory;
+            bool resource;
+        } expiry { std::filesystem::u8path(argv[2]),
+                   std::string_view(argv[1]) == "session-resource-finalization-expiry" };
         spectrapack::cli::test::set_finalization_hook(
             [](void* raw, spectrapack::runtime::OperationControl& control,
                const spectrapack::cli::SolveRuntime& runtime) {
-            const auto& directory = *static_cast<std::filesystem::path*>(raw);
+            const auto& expiry = *static_cast<Expiry*>(raw);
+            const auto& directory = expiry.directory;
+            const auto retained = runtime.last_validated ? *runtime.last_validated : nullptr;
+            // The next run has enough work for this actual validated prefix,
+            // but cannot finish validating a second growing prefix.
+            if (expiry.resource && retained) {
+                spectrapack::cli::test::set_baseline_validation_max_kernel_work(retained->report().kernel_work + 1);
+            }
             if (std::filesystem::exists(directory / "expire-finalization")) {
-                const auto retained = runtime.last_validated ? *runtime.last_validated : nullptr;
                 std::ofstream(directory / "retained.json") << spectrapack::io::Json {
                     { "native_handle_retained", static_cast<bool>(retained)              },
                     { "count",                  retained ? retained->copies().size() : 0 }
@@ -30,7 +41,7 @@ int main(int argc, char** argv)
                 };
             }
         },
-            &directory);
+            &expiry);
         return run_desktop_session("finalization-check", "test-only");
     }
     if ((argc == 3 || argc == 4) && std::string_view(argv[1]) == "session-publication-barrier") {

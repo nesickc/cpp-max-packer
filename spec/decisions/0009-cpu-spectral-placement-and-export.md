@@ -229,13 +229,15 @@ or sink publication, with the unchanged handle in `retained_solution`, empty
 `best`, and zero search counters. This is an unsupported initial representation,
 not a claim of geometric invalidity. Never silently rewrite a validated pose.
 
-First try extending the baseline best; then permit one empty initial spectral
-trial for mixed-orientation greedy placement. There is no count controller,
+Run one empty initial spectral trial for mixed-orientation greedy placement;
+then try extending the retained baseline best if budget remains. This T-010
+revision is recorded in ADR 0016; the baseline remains centrally retained.
+There is no count controller,
 random restart, removal/reinsertion, local rotation or multilevel pitch search.
 All trials feed the same incumbent. No trial can reduce its published count.
 
-A spectral search pass is one greedy trial: first the retained-layout extension,
-then, if a second pass is admitted, the empty trial. All orientations, insertion
+A spectral search pass is one greedy trial: first the empty trial,
+then, if a second pass is admitted, the retained-layout extension. All orientations, insertion
 rebuilds and candidate pages within that trial share its work slice. Increment
 `search_passes` only when the trial completes; an interrupted or candidate-budget
 exhausted partial trial does not fabricate a completed pass. At most these two
@@ -306,7 +308,7 @@ before enumerating their Cartesian product; this is only a proposal filter.
 Every accepted insertion restarts ordinary search with rebuilt blockers and
 fresh refinement state. Refinement allowances are ceilings, not reservations
 that suppress ordinary search. There is no additional per-trial candidate quota:
-the empty trial starts only after the retained trial completes with budget left.
+the retained-layout trial starts only after the empty trial completes with budget left.
 Candidate, copy-count or enabled-refinement ceilings interrupt a partial trial
 with `budget_exhausted`; they do not increment the completed-pass counter.
 

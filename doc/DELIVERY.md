@@ -16,18 +16,17 @@ The spec's `T-001`–`T-008` are initial implementation tasks; `AT-01`–`AT-17`
 | [T-007 CPU spectral placement and transform export](T-007.md) | `feature/AT-12-cpu-spectral-placement` | Merged through PR #8 at `1014b39`; local qualification is recorded in the ticket |
 | [T-008 desktop workflow](T-008.md) | `feature/AT-15-desktop-workflow` | Merged through PR #10 at `a05fa2c`; bounded first-journey evidence and remaining full-v1 gates are recorded in the ticket |
 | [T-009 CPU field scalability](T-009.md) | `feature/SOL-05-cpu-field-scalability` | Merged through PR #12 at `b82117a`; bounded local gates and three retained-result desktop journeys pass. Reviewed scope revision carries successful practical spectral/STL support into T-010 without raising caps |
-| [T-011 serial runtime foundations](T-011.md) | Existing `feature/SOL-08-cpu-runtime` | Local T011-A1–A7 and carried T009-A2/A3/A6 acceptance complete on 2026-10-09; successful serial baseline retained. Ready for PR/user review; merge pending |
-| [T-010 measured CPU threading](T-010.md) | Proposed `feature/SOL-08-cpu-threading` | Wait for the T-011 user merge; one selected parallel kernel and all T010-A1–A7 gates |
+| [T-011 serial runtime foundations](T-011.md) | `feature/SOL-08-cpu-runtime` | Merged through PR #13 at `977c27c`; final local T011-A1–A7 and carried T009-A2/A3/A6 evidence retained |
+| [T-010 measured CPU threading](T-010.md) | `feature/SOL-08-cpu-threading` | Bounded local A1–A7 complete: native `3d3343e` passes 144 final FFT observations and critical review; CSS-only `8950fea` reduces measured busy UI overhead. Four-thread Ulamok Start/FFT gains 2.622x/3.724x. PR #14 returns to review; new-head CI and user merge pending. Unrestricted many-copy search and live incumbents remain later work |
 
 [Delivery milestones](MILESTONES.md) define T-009–T-023 and their merged
 prerequisites. Each delivery ticket has a planned feature branch, requirements
-and observable acceptance. T-011 is the current delivery; later dependent
+and observable acceptance. T-010 is the current delivery; later dependent
 branches wait for the preceding user merge.
 The user-approved [ADR 0014](../spec/decisions/0014-runtime-delivery-split.md) splits
 the former combined ticket: **T-009 → T-011 foundations → T-010 threading → T-012**.
 Every acceptance ID and performance target remains. Keep existing branch/history
-for T-011; create the T-010 branch only after its user merge. Two workers share each delivery branch under
-the [native/integration ownership rules](MILESTONES.md#parallel-agent-execution).
+for T-011; T-010 begins from its user merge.
 Explicit library repair and practical
 geometry workflows follow. Live result rendering is low priority after CPU,
 repair and core packing/usability work; Vulkan follows measured CPU parallelism.

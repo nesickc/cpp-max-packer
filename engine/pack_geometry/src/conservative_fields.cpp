@@ -364,7 +364,7 @@ std::optional<RepresentationFailure> fill_components(
 std::variant<RawField, RepresentationFailure> make_raw(std::shared_ptr<const kernel::PlacedSolid> placed,
                                                        GridWindow window, kernel::Budget& budget,
                                                        const RepresentationLimits& limits,
-                                                       std::uint64_t& attempt_cell_visits)
+                                                       std::uint64_t& attempt_cell_visits, RasterExecution* execution)
 {
     RepresentationFailure error;
     const auto count = window_cells(window, limits, error);
@@ -381,7 +381,7 @@ std::variant<RawField, RepresentationFailure> make_raw(std::shared_ptr<const ker
         }
         CellVisitCapture capture(raw, attempt_cell_visits);
         if (auto failure = kernel::rasterize_boundary(*raw.placed, window, raw.cells, budget, raw.cell_visits,
-                                                      limits.max_cell_visits)) {
+                                                      limits.max_cell_visits, true, execution)) {
             attempt_cell_visits = raw.cell_visits;
             return kernel_failure(*failure);
         }
@@ -922,7 +922,7 @@ RepresentationOutcome<VoxelGeometry> prepare_voxel_geometry(std::shared_ptr<cons
 RepresentationOutcome<CellField> voxelize_object(std::shared_ptr<const VoxelGeometry> geometry, GridLattice lattice,
                                                  Quaternion rotation, const RepresentationLimits& limits,
                                                  RepresentationAttemptStats& attempt,
-                                                 const runtime::OperationControl& control)
+                                                 const runtime::OperationControl& control, RasterExecution* execution)
 {
     if (auto failure = interruption_failure(control)) {
         attempt = {};
@@ -976,7 +976,7 @@ RepresentationOutcome<CellField> voxelize_object(std::shared_ptr<const VoxelGeom
             }
             CellVisitCapture capture(raw, cell_visits);
             if (auto failure = kernel::rasterize_boundary(*raw.placed, window, raw.cells, budget, raw.cell_visits,
-                                                          limits.max_cell_visits)) {
+                                                          limits.max_cell_visits, true, execution)) {
                 cell_visits = raw.cell_visits;
                 return kernel_failure(*failure);
             }
@@ -1009,16 +1009,16 @@ RepresentationOutcome<CellField> voxelize_placed(std::shared_ptr<const VoxelGeom
                                                  const CopyPose& pose, double clearance,
                                                  const RepresentationLimits& limits,
                                                  RepresentationAttemptStats& attempt,
-                                                 const runtime::OperationControl& control)
+                                                 const runtime::OperationControl& control, RasterExecution* execution)
 {
     return detail::voxelize_placed_with_policy(std::move(geometry), requested, pose, clearance, limits, attempt,
-                                               control, detail::PlacedFieldPolicy::certified_support);
+                                               control, detail::PlacedFieldPolicy::certified_support, execution);
 }
 
 RepresentationOutcome<CellField> detail::voxelize_placed_with_policy(
     std::shared_ptr<const VoxelGeometry> geometry, GridWindow requested, const CopyPose& pose, double clearance,
     const RepresentationLimits& limits, RepresentationAttemptStats& attempt, const runtime::OperationControl& control,
-    PlacedFieldPolicy policy)
+    PlacedFieldPolicy policy, RasterExecution* execution)
 {
     if (auto failure = interruption_failure(control)) {
         attempt = {};
@@ -1091,7 +1091,7 @@ RepresentationOutcome<CellField> detail::voxelize_placed_with_policy(
                 return fail("FIELD_ALLOCATION_FAILURE", "empty placed field allocation failed");
             }
         }
-        auto raw = make_raw(std::move(placed.solid), plan.window, budget, limits, cell_visits);
+        auto raw = make_raw(std::move(placed.solid), plan.window, budget, limits, cell_visits, execution);
         if (std::holds_alternative<RepresentationFailure>(raw)) {
             return std::get<RepresentationFailure>(std::move(raw));
         }
@@ -1127,7 +1127,8 @@ RepresentationOutcome<CellField> detail::voxelize_placed_with_policy(
 RepresentationOutcome<CellField> voxelize_container(Container container, GridWindow requested, double clearance,
                                                     const RepresentationLimits& limits,
                                                     RepresentationAttemptStats& attempt,
-                                                    const runtime::OperationControl& control)
+                                                    const runtime::OperationControl& control,
+                                                    RasterExecution* execution)
 {
     if (auto failure = interruption_failure(control)) {
         attempt = {};
@@ -1243,7 +1244,7 @@ RepresentationOutcome<CellField> voxelize_container(Container container, GridWin
             }
             CellVisitCapture capture(raw, cell_visits);
             if (auto failure = kernel::rasterize_boundary(*raw.placed, *work_window, raw.cells, budget, raw.cell_visits,
-                                                          limits.max_cell_visits)) {
+                                                          limits.max_cell_visits, true, execution)) {
                 cell_visits = raw.cell_visits;
                 return kernel_failure(*failure);
             }
