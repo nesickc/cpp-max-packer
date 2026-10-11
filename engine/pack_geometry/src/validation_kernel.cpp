@@ -324,6 +324,59 @@ Interval divide_interval(Interval numerator, Interval denominator) noexcept {
   return multiply_interval(numerator, reciprocal);
 }
 
+using SupportDirection = std::array<int, 3>;
+
+constexpr std::array<SupportDirection, 30> support_directions() noexcept
+{
+    std::array<SupportDirection, 30> result {};
+    std::size_t count {};
+    for (int zero = 0; zero != 3; ++zero) {
+        const int first = (zero + 1) % 3, second = (zero + 2) % 3;
+        for (int k = 1; k != 4; ++k) {
+            for (int swapped = 0; swapped != (k == 1 ? 1 : 2); ++swapped) {
+                for (const int sign : { 1, -1 }) {
+                    SupportDirection direction {};
+                    direction[first] = swapped ? k : 1;
+                    direction[second] = sign * (swapped ? 1 : k);
+                    for (const int coordinate : direction) {
+                        if (coordinate == 0) {
+                            continue;
+                        }
+                        if (coordinate < 0) {
+                            for (auto& value : direction) {
+                                value = -value;
+                            }
+                        }
+                        break;
+                    }
+                    result[count++] = direction;
+                }
+            }
+        }
+    }
+    return result;
+}
+
+constexpr auto kSupportDirections = support_directions();
+
+// Every direction has exactly two nonzero integer coefficients. Arithmetic
+// encloses the original doubles, never a rounded transformed world vertex.
+Interval support_projection(const SupportDirection& direction, const Vec3& point) noexcept
+{
+    Interval projection {};
+    bool first = true;
+    for (int axis = 0; axis != 3; ++axis) {
+        if (direction[axis] == 0) {
+            continue;
+        }
+        const auto term =
+            multiply_interval(point_interval(static_cast<double>(direction[axis])), point_interval(point[axis]));
+        projection = first ? term : add_interval(projection, term);
+        first = false;
+    }
+    return projection;
+}
+
 struct CuboidCertificate { Bounds local; };
 
 bool certify_cuboid(MeshView mesh, CuboidCertificate& result) noexcept {
@@ -589,6 +642,12 @@ public:
     CardinalRotation cardinal;
     bool is_cardinal {};
     ConservativeBounds conservative;
+};
+
+class SupportTable {
+public:
+    std::shared_ptr<const AcceptedSolid> asset;
+    std::array<Interval, 30> supports {};
 };
 
 std::optional<std::uint64_t> prepared_owned_bytes(const PreparedSolid& solid) noexcept
@@ -2264,6 +2323,167 @@ std::optional<PairResult> bounds_pair_certificate(const PosedBounds& first, cons
     }
     return PairResult { Decision::no, BoundaryRelation::disjoint, Threshold::at_least,
                         "exact-cardinal-bounds-lower-bound", "" };
+}
+
+std::optional<SupportPairResult> support_pair_certificate(const PosedBounds& first, const PosedBounds& second,
+                                                          double clearance, std::shared_ptr<const SupportTable>& table,
+                                                          Budget& budget)
+{
+    if (clearance == 0.0 || !first.is_cardinal || !second.is_cardinal || first.asset != second.asset ||
+        (table && table->asset != first.asset)) {
+        return std::nullopt;
+    }
+    const auto unresolved = [](std::string_view code) {
+        return SupportPairResult { Decision::indeterminate, BoundaryRelation::indeterminate, Threshold::indeterminate,
+                                   "cardinal-slabs", code };
+    };
+    // Includes both mapped directions, projection/threshold temporaries, shared
+    // owner handles, and static result views. No per-pair heap allocation.
+    ScratchCharge scratch(budget, 1024);
+    if (!scratch.held()) {
+        return unresolved(exact_failure_code(budget));
+    }
+    if (!(clearance > 0.0) || !std::isfinite(clearance)) {
+        return unresolved("KERNEL_CLEARANCE_INVALID");
+    }
+    if (!supported_floating_environment()) {
+        return unresolved("KERNEL_FLOATING_ENVIRONMENT");
+    }
+    if (!table) {
+        if (!budget.reserve_bytes(sizeof(SupportTable) + 64)) {
+            return unresolved(exact_failure_code(budget));
+        }
+        try {
+            auto complete = std::make_shared<SupportTable>();
+            complete->asset = first.asset;
+            bool initialized {};
+            for (const auto& vertex : first.asset->mesh().vertices) {
+                // Thirty two-term interval projections and extrema updates.
+                // One streaming pass; consume_work polls during dense scans.
+                if (!budget.consume_work(30 * 20)) {
+                    return unresolved(exact_failure_code(budget));
+                }
+                if (!supported_floating_environment()) {
+                    return unresolved("KERNEL_FLOATING_ENVIRONMENT");
+                }
+                for (std::size_t index = 0; index != kSupportDirections.size(); ++index) {
+                    const auto projection = support_projection(kSupportDirections[index], vertex);
+                    if (!projection.valid) {
+                        return unresolved("KERNEL_INTERVAL_OVERFLOW");
+                    }
+                    auto& support = complete->supports[index];
+                    if (!initialized) {
+                        support = projection;
+                    }
+                    else {
+                        support.low = std::min(support.low, projection.low);
+                        support.high = std::max(support.high, projection.high);
+                    }
+                }
+                initialized = true;
+            }
+            if (!initialized) {
+                return unresolved("KERNEL_SOLID_REQUIRED");
+            }
+            // An unconditional final control poll prevents a late cancellation
+            // from publishing a partially completed/now-cancelled table.
+            if (!budget.reserve_bytes(0)) {
+                return unresolved(exact_failure_code(budget));
+            }
+            if (!supported_floating_environment()) {
+                return unresolved("KERNEL_FLOATING_ENVIRONMENT");
+            }
+            table = std::move(complete);
+        }
+        catch (const std::bad_alloc&) {
+            return unresolved("KERNEL_ALLOCATION_FAILURE");
+        }
+    }
+    const auto world_support = [&](const PosedBounds& posed, const SupportDirection& world) -> Interval {
+        SupportDirection local {};
+        for (int axis = 0; axis != 3; ++axis) {
+            local[posed.cardinal.source_axis[axis]] = posed.cardinal.sign[axis] * world[axis];
+        }
+        bool reverse {};
+        for (const auto coefficient : local) {
+            if (coefficient == 0) {
+                continue;
+            }
+            reverse = coefficient < 0;
+            break;
+        }
+        if (reverse) {
+            for (auto& coefficient : local) {
+                coefficient = -coefficient;
+            }
+        }
+        int zero {};
+        while (zero != 3 && local[zero] != 0) {
+            ++zero;
+        }
+        if (zero == 3) {
+            return {};
+        }
+        const int a = (zero + 1) % 3, b = (zero + 2) % 3;
+        const int k = std::max(std::abs(local[a]), std::abs(local[b]));
+        if (k < 1 || k > 3 || std::min(std::abs(local[a]), std::abs(local[b])) != 1) {
+            return {};
+        }
+        const auto index =
+            static_cast<std::size_t>(zero * 10 +
+                                     (k == 1   ? 0
+                                      : k == 2 ? 2
+                                               : 6) +
+                                     (k != 1 && std::abs(local[a]) == k ? 2 : 0) + (local[a] * local[b] < 0 ? 1 : 0));
+        if (local != kSupportDirections[index]) {
+            return {};
+        }
+        auto support = table->supports[index];
+        if (reverse) {
+            support = { -support.high, -support.low, support.valid };
+        }
+        return add_interval(support, support_projection(world, posed.translation));
+    };
+    for (const auto& direction : kSupportDirections) {
+        // Constant-size signed maps, two translation projections, enclosing
+        // support sums, both gap orderings and the squared clearance check.
+        if (!budget.consume_work(128)) {
+            return unresolved(exact_failure_code(budget));
+        }
+        if (!supported_floating_environment()) {
+            return unresolved("KERNEL_FLOATING_ENVIRONMENT");
+        }
+        const auto first_support = world_support(first, direction);
+        const auto second_support = world_support(second, direction);
+        if (!first_support.valid || !second_support.valid) {
+            return unresolved("KERNEL_INTERVAL_OVERFLOW");
+        }
+        const auto forward = subtract_interval(point_interval(second_support.low), point_interval(first_support.high));
+        const auto backward = subtract_interval(point_interval(first_support.low), point_interval(second_support.high));
+        if (!forward.valid || !backward.valid) {
+            return unresolved("KERNEL_INTERVAL_OVERFLOW");
+        }
+        const double gap = std::max(forward.low, backward.low);
+        if (!(gap > 0.0)) {
+            continue;
+        }
+        int norm_squared {};
+        for (const auto coefficient : direction) {
+            norm_squared += coefficient * coefficient;
+        }
+        const auto gap_squared = multiply_interval(point_interval(gap), point_interval(gap));
+        const auto requested =
+            multiply_interval(multiply_interval(point_interval(clearance), point_interval(clearance)),
+                              point_interval(static_cast<double>(norm_squared)));
+        if (!gap_squared.valid || !requested.valid) {
+            return unresolved("KERNEL_INTERVAL_OVERFLOW");
+        }
+        if (gap_squared.low >= requested.high) {
+            return SupportPairResult { Decision::no, BoundaryRelation::disjoint, Threshold::at_least, "cardinal-slabs",
+                                       "" };
+        }
+    }
+    return std::nullopt;
 }
 
 std::optional<ContainmentResult> bounds_box_certificate(const PosedBounds& object, BoxDimensions box, double clearance,

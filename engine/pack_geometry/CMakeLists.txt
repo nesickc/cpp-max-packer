@@ -32,10 +32,15 @@ catch_discover_tests(spectrapack_solid_analysis_tests)
 add_executable(spectrapack_validation_tests
   tests/validation_tests.cpp
   tests/validation_kernel_tests.cpp
+  tests/support_certificate_tests.cpp
   tests/axis_container_tests.cpp
   tests/axis_pair_tests.cpp)
 target_link_libraries(spectrapack_validation_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
 catch_discover_tests(spectrapack_validation_tests)
+
+add_executable(spectrapack_support_allocation_tests tests/support_allocation_tests.cpp)
+target_link_libraries(spectrapack_support_allocation_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
+catch_discover_tests(spectrapack_support_allocation_tests)
 
 add_executable(spectrapack_display_lod_tests tests/display_lod_tests.cpp)
 target_link_libraries(spectrapack_display_lod_tests PRIVATE pack_geometry Catch2::Catch2WithMain)

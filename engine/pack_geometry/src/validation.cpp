@@ -389,6 +389,7 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
         placed[index] = result.solid;
         return true;
     };
+    std::shared_ptr<const kernel::SupportTable> support_table;
     for (std::size_t first = 0; first != placed.size(); ++first)
         for (std::size_t second = 0; second != first; ++second) {
             if (outcome.report.aabb_pair_tests >= limits.max_aabb_pair_tests)
@@ -405,6 +406,20 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
                                   certificate->code.empty() ? "VALIDATION_PAIR_UNRESOLVED" : certificate->code,
                                   "Pair clearance bound was unresolved.", ValidationCheck::pair_solids,
                                   { candidate->copies()[first].copy_id, candidate->copies()[second].copy_id });
+                continue;
+            }
+            const auto support = kernel::support_pair_certificate(*descriptors[first], *descriptors[second],
+                                                                  expected_context->constraints().pair_clearance_mm,
+                                                                  support_table, budget);
+            if (support) {
+                outcome.report.checks[3].method = support->method;
+                if (support->material_overlap == kernel::Decision::indeterminate ||
+                    support->surface_gap == kernel::Threshold::indeterminate) {
+                    return reject(Validity::indeterminate,
+                                  support->code.empty() ? "VALIDATION_PAIR_UNRESOLVED" : std::string(support->code),
+                                  "Pair clearance bound was unresolved.", ValidationCheck::pair_solids,
+                                  { candidate->copies()[first].copy_id, candidate->copies()[second].copy_id });
+                }
                 continue;
             }
             if (!materialize(first) || !materialize(second)) {
