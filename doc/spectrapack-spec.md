@@ -189,6 +189,14 @@ Geometry computations use double precision and documented scale conditioning. In
 
 Validation may be incremental during search: reuse checks only for unchanged geometry, constraints, and poses, and validate every changed copy against all relevant neighbors and the container. A complete final/export pass bypasses search-derived certificates. Avoid recomputing expensive solid booleans for pairs already separated by a sound bounding-volume test.
 
+For the bounded T015-P1 stagger path, [ADR 0018](../spec/decisions/0018-cardinal-support-stagger.md)
+permits a validation-local outward support-interval certificate over all accepted
+vertices for exact cardinal poses. A positive projected gap must independently
+prove the requested Euclidean pair clearance with guarded interval arithmetic.
+The table, work and scratch remain within existing budgets; inconclusive cases
+retain the existing validator path. Final/export validation rebuilds this
+authoritative-geometry certificate independently of search state.
+
 Report the tolerance, kernel revision, and test method with results. “Validated” means passing this numerical contract; it is not a formal real-arithmetic proof. The implementation must not invent certified error bounds for a third-party operation that supplies none: uncertain cases stay indeterminate, and the M1 tests gate the chosen adapter.
 
 ## 6. Packing algorithm
