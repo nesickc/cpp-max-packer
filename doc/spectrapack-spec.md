@@ -230,6 +230,12 @@ The bounded T015-P1 package additionally investigates a physical staggered-row
 seed within the existing permitted rotations and work budget. It preserves the
 AABB incumbent and sends complete proposals to authoritative solid validation;
 it does not silently alter manual pitch, clearance, dimensions or rotation policy.
+Its seed and subsequent FFT work share the existing spectral-phase allowances;
+the baseline keeps its existing separate allowance. Admit only the catalog prefix
+permitted by the remaining pass budget, charging before oriented queries. Additive
+command `diagnostics.stagger` records actual work and completion within that prefix,
+independently of later FFT failure; persistent result schemas are unchanged.
+Detailed bounded ownership and accounting follow [ADR 0018](../spec/decisions/0018-cardinal-support-stagger.md).
 Its practical targets and remaining gates are recorded in [T-015](T-015.md).
 
 For an STL container, create the same enclosing-box candidates, filter each through true containment, and retain a validated subset. A bounding box by itself never defines feasibility for an STL container.

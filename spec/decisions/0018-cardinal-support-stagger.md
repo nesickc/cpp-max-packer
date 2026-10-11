@@ -71,8 +71,46 @@ zero-clearance exact-contact fixtures must retain their dimensions. Manual voxel
 pitch, pair/wall clearances, dimensions and orientation permissions are unchanged.
 Preserve baseline ordering and its budget. Debit at most 1,024 complete candidate
 evaluations and 24 orientation passes from existing spectral phase limits, with
-unchanged aggregate validation-work and memory caps. Report actual operator work
-and completion separately from any later FFT resource failure.
+unchanged memory and existing phase validation-work caps. The earlier phrase
+"aggregate validation-work cap" was imprecise: the existing baseline and spectral
+paths have independent 1.3-billion validation-work ledgers. Preserve the baseline
+ledger; the seed and later FFT share the original spectral ledger with no reset
+or added allowance. Aggregate run statistics sum their actual work. Report actual
+operator work and completion separately from any later FFT resource failure.
+
+### Bounded integration and command diagnostics
+
+For a positive candidate/pass tranche, admit the catalog-order prefix
+`N = min(24, remaining spectral passes, catalog size, max_orientations)`. Debit one
+pass before each authoritative oriented-bounds query, create at most two parity
+descriptors per admitted orientation, and rank only those descriptors by count,
+catalog order and parity. Zero candidate/pass allowance means no seed work.
+Use the shortest physical extent for layers and the longest for columns, with
+axis-index tie breaking. Keep one complete candidate vector at a time.
+
+Seed queries, candidate evaluations, passes, native validation work and AABB tests
+debit the spectral phase's existing ledgers. Add counters with checked arithmetic
+and combine memory peaks by maximum. Check remaining allowances before later FFT
+trial setup. Its existing two-trial guard remains relative to FFT-local passes,
+so seed passes cannot silently suppress an otherwise affordable retained trial.
+Preserve the caller's baseline/spectral apportionment in fixed-work and timed runs.
+
+A fixed-size `StaggerSummary` on `SpectralOutcome` records the operator identity
+`half_column_seven_eighths_rows`, state (`not_started`, `completed`, `interrupted`),
+a small completion reason, actual `RunStats`, admitted/ranked proposal scope and
+counts before/after. Completion means the admitted descriptors were exhausted or
+count-dominated; it does not claim the whole catalog was explored. Candidate
+tranche exhaustion with promising admitted descriptors remaining is interrupted.
+Stop, deadline, resource or error retains the last complete validated incumbent.
+Later FFT failure never overwrites this summary or becomes seed success.
+
+Expose the summary as additive `diagnostics.stagger` in existing solve command
+replies and every post-solver failure, including valid-empty success, measurement,
+Stop-monitor and build/export admission failures. Existing generic command result
+and error-details objects permit it. Keep persistent result/project schemas
+unchanged; retain command diagnostics alongside comparison artifacts. This
+additive command evidence introduces no scheduler, runtime phase or saved-result
+compatibility change.
 
 ## Required staged evidence
 
