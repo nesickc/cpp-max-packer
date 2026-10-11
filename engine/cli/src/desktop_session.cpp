@@ -2,6 +2,7 @@
 #include <spectrapack/solver/spectral.hpp>
 
 #include "desktop.hpp"
+#include "packing_wire.hpp"
 #include "runtime_record_bound.hpp"
 #include "runtime_wire.hpp"
 #include "solve.hpp"
@@ -152,6 +153,19 @@ struct Session {
         double seconds {};
     };
     std::optional<PhasePacket> pending_phase;
+    struct PackingBinding {
+        Json envelope;
+        runtime::Clock::time_point start;
+    };
+    struct PackingPacket {
+        cli::PublishedSnapshotHandle snapshot;
+        std::shared_ptr<const PackingBinding> binding;
+        double seconds {};
+    };
+    std::optional<PackingPacket> pending_packing;
+    bool packing_inflight {};
+    std::atomic_bool publication_failed {};
+    runtime::Clock::time_point next_delivery {};
     std::optional<PreparedAsset> asset, previous_asset;
     std::shared_ptr<std::stop_source> active_stop;
     bool active {};
@@ -164,38 +178,74 @@ struct Session {
     std::string engine_version, engine_commit;
     std::shared_ptr<const geo::ValidatedSolution> retained_solution;
 
+#ifdef SPECTRAPACK_PUBLICATION_TESTING
+    void* test_context {};
+    runtime::Clock::time_point (*test_clock)(void*) {};
+    void (*test_before_encode)(void*) {};
+    HANDLE test_output {};
+#endif
+    runtime::Clock::time_point delivery_now() const
+    {
+#ifdef SPECTRAPACK_PUBLICATION_TESTING
+        if (test_clock) {
+            return test_clock(test_context);
+        }
+#endif
+        return runtime::Clock::now();
+    }
     void start_writer()
     {
-        if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &input_thread, 0, FALSE,
-                             DUPLICATE_SAME_ACCESS)) {
-            throw std::runtime_error("Native input watch unavailable.");
-        }
+#ifdef SPECTRAPACK_PUBLICATION_TESTING
+        if (!test_output)
+#endif
+            if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &input_thread, 0, FALSE,
+                                 DUPLICATE_SAME_ACCESS)) {
+                throw std::runtime_error("Native input watch unavailable.");
+            }
         writer = std::jthread([this] {
             try {
                 while (true) {
                     std::string bytes;
+                    std::optional<PhasePacket> phase;
+                    std::optional<PackingPacket> packing;
+                    bool paced_record {};
                     {
                         std::unique_lock lock(wire_mutex);
                         wire_ready.wait(lock, [this] {
-                            return wire_closing || wire_failed || pending_phase || !wire_records.empty();
+                            return wire_closing || wire_failed || pending_phase || pending_packing ||
+                                   !wire_records.empty();
                         });
                         if (wire_failed) {
                             return;
                         }
-                        if (pending_phase) {
-                            const auto phase = *pending_phase;
-                            pending_phase.reset();
-                            bytes = cli::encode_runtime_record(
-                                Json {
-                                    { "runtime_version",        1                            },
-                                    { "request_id",             phase.request.data()         },
-                                    { "operation_id",           phase.operation.data()       },
-                                    { "kind",                   "phase"                      },
-                                    { "sequence",               phase.sequence               },
-                                    { "phase",                  cli::phase_name(phase.phase) },
-                                    { "native_elapsed_seconds", phase.seconds                }
-                            },
-                                true, 1024);
+                        if (pending_packing || pending_phase) {
+                            if (delivery_now() < next_delivery) {
+#ifdef SPECTRAPACK_PUBLICATION_TESTING
+                                if (test_clock) {
+                                    wire_ready.wait(lock, [this] {
+                                        return wire_failed || delivery_now() >= next_delivery;
+                                    });
+                                }
+                                else
+#endif
+                                    wire_ready.wait_until(lock, next_delivery, [this] {
+                                        return wire_failed.load();
+                                    });
+                                if (wire_failed) {
+                                    return;
+                                }
+                            }
+                            paced_record = true;
+                            if (pending_packing) {
+                                packing = std::move(pending_packing);
+                                pending_packing.reset();
+                                packing_inflight = true;
+                                pending_phase.reset();
+                            }
+                            else {
+                                phase = pending_phase;
+                                pending_phase.reset();
+                            }
                         }
                         else if (!wire_records.empty()) {
                             bytes = std::move(wire_records.front());
@@ -205,6 +255,42 @@ struct Session {
                         else if (wire_closing) {
                             return;
                         }
+                    }
+                    if (packing) {
+                        try {
+#ifdef SPECTRAPACK_PUBLICATION_TESTING
+                            if (test_before_encode) {
+                                test_before_encode(test_context);
+                            }
+#endif
+                            auto envelope = packing->binding->envelope;
+                            envelope["sequence"] = packing->snapshot->revision;
+                            envelope["native_elapsed_seconds"] = packing->seconds;
+                            bytes = cli::encode_packing_record(std::move(envelope), *packing->snapshot);
+                        }
+                        catch (...) {
+                            publication_failed = true;
+                        }
+                        // The byte record no longer pins geometry while WriteFile may block.
+                        packing.reset();
+                        {
+                            std::lock_guard lock(wire_mutex);
+                            packing_inflight = false;
+                        }
+                        wire_ready.notify_all();
+                    }
+                    else if (phase) {
+                        bytes = cli::encode_runtime_record(
+                            Json {
+                                { "runtime_version",        1                             },
+                                { "request_id",             phase->request.data()         },
+                                { "operation_id",           phase->operation.data()       },
+                                { "kind",                   "phase"                       },
+                                { "sequence",               phase->sequence               },
+                                { "phase",                  cli::phase_name(phase->phase) },
+                                { "native_elapsed_seconds", phase->seconds                }
+                        },
+                            true, 1024);
                     }
                     if (bytes.empty()) {
                         continue;
@@ -220,8 +306,13 @@ struct Session {
                             write_started.store(0);
                             return;
                         }
-                        const auto ok =
-                            WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), bytes.data() + offset, count, &wrote, nullptr);
+                        auto output = GetStdHandle(STD_OUTPUT_HANDLE);
+#ifdef SPECTRAPACK_PUBLICATION_TESTING
+                        if (test_output) {
+                            output = test_output;
+                        }
+#endif
+                        const auto ok = WriteFile(output, bytes.data() + offset, count, &wrote, nullptr);
                         write_started.store(0);
                         if (!ok || wrote != count) {
                             wire_failed = true;
@@ -229,6 +320,10 @@ struct Session {
                             return;
                         }
                         offset += count;
+                    }
+                    if (paced_record) {
+                        std::lock_guard lock(wire_mutex);
+                        next_delivery = delivery_now() + std::chrono::milliseconds(250);
                     }
                 }
             }
@@ -316,6 +411,22 @@ struct Session {
             wire_mutex.unlock();
             wire_ready.notify_one();
         }
+    }
+    void packing(cli::PublishedSnapshotHandle snapshot, std::shared_ptr<const PackingBinding> binding) noexcept
+    {
+        // No encoding, pipe readiness or scheduling waits under this short ownership lock.
+        std::lock_guard lock(wire_mutex);
+        const auto seconds = std::chrono::duration<double>(runtime::Clock::now() - binding->start).count();
+        pending_packing = PackingPacket { std::move(snapshot), std::move(binding), seconds };
+        wire_ready.notify_one();
+    }
+    bool flush_packing()
+    {
+        std::unique_lock lock(wire_mutex);
+        wire_ready.wait_for(lock, std::chrono::seconds(5), [this] {
+            return wire_failed || (!pending_packing && !packing_inflight);
+        });
+        return !wire_failed && !publication_failed && !pending_packing && !packing_inflight;
     }
     static std::array<std::uint64_t, 2> identity_hash(const std::string& value) noexcept
     {
@@ -794,6 +905,27 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
                 };
                 return response(request, false, io::error_json(failure));
             }
+            struct PublicationContext {
+                Session& session;
+                std::shared_ptr<const Session::PackingBinding> binding;
+            } publication { session, {} };
+            if (params.contains("publication")) {
+                publication.binding = std::make_shared<const Session::PackingBinding>(Session::PackingBinding {
+                    Json { { "runtime_version", 1 },
+                          { "request_id", request.at("request_id") },
+                          { "operation_id", request.at("operation_id") },
+                          { "kind", "packing" },
+                          { "publication", params.at("publication") } },
+                    clock.native_start
+                });
+                session.publication_failed = false;
+                runtime_run.publication_reserved_bytes = cli::publication_reserve_bytes;
+                runtime_run.publication_context = &publication;
+                runtime_run.publication_sink = [](void* raw, cli::PublishedSnapshotHandle snapshot) noexcept {
+                    auto& context = *static_cast<PublicationContext*>(raw);
+                    context.session.packing(std::move(snapshot), context.binding);
+                };
+            }
             auto native = cli::solve({ std::move(*validated_settings),
                                        prepared->report,
                                        output,
@@ -803,6 +935,14 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
                                        session.engine_version,
                                        session.engine_commit },
                                      runtime_run);
+            runtime_run.publication_sink = nullptr;
+            if (publication.binding && !session.flush_packing()) {
+                return response(
+                    request, false,
+                    io::error_json(
+                        error("PUBLICATION_RESOURCE_LIMIT",
+                              "The complete public packing could not be delivered within its bounded reservation.")));
+            }
             validated_settings.reset();
             if (const auto* native_error = std::get_if<io::Error>(&native.terminal)) {
                 const auto& code = native_error->code;

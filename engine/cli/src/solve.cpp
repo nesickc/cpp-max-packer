@@ -4,6 +4,7 @@
 #include <spectrapack/solver/orientations.hpp>
 #include <spectrapack/solver/spectral.hpp>
 
+#include "count_publication.hpp"
 #include "host_admission.hpp"
 #include "result_publication.hpp"
 #include "settings_reader.hpp"
@@ -796,10 +797,15 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         !add_bytes(caller_reserve, *command_reserve)) {
         return fail("MEMORY_LIMIT", "CLI input residency cannot be represented.", 3);
     }
-    if (!add_bytes(caller_reserve, run_runtime.retained_reserve_bytes)) {
+    if (!add_bytes(caller_reserve, run_runtime.retained_reserve_bytes) ||
+        !add_bytes(caller_reserve, run_runtime.publication_reserved_bytes)) {
         return fail("MEMORY_LIMIT", "Retained session residency overflows.", 3);
     }
     limits.reserved_bytes = caller_reserve;
+    CountPublication publication;
+    if (run_runtime.publication_sink && run_runtime.publication_reserved_bytes < publication_reserve_bytes) {
+        return fail("PUBLICATION_RESOURCE_LIMIT", "Count publication reservation is insufficient.", 3);
+    }
     solver::SnapshotHandle last_snapshot;
     std::optional<double> last_snapshot_seconds;
     std::atomic_bool reported_snapshot {};
@@ -827,6 +833,13 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     },
                                             *native_catalog, limits, control, [&](solver::SnapshotHandle snapshot) {
         if (snapshot) {
+            if (run_runtime.publication_sink) {
+                const auto seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+                if (!publication.offer(snapshot, seconds)) {
+                    return;
+                }
+                run_runtime.publication_sink(run_runtime.publication_context, publication.latest());
+            }
             last_snapshot = std::move(snapshot);
             last_snapshot_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
             if (!reported_snapshot.exchange(true)) {
@@ -835,6 +848,22 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
             }
         }
     }, std::move(initial));
+    if (run_runtime.publication_sink && outcome.run.retained_solution) {
+        const auto terminal =
+            std::make_shared<const solver::NativeSnapshot>(solver::NativeSnapshot { 0, outcome.run.retained_solution });
+        if (publication.offer(terminal, std::chrono::duration<double>(runtime::Clock::now() - started).count())) {
+            run_runtime.publication_sink(run_runtime.publication_context, publication.latest());
+        }
+        if (publication.latest()) {
+            outcome.run.retained_solution = publication.latest()->native->solution;
+            last_snapshot = publication.latest()->native;
+            last_snapshot_seconds = publication.latest()->time_to_count_seconds;
+        }
+        if (publication.failed()) {
+            outcome.run.termination_reason = solver::TerminationReason::error;
+            outcome.run.diagnostic_code = "PUBLICATION_RESOURCE_LIMIT";
+        }
+    }
     const auto stop_monitor_error = run_runtime.stop_monitor_status
                                         ? run_runtime.stop_monitor_status(run_runtime.stop_monitor_context)
                                         : spectrapack::cli::StopMonitorResult {};
@@ -869,14 +898,26 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     }
     const bool final_snapshot = last_snapshot && last_snapshot->solution == outcome.run.retained_solution;
     const auto time_to_best = final_snapshot ? *last_snapshot_seconds : elapsed;
-    const auto revision = final_snapshot ? last_snapshot->revision : 0;
+    const auto revision = publication.latest() ? publication.latest()->revision
+                          : final_snapshot     ? last_snapshot->revision
+                                               : 0;
     const auto time_to_best_basis = final_snapshot ? "snapshot" : "retained_return";
     const auto diagnostics = command_diagnostics(outcome, limits, caller_reserve, time_to_best_basis);
     const auto termination_reason =
         stop_monitor_error.failed ? solver::TerminationReason::error : outcome.run.termination_reason;
     if (request.object && run_runtime.preserve_previous_on_empty && outcome.run.retained_solution->copies().empty() &&
-        (termination_reason == solver::TerminationReason::user_stopped ||
+        (run_runtime.publication_sink || termination_reason == solver::TerminationReason::user_stopped ||
          termination_reason == solver::TerminationReason::budget_exhausted)) {
+        if (run_runtime.publication_sink && (termination_reason == solver::TerminationReason::resource_limit ||
+                                             termination_reason == solver::TerminationReason::error)) {
+            return fail(
+                termination_reason == solver::TerminationReason::resource_limit ? "RESOURCE_LIMIT" : "SOLVE_FAILED",
+                "Search failed without a new nonempty public packing; previous files are retained.", 3,
+                {
+                    { "diagnostics",        diagnostics                },
+                    { "termination_reason", reason(termination_reason) }
+            });
+        }
         return {
             0, Json { { "ok", true },
                      { "termination_reason", reason(termination_reason) },
@@ -962,6 +1003,7 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         !add_bytes(build_live_bytes, *input_reserve) || !add_bytes(build_live_bytes, *build_command_reserve) ||
         !add_bytes(build_live_bytes, build_diagnostics_bytes) || !add_bytes(build_live_bytes, build_metadata_bytes) ||
         !add_bytes(build_live_bytes, run_runtime.retained_reserve_bytes) ||
+        !add_bytes(build_live_bytes, run_runtime.publication_reserved_bytes) ||
         !add_bytes(build_live_bytes, *build_native_reserve) || build_live_bytes > build_limit) {
         return fail("MEMORY_LIMIT", "CLI result live residency exceeds the checked build reservation.", 3,
                     {
@@ -989,7 +1031,8 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     uint64_t export_live_bytes {};
     const bool export_representable = export_reserve && add_bytes(export_live_bytes, export_reserve->non_context) &&
                                       add_bytes(export_live_bytes, export_reserve->context_catalog) &&
-                                      add_bytes(export_live_bytes, run_runtime.retained_reserve_bytes);
+                                      add_bytes(export_live_bytes, run_runtime.retained_reserve_bytes) &&
+                                      add_bytes(export_live_bytes, run_runtime.publication_reserved_bytes);
     if (!export_representable || export_live_bytes > export_limit) {
         return fail("MEMORY_LIMIT", "CLI export residency cannot be represented.", 3,
                     export_reserve ? export_admission_details(export_limit, export_live_bytes, *export_reserve)

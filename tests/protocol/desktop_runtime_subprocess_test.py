@@ -84,6 +84,60 @@ class Session:
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_count_publication_matches_terminal_poses(self):
+        """SOL-01/UI-02/DATA-02 ADR0017: real NDJSON count-only snapshots and exact files."""
+        with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).resolve().parents[2]/'.local') as temporary:
+            root = pathlib.Path(temporary)
+            source, report = root/'cube.stl', root/'object.report.json'
+            fixtures.write_cube_stl(source, extent=2)
+            imported = subprocess.run([str(ENGINE), 'inspect', '--stl', str(source), '--units', 'mm',
+                                      '--report', str(report)], capture_output=True, text=True, timeout=15)
+            self.assertEqual(imported.returncode, 0, imported.stdout+imported.stderr)
+            fixture = fixtures.SolveSubprocessTests(); fixture.object_report_path = report
+            settings = fixture.settings(dimensions=(12, 6, 4), candidates=64, passes=2)
+            session = Session()
+            try:
+                preview = root/'preview'; preview.mkdir()
+                prepared, _ = session.request({'runtime_version':1,'request_id':'prepare-live',
+                    'operation_id':'prepare-live-op','method':'prepare','params':{
+                        'object_report':str(report),'output_directory':str(preview)}})
+                self.assertTrue(prepared['ok'], prepared)
+                ticks, frequency = qpc()
+                publication = {'version':1,'session_id':'session-live','native_epoch':'native-live',
+                               'settings_id':'settings-live'}
+                request = {'runtime_version':1,'request_id':'run-live','operation_id':'run-live-op',
+                    'method':'run','params':{'asset_token':prepared['result']['asset_token'],
+                    'settings':settings,'result_path':str(root/'result.json'),'stop_file':str(root/'stop'),
+                    'start_qpc_ticks':ticks,'qpc_frequency_hz':frequency,'publication':publication}}
+                session.child.stdin.write(json.dumps(request)+'\n');session.child.stdin.flush()
+                packings, times = [], []
+                while True:
+                    record = session.records.get(timeout=15)
+                    self.assertIsNotNone(record)
+                    if record['kind'] == 'packing':
+                        self.assertEqual(record['publication'], publication)
+                        self.assertEqual(record['operation_id'], request['operation_id'])
+                        self.assertEqual(record['request_id'], request['request_id'])
+                        packing = record['packing']
+                        self.assertEqual(packing['validation_status'], 'valid')
+                        self.assertEqual(packing['count'], len(packing['placements']))
+                        if packings:
+                            self.assertGreater(packing['count'], packings[-1]['count'])
+                            self.assertGreater(packing['solution_revision'], packings[-1]['solution_revision'])
+                            self.assertGreaterEqual(time.monotonic()-times[-1], 0.23)
+                        packings.append(packing);times.append(time.monotonic())
+                    elif record['kind'] == 'response':
+                        self.assertTrue(record['ok'], record)
+                        break
+                self.assertTrue(packings, 'No native live packing reached the reader')
+                terminal = json.loads((root/'result.json').read_text())
+                self.assertEqual(terminal['placements'], packings[-1]['placements'])
+                self.assertEqual(terminal['solution_revision'], packings[-1]['solution_revision'])
+                print(json.dumps({'case':'count-publication','counts':[p['count'] for p in packings],
+                    'ordered_terminal_poses_match':True,'record':record}),flush=True)
+            finally:
+                session.close()
+
     def test_finalization_deadline_preserves_nonempty_authority_and_previous_result(self):
         """T011-A4 / SOL-06: resource refusal then cleanup expiry preserves authority and both causes."""
         if MEMORY_HELPER is None:

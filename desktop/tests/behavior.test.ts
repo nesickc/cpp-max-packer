@@ -44,3 +44,27 @@ describe('UI-01/UI-03 immutable routing and settings', () => {
     expect(settingsError({ ...defaultSettings, clearance_mm: { pair: 0, wall: 0 } })).toBeNull();
   });
 });
+
+describe('UI-02 T015 count publication identity', () => {
+  const live=(count:number,revision:number,sequence=revision):Desktop.LiveResult=>({publication_version:1,
+    session_id:'s',native_epoch:'n',operation_id:'op',settings_id:'settings',solution_revision:revision,sequence,count,
+    validation_status:'valid',settings:defaultSettings,preview:null,
+    placements:Array.from({length:count},(_,i)=>({...pose,copy_id:`copy-${i}`})) as Desktop.LiveResult['placements']});
+  const withLive=(packing:Desktop.LiveResult,revision:number):Desktop.State=>({...state('s',revision),live_result:packing,
+    operation:{id:packing.operation_id,kind:'solve',phase:'placing',started_at:'2026-10-11T00:00:00Z',finished_at:null,result_id:null,detail:null}});
+  it('keeps exact24 poses across equal/stale duplicates, then installs25 and26 and resets the new run',()=>{
+    const first=withLive(live(24,1),1);
+    const equal=withLive(live(24,2),2);equal.live_result!.placements[0].translation_mm=[999,0,0];
+    const retained=acceptState(first,equal);
+    expect(retained.live_result).toBe(first.live_result);
+    const next=acceptState(retained,withLive(live(25,3),3));expect(next.live_result!.count).toBe(25);
+    expect(acceptState(next,withLive(live(24,1),4)).live_result).toBe(next.live_result);
+    const foreign=withLive({...live(26,4),native_epoch:'old'},5);
+    expect(acceptState(next,foreign).live_result).toBe(next.live_result);
+    const higher=acceptState(next,withLive(live(26,4),6));expect(higher.live_result!.count).toBe(26);
+    const fresh=withLive({...live(1,1),operation_id:'fresh',settings_id:'fresh'},7);
+    expect(acceptState(higher,fresh).live_result!.count).toBe(1);
+    const terminal={...higher,revision:7,operation:{...higher.operation!,finished_at:'2026-10-11T00:00:01Z'}};
+    expect(acceptState(higher,terminal).live_result).toBe(higher.live_result);
+  });
+});

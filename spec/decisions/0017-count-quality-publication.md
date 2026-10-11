@@ -60,7 +60,7 @@ source-private adapter value alongside `SolveRuntime` in `engine/cli/src/solve.h
 ```cpp
 struct PublishedSnapshot {
     std::uint64_t revision;          // operation-local, count increases only
-    double time_to_count_seconds;    // same Start clock basis as run metadata
+    double time_to_count_seconds;    // existing search/result time-to-best basis
     solver::SnapshotHandle native;   // opaque complete valid solution authority
 };
 using PublishedSnapshotHandle = std::shared_ptr<const PublishedSnapshot>;
@@ -72,6 +72,10 @@ void* publication_context{};
 ```
 
 These interface spellings are accepted for implementation.
+The result time-to-count retains the existing search-elapsed clock and its
+`time_to_best <= search.elapsed_seconds` invariant. Packing records separately
+carry Start-origin `native_elapsed_seconds` for first-result/improvement latency.
+Do not migrate persisted result elapsed clocks as part of live publication.
 The solve adapter performs count gating and retains the latest public handle even
 if delivery is coalesced. Its sink transfers ownership only; it does no JSON,
 filesystem work, full revalidation or pipe write. The retained handle, its time and

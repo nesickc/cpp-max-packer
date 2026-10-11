@@ -1,7 +1,7 @@
 //! A single retained native child. The Core serializes requests through its
 //! operation lock; Stop remains an independent scoped marker write.
 use crate::model::{error, id, DesktopError, Outcome};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -40,6 +40,96 @@ struct Record {
     phase: Option<String>,
     native_elapsed_seconds: Option<f64>,
     retained_native_bytes: Option<u64>,
+    publication: Option<Publication>,
+    packing: Option<Packing>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Publication {
+    pub version: u32,
+    pub session_id: String,
+    pub native_epoch: String,
+    pub settings_id: String,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Packing {
+    pub solution_revision: u64,
+    pub count: u64,
+    pub validation_status: String,
+    pub placements: Vec<Pose>,
+}
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Pose {
+    copy_id: String,
+    translation_mm: [f64; 3],
+    quaternion_xyzw: [f64; 4],
+    local_to_world: [[f64; 4]; 4],
+}
+impl Packing {
+    fn validate(&self) -> Outcome<()> {
+        let malformed = || error("ENGINE_TRANSPORT", "Native complete packing is malformed.");
+        if self.solution_revision == 0
+            || self.count == 0
+            || self.count != self.placements.len() as u64
+            || self.validation_status != "valid"
+        {
+            return Err(malformed());
+        }
+        let mut ids = std::collections::HashSet::new();
+        for pose in &self.placements {
+            if pose.copy_id.is_empty()
+                || !ids.insert(&pose.copy_id)
+                || !pose
+                    .translation_mm
+                    .iter()
+                    .chain(pose.quaternion_xyzw.iter())
+                    .all(|n| n.is_finite())
+            {
+                return Err(malformed());
+            }
+            let [x, y, z, w] = pose.quaternion_xyzw;
+            let norm = x * x + y * y + z * z + w * w;
+            if (norm - 1.0).abs() > 1e-9 {
+                return Err(malformed());
+            }
+            let [tx, ty, tz] = pose.translation_mm;
+            let expected = [
+                [
+                    1.0 - 2.0 * (y * y + z * z),
+                    2.0 * (x * y - z * w),
+                    2.0 * (x * z + y * w),
+                    tx,
+                ],
+                [
+                    2.0 * (x * y + z * w),
+                    1.0 - 2.0 * (x * x + z * z),
+                    2.0 * (y * z - x * w),
+                    ty,
+                ],
+                [
+                    2.0 * (x * z - y * w),
+                    2.0 * (y * z + x * w),
+                    1.0 - 2.0 * (x * x + y * y),
+                    tz,
+                ],
+                [0.0, 0.0, 0.0, 1.0],
+            ];
+            for row in 0..4 {
+                for col in 0..4 {
+                    let actual = pose.local_to_world[row][col];
+                    if !actual.is_finite()
+                        || (actual - expected[row][col]).abs() > 1e-9 * (1.0 + expected[row][col].abs())
+                    {
+                        return Err(malformed());
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl NativeSession {
@@ -149,7 +239,17 @@ impl NativeSession {
         method: &str,
         operation_id: Option<&str>,
         params: Value,
+        phase: impl FnMut(u64, &str, f64),
+    ) -> Outcome<Value> {
+        self.request_with_packing(method, operation_id, params, phase, None)
+    }
+    pub fn request_with_packing(
+        &mut self,
+        method: &str,
+        operation_id: Option<&str>,
+        params: Value,
         mut phase: impl FnMut(u64, &str, f64),
+        mut packing_sink: Option<&mut dyn FnMut(&Publication, &Packing, u64)>,
     ) -> Outcome<Value> {
         let request_id = id("request");
         let mut request = serde_json::json!({"runtime_version":1,"request_id":request_id,"method":method,"params":params});
@@ -255,6 +355,7 @@ impl NativeSession {
         }
         outcome?;
         let mut sequence = 0;
+        let (mut packing_sequence, mut packing_revision, mut packing_count) = (0, 0, 0);
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             let record = self
@@ -281,6 +382,52 @@ impl NativeSession {
                 ));
             }
             match record.kind.as_str() {
+                "packing" => {
+                    let binding = record
+                        .publication
+                        .as_ref()
+                        .ok_or_else(|| error("ENGINE_TRANSPORT", "Publication binding missing."))?;
+                    if binding.version != 1
+                        || binding.native_epoch != self.epoch
+                        || serde_json::to_value(binding).unwrap() != request["params"]["publication"]
+                    {
+                        continue;
+                    }
+                    let packing = record
+                        .packing
+                        .as_ref()
+                        .ok_or_else(|| error("ENGINE_TRANSPORT", "Packing missing."))?;
+                    let next = record
+                        .sequence
+                        .ok_or_else(|| error("ENGINE_TRANSPORT", "Packing sequence missing."))?;
+                    let seconds = record
+                        .native_elapsed_seconds
+                        .ok_or_else(|| error("ENGINE_TRANSPORT", "Packing time missing."))?;
+                    if record.ok.is_some()
+                        || record.result.is_some()
+                        || record.error.is_some()
+                        || record.phase.is_some()
+                        || record.retained_native_bytes.is_some()
+                        || !seconds.is_finite()
+                        || seconds < 0.0
+                        || next == 0
+                    {
+                        return Err(error("ENGINE_TRANSPORT", "Packing envelope is malformed."));
+                    }
+                    packing.validate()?;
+                    if next <= packing_sequence
+                        || packing.solution_revision <= packing_revision
+                        || packing.count <= packing_count
+                    {
+                        continue;
+                    }
+                    packing_sequence = next;
+                    packing_revision = packing.solution_revision;
+                    packing_count = packing.count;
+                    if let Some(sink) = packing_sink.as_mut() {
+                        sink(binding, packing, next);
+                    }
+                }
                 "phase" => {
                     let next = record
                         .sequence
@@ -297,6 +444,8 @@ impl NativeSession {
                         || record.ok.is_some()
                         || record.result.is_some()
                         || record.error.is_some()
+                        || record.publication.is_some()
+                        || record.packing.is_some()
                         || ![
                             "loading",
                             "preparing",
@@ -328,7 +477,9 @@ impl NativeSession {
                 "response"
                     if record.sequence.is_none()
                         && record.phase.is_none()
-                        && record.native_elapsed_seconds.is_none() =>
+                        && record.native_elapsed_seconds.is_none()
+                        && record.publication.is_none()
+                        && record.packing.is_none() =>
                 {
                     if ["prepare", "run", "release"].contains(&method) {
                         let bytes = record
@@ -367,6 +518,28 @@ impl NativeSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn t015_complete_native_packing_record_decodes() {
+        let value = serde_json::json!({"runtime_version":1,"request_id":"request-live","operation_id":"op-live",
+            "kind":"packing","publication":{"version":1,"session_id":"session-live","native_epoch":"native-live","settings_id":"settings-live"},
+            "sequence":1,"native_elapsed_seconds":0.1,"packing":{"solution_revision":1,"count":1,"validation_status":"valid",
+            "placements":[{"copy_id":"copy-0","translation_mm":[1,2,3],"quaternion_xyzw":[0,0,0,1],
+            "local_to_world":[[1,0,0,1],[0,1,0,2],[0,0,1,3],[0,0,0,1]]}]}});
+        let record = serde_json::from_value::<Record>(value).expect("ADR0017 native packing rejected");
+        let packing = record.packing.unwrap();
+        assert!(packing.validate().is_ok());
+        let mut duplicate = packing.clone();
+        duplicate.count = 2;
+        duplicate.placements.push(duplicate.placements[0].clone());
+        assert!(duplicate.validate().is_err());
+        let mut matrix = packing.clone();
+        matrix.placements[0].local_to_world[0][3] = 999.0;
+        assert!(matrix.validate().is_err());
+        let mut truncated = packing;
+        truncated.count = 25;
+        assert!(truncated.validate().is_err());
+    }
+
     #[test]
     fn rejected_large_budget_preserves_the_live_transport_epoch() {
         let engine = match std::env::var_os("SPECTRAPACK_TEST_ENGINE") {

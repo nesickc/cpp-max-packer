@@ -313,5 +313,70 @@
         "recoverable": true
       }
     }
+  },
+  {
+    "name": "T015 native complete count publication",
+    "valid": true,
+    "value": {
+      "runtime_version": 1,
+      "request_id": "request-live",
+      "operation_id": "operation-live",
+      "kind": "packing",
+      "publication": {
+        "version": 1,
+        "session_id": "session-live",
+        "native_epoch": "native-live",
+        "settings_id": "settings-live"
+      },
+      "sequence": 1,
+      "native_elapsed_seconds": 0.2,
+      "packing": {
+        "solution_revision": 1,
+        "count": 1,
+        "validation_status": "valid",
+        "placements": [
+          {
+            "copy_id": "copy-0",
+            "translation_mm": [
+              1,
+              2,
+              3
+            ],
+            "quaternion_xyzw": [
+              0,
+              0,
+              0,
+              1
+            ],
+            "local_to_world": [
+              [
+                1,
+                0,
+                0,
+                1
+              ],
+              [
+                0,
+                1,
+                0,
+                2
+              ],
+              [
+                0,
+                0,
+                1,
+                3
+              ],
+              [
+                0,
+                0,
+                0,
+                1
+              ]
+            ]
+          }
+        ]
+      }
+    }
   }
 ]

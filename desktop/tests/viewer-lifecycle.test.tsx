@@ -87,6 +87,48 @@ describe('UI-02/UI-03 / AT-15 persistent viewer (device adapter, real PLY and co
     expect(native.preview).toHaveBeenCalledOnce(); expect(device.disposed).not.toHaveBeenCalled();
   });
 
+  it('T015 preserves camera, shared mesh, selection and instance identity across live polling and terminal metadata', async()=>{
+    const fixture=fixtures.find(f=>f.kind==='results'&&f.schema_valid&&f.semantic_valid)!;
+    const document=structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];
+    document.container={kind:'box',dimensions_mm:[40,40,40]};
+    const live:Desktop.LiveResult={publication_version:1,session_id:'live-viewer',native_epoch:'native',operation_id:'solve',
+      settings_id:'settings',solution_revision:1,sequence:1,count:24,validation_status:'valid',
+      settings:{desktop_version:1,box_dimensions_mm:[40,40,40],clearance_mm:{pair:0,wall:0},
+        orientation:{mode:'fixed',quaternion_xyzw:[0,0,0,1]},pitch_mm:2,budget_seconds:60,seed:'0'},preview,
+      placements:Array.from({length:24},(_,i)=>({...pose,copy_id:`copy-${i}`})) as Desktop.LiveResult['placements']};
+    const initial:Desktop.State={desktop_version:1,session_id:'live-viewer',revision:1,
+      object:{id:'object',display_name:'Cube.stl',report:document.assets.object,preview},draft_settings:live.settings,
+      result:null,live_result:live,last_error:null,operation:{id:'solve',kind:'solve',phase:'placing',
+        started_at:'2026-10-11T00:00:00Z',finished_at:null,result_id:null,detail:null}};
+    native.state.mockResolvedValue(initial);native.preview.mockResolvedValue(bytes);
+    render(<App/>);await settle();drain();
+    const mesh=visibleMesh()!;const geometry=mesh.geometry;
+    const camera=device.render.mock.lastCall![1] as Camera;const position=camera.position.clone();
+    fireEvent.change(screen.getByLabelText('Select copy'),{target:{value:'copy-0'}});
+    fireEvent.change(screen.getByLabelText('Clipping height'),{target:{value:'50'}});drain();
+    const equal=structuredClone(initial);equal.revision=2;equal.live_result!.sequence=2;
+    equal.live_result!.solution_revision=2;equal.live_result!.placements[0].translation_mm=[99,99,99];
+    native.state.mockResolvedValue(equal);await act(async()=>{await vi.advanceTimersByTimeAsync(250);});drain();
+    expect(visibleMesh()).toBe(mesh);
+    expect((screen.getByLabelText('Select copy') as HTMLSelectElement).value).toBe('copy-0');
+    const higher=structuredClone(initial);higher.revision=3;higher.live_result!.solution_revision=3;
+    higher.live_result!.sequence=3;higher.live_result!.count=25;
+    higher.live_result!.placements.push({...pose,copy_id:'copy-24'});
+    native.state.mockResolvedValue(higher);await act(async()=>{await vi.advanceTimersByTimeAsync(250);});drain();
+    const installed=visibleMesh()!;expect(installed.count).toBe(25);expect(installed.geometry).toBe(geometry);
+    expect(camera.position.distanceTo(position)).toBeLessThan(1e-9);
+    const terminal=structuredClone(higher);terminal.revision=4;terminal.operation!.finished_at='2026-10-11T00:00:02Z';
+    document.count=25;document.placements=higher.live_result!.placements;document.solution_revision=3;
+    terminal.result={id:'terminal-files',document,preview,origin:'solve'};
+    native.state.mockResolvedValue(terminal);await act(async()=>{await vi.advanceTimersByTimeAsync(250);});drain();
+    expect(visibleMesh()).toBe(installed);expect(native.preview).toHaveBeenCalledOnce();
+    expect(device.created).toHaveBeenCalledOnce();expect(camera.position.distanceTo(position)).toBeLessThan(1e-9);
+    expect((screen.getByLabelText('Clipping height') as HTMLInputElement).value).toBe('50');
+    expect((screen.getByLabelText('Select copy') as HTMLSelectElement).value).toBe('copy-0');
+    const settled=device.render.mock.calls.length;await act(async()=>{await vi.advanceTimersByTimeAsync(1000);});drain();
+    expect(device.render).toHaveBeenCalledTimes(settled);expect(device.loop).toBeNull();
+  });
+
   it('updates poses, visibility, selection, clipping, dimensions and projection without refetching geometry', async () => {
     const props = { mode: 'result' as const, preview, placements: [pose], dimensions: [40,40,40] as [number,number,number], hidden: new Set<string>(), selected: null as string | null, onSelect: vi.fn() };
     const view = render(<Viewer {...props} />); await settle(); drain();

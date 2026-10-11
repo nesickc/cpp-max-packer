@@ -11,6 +11,24 @@ import { App } from '../src/App';
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
+  it('UI-02 T015 shows the native live packing while Save and export stay unavailable', async () => {
+    const fixture = fixtures.find(f => f.kind === 'results' && f.schema_valid && f.semantic_valid)!;
+    const document = structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];
+    const live: Desktop.LiveResult = { publication_version:1, session_id:'session-live', native_epoch:'native-1',
+      operation_id:'solve-live', settings_id:'settings-1', solution_revision:1, sequence:1, count:24,
+      validation_status:'valid', settings:structuredClone(defaultSettings), preview:null,
+      placements:Array.from({length:24},(_,i)=>({...document.placements[0],copy_id:`copy-${i}`})) as Desktop.LiveResult['placements'] };
+    native.state.mockResolvedValue({ desktop_version:1,session_id:'session-live',revision:1,
+      object:{id:'object',display_name:'Cube.stl',report:document.assets.object,preview:null},
+      draft_settings:defaultSettings,result:null,live_result:live,last_error:null,
+      operation:{id:'solve-live',kind:'solve',phase:'placing',started_at:'2026-10-11T00:00:00Z',
+        finished_at:null,result_id:null,detail:null} } satisfies Desktop.State);
+    render(<App/>);
+    await waitFor(()=>expect(screen.getByText('24')).toBeDefined());
+    expect(screen.getByRole('option',{name:'copy-23'})).toBeDefined();
+    expect(screen.getByRole('button',{name:'Save project'}).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByRole('button',{name:/Export result JSON/}).hasAttribute('disabled')).toBe(true);
+  });
   it('normalizes new Start scope after legacy Open without a false pending-settings notice', async () => {
     const fixture=fixtures.find(f=>f.kind==='results'&&f.schema_valid&&f.semantic_valid)!;
     const document=structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];

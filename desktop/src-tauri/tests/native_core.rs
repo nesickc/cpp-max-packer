@@ -9,6 +9,78 @@ use std::{
 };
 
 #[test]
+fn t015_real_live_packing_stop_files_and_new_run_bind_exact_public_poses() {
+    let (_root, core, source) = fixture();
+    import(&core, &source);
+    let mut request = settings(2.0);
+    request["box_dimensions_mm"] = json!([100, 100, 100]);
+    request["pitch_mm"] = json!(2);
+    let receipt = core.start(request.clone()).unwrap();
+    let until = Instant::now() + Duration::from_secs(15);
+    let mut observed = None;
+    loop {
+        let state = core.state();
+        if let Some(live) = state.live_result.clone() {
+            if live["operation_id"] == receipt.operation_id && state.operation.as_ref().unwrap().finished_at.is_none() {
+                observed = Some(live);
+                core.stop(&receipt.operation_id).unwrap();
+                break;
+            }
+        }
+        if state.operation.as_ref().unwrap().finished_at.is_some() {
+            break;
+        }
+        assert!(Instant::now() < until);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        observed.is_some(),
+        "native complete packing must be observable while active"
+    );
+    let terminal = wait(&core);
+    assert!(terminal.last_error.is_none(), "{terminal:?}");
+    let live = terminal.live_result.as_ref().unwrap();
+    let document = &terminal.result.as_ref().unwrap()["document"];
+    assert_eq!(live["placements"], document["placements"]);
+    assert_eq!(live["count"], document["count"]);
+    assert_eq!(live["solution_revision"], document["solution_revision"]);
+    assert_eq!(document["metrics"]["termination_reason"], "user_stopped");
+    let previous_binding = live["settings_id"].clone();
+    request["box_dimensions_mm"] = json!([20, 20, 20]);
+    request["pitch_mm"] = json!(10);
+    request["budget_seconds"] = json!(0.5);
+    let receipt = core.start(request).unwrap();
+    let next = wait(&core);
+    assert!(next.last_error.is_none(), "{next:?}");
+    let live = next.live_result.as_ref().unwrap();
+    assert_eq!(live["operation_id"], receipt.operation_id);
+    assert_ne!(live["settings_id"], previous_binding);
+    assert_eq!(
+        live["placements"],
+        next.result.as_ref().unwrap()["document"]["placements"]
+    );
+    let mut empty = settings(1.0);
+    empty["box_dimensions_mm"] = json!([1, 1, 1]);
+    empty["pitch_mm"] = json!(1e-9);
+    core.start(empty.clone()).unwrap();
+    let failed_empty = wait(&core);
+    assert!(failed_empty.last_error.is_some(), "{failed_empty:?}");
+    assert_eq!(failed_empty.live_result, next.live_result);
+    assert_eq!(failed_empty.result, next.result);
+    core.new_project().unwrap();
+    assert!(core.state().live_result.is_none());
+    import(&core, &source);
+    empty["pitch_mm"] = json!(10);
+    core.start(empty).unwrap();
+    let first_empty = wait(&core);
+    assert!(first_empty.last_error.is_none(), "{first_empty:?}");
+    assert!(first_empty.live_result.is_none());
+    // ADR0017 permits retaining no result for a first empty run; no fabricated empty-valid DTO.
+    assert!(first_empty.result.is_none());
+    assert_eq!(first_empty.operation.unwrap().detail.as_deref(), Some("No nonempty incumbent."));
+}
+
+#[test]
 fn native_result_decimals_survive_desktop_json_roundtrip() {
     // AT-14: decimals from the real Ulamok native snapshot that previously
     // changed by one ULP while Save parsed and rewrote the result.

@@ -474,7 +474,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         outcome.run.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
         return outcome;
     }
-    outcome.run = detail::run_aabb_baseline_with_seeds(context, baseline_limits, control, catalog.quaternions, {},
+    outcome.run = detail::run_aabb_baseline_with_seeds(context, baseline_limits, control, catalog.quaternions, sink,
                                                        std::move(initial));
     outcome.baseline_stats = outcome.run.stats;
     const auto retained = outcome.run.best ? outcome.run.best->solution : outcome.run.retained_solution;

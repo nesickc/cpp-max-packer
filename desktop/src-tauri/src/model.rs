@@ -47,6 +47,8 @@ pub struct State {
     pub object: Option<Value>,
     pub draft_settings: Option<Value>,
     pub result: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub live_result: Option<Value>,
     pub operation: Option<Operation>,
     pub last_error: Option<DesktopError>,
     #[serde(skip_serializing_if = "Option::is_none", default)]

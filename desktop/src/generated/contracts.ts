@@ -1763,6 +1763,7 @@ export interface State {
      */
     working_set_estimate_bytes?: number;
   };
+  live_result?: LiveResult | null;
 }
 export interface ImportedObject {
   id: string;
@@ -2997,6 +2998,23 @@ export interface Error {
   };
   recoverable: boolean;
 }
+export interface LiveResult {
+  publication_version: 1;
+  session_id: string;
+  native_epoch: string;
+  operation_id: string;
+  settings_id: string;
+  solution_revision: number;
+  sequence: number;
+  count: number;
+  /**
+   * @minItems 1
+   */
+  placements: [Placement, ...Placement[]];
+  validation_status: "valid";
+  settings: Settings;
+  preview: Preview1 | null;
+}
 export interface StartRequest {
   settings: Settings;
 }
@@ -3049,7 +3067,7 @@ export type SaveRequest = StartRequest;
 
 export namespace DesktopRuntime {
 export type HttpsSpectrapackInvalidSchemasV1DesktopRuntimeSchemaJson =
-  Prepare | Run | Release | Shutdown | Response | Phase;
+  Prepare | Run | Release | Shutdown | Response | Phase | Packing;
 /**
  * @minItems 4
  * @maxItems 4
@@ -3067,6 +3085,21 @@ export type Response = {
   error?: Error;
   retained_native_bytes?: number;
 };
+/**
+ * @minItems 3
+ * @maxItems 3
+ */
+export type Vec3 = [number, number, number];
+/**
+ * @minItems 4
+ * @maxItems 4
+ */
+export type M = [
+  [number, number, number, number],
+  [number, number, number, number],
+  [number, number, number, number],
+  [number, number, number, number]
+];
 
 export interface Prepare {
   runtime_version: 1;
@@ -3092,6 +3125,7 @@ export interface Run {
     stop_file: string;
     start_qpc_ticks: string;
     qpc_frequency_hz: string;
+    publication?: Publication;
   };
 }
 export interface Settings {
@@ -3198,6 +3232,12 @@ export interface Compute {
   backend: "auto" | "cpu" | "vulkan";
   thread_count?: number;
 }
+export interface Publication {
+  version: 1;
+  session_id: string;
+  native_epoch: string;
+  settings_id: string;
+}
 export interface Release {
   runtime_version: 1;
   request_id: string;
@@ -3237,6 +3277,31 @@ export interface Phase {
     | "saving"
     | "cleanup";
   native_elapsed_seconds: number;
+}
+export interface Packing {
+  runtime_version: 1;
+  request_id: string;
+  operation_id: string;
+  kind: "packing";
+  publication: Publication;
+  sequence: number;
+  native_elapsed_seconds: number;
+  packing: PackingValue;
+}
+export interface PackingValue {
+  solution_revision: number;
+  count: number;
+  validation_status: "valid";
+  /**
+   * @minItems 1
+   */
+  placements: [Placement, ...Placement[]];
+}
+export interface Placement {
+  copy_id: string;
+  translation_mm: Vec3;
+  quaternion_xyzw: Q;
+  local_to_world: M;
 }
 
 }
