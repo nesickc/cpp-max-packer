@@ -676,7 +676,7 @@ std::optional<std::uint64_t> SpectralWorkspace::resident_bytes() const noexcept
 }
 std::uint64_t SpectralWorkspace::layout_revision() const noexcept { return storage_ ? storage_->revision : 0; }
 
-bool SpectralWorkspace::release_disposable() noexcept
+bool SpectralWorkspace::release_disposable(bool retain_raster, bool retain_fft) noexcept
 {
     const auto before = resident_bytes();
     if (!storage_ || !before) {
@@ -684,8 +684,12 @@ bool SpectralWorkspace::release_disposable() noexcept
     }
     storage_->ranked.reset();
     storage_->kernels[1] = {};
-    storage_->fft.reset();
-    storage_->raster.reset();
+    if (!retain_fft) {
+        storage_->fft.reset();
+    }
+    if (!retain_raster) {
+        storage_->raster.reset();
+    }
     const auto after = resident_bytes();
     return after && *after < *before;
 }
@@ -1636,6 +1640,11 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             if (!std::holds_alternative<compute::CorrelationResult>(ranked)) {
                 state.fft.reset();
                 record_correlation_failure(result, std::get<compute::CorrelationFailure>(ranked), "proximity_fft");
+                if (result.failure_details->cause_code() == "CORRELATION_DIRECT_TERM_LIMIT") {
+                    const auto cap = correlation_limits.max_direct_terms;
+                    result.failure_details->resource =
+                        ResourceLimitDetails { "direct_terms", cap == UINT64_MAX ? cap : cap + 1, cap };
+                }
                 return result;
             }
             state.ranked = std::move(std::get<compute::CorrelationResult>(ranked));

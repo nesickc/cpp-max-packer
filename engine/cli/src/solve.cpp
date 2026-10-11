@@ -52,6 +52,7 @@ struct FailureTiming {
 std::atomic_uint64_t result_build_max_working_bytes_for_test {};
 std::atomic_uint64_t result_export_max_working_bytes_for_test {};
 std::atomic_uint64_t baseline_validation_max_kernel_work_for_test {};
+std::atomic<spectrapack::cli::test::AvailableRamHook> available_ram_hook_for_test {};
 std::atomic<spectrapack::cli::test::PublicationHook> publication_hook_for_test {};
 std::atomic<void*> publication_hook_context_for_test {};
 std::atomic<spectrapack::cli::test::FinalizationHook> finalization_hook_for_test {};
@@ -649,6 +650,10 @@ void set_baseline_validation_max_kernel_work(std::uint64_t work) noexcept
 {
     baseline_validation_max_kernel_work_for_test.store(work, std::memory_order_relaxed);
 }
+void set_available_ram_hook(AvailableRamHook hook) noexcept
+{
+    available_ram_hook_for_test.store(hook, std::memory_order_relaxed);
+}
 }  // namespace spectrapack::cli::test
 #endif
 
@@ -846,6 +851,13 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
            limits.spectral.max_search_passes != partition.spectral.max_search_passes)))) {
         return fail("UNSUPPORTED_RESOURCE_POLICY", "Resolved caps must match the effective fixed-work partition.", 3);
     }
+#ifdef SPECTRAPACK_CLI_TESTING
+    if (limits.resource_mode == solver::ResourceMode::timed) {
+        if (const auto hook = available_ram_hook_for_test.load(std::memory_order_relaxed)) {
+            limits.available_ram = hook;
+        }
+    }
+#endif
     std::optional<std::chrono::steady_clock::time_point> deadline;
     if (!search["deterministic"].get<bool>()) {
         deadline = control.deadline;
@@ -919,9 +931,11 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
             }
         }
     }, std::move(initial));
-    if (run_runtime.admitted_host_cap_bytes && outcome.admitted_host_cap_bytes) {
-        *run_runtime.admitted_host_cap_bytes = outcome.admitted_host_cap_bytes;
+    if (outcome.admitted_host_cap_bytes) {
         limits.max_working_bytes = outcome.admitted_host_cap_bytes;
+        if (run_runtime.admitted_host_cap_bytes) {
+            *run_runtime.admitted_host_cap_bytes = outcome.admitted_host_cap_bytes;
+        }
     }
     if (run_runtime.publication_sink && outcome.run.retained_solution) {
         const auto terminal =
