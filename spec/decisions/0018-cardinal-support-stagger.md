@@ -125,8 +125,19 @@ compatibility change.
    layout under the unchanged caps. A timeout or projection oracle does not pass.
    Reassess before solver integration if this fails.
 3. Observe the selected stagger solver fixture fail, then pass with independent
-   validation. The diamond-prism fixture must preserve exact zero-clearance
-   contacts; this is not removal/reinsertion or full AT-11 completion.
+   validation. Use the unchanged diamond prism `|x|+|y| <= 1`, height 1, in a
+   5.5 × 4 × 1 box with pair clearance 1/8, wall clearance 0 and fixed identity.
+   Its AABB lattice holds two; centers `(1,1,0.5)`, `(3.25,1,0.5)`,
+   `(2.125,2.875,0.5)`, `(4.375,2.875,0.5)` independently witness four with
+   same-row gap 1/4 and nearest cross-row gap `1/sqrt(2)`, both greater than 1/8.
+   First establish native witness four and baseline two, then observe the old
+   solver's count failure under these same constraints before implementation.
+   The originally planned zero-clearance 5 × 3.75 × 1 witness instead reaches
+   existing `KERNEL_CONTACTED_DEGENERACY` before the solver assertion; retain it
+   and its failure as characterization, not a solver red or passing acceptance.
+   This reviewed fixture substitution avoids expanding contact classification;
+   practical 1/1 mm constraints and zero-contact behavior remain unchanged.
+   It proves staggering, not removal/reinsertion or full AT-11 completion.
 4. Run the frozen old/new practical comparisons, relevant Ulamok/full-Pryanik/
    invalid-simplified regressions, real desktop publication and file consistency,
    then obtain a final stable critical correctness/concurrency review.
