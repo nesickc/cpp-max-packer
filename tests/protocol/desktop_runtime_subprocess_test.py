@@ -138,6 +138,25 @@ class RuntimeTests(unittest.TestCase):
             finally:
                 session.close()
 
+            # Actual cli::solve path: publication callbacks must not write/flush stderr.
+            self.assertNotIn('solve: validated count=', ''.join(session.stderr))
+            legacy = Session()
+            try:
+                preview = root/'legacy-preview'; preview.mkdir()
+                prepared, _ = legacy.request({'runtime_version':1,'request_id':'prepare-legacy',
+                    'operation_id':'prepare-legacy-op','method':'prepare','params':{
+                        'object_report':str(report),'output_directory':str(preview)}})
+                self.assertTrue(prepared['ok'], prepared)
+                ticks, frequency = qpc()
+                reply, _ = legacy.request({'runtime_version':1,'request_id':'run-legacy','operation_id':'run-legacy-op',
+                    'method':'run','params':{'asset_token':prepared['result']['asset_token'],
+                    'settings':settings,'result_path':str(root/'legacy-result.json'),'stop_file':str(root/'legacy-stop'),
+                    'start_qpc_ticks':ticks,'qpc_frequency_hz':frequency}})
+                self.assertTrue(reply['ok'], reply)
+            finally:
+                legacy.close()
+            self.assertIn('solve: validated count=', ''.join(legacy.stderr))
+
     def test_finalization_deadline_preserves_nonempty_authority_and_previous_result(self):
         """T011-A4 / SOL-06: resource refusal then cleanup expiry preserves authority and both causes."""
         if MEMORY_HELPER is None:

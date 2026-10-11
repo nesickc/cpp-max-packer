@@ -842,7 +842,7 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
             }
             last_snapshot = std::move(snapshot);
             last_snapshot_seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
-            if (!reported_snapshot.exchange(true)) {
+            if (!run_runtime.publication_sink && !reported_snapshot.exchange(true)) {
                 std::cerr << "solve: validated count=" << last_snapshot->solution->copies().size() << '\n'
                           << std::flush;
             }

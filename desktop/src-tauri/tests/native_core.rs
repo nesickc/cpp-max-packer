@@ -81,6 +81,30 @@ fn t015_real_live_packing_stop_files_and_new_run_bind_exact_public_poses() {
 }
 
 #[test]
+fn t015_canonical_fixed_negative_identity_keeps_save_export_eligible() {
+    let mut request = settings(0.2);
+    request["orientation"]["quaternion_xyzw"] = json!([0, 0, 0, -1]);
+    assert!(project_roundtrip(request, false, true) > 0);
+}
+
+#[test]
+fn t015_canonical_fixed_near_unit_keeps_save_export_eligible() {
+    for q in [
+        [0.0, 0.0, 0.0, 1.0000000005],
+        [
+            0.0,
+            0.0,
+            std::f64::consts::FRAC_1_SQRT_2 * 1.0000000005,
+            std::f64::consts::FRAC_1_SQRT_2 * 1.0000000005,
+        ],
+    ] {
+        let mut request = settings(0.2);
+        request["orientation"]["quaternion_xyzw"] = json!(q);
+        assert!(project_roundtrip(request, false, true) > 0);
+    }
+}
+
+#[test]
 fn native_result_decimals_survive_desktop_json_roundtrip() {
     // AT-14: decimals from the real Ulamok native snapshot that previously
     // changed by one ULP while Save parsed and rewrote the result.
@@ -396,12 +420,16 @@ fn project_roundtrip(request: Value, expect_failure: bool, checked_stl: bool) ->
     core.start(request).unwrap();
     let state = wait(&core);
     let start_seconds = started.elapsed().as_secs_f64();
+    if !expect_failure {
+        assert!(state.last_error.is_none(), "{state:?}");
+    }
     let document = state.result.as_ref().unwrap()["document"].clone();
     let minimum: u64 = std::env::var("SPECTRAPACK_JOURNEY_MIN_COUNT")
         .unwrap_or_else(|_| "1".into())
         .parse()
         .unwrap();
     assert!(document["count"].as_u64().unwrap() >= minimum, "{document}");
+    assert_eq!(state.live_result.as_ref().unwrap()["placements"], document["placements"]);
     if expect_failure {
         let error = state
             .last_error

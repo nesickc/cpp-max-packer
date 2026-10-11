@@ -150,6 +150,33 @@ fn physical_value_equal(a: &Value, b: &Value) -> bool {
         _ => a == b,
     }
 }
+fn physical_orientation_equal(a: &Value, b: &Value) -> bool {
+    if a["mode"] != "fixed" || b["mode"] != "fixed" {
+        return physical_value_equal(a, b);
+    }
+    let normalized = |value: &Value| -> Option<[f64; 4]> {
+        let mut q: [f64; 4] = serde_json::from_value(value["quaternion_xyzw"].clone()).ok()?;
+        let norm = q[0].hypot(q[1]).hypot(q[2].hypot(q[3]));
+        if !norm.is_finite() || norm == 0.0 {
+            return None;
+        }
+        for component in &mut q {
+            *component /= norm;
+        }
+        Some(q)
+    };
+    let (Some(a), Some(b)) = (normalized(a), normalized(b)) else {
+        return false;
+    };
+    // q and -q describe the same rotation. Allow only normalization rounding,
+    // not the broader accepted-input unit-norm tolerance; placements remain exact.
+    [1.0, -1.0].into_iter().any(|sign| {
+        a.iter()
+            .zip(b)
+            .all(|(a, b)| (a - sign * b).abs() <= 32.0 * f64::EPSILON)
+    })
+}
+
 fn public_artifact_matches(live: &Value, document: &Value, settings: &Value, object_report: &Value) -> Outcome<()> {
     let resolved = &document["search"]["resolved_settings"];
     if document["count"] != live["count"]
@@ -157,7 +184,7 @@ fn public_artifact_matches(live: &Value, document: &Value, settings: &Value, obj
         || document["solution_revision"] != live["solution_revision"]
         || !physical_value_equal(&document["container"]["dimensions_mm"], &settings["box_dimensions_mm"])
         || !physical_value_equal(&resolved["clearance_mm"], &settings["clearance_mm"])
-        || !physical_value_equal(&resolved["orientation"], &settings["orientation"])
+        || !physical_orientation_equal(&resolved["orientation"], &settings["orientation"])
         || !physical_value_equal(&resolved["resolved"]["pitch_mm"], &settings["pitch_mm"])
         || resolved["search"]["seed"] != settings["seed"]
     {
@@ -1539,6 +1566,35 @@ mod tests {
                 .code,
             "PUBLICATION_MISMATCH"
         );
+    }
+
+    #[test]
+    fn t015_canonical_fixed_settings_preserve_exact_public_placement_matching() {
+        let live = json!({"count":1,"solution_revision":1,"placements":[{"copy_id":"one",
+            "translation_mm":[1,2,3],"quaternion_xyzw":[0,0,0,1]}]});
+        let mut requested = settings();
+        let mut document = json!({"count":1,"solution_revision":1,"placements":live["placements"],
+            "container":{"dimensions_mm":requested["box_dimensions_mm"]},"assets":{"object":{}},
+            "search":{"resolved_settings":{"clearance_mm":requested["clearance_mm"],
+                "orientation":requested["orientation"],"resolved":{"pitch_mm":requested["pitch_mm"]},
+                "search":{"seed":requested["seed"]}}}});
+        for q in [[0.0, 0.0, 0.0, -1.0], [0.0, 0.0, 0.0, 1.0000000005]] {
+            requested["orientation"]["quaternion_xyzw"] = json!(q);
+            assert!(
+                public_artifact_matches(&live, &document, &requested, &json!({})).is_ok(),
+                "{q:?}"
+            );
+        }
+        requested["orientation"]["quaternion_xyzw"] = json!([0, 0, 1e-10, 1]);
+        assert!(public_artifact_matches(&live, &document, &requested, &json!({})).is_err());
+        requested["orientation"]["quaternion_xyzw"] = json!([0, 0, 0, -1]);
+        document["placements"][0]["quaternion_xyzw"] = json!([0, 0, 0, -1]);
+        assert_eq!(
+            public_artifact_matches(&live, &document, &requested, &json!({}))
+                .unwrap_err()
+                .code,
+            "PUBLICATION_MISMATCH"
+        ); // Physical settings equivalence never relaxes canonical pose equality.
     }
 
     #[test]
