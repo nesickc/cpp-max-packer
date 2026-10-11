@@ -311,7 +311,8 @@ class RuntimeTests(unittest.TestCase):
                 fixture = fixtures.SolveSubprocessTests()
                 fixture.object_report_path = report
                 settings = fixture.settings(dimensions=(64, 64, 64), candidates=2)
-                settings['search']['work_budget']['max_search_passes'] = 2
+                # CLI splits four passes into baseline2, count-dominated seed1, FFT1.
+                settings['search']['work_budget']['max_search_passes'] = 4
                 settings['resolution']['pitch_mm'] = settings['resolved']['pitch_mm'] = 1
                 reference_placements = None
                 for target in ('voxelizing', 'planning_fft'):
@@ -856,8 +857,9 @@ class RuntimeTests(unittest.TestCase):
                     else:changed['container']['dimensions_mm'][0]=value
                     saved,_=fixed_run('constraints-'+name,options=changed);self.assertEqual(saved['count'],count)
                     if name=='wall':self.assertNotEqual(saved['placements'][0]['translation_mm'],base['placements'][0]['translation_mm'])
-                spectral=copy.deepcopy(fixed);spectral['container']['dimensions_mm']=[40,40,40]
-                spectral['search']['work_budget']={'max_candidate_evaluations':2,'max_search_passes':2}
+                # Exact one-copy capacity leaves the seed dominated before the original FFT candidate.
+                spectral=copy.deepcopy(fixed);spectral['container']['dimensions_mm']=[10,10,10]
+                spectral['search']['work_budget']={'max_candidate_evaluations':2,'max_search_passes':4}
                 coarse,_=fixed_run('pitch-10',options=spectral)
                 spectral['resolution']['pitch_mm']=spectral['resolved']['pitch_mm']=5
                 fine,_=fixed_run('pitch-5',options=spectral)

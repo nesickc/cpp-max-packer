@@ -310,7 +310,8 @@ TEST_CASE("T010 Ulamok full cube field pass preserves 36", "[solver][T010][quali
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
     limits.spectral.max_candidate_evaluations = 1;
-    limits.spectral.max_search_passes = 1;
+    limits.spectral.max_copies = baseline.best->solution->copies().size();
+    limits.spectral.max_search_passes = 25;  // Count-dominated cube seed24 plus the original FFT pass.
     limits.max_refinement_evaluations = 0;
     const auto value = sol::run_cpu_spectral(
         native_context,
