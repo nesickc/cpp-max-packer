@@ -1,4 +1,5 @@
 #include "spectrapack/solver/baseline.hpp"
+#include "spectrapack/solver/spectral.hpp"
 
 #include <algorithm>
 #include <array>
@@ -10,6 +11,7 @@
 #include <numbers>
 #include <span>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -48,6 +50,9 @@ bool checked_add(std::uint64_t& total, std::uint64_t value) noexcept {
 
 std::optional<std::uint64_t> checked_product(std::size_t count,
                                              std::size_t size) noexcept {
+  if (size == 0) {
+    return 0;
+  }
   if (count > std::numeric_limits<std::uint64_t>::max() / size) return {};
   return static_cast<std::uint64_t>(count) * size;
 }
@@ -450,11 +455,10 @@ struct CopyIdBuffer {
 };
 
 CopyIdBuffer copy_id_buffer(std::size_t seed,
-                            std::uint64_t evaluation) noexcept {
+                            std::uint64_t evaluation, std::string_view prefix = "baseline-") noexcept {
   CopyIdBuffer result;
   char* cursor = result.text.data();
   char* const end = result.text.data() + result.text.size();
-  constexpr std::string_view prefix = "baseline-";
   cursor = std::copy(prefix.begin(), prefix.end(), cursor);
   cursor = std::to_chars(cursor, end, seed).ptr;
   *cursor++ = '-';
@@ -491,8 +495,13 @@ BaselineOutcome run_aabb_baseline_impl(
     std::shared_ptr<const geometry::ValidationContext> context,
     const BaselineLimits& limits, const RunControl& control, SnapshotSink sink,
     std::shared_ptr<const geometry::ValidatedSolution> initial,
-    const std::vector<geometry::Quaternion>* exact_seeds) {
+    const std::vector<geometry::Quaternion>* exact_seeds, StaggerSummary* stagger = nullptr,
+    SnapshotHandle entry = {}) {
   BaselineOutcome out;
+  if (stagger && entry && entry->solution && entry->solution->context() == context &&
+      entry->score.count == entry->solution->copies().size()) {
+    out.best = entry;
+  }
   if (!context) {
     out.diagnostic_code = "PHYSICAL_NULL_CONTEXT";
     return out;
@@ -534,6 +543,14 @@ BaselineOutcome run_aabb_baseline_impl(
     std::uint64_t profile_seed = UINT64_MAX;
     std::uint64_t incumbent_bytes = detail::kIncumbentFixedOwnerBytes;
     std::shared_ptr<const geometry::ValidatedSolution> admitted_solution;
+    if (entry) {
+      if (!stagger || !detail::IncumbentResumeAccess::resume(incumbent, entry)) {
+        out.diagnostic_code = "STAGGER_ENTRY_INVALID";
+        return out;
+      }
+      admitted_solution = entry->solution;
+      incumbent_bytes += sizeof(NativeSnapshot) + detail::kSharedOwnerControlBytes;
+    }
     std::uint64_t base_with_incumbent = *base;
     if (!checked_add(base_with_incumbent, incumbent_bytes) ||
         !update_peak(out.stats, base_with_incumbent, limits)) {
@@ -619,7 +636,7 @@ BaselineOutcome run_aabb_baseline_impl(
         out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
         return out;
       }
-      if (!offer(out.retained_solution, initial_live)) return out;
+      if (!entry && !offer(out.retained_solution, initial_live)) return out;
     }
 
     if (!incumbent.best()) {
@@ -688,7 +705,7 @@ BaselineOutcome run_aabb_baseline_impl(
 
     const auto& policy = context->constraints().orientations;
     const auto raw_seed_count = maximum_seed_count(policy);
-    if (raw_seed_count > limits.max_orientations) {
+    if (!stagger && raw_seed_count > limits.max_orientations) {
       retain_best();
       out.termination_reason = TerminationReason::budget_exhausted;
       out.diagnostic_code = "PHYSICAL_ORIENTATION_LIMIT";
@@ -709,11 +726,260 @@ BaselineOutcome run_aabb_baseline_impl(
     }
     if (!exact_seeds) detail::allocation_point();
     auto seeds = exact_seeds ? *exact_seeds : orientation_seeds(policy);
-    if (seeds.size() > limits.max_orientations) {
+    if (!stagger && seeds.size() > limits.max_orientations) {
       retain_best();
       out.termination_reason = TerminationReason::budget_exhausted;
       out.diagnostic_code = "PHYSICAL_ORIENTATION_LIMIT";
       return out;
+    }
+
+    if (stagger) {
+        struct Proposal {
+            std::array<double, 3> origin {}, pitch {};
+            std::array<std::uint64_t, 2> columns {};
+            std::uint64_t rows {}, layers {}, count {};
+            std::size_t seed {}, parity {}, column {}, row {}, layer {};
+        };
+        const auto fail = [&](std::string_view code, TerminationReason reason = TerminationReason::resource_limit) {
+            out.diagnostic_code = code;
+            out.termination_reason = reason;
+            retain_best();
+            return out;
+        };
+        const auto honor = [&] {
+            const auto current = boundary(control);
+            if (current == Boundary::none) {
+                return true;
+            }
+            retain_best();
+            apply_boundary(out, current);
+            return false;
+        };
+        // Fixed descriptors and arithmetic/sort scratch coexist with the baseline
+        // incumbent. The table contains no mesh or complete candidate layouts.
+        if (!add_optional(*base, checked_product(seeds.capacity(), sizeof(geometry::Quaternion))) ||
+            !checked_add(*base, sizeof(std::array<Proposal, 48>) + 1024)) {
+            return fail("STAGGER_MEMORY_LIMIT");
+        }
+        std::array<Proposal, 48> proposals {};
+        std::size_t proposed {};
+        const auto admitted =
+            std::min<std::uint64_t>({ 24, limits.max_search_passes, seeds.size(), limits.max_orientations });
+        stagger->admitted_orientations = admitted;
+        const auto cells = [&](double low, double high, double pitch) -> std::optional<std::uint64_t> {
+            if (!std::isfinite(low) || !std::isfinite(high) || !std::isfinite(pitch) || !(pitch > 0)) {
+                return {};
+            }
+            if (high < low) {
+                return 0;
+            }
+            const double count = std::floor((high - low) / pitch) + 1;
+            if (!std::isfinite(count) || count > static_cast<double>(limits.max_axis_cells) ||
+                count >= static_cast<double>(UINT64_MAX)) {
+                return {};
+            }
+            return static_cast<std::uint64_t>(count);
+        };
+        for (std::size_t seed = 0; seed != admitted; ++seed) {
+            if (!honor()) {
+                return out;
+            }
+            if (!checked_add(out.stats.search_passes, 1) || !checked_add(out.stats.orientations_started, 1)) {
+                return fail("STAGGER_COUNTER_LIMIT");
+            }
+            std::uint64_t live = *base;
+            if (!add_optional(live, solution_bytes(admitted_solution)) || !checked_add(live, incumbent_bytes)) {
+                return fail("STAGGER_MEMORY_LIMIT");
+            }
+            const auto queried =
+                geometry::oriented_bounds(context->object(), seeds[seed], query_limits(limits, out.stats, live));
+            const auto& work = std::holds_alternative<geometry::OrientedBounds>(queried)
+                                   ? std::get<geometry::OrientedBounds>(queried).stats
+                                   : std::get<geometry::PhysicalQueryFailure>(queried).stats;
+            if (!record_geometry(out.stats, work, live, limits)) {
+                return fail("STAGGER_RESOURCE_LIMIT");
+            }
+            if (const auto* failure = std::get_if<geometry::PhysicalQueryFailure>(&queried)) {
+                apply_physical_failure(out, failure->code);
+                retain_best();
+                return out;
+            }
+            if (!honor()) {
+                return out;
+            }
+            const auto& shape = std::get<geometry::OrientedBounds>(queried).bounds_mm;
+            std::array<std::size_t, 3> axes { 0, 1, 2 };
+            std::sort(axes.begin(), axes.end(), [&](auto a, auto b) {
+                return std::tuple { shape.max[a] - shape.min[a], a } < std::tuple { shape.max[b] - shape.min[b], b };
+            });
+            for (std::size_t parity = 0; parity != 2; ++parity) {
+                const auto plan = [&](double margin) -> std::optional<Proposal> {
+                    Proposal p;
+                    p.seed = seed;
+                    p.parity = parity;
+                    p.layer = axes[0];
+                    p.column = shape.max[axes[1]] - shape.min[axes[1]] >= shape.max[axes[2]] - shape.min[axes[2]]
+                                   ? axes[1]
+                                   : axes[2];
+                    p.row = p.column == axes[1] ? axes[2] : axes[1];
+                    std::array<double, 3> high {};
+                    for (std::size_t axis = 0; axis != 3; ++axis) {
+                        const auto wall = context->constraints().wall_clearance_mm;
+                        const double padding = wall > 0 ? std::min(margin, wall / 100) : 0;
+                        p.origin[axis] = bounds->min[axis] + wall + padding - shape.min[axis];
+                        high[axis] = bounds->max[axis] - wall - padding - shape.max[axis];
+                        p.pitch[axis] =
+                            shape.max[axis] - shape.min[axis] + context->constraints().pair_clearance_mm + margin;
+                    }
+                    p.pitch[p.row] *= .875;
+                    const auto rows = cells(p.origin[p.row], high[p.row], p.pitch[p.row]);
+                    const auto layers = cells(p.origin[p.layer], high[p.layer], p.pitch[p.layer]);
+                    if (!rows || !layers) {
+                        return {};
+                    }
+                    p.rows = *rows;
+                    p.layers = *layers;
+                    for (std::size_t phase = 0; phase != 2; ++phase) {
+                        const auto count = cells(p.origin[p.column] + .5 * p.pitch[p.column] * ((phase + parity) % 2),
+                                                 high[p.column], p.pitch[p.column]);
+                        if (!count) {
+                            return {};
+                        }
+                        p.columns[phase] = *count;
+                    }
+                    auto count = checked_product(p.rows / 2 + p.rows % 2, p.columns[0]);
+                    if (!count || !add_optional(*count, checked_product(p.rows / 2, p.columns[1]))) {
+                        return {};
+                    }
+                    count = checked_product(*count, p.layers);
+                    if (!count) {
+                        return {};
+                    }
+                    p.count = std::min(*count, limits.max_copies);
+                    return p;
+                };
+                auto proposal = plan(0);
+                if (!proposal) {
+                    return fail("STAGGER_AXIS_LIMIT");
+                }
+                const auto pair = context->constraints().pair_clearance_mm;
+                if (pair > 0) {
+                    const auto padded = plan(std::min(.01, pair / 100));
+                    if (padded && padded->count == proposal->count) {
+                        proposal = padded;
+                    }
+                }
+                proposals[proposed++] = *proposal;
+            }
+        }
+        stagger->ranked_proposals = proposed;
+        std::sort(proposals.begin(), proposals.begin() + proposed, [](const auto& a, const auto& b) {
+            if (a.count != b.count) {
+                return a.count > b.count;
+            }
+            return std::tuple { a.seed, a.parity } < std::tuple { b.seed, b.parity };
+        });
+        control.phase(runtime::Phase::improving);
+        for (std::size_t index = 0; index != proposed; ++index) {
+            if (!honor()) {
+                return out;
+            }
+            const auto& p = proposals[index];
+            if (p.count <= incumbent.best()->score.count) {
+                stagger->state = StaggerState::completed;
+                stagger->completion_reason = "count_dominated";
+                retain_best();
+                out.termination_reason = TerminationReason::search_stalled;
+                return out;
+            }
+            if (out.stats.candidate_evaluations >= std::min<std::uint64_t>(1024, limits.max_candidate_evaluations)) {
+                return fail("STAGGER_CANDIDATE_LIMIT", TerminationReason::budget_exhausted);
+            }
+            auto storage = checked_product(p.count, 2 * (sizeof(geometry::CopyPose) + 65));
+            std::uint64_t live = *base;
+            if (!add_optional(live, storage) || !add_optional(live, solution_bytes(admitted_solution)) ||
+                !checked_add(live, incumbent_bytes) ||
+                !checked_add(live, sizeof(geometry::Candidate) + 2 * detail::kSharedOwnerControlBytes +
+                                       kPendingPoseMetadataBytes) ||
+                !update_peak(out.stats, live, limits)) {
+                return fail("STAGGER_MEMORY_LIMIT");
+            }
+            detail::allocation_point();
+            std::vector<geometry::CopyPose> copies;
+            copies.reserve(static_cast<std::size_t>(p.count));
+            for (std::uint64_t z = 0; z != p.layers && copies.size() < p.count; ++z) {
+                for (std::uint64_t y = 0; y != p.rows && copies.size() < p.count; ++y) {
+                    for (std::uint64_t x = 0; x != p.columns[y % 2] && copies.size() < p.count; ++x) {
+                        if (!honor()) {
+                            return out;
+                        }
+                        auto translation = p.origin;
+                        translation[p.column] +=
+                            (static_cast<double>(x) + .5 * ((y + p.parity) % 2)) * p.pitch[p.column];
+                        translation[p.row] += static_cast<double>(y) * p.pitch[p.row];
+                        translation[p.layer] += static_cast<double>(z) * p.pitch[p.layer];
+                        const auto id = copy_id_buffer(p.seed * 2 + p.parity, copies.size(), "stagger-");
+                        copies.push_back({ std::string(id.text.data(), id.size), translation, seeds[p.seed] });
+                    }
+                }
+            }
+            if (!honor()) {
+                return out;
+            }
+            auto made = geometry::make_candidate(context, std::move(copies));
+            if (!std::holds_alternative<std::shared_ptr<const geometry::Candidate>>(made)) {
+                return fail("STAGGER_CANDIDATE_ERROR", TerminationReason::error);
+            }
+            if (!checked_add(out.stats.candidate_evaluations, 1)) {
+                return fail("STAGGER_COUNTER_LIMIT");
+            }
+            control.phase(runtime::Phase::validating);
+            auto checked = geometry::validate(context, std::get<std::shared_ptr<const geometry::Candidate>>(made),
+                                              validation_limits(limits, out.stats, live), control);
+            if (!record_validation(out.stats, checked.report, live, limits)) {
+                return fail("STAGGER_RESOURCE_LIMIT");
+            }
+            if (!checked.validated_solution) {
+                auto& counter = checked.report.validity == geometry::Validity::invalid
+                                    ? out.stats.invalid_candidates
+                                    : out.stats.indeterminate_candidates;
+                if (!checked_add(counter, 1)) {
+                    return fail("STAGGER_COUNTER_LIMIT");
+                }
+                if (checked.report.code == "OPERATION_CANCELLED" || checked.report.code == "DEADLINE_EXCEEDED") {
+                    apply_boundary(
+                        out, checked.report.code == "OPERATION_CANCELLED" ? Boundary::stopped : Boundary::deadline);
+                    retain_best();
+                    return out;
+                }
+                if (!honor()) {
+                    return out;
+                }
+                if (resource_code(checked.report.code) || checked.report.code == "KERNEL_FLOATING_ENVIRONMENT") {
+                    out.failure_details =
+                        RunFailureDetails { resource_code(checked.report.code) ? TerminationReason::resource_limit
+                                                                               : TerminationReason::error,
+                                            "stagger_validation",
+                                            checked.report.code,
+                                            {},
+                                            {} };
+                    return fail("STAGGER_VALIDATION_FAILED", out.failure_details->reason);
+                }
+                continue;
+            }
+            if (!add_optional(live, solution_bytes(checked.validated_solution)) ||
+                !add_optional(live, retained_report_bytes(checked.report)) || !update_peak(out.stats, live, limits)) {
+                return fail("STAGGER_MEMORY_LIMIT");
+            }
+            if (!honor() || !offer(checked.validated_solution, live)) {
+                return out;
+            }
+        }
+        stagger->state = StaggerState::completed;
+        stagger->completion_reason = "admitted_exhausted";
+        retain_best();
+        out.termination_reason = TerminationReason::search_stalled;
+        return out;
     }
 
     for (std::size_t seed = 0; seed != seeds.size(); ++seed) {
@@ -1117,18 +1383,42 @@ BaselineOutcome run_aabb_baseline(
     std::shared_ptr<const geometry::ValidationContext> context,
     const BaselineLimits& limits, const RunControl& control, SnapshotSink sink,
     std::shared_ptr<const geometry::ValidatedSolution> initial) {
-  return run_aabb_baseline_impl(std::move(context), limits, control, std::move(sink),
-                                std::move(initial), nullptr);
+    return run_aabb_baseline_impl(std::move(context), limits, control, std::move(sink), std::move(initial), nullptr);
 }
 
 namespace detail {
-BaselineOutcome run_aabb_baseline_with_seeds(
-    std::shared_ptr<const geometry::ValidationContext> context,
-    const BaselineLimits& limits, const RunControl& control,
-    const std::vector<geometry::Quaternion>& seeds, SnapshotSink sink,
-    std::shared_ptr<const geometry::ValidatedSolution> initial) {
-  return run_aabb_baseline_impl(std::move(context), limits, control, std::move(sink),
-                                std::move(initial), &seeds);
+BaselineOutcome run_stagger_seed_with_seeds(std::shared_ptr<const geometry::ValidationContext> context,
+                                            const BaselineLimits& limits, const RunControl& control,
+                                            const std::vector<geometry::Quaternion>& seeds, StaggerSummary& summary,
+                                            SnapshotSink sink,
+                                            SnapshotHandle initial)
+{
+    summary.best_count_before = summary.best_count_after = initial ? initial->score.count : 0;
+    summary.state = StaggerState::interrupted;
+    summary.completion_reason = "error";
+    const auto solution = initial ? initial->solution : nullptr;
+    auto out = run_aabb_baseline_impl(std::move(context), limits, control, std::move(sink), solution, &seeds,
+                                      &summary, std::move(initial));
+    summary.work = out.stats;
+    const auto retained = out.best ? out.best->solution : out.retained_solution;
+    summary.best_count_after = retained ? retained->copies().size() : summary.best_count_before;
+    if (summary.state == StaggerState::interrupted) {
+        summary.completion_reason =
+            out.termination_reason == TerminationReason::user_stopped ? "user_stopped"
+            : out.termination_reason == TerminationReason::budget_exhausted
+                ? (out.diagnostic_code == "STAGGER_CANDIDATE_LIMIT" ? "candidate_limit" : "deadline")
+            : out.termination_reason == TerminationReason::resource_limit ? "resource_limit"
+                                                                          : "error";
+    }
+    return out;
+}
+
+BaselineOutcome run_aabb_baseline_with_seeds(std::shared_ptr<const geometry::ValidationContext> context,
+                                             const BaselineLimits& limits, const RunControl& control,
+                                             const std::vector<geometry::Quaternion>& seeds, SnapshotSink sink,
+                                             std::shared_ptr<const geometry::ValidatedSolution> initial)
+{
+    return run_aabb_baseline_impl(std::move(context), limits, control, std::move(sink), std::move(initial), &seeds);
 }
 }  // namespace detail
 

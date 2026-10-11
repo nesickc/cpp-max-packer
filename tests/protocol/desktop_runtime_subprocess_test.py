@@ -518,6 +518,12 @@ class RuntimeTests(unittest.TestCase):
                 if monitor_failure:
                     self.assertFalse(reply['ok'],reply)
                     self.assertEqual(reply['error']['code'],'STOP_MONITOR_FAILED')
+                    details=reply['error']['details']
+                    stagger=details['diagnostics']['stagger']
+                    self.assertEqual(stagger['operator'],'half_column_seven_eighths_rows')
+                    self.assertEqual(stagger['state'],'completed')
+                    self.assertEqual(stagger['best_count_after'],document['count'])
+                    self.assertGreater(stagger['work']['search_passes'],0)
                 else:
                     self.assertTrue(reply['ok'],reply)
                     # Search may already have ended when Stop races the final certified commit.

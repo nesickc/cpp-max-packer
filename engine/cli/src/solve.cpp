@@ -533,7 +533,7 @@ Json command_diagnostics(const solver::SpectralOutcome& outcome, const solver::S
                 { "validation_kernel_work", limits.baseline.max_validation_kernel_work } } },
             { "spectral",
               { { "candidate_evaluations", limits.spectral.max_candidate_evaluations },
-                { "search_passes", limits.spectral.max_search_passes } } } }         },
+                { "search_passes", limits.spectral.max_search_passes } } } }                            },
         { "work",
          { { "candidate_evaluations", outcome.run.stats.candidate_evaluations },
             { "search_passes", outcome.run.stats.search_passes },
@@ -543,11 +543,32 @@ Json command_diagnostics(const solver::SpectralOutcome& outcome, const solver::S
             { "baseline_validation_kernel_work", outcome.baseline_stats.validation_kernel_work },
             { "validation_aabb_pair_tests", outcome.run.stats.validation_aabb_pair_tests },
             { "spectral_correlations", outcome.spectral_stats.correlations },
-            { "spectral_pages_examined", outcome.spectral_stats.pages_examined } }   },
-        { "time_to_best_basis",         std::string(time_to_best_basis)              },
-        { "caller_reserved_bytes",      caller_reserved                              },
-        { "tracked_working_bytes_peak", outcome.run.stats.tracked_working_bytes_peak },
-        { "diagnostic_code",            std::string(outcome.run.diagnostic_code)     }
+            { "spectral_pages_examined", outcome.spectral_stats.pages_examined } }                      },
+        { "stagger",
+         { { "operator", std::string(solver::StaggerSummary::operator_name) },
+            { "state", outcome.stagger.state == solver::StaggerState::completed     ? "completed"
+                       : outcome.stagger.state == solver::StaggerState::interrupted ? "interrupted"
+                                                                                    : "not_started" },
+            { "completion_reason", outcome.stagger.completion_reason },
+            { "admitted_orientations", outcome.stagger.admitted_orientations },
+            { "ranked_proposals", outcome.stagger.ranked_proposals },
+            { "best_count_before", outcome.stagger.best_count_before },
+            { "best_count_after", outcome.stagger.best_count_after },
+            { "work",
+              { { "candidate_evaluations", outcome.stagger.work.candidate_evaluations },
+                { "search_passes", outcome.stagger.work.search_passes },
+                { "orientations_started", outcome.stagger.work.orientations_started },
+                { "geometry_kernel_work", outcome.stagger.work.geometry_kernel_work },
+                { "geometry_vertex_visits", outcome.stagger.work.geometry_vertex_visits },
+                { "validation_kernel_work", outcome.stagger.work.validation_kernel_work },
+                { "validation_aabb_pair_tests", outcome.stagger.work.validation_aabb_pair_tests },
+                { "invalid_candidates", outcome.stagger.work.invalid_candidates },
+                { "indeterminate_candidates", outcome.stagger.work.indeterminate_candidates },
+                { "tracked_working_bytes_peak", outcome.stagger.work.tracked_working_bytes_peak } } } } },
+        { "time_to_best_basis",         std::string(time_to_best_basis)                                 },
+        { "caller_reserved_bytes",      caller_reserved                                                 },
+        { "tracked_working_bytes_peak", outcome.run.stats.tracked_working_bytes_peak                    },
+        { "diagnostic_code",            std::string(outcome.run.diagnostic_code)                        }
     };
 }
 
@@ -894,7 +915,10 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     }
     const auto host = peak_rss();
     if (!host) {
-        return fail("RESOURCE_MEASUREMENT_FAILED", "Peak RSS measurement failed.", 3);
+        return fail("RESOURCE_MEASUREMENT_FAILED", "Peak RSS measurement failed.", 3,
+                    {
+                        { "diagnostics", command_diagnostics(outcome, limits, caller_reserve, "retained_return") }
+        });
     }
     const bool final_snapshot = last_snapshot && last_snapshot->solution == outcome.run.retained_solution;
     const auto time_to_best = final_snapshot ? *last_snapshot_seconds : elapsed;
@@ -920,6 +944,7 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         }
         return {
             0, Json { { "ok", true },
+                     { "diagnostics", diagnostics },
                      { "termination_reason", reason(termination_reason) },
                      { "no_nonempty_incumbent", true },
                      { "preparation_reused", run_runtime.preparation_reused },
@@ -982,7 +1007,10 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     std::string().swap(engine_commit);
     uint64_t build_metadata_bytes {};
     if (!json_payload_bytes(metadata, build_metadata_bytes)) {
-        return fail("MEMORY_LIMIT", "CLI result metadata residency cannot be represented.", 3);
+        return fail("MEMORY_LIMIT", "CLI result metadata residency cannot be represented.", 3,
+                    {
+                        { "diagnostics", diagnostics }
+        });
     }
     io::ResultRequest result_request { retained_solution, object, container_asset, std::move(output_catalog),
                                        std::move(metadata) };
@@ -991,7 +1019,10 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     if (!add_repeated_bytes(build_catalog_bytes, result_request.catalog.quaternions.capacity(),
                             sizeof(geo::Quaternion)) ||
         !add_bytes(build_metadata_bytes, build_catalog_bytes)) {
-        return fail("MEMORY_LIMIT", "CLI result catalog residency cannot be represented.", 3);
+        return fail("MEMORY_LIMIT", "CLI result catalog residency cannot be represented.", 3,
+                    {
+                        { "diagnostics", diagnostics }
+        });
     }
     const auto build_command_reserve = request_resident_bytes(request, run_runtime.adapter_reserve_bytes);
     const auto build_native_reserve = solution_resident_bytes(*retained_solution);
@@ -1008,6 +1039,7 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         return fail("MEMORY_LIMIT", "CLI result live residency exceeds the checked build reservation.", 3,
                     {
                         { "phase",              "result_build_admission"         },
+                        { "diagnostics",        diagnostics                      },
                         { "build_limit_bytes",  build_limit                      },
                         { "live_bytes",         build_live_bytes                 },
                         { "native_input_bytes", build_native_reserve.value_or(0) }
@@ -1034,9 +1066,10 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
                                       add_bytes(export_live_bytes, run_runtime.retained_reserve_bytes) &&
                                       add_bytes(export_live_bytes, run_runtime.publication_reserved_bytes);
     if (!export_representable || export_live_bytes > export_limit) {
-        return fail("MEMORY_LIMIT", "CLI export residency cannot be represented.", 3,
-                    export_reserve ? export_admission_details(export_limit, export_live_bytes, *export_reserve)
-                                   : Json::object());
+        auto details = export_reserve ? export_admission_details(export_limit, export_live_bytes, *export_reserve)
+                                      : Json::object();
+        details["diagnostics"] = diagnostics;
+        return fail("MEMORY_LIMIT", "CLI export residency cannot be represented.", 3, std::move(details));
     }
     io::ResultPublicationRequest export_request { result_request, result_path, stl_path };
     export_request.max_working_bytes = export_limit - export_live_bytes;
@@ -1085,7 +1118,8 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     if (stop_monitor_error.failed) {
         Json details {
             { "result_path", portable_path(success.result_path) },
-            { "failure",     retained_diagnostics["failure"]    }
+            { "failure",     retained_diagnostics["failure"]    },
+            { "diagnostics", diagnostics                        }
         };
         if (stop_monitor_error.system_error) {
             details["system_error"] = *stop_monitor_error.system_error;

@@ -16,6 +16,7 @@ add_executable(spectrapack_solver_tests
   tests/baseline_tests.cpp
   tests/orientations_tests.cpp
   tests/spectral_tests.cpp
+  tests/stagger_tests.cpp
   tests/t009_tests.cpp
   tests/t010_tests.cpp
 )

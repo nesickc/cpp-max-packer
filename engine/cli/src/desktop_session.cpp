@@ -755,6 +755,15 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
     } preparation { session };
     try {
         Json result;
+        const auto preserve_diagnostics = [](Json& destination, const Json& completed) {
+            if (completed.contains("diagnostics")) {
+                destination["diagnostics"] = completed.at("diagnostics");
+            }
+        };
+        const auto completed_failure = [&](io::Error failure, const Json& completed) {
+            preserve_diagnostics(failure.details, completed);
+            return io::error_json(failure);
+        };
         if (method == "prepare") {
             if (session.previous_asset) {
                 return response(request, false,
@@ -936,12 +945,15 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
                                        session.engine_commit },
                                      runtime_run);
             runtime_run.publication_sink = nullptr;
+            const auto* completed_error = std::get_if<io::Error>(&native.terminal);
+            const auto& completed = completed_error ? completed_error->details : std::get<Json>(native.terminal);
             if (publication.binding && !session.flush_packing()) {
                 return response(
                     request, false,
-                    io::error_json(
+                    completed_failure(
                         error("PUBLICATION_RESOURCE_LIMIT",
-                              "The complete public packing could not be delivered within its bounded reservation.")));
+                              "The complete public packing could not be delivered within its bounded reservation."),
+                        completed));
             }
             validated_settings.reset();
             if (const auto* native_error = std::get_if<io::Error>(&native.terminal)) {
@@ -956,6 +968,7 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
                     if (native_error->details.contains("runtime")) {
                         result["runtime"] = native_error->details.at("runtime");
                     }
+                    preserve_diagnostics(result, native_error->details);
                 }
                 else {
                     auto failure = io::error_json(*native_error);
@@ -980,11 +993,13 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
                 std::chrono::duration<double>(runtime::Clock::now() - clock.native_start).count();
         }
         if (watcher.finish()) {
-            return response(request, false,
-                            io::error_json(error("STOP_MONITOR_FAILED", "Operation-scoped Stop transport failed.")));
+            return response(
+                request, false,
+                completed_failure(error("STOP_MONITOR_FAILED", "Operation-scoped Stop transport failed."), result));
         }
         if (session.wire_failed) {
-            return response(request, false, io::error_json(error("ENGINE_TRANSPORT", "Phase publication failed.")));
+            return response(request, false,
+                            completed_failure(error("ENGINE_TRANSPORT", "Phase publication failed."), result));
         }
         auto reply = response(request, true, std::move(result));
         preparation.committed = true;

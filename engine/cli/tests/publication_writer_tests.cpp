@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 #include <future>
+#include <spectrapack/io/inspection.hpp>
 
 #include "../../pack_geometry/tests/validation_fixtures.hpp"
 // Exercise the actual private writer, serialization, flush and Windows watchdog.
@@ -243,4 +244,80 @@ TEST_CASE("AT-14 T015 serialization refusal retains previous delivered DTO and r
     if (fixture.records.size() == 2) {
         CHECK(fixture.records[1]["kind"] == "response");
     }
+}
+TEST_CASE("AT-16 T015 failed final packing flush retains completed solver diagnostics without artifact eligibility",
+          "[publication][writer][T015][stagger-diagnostics]")
+{
+    const auto root =
+        std::filesystem::temp_directory_path() /
+        ("spectrapack-flush-diagnostics-" + std::to_string(runtime::Clock::now().time_since_epoch().count()));
+    struct Cleanup {
+        std::filesystem::path root;
+        ~Cleanup() { std::filesystem::remove_all(root); }
+    } cleanup { root };
+    REQUIRE(std::filesystem::create_directory(root));
+    const auto source = root / "cube.stl", report = root / "report.json", preview = root / "preview";
+    const auto bytes = geo::test_support::ascii_stl(geo::test_support::cuboid({ 0, 0, 0 }, { 1, 1, 1 }));
+    std::ofstream(source, std::ios::binary).write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+    REQUIRE(std::holds_alternative<io::InspectSuccess>(io::inspect_stl_file({ source, report, "mm" })));
+    REQUIRE(std::filesystem::create_directory(preview));
+    WriterFixture fixture;
+    fixture.session.test_clock = nullptr;
+    const auto stop = std::make_shared<std::stop_source>();
+    const auto prepared = operate(
+        fixture.session,
+        Json {
+            { "request_id",   "prepare"                                                                              },
+            { "operation_id", "prepare-op"                                                                           },
+            { "method",       "prepare"                                                                              },
+            { "params",       { { "object_report", path_text(report) }, { "output_directory", path_text(preview) } } }
+    },
+        stop);
+    REQUIRE(prepared.at("ok") == true);
+    fixture.session.test_before_encode = [](void*) {
+        throw std::bad_alloc();
+    };
+    LARGE_INTEGER ticks {}, frequency {};
+    REQUIRE(QueryPerformanceCounter(&ticks));
+    REQUIRE(QueryPerformanceFrequency(&frequency));
+    const auto failed =
+        operate(fixture.session,
+                Json {
+                    { "request_id",   "run"                     },
+                    { "operation_id", "run-op"                  },
+                    { "method",       "run"                     },
+                    { "params",
+                     { { "asset_token", prepared.at("result").at("asset_token") },
+                        { "settings",
+                          { { "desktop_version", 1 },
+                            { "box_dimensions_mm", { 1, 1, 1 } },
+                            { "clearance_mm", { { "pair", 0 }, { "wall", 0 } } },
+                            { "pitch_mm", 1 },
+                            { "orientation", { { "mode", "fixed" }, { "quaternion_xyzw", { 0, 0, 0, 1 } } } },
+                            { "budget_seconds", 10 },
+                            { "seed", "42" },
+                            { "thread_count", 1 },
+                            { "budget_scope", "total_start" } } },
+                        { "result_path", path_text(root / "result.json") },
+                        { "stop_file", path_text(root / "stop") },
+                        { "start_qpc_ticks", std::to_string(ticks.QuadPart) },
+                        { "qpc_frequency_hz", std::to_string(frequency.QuadPart) },
+                        { "publication",
+                          { { "version", 1 },
+                            { "session_id", "session" },
+                            { "native_epoch", "native" },
+                            { "settings_id", "settings" } } } } }
+    },
+                stop);
+    CHECK(failed.at("ok") == false);
+    CHECK(failed.at("error").at("code") == "PUBLICATION_RESOURCE_LIMIT");
+    const auto& details = failed.at("error").at("details");
+    CHECK_FALSE(details.contains("result_path"));
+    const auto& stagger = details.at("diagnostics").at("stagger");
+    CHECK(stagger.at("state") == "completed");
+    CHECK(stagger.at("best_count_after") == 1);
+    REQUIRE(fixture.session.retained_solution);
+    CHECK(fixture.session.retained_solution->copies().size() == 1);
+    CHECK(geo::revalidate(fixture.session.retained_solution).validated_solution);
+    CHECK(fixture.records.empty());
 }

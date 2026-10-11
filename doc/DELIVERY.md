@@ -31,7 +31,7 @@ The spec's `T-001`–`T-008` are initial implementation tasks; `AT-01`–`AT-17`
 | [T-009 CPU field scalability](T-009.md) | `feature/SOL-05-cpu-field-scalability` | Merged through PR #12 at `b82117a`; bounded local gates and three retained-result desktop journeys pass. Reviewed scope revision carries successful practical spectral/STL support into T-010 without raising caps |
 | [T-011 serial runtime foundations](T-011.md) | `feature/SOL-08-cpu-runtime` | Merged through PR #13 at `977c27c`; final local T011-A1–A7 and carried T009-A2/A3/A6 evidence retained |
 | [T-010 measured CPU threading](T-010.md) | `feature/SOL-08-cpu-threading` | Merged PR #14 at `858940a`; bounded local A1–A7 evidence retained. Latest hosted native gate: 570/571 pass, one refinement-counter case fails. No new threading qualification claimed |
-| [T015-P1 quality and count-only live results](T-015.md#t015-p1-known-object-quality-and-count-only-live-publication) | `feature/SOL-04-pryanik-live-count` | Active bounded extraction after merged T-010; remaining parent-ticket gates stay open |
+| [T015-P1 quality and count-only live results](T-015.md#t015-p1-known-object-quality-and-count-only-live-publication) | `feature/SOL-04-pryanik-live-count` | Locally verified bounded extraction after merged T-010; user review/merge pending; parent-ticket gates stay open |
 
 [Delivery milestones](MILESTONES.md) define T-009–T-023 and their merged
 prerequisites. Each delivery ticket has a planned feature branch, requirements
