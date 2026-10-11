@@ -1,6 +1,7 @@
 #include "spectrapack/solver/incumbent.hpp"
 
 #include "allocation_fault.hpp"
+#include "baseline_internal.hpp"
 #include "storage_accounting.hpp"
 
 #include <algorithm>
@@ -281,6 +282,18 @@ struct Incumbent::Storage {
   std::vector<PoseKey> keys;
   std::uint64_t retained_bytes{};
 };
+
+bool detail::IncumbentResumeAccess::resume(Incumbent& incumbent, const SnapshotHandle& entry) noexcept
+{
+    auto& storage = *incumbent.storage_;
+    if (storage.best || !storage.keys.empty() || !entry || !entry->solution ||
+        entry->solution->context() != storage.context || entry->score.count != entry->solution->copies().size()) {
+        return false;
+    }
+    storage.best = entry;
+    storage.retained_bytes = sizeof(NativeSnapshot) + detail::kSharedOwnerControlBytes;
+    return true;
+}
 
 Incumbent::Incumbent(std::shared_ptr<const geometry::ValidationContext> context)
     : storage_(std::make_unique<Storage>(

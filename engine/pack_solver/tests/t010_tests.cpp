@@ -116,6 +116,8 @@ TEST_CASE("T010 two-thread CPU request completes real spectral work",
   limits.cpu_thread_count = 2;
   limits.baseline.max_candidate_evaluations = 1;
   limits.spectral.max_candidate_evaluations = 1;
+  limits.spectral.max_copies = 1;
+  limits.spectral.max_search_passes = 2;  // Count-dominated seed1 plus the original FFT pass.
   limits.max_refinement_evaluations = 0;
   const auto result =
       sol::run_cpu_spectral(context(), {{0, 0, 0}, 1}, limits, {});
@@ -157,7 +159,9 @@ TEST_CASE("T010 requested FFT threads overlap real library calls", "[solver][T01
         sol::SpectralLimits limits;
         limits.cpu_thread_count = threads;
         limits.baseline.max_candidate_evaluations = 1;
-        limits.spectral.max_candidate_evaluations = limits.spectral.max_search_passes = 1;
+        // Retain the original FFT candidate allowance after a count-dominated fixed seed.
+        limits.spectral.max_candidate_evaluations = limits.spectral.max_copies = 1;
+        limits.spectral.max_search_passes = 2;
         limits.max_refinement_evaluations = 0;
         const auto native = geo::make_validation_context(context()->object(), geo::BoxDimensions { 40, 30, 20 }, {});
         const auto result = sol::run_cpu_spectral(std::get<std::shared_ptr<const geo::ValidationContext>>(native),
@@ -202,6 +206,8 @@ TEST_CASE("T010 Stop during a real raster worker retains native incumbent", "[so
     limits.cpu_thread_count = 4;
     limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
     limits.spectral.max_candidate_evaluations = 1;
+    limits.spectral.max_copies = initial.best->solution->copies().size();
+    limits.spectral.max_search_passes = 2;  // Count-dominated seed1 plus the original raster/FFT pass.
     limits.max_refinement_evaluations = 0;
     const auto result = sol::run_cpu_spectral(native_context, { { 0, 0, 0 }, 1 }, limits,
                                               { stop.get_token() }, {}, initial.best->solution);
@@ -271,7 +277,9 @@ TEST_CASE("T010 active FFT interruption preserves exact central incumbent", "[so
         sol::SpectralLimits limits;
         limits.cpu_thread_count = 4;
         limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
-        limits.spectral.max_candidate_evaluations = limits.spectral.max_search_passes = 1;
+        limits.spectral.max_candidate_evaluations = 1;
+        limits.spectral.max_copies = initial.best->score.count;
+        limits.spectral.max_search_passes = 2;  // Seed prefix1 plus the original FFT pass.
         limits.max_refinement_evaluations = 0;
         const auto result =
             sol::run_cpu_spectral(native, { {}, 1 }, limits, control, [&](sol::SnapshotHandle published) {

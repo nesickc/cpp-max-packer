@@ -11,7 +11,7 @@
 
 namespace spectrapack::geometry::detail::validation_kernel {
 
-inline constexpr std::string_view kRevision = "homogeneous-rational-interval-v3";
+inline constexpr std::string_view kRevision = "homogeneous-rational-interval-v4";
 
 enum class Decision : std::uint8_t { no, yes, indeterminate };
 // `at_least` certifies that a lower bound meets the requested threshold. It
@@ -78,6 +78,7 @@ class PreparedSolid;
                                                                           std::uint64_t passes) noexcept;
 class PlacedSolid;
 class PosedBounds;
+class SupportTable;
 
 [[nodiscard]] std::optional<std::uint64_t> prepared_owned_bytes(const PreparedSolid&) noexcept;
 [[nodiscard]] std::optional<std::uint64_t> placed_owned_bytes(const PlacedSolid&) noexcept;
@@ -107,6 +108,16 @@ struct PairResult {
   Threshold surface_gap{Threshold::indeterminate};
   std::string method;
   std::string code;
+};
+
+// Static support diagnostics must not allocate per pair, including Debug STL
+// iterator proxies. Full classifiers retain their existing owning PairResult.
+struct SupportPairResult {
+    Decision material_overlap { Decision::indeterminate };
+    BoundaryRelation boundaries { BoundaryRelation::indeterminate };
+    Threshold surface_gap { Threshold::indeterminate };
+    std::string_view method;
+    std::string_view code;
 };
 
 struct ContainmentResult {
@@ -158,6 +169,11 @@ struct PhysicalBounds {
 [[nodiscard]] PosedBoundsResult posed_bounds(std::shared_ptr<const AcceptedSolid>, Vec3, Quaternion, Budget&);
 [[nodiscard]] std::optional<PairResult> bounds_pair_certificate(const PosedBounds&, const PosedBounds&,
                                                                 double clearance_mm, Budget&);
+// A complete immutable table belongs to one validate() call and one exact asset.
+// A miss falls through to full native classification; a failed proof is indeterminate.
+[[nodiscard]] std::optional<SupportPairResult> support_pair_certificate(
+    const PosedBounds&, const PosedBounds&, double clearance_mm,
+    std::shared_ptr<const SupportTable>& validation_local_table, Budget&);
 [[nodiscard]] std::optional<ContainmentResult> bounds_box_certificate(const PosedBounds&, BoxDimensions,
                                                                       double clearance_mm, Budget&);
 [[nodiscard]] PhysicalBounds physical_bounds(

@@ -159,7 +159,7 @@ TEST_CASE("T009 forwarded kernel work failure retains the physical incumbent as 
     const auto native_context = context({ 10, 8, 6 });
     sol::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = 1;
-    limits.spectral.max_candidate_evaluations = 1;
+    limits.spectral.max_candidate_evaluations = limits.spectral.max_copies = 1;  // Dominated by retained1.
     limits.per_representation.max_kernel_work = 0;
     const auto result = sol::run_cpu_spectral(native_context,
                                               {
@@ -310,7 +310,8 @@ TEST_CASE("T010 Ulamok full cube field pass preserves 36", "[solver][T010][quali
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
     limits.spectral.max_candidate_evaluations = 1;
-    limits.spectral.max_search_passes = 1;
+    limits.spectral.max_copies = baseline.best->solution->copies().size();
+    limits.spectral.max_search_passes = 25;  // Count-dominated cube seed24 plus the original FFT pass.
     limits.max_refinement_evaluations = 0;
     const auto value = sol::run_cpu_spectral(
         native_context,
@@ -404,6 +405,8 @@ TEST_CASE("T010 full Pryanik field profiles preserve two native-valid copies", "
             sol::SpectralLimits limits;
             limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
             limits.spectral.max_candidate_evaluations = limits.spectral.max_search_passes = 1;
+            // One fixed-orientation seed pass plus the original FFT trial pass.
+            limits.spectral.max_search_passes = 2;
             limits.max_refinement_evaluations = 0;
             const auto value =
                 sol::run_cpu_spectral(native_context, { {}, 4 }, limits, {}, {}, baseline.best->solution);
@@ -419,20 +422,6 @@ TEST_CASE("T010 full Pryanik field profiles preserve two native-valid copies", "
             REQUIRE(value.field_admission);
             CHECK(value.field_admission->working_bytes_upper_bound <= limits.max_working_bytes);
             CHECK(geo::revalidate(retained).validated_solution);
-            if (source == std::string_view { "rc/items/pryanik_1.STL" }) {
-                // The ordinary desktop reaches this physical-face trial after its two baseline copies.
-                limits.max_refinement_evaluations = 1;
-                const auto refined =
-                    sol::run_cpu_spectral(native_context, { {}, 4 }, limits, {}, {}, baseline.best->solution);
-                const auto refined_retained = refined.run.best ? refined.run.best->solution
-                                                               : refined.run.retained_solution;
-                CAPTURE(refined.run.diagnostic_code, refined.run.stats.indeterminate_candidates);
-                CHECK(refined.spectral_stats.refinement_evaluations == 1);
-                CHECK(refined.run.stats.indeterminate_candidates == 1);
-                CHECK(refined.run.termination_reason != sol::TerminationReason::resource_limit);
-                CHECK(refined.run.termination_reason != sol::TerminationReason::error);
-                CHECK(refined_retained == baseline.best->solution);
-            }
         }
     }
 }

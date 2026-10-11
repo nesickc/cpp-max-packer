@@ -3,6 +3,14 @@ import type { Desktop } from './generated/contracts';
 export const defaultSettings: Desktop.Settings = { desktop_version: 1, box_dimensions_mm: [100, 100, 100], clearance_mm: { pair: 1, wall: 1 }, orientation: { mode: 'fixed', quaternion_xyzw: [0, 0, 0, 1] }, pitch_mm: 2, budget_seconds: 60, seed: '0', thread_count: 1, budget_scope: 'total_start' };
 export function acceptState(current: Desktop.State | null, incoming: Desktop.State): Desktop.State {
   if (current && (current.session_id !== incoming.session_id || incoming.revision <= current.revision)) return current;
+  const old = current?.live_result, next = incoming.live_result;
+  if (old && next && old.operation_id === next.operation_id) {
+    if (old.settings_id !== next.settings_id || old.native_epoch !== next.native_epoch ||
+        next.count <= old.count || next.sequence <= old.sequence || next.solution_revision <= old.solution_revision)
+      return { ...incoming, live_result: old };
+  }
+  if (next && next.operation_id !== old?.operation_id && next.operation_id !== incoming.operation?.id)
+    return { ...incoming, live_result: old ?? null };
   return incoming;
 }
 export function settingsError(settings: Desktop.Settings): string | null {

@@ -43,6 +43,16 @@ struct SpectralStats {
     std::uint64_t proximity_terms {};
 };
 
+enum class StaggerState { not_started, completed, interrupted };
+struct StaggerSummary {
+    static constexpr std::string_view operator_name = "half_column_seven_eighths_rows";
+    StaggerState state { StaggerState::not_started };
+    std::string_view completion_reason { "not_requested" };
+    RunStats work;
+    std::uint64_t admitted_orientations {}, ranked_proposals {};
+    std::uint64_t best_count_before {}, best_count_after {};
+};
+
 struct CpuFieldAdmissionEstimate {
     std::uint64_t working_bytes_upper_bound {};
     std::uint64_t footprint_copy_count {};
@@ -56,6 +66,7 @@ struct SpectralOutcome {
     BaselineOutcome run;
     RunStats baseline_stats;
     SpectralStats spectral_stats;
+    StaggerSummary stagger;
     // Maximum successful actual-layout field admission, with its associated
     // copy/thread/policy basis. Speculative empty preflight is not published.
     std::optional<CpuFieldAdmissionEstimate> field_admission;

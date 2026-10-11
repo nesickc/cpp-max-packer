@@ -6,6 +6,7 @@
 #include <optional>
 #include <span>
 #include <spectrapack/io/result_export.hpp>
+#include <spectrapack/solver/incumbent.hpp>
 #include <stop_token>
 #include <string>
 #include <variant>
@@ -27,7 +28,16 @@ struct StopMonitorResult {
     bool failed {};
     std::optional<int> system_error;
 };
+struct PublishedSnapshot {
+    std::uint64_t revision {};
+    double time_to_count_seconds {};
+    solver::SnapshotHandle native;
+};
+using PublishedSnapshotHandle = std::shared_ptr<const PublishedSnapshot>;
 struct SolveRuntime {
+    std::uint64_t publication_reserved_bytes {};
+    void (*publication_sink)(void*, PublishedSnapshotHandle) noexcept {};
+    void* publication_context {};
     runtime::OperationControl control;
     runtime::Clock::time_point native_start { runtime::Clock::now() };
     double elapsed_before_native_seconds {};

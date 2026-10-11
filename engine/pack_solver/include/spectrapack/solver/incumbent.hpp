@@ -10,6 +10,10 @@
 
 namespace spectrapack::solver {
 
+namespace detail {
+struct IncumbentResumeAccess;
+}
+
 struct LayoutScore {
   std::uint64_t count{};
   std::optional<double> enclosing_z_span_mm;
@@ -68,6 +72,7 @@ class Incumbent {
   [[nodiscard]] const SnapshotHandle& best() const noexcept;
 
  private:
+  friend struct detail::IncumbentResumeAccess;
   struct Storage;
   std::unique_ptr<Storage> storage_;
 };

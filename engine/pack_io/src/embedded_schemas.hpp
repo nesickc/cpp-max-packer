@@ -2616,6 +2616,16 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
             }
           },
           "additionalProperties": false
+        },
+        "live_result": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/LiveResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -2834,6 +2844,88 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         }
       },
       "additionalProperties": false
+    },
+    "LiveResult": {
+      "type": "object",
+      "required": [
+        "publication_version",
+        "session_id",
+        "native_epoch",
+        "operation_id",
+        "settings_id",
+        "solution_revision",
+        "sequence",
+        "count",
+        "placements",
+        "validation_status",
+        "settings",
+        "preview"
+      ],
+      "properties": {
+        "publication_version": {
+          "const": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "native_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "settings_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "solution_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "placements": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "https://spectrapack.invalid/schemas/v1/results.schema.json#/definitions/placement"
+          }
+        },
+        "validation_status": {
+          "const": "valid"
+        },
+        "settings": {
+          "$ref": "#/definitions/Settings"
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Preview"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
     }
   },
   "oneOf": [
@@ -3012,6 +3104,9 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
             },
             "qpc_frequency_hz": {
               "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"
+            },
+            "publication": {
+              "$ref": "#/definitions/publication"
             }
           },
           "additionalProperties": false
@@ -3215,6 +3310,117 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         }
       },
       "additionalProperties": false
+    },
+    "publication": {
+      "type": "object",
+      "required": [
+        "version",
+        "session_id",
+        "native_epoch",
+        "settings_id"
+      ],
+      "properties": {
+        "version": {
+          "const": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "native_epoch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "settings_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "packing_value": {
+      "type": "object",
+      "required": [
+        "solution_revision",
+        "count",
+        "validation_status",
+        "placements"
+      ],
+      "properties": {
+        "solution_revision": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "validation_status": {
+          "const": "valid"
+        },
+        "placements": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "https://spectrapack.invalid/schemas/v1/results.schema.json#/definitions/placement"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "packing": {
+      "type": "object",
+      "required": [
+        "runtime_version",
+        "request_id",
+        "operation_id",
+        "kind",
+        "publication",
+        "sequence",
+        "native_elapsed_seconds",
+        "packing"
+      ],
+      "properties": {
+        "runtime_version": {
+          "const": 1
+        },
+        "request_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "operation_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "kind": {
+          "const": "packing"
+        },
+        "publication": {
+          "$ref": "#/definitions/publication"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "native_elapsed_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "packing": {
+          "$ref": "#/definitions/packing_value"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "oneOf": [
@@ -3235,6 +3441,9 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
     },
     {
       "$ref": "#/definitions/phase"
+    },
+    {
+      "$ref": "#/definitions/packing"
     }
   ]
 }

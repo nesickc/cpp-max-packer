@@ -95,6 +95,115 @@ struct Inner {
     transitioning: bool,
 }
 
+fn accept_live(
+    inner: &mut Inner,
+    binding: &crate::native_session::Publication,
+    operation: &str,
+    asset_token: &Value,
+    live: Value,
+) -> bool {
+    if inner.state.session_id != binding.session_id
+        || !inner
+            .state
+            .operation
+            .as_ref()
+            .is_some_and(|op| op.id == operation && op.finished_at.is_none())
+        || !inner.object.as_ref().is_some_and(|object| {
+            object.native_epoch.as_deref() == Some(&binding.native_epoch)
+                && object.native_token.as_deref() == asset_token.as_str()
+        })
+    {
+        return false;
+    }
+    if let Some(old) = inner
+        .state
+        .live_result
+        .as_ref()
+        .filter(|old| old["operation_id"] == operation)
+    {
+        if old["settings_id"] != binding.settings_id
+            || old["native_epoch"] != binding.native_epoch
+            || live["count"].as_u64() <= old["count"].as_u64()
+            || live["sequence"].as_u64() <= old["sequence"].as_u64()
+            || live["solution_revision"].as_u64() <= old["solution_revision"].as_u64()
+        {
+            return false;
+        }
+    }
+    inner.result = None;
+    inner.state.result = None;
+    inner.state.live_result = Some(live);
+    inner.state.revision += 1;
+    true
+}
+fn physical_value_equal(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Number(_), Value::Number(_)) => a.as_f64() == b.as_f64(),
+        (Value::Array(a), Value::Array(b)) => {
+            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| physical_value_equal(a, b))
+        }
+        (Value::Object(a), Value::Object(b)) => {
+            a.len() == b.len()
+                && a.iter()
+                    .all(|(key, a)| b.get(key).is_some_and(|b| physical_value_equal(a, b)))
+        }
+        _ => a == b,
+    }
+}
+fn physical_orientation_equal(a: &Value, b: &Value) -> bool {
+    if a["mode"] != "fixed" || b["mode"] != "fixed" {
+        return physical_value_equal(a, b);
+    }
+    let normalized = |value: &Value| -> Option<[f64; 4]> {
+        let mut q: [f64; 4] = serde_json::from_value(value["quaternion_xyzw"].clone()).ok()?;
+        let norm = q[0].hypot(q[1]).hypot(q[2].hypot(q[3]));
+        if !norm.is_finite() || norm == 0.0 {
+            return None;
+        }
+        for component in &mut q {
+            *component /= norm;
+        }
+        Some(q)
+    };
+    let (Some(a), Some(b)) = (normalized(a), normalized(b)) else {
+        return false;
+    };
+    // q and -q describe the same rotation. Allow only normalization rounding,
+    // not the broader accepted-input unit-norm tolerance; placements remain exact.
+    [1.0, -1.0].into_iter().any(|sign| {
+        a.iter()
+            .zip(b)
+            .all(|(a, b)| (a - sign * b).abs() <= 32.0 * f64::EPSILON)
+    })
+}
+
+fn public_artifact_matches(live: &Value, document: &Value, settings: &Value, object_report: &Value) -> Outcome<()> {
+    let resolved = &document["search"]["resolved_settings"];
+    if document["count"] != live["count"]
+        || document["placements"] != live["placements"]
+        || document["solution_revision"] != live["solution_revision"]
+        || !physical_value_equal(&document["container"]["dimensions_mm"], &settings["box_dimensions_mm"])
+        || !physical_value_equal(&resolved["clearance_mm"], &settings["clearance_mm"])
+        || !physical_orientation_equal(&resolved["orientation"], &settings["orientation"])
+        || !physical_value_equal(&resolved["resolved"]["pitch_mm"], &settings["pitch_mm"])
+        || resolved["search"]["seed"] != settings["seed"]
+    {
+        return Err(error(
+            "PUBLICATION_MISMATCH",
+            "Terminal artifact differs from the displayed public packing or captured settings.",
+        ));
+    }
+    for key in ["source", "accepted_solid", "frame", "dimensions_mm", "repair_record"] {
+        if document["assets"]["object"][key] != object_report[key] {
+            return Err(error(
+                "PUBLICATION_MISMATCH",
+                "Terminal artifact belongs to a different accepted object.",
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct Core {
     engine: PathBuf,
@@ -189,6 +298,7 @@ impl Core {
             object: None,
             draft_settings: None,
             result: None,
+            live_result: None,
             operation: None,
             last_error: None,
             cpu_runtime: None,
@@ -583,27 +693,54 @@ impl Core {
                 &self.root,
             )?);
         }
-        let result =
-            native
-                .as_mut()
-                .unwrap()
-                .request(method, operation, params, |sequence, phase, _| {
-                    if let Some(operation_id) = operation {
-                        let mut inner = self.inner.lock().unwrap();
-                        if let Some(active) = inner.state.operation.as_mut() {
-                            if active.id == operation_id
-                                && active.finished_at.is_none()
-                                && active.sequence.unwrap_or(0) < sequence
-                            {
-                                active.sequence = Some(sequence);
-                                if active.phase != "stopping" {
-                                    active.phase = phase.into();
-                                }
-                                inner.state.revision += 1;
+        let live_settings = params["settings"].clone();
+        let asset_token = params["asset_token"].clone();
+        let preview = self
+            .inner
+            .lock()
+            .unwrap()
+            .object
+            .as_ref()
+            .and_then(|object| object.preview.clone());
+        let mut packing_sink =
+            |binding: &crate::native_session::Publication, packing: &crate::native_session::Packing, sequence| {
+                let mut live = serde_json::to_value(packing).unwrap();
+                live["publication_version"] = json!(binding.version);
+                live["session_id"] = json!(binding.session_id);
+                live["native_epoch"] = json!(binding.native_epoch);
+                live["settings_id"] = json!(binding.settings_id);
+                live["operation_id"] = json!(operation);
+                live["sequence"] = json!(sequence);
+                live["settings"] = live_settings.clone();
+                live["preview"] = json!(preview);
+                if let Some(operation) = operation {
+                    accept_live(&mut self.inner.lock().unwrap(), binding, operation, &asset_token, live);
+                }
+            };
+        let result = native.as_mut().unwrap().request_with_packing(
+            method,
+            operation,
+            params,
+            |sequence, phase, _| {
+                if let Some(operation_id) = operation {
+                    let mut inner = self.inner.lock().unwrap();
+                    if let Some(active) = inner.state.operation.as_mut() {
+                        if active.id == operation_id
+                            && active.finished_at.is_none()
+                            && active.sequence.unwrap_or(0) < sequence
+                        {
+                            active.sequence = Some(sequence);
+                            if active.phase != "stopping" {
+                                active.phase = phase.into();
                             }
+                            inner.state.revision += 1;
                         }
                     }
-                });
+                }
+            },
+            Some(&mut packing_sink),
+        );
+
         if result.as_ref().err().is_some_and(|failure| {
             [
                 "ENGINE_TRANSPORT",
@@ -726,6 +863,7 @@ impl Core {
             let mut inner = core.inner.lock().unwrap(); inner.state.cpu_runtime=object.cpu_runtime.clone(); inner.object = Some(object.clone());
             prepared_guard.committed=true;
             inner.protected_sources.push(source.clone());
+            inner.state.live_result=None;
             inner.state.object = Some(json!({"id":object_id,"display_name":name,"report":report,"preview":object.preview}));
             inner.state.draft_settings = Some(settings); inner.state.revision += 1; drop(inner);
             core.prune_previews();
@@ -770,7 +908,9 @@ impl Core {
             fs::create_dir(&output).map_err(|e|error("FILE_ACCESS",e.to_string()))?;
             let current_epoch=core.native.lock().unwrap().as_ref().map(|native|native.epoch.clone());
             if object.native_epoch!=current_epoch { return Err(error("ENGINE_SESSION_LOST","Prepared token belongs to an expired native epoch.")); }
-            let solve_outcome=core.native_request("run",Some(&op),json!({"asset_token":object.native_token,"settings":settings,
+            let publication=json!({"version":1,"session_id":core.inner.lock().unwrap().state.session_id,
+                "native_epoch":current_epoch,"settings_id":id("settings")});
+            let solve_outcome=core.native_request("run",Some(&op),json!({"asset_token":object.native_token,"settings":settings,"publication":publication,
                 "result_path":output.join("result.json"),"stop_file":marker,"start_qpc_ticks":clock.0.to_string(),"qpc_frequency_hz":clock.1.to_string()}),false);
             if let Err(failure)=&solve_outcome {
                 let mut inner=core.inner.lock().unwrap();
@@ -783,7 +923,7 @@ impl Core {
                 if let Some(operation)=&mut inner.state.operation {
                     if operation.id==op {
                         operation.native_completion_elapsed_seconds=response["native_completion_elapsed_seconds"].as_f64();
-                        if response["no_nonempty_incumbent"]==true {operation.detail=Some("No nonempty incumbent; previous complete result retained.".into());}
+                        if response["no_nonempty_incumbent"]==true {operation.detail=Some("No nonempty incumbent.".into());}
                     }
                 }
                 if let Some(runtime)=inner.state.cpu_runtime.as_mut() {runtime["requested_thread_count"]=settings.get("thread_count").cloned().unwrap_or(json!(1));runtime["resolved_thread_count"]=response["resolved_thread_count"].clone();}
@@ -794,6 +934,21 @@ impl Core {
                 if document["validation"]["status"] != "valid" {
                     return Err(error("INVALID_RESULT", "Native result is not validated."));
                 }
+                let live = core.inner.lock().unwrap().state.live_result.clone();
+                if document["count"] == 0 && (live.is_some() || core.inner.lock().unwrap().state.result.is_some()) {
+                    return solve_outcome.map(|_| ());
+                }
+                if document["count"].as_u64().unwrap_or(0) > 0 {
+                    let live = live.as_ref().filter(|live| live["operation_id"] == op).ok_or_else(|| {
+                        error(
+                            "PUBLICATION_MISMATCH",
+                            "Terminal packing has no matching complete public snapshot.",
+                        )
+                    })?;
+                    let object_report = security::json(&object.report, REPORT_LIMIT)?;
+                    public_artifact_matches(live, &document, &settings, &object_report)?;
+                }
+
                 let result_report=output.join("object.report.json");
                 write_json(&result_report,&document["assets"]["object"])?;
                 core.copy_report_dependencies(&result_report, &output)?;
@@ -924,6 +1079,7 @@ impl Core {
         inner.stop_file = None;
         inner.state.object = None;
         inner.state.result = None;
+        inner.state.live_result = None;
         inner.state.draft_settings = None;
         inner.state.cpu_runtime = None;
         inner.state.last_error = None;
@@ -935,6 +1091,7 @@ impl Core {
     fn prune_previews(&self) {
         let mut inner = self.inner.lock().unwrap();
         let ids = [
+            inner.state.live_result.as_ref().and_then(|live|live["preview"]["preview_id"].as_str()).map(str::to_owned),
             inner
                 .object
                 .as_ref()
@@ -1084,6 +1241,9 @@ impl Core {
             if inner.state.object.as_ref().unwrap()["report"]["state"] != "accepted" {
                 return Err(error("INVALID_SOLID", "Only accepted objects can be saved."));
             }
+            if inner.state.live_result.is_some() && inner.result.is_none() {
+                return Err(error("PUBLIC_RESULT_UNAVAILABLE","The displayed packing has no matching finalized files; Save is unavailable."));
+            }
             let result = inner.result.clone();
             if let Some(result) = &result {
                 let original = security::json(&result.object.report, REPORT_LIMIT)?;
@@ -1172,6 +1332,7 @@ impl Core {
             if let Some(old)=old_object {core.release_native(old.native_token,old.native_epoch.as_deref())?;}
             let mut inner = core.inner.lock().unwrap(); inner.state.cpu_runtime=object.cpu_runtime.clone(); inner.object = Some(object.clone()); inner.result = result_files;
             prepared_guard.committed=true;
+            inner.state.live_result=None;
             inner.state.object = Some(json!({"id":object_id,"display_name":name,"report":report,"preview":object.preview}));
             inner.state.result = result_snapshot; inner.state.draft_settings = Some(draft);
             let result_id = inner.result.as_ref().map(|r| r.id.clone());
@@ -1291,6 +1452,209 @@ mod tests {
             "owner exit at the child-creation boundary must leave no native process"
         );
     }
+    #[test]
+    fn t015_public_binding_gate_keeps_exact_poses_and_resets_only_for_current_run() {
+        use crate::native_session::Publication;
+        let binding = Publication {
+            version: 1,
+            session_id: "session".into(),
+            native_epoch: "native".into(),
+            settings_id: "settings".into(),
+        };
+        let state = State {
+            desktop_version: 1,
+            session_id: "session".into(),
+            revision: 0,
+            object: None,
+            draft_settings: None,
+            result: None,
+            live_result: None,
+            last_error: None,
+            cpu_runtime: None,
+            operation: Some(Operation {
+                id: "operation".into(),
+                kind: "solve".into(),
+                phase: "placing".into(),
+                started_at: now(),
+                finished_at: None,
+                result_id: None,
+                detail: None,
+                sequence: None,
+                completion_elapsed_seconds: None,
+                native_completion_elapsed_seconds: None,
+            }),
+        };
+        let mut inner = Inner {
+            state,
+            object: Some(ObjectFiles {
+                id: "object".into(),
+                report: PathBuf::new(),
+                preview: None,
+                native_token: Some("asset".into()),
+                native_epoch: Some("native".into()),
+                cpu_runtime: None,
+            }),
+            result: None,
+            previews: HashMap::new(),
+            stop_file: None,
+            protected_sources: Vec::new(),
+            operation_started: None,
+            transitioning: false,
+        };
+        let value = |count: u32, revision, sequence| {
+            json!({"operation_id":"operation","settings_id":"settings","native_epoch":"native",
+            "solution_revision":revision,"sequence":sequence,"count":count,
+            "placements":(0..count).map(|i|json!({"copy_id":format!("copy-{i}"),"translation_mm":[i*2+1,revision,1],
+                "quaternion_xyzw":[0,0,0,1],"local_to_world":[[1,0,0,i*2+1],[0,1,0,revision],[0,0,1,1],[0,0,0,1]]})).collect::<Vec<_>>()})
+        };
+        let token = json!("asset");
+        assert!(accept_live(&mut inner, &binding, "operation", &token, value(24, 1, 1)));
+        let a24 = inner.state.live_result.clone();
+        assert!(!accept_live(&mut inner, &binding, "operation", &token, value(24, 2, 2)));
+        assert_eq!(inner.state.live_result, a24);
+        for field in ["session", "native", "settings"] {
+            let mut foreign = binding.clone();
+            match field {
+                "session" => foreign.session_id = "old".into(),
+                "native" => foreign.native_epoch = "old".into(),
+                _ => foreign.settings_id = "old".into(),
+            }
+            assert!(!accept_live(&mut inner, &foreign, "operation", &token, value(25, 2, 2)));
+        }
+        assert!(!accept_live(
+            &mut inner,
+            &binding,
+            "old-operation",
+            &token,
+            value(25, 2, 2)
+        ));
+        assert!(!accept_live(
+            &mut inner,
+            &binding,
+            "operation",
+            &json!("old-asset"),
+            value(25, 2, 2)
+        ));
+        assert!(accept_live(&mut inner, &binding, "operation", &token, value(25, 2, 2)));
+        let d25 = inner.state.live_result.clone();
+        assert!(!accept_live(&mut inner, &binding, "operation", &token, value(26, 1, 3)));
+        assert!(!accept_live(&mut inner, &binding, "operation", &token, value(26, 3, 2)));
+        assert_eq!(inner.state.live_result, d25);
+        assert!(accept_live(&mut inner, &binding, "operation", &token, value(26, 3, 3)));
+        inner.state.operation.as_mut().unwrap().id = "fresh".into();
+        assert!(accept_live(
+            &mut inner,
+            &binding,
+            "fresh",
+            &token,
+            json!({"operation_id":"fresh","count":1,"solution_revision":1,"sequence":1})
+        ));
+    }
+    #[test]
+    fn t015_terminal_equal_count_pose_change_is_a_publication_error() {
+        let settings = settings();
+        let live = json!({"count":1,"solution_revision":2,"placements":[{"copy_id":"first","translation_mm":[1,2,3],"quaternion_xyzw":[0,0,0,1]}]});
+        let mut document = json!({"count":1,"solution_revision":2,"placements":live["placements"],
+            "container":{"dimensions_mm":settings["box_dimensions_mm"]},"assets":{"object":{}},
+            "search":{"resolved_settings":{"clearance_mm":settings["clearance_mm"],"orientation":settings["orientation"],
+                "resolved":{"pitch_mm":settings["pitch_mm"]},"search":{"seed":settings["seed"]}}}});
+        assert!(public_artifact_matches(&live, &document, &settings, &json!({})).is_ok());
+        document["placements"][0]["translation_mm"] = json!([4, 5, 6]);
+        assert_eq!(
+            public_artifact_matches(&live, &document, &settings, &json!({}))
+                .unwrap_err()
+                .code,
+            "PUBLICATION_MISMATCH"
+        );
+    }
+
+    #[test]
+    fn t015_canonical_fixed_settings_preserve_exact_public_placement_matching() {
+        let live = json!({"count":1,"solution_revision":1,"placements":[{"copy_id":"one",
+            "translation_mm":[1,2,3],"quaternion_xyzw":[0,0,0,1]}]});
+        let mut requested = settings();
+        let mut document = json!({"count":1,"solution_revision":1,"placements":live["placements"],
+            "container":{"dimensions_mm":requested["box_dimensions_mm"]},"assets":{"object":{}},
+            "search":{"resolved_settings":{"clearance_mm":requested["clearance_mm"],
+                "orientation":requested["orientation"],"resolved":{"pitch_mm":requested["pitch_mm"]},
+                "search":{"seed":requested["seed"]}}}});
+        for q in [[0.0, 0.0, 0.0, -1.0], [0.0, 0.0, 0.0, 1.0000000005]] {
+            requested["orientation"]["quaternion_xyzw"] = json!(q);
+            assert!(
+                public_artifact_matches(&live, &document, &requested, &json!({})).is_ok(),
+                "{q:?}"
+            );
+        }
+        requested["orientation"]["quaternion_xyzw"] = json!([0, 0, 1e-10, 1]);
+        assert!(public_artifact_matches(&live, &document, &requested, &json!({})).is_err());
+        requested["orientation"]["quaternion_xyzw"] = json!([0, 0, 0, -1]);
+        document["placements"][0]["quaternion_xyzw"] = json!([0, 0, 0, -1]);
+        assert_eq!(
+            public_artifact_matches(&live, &document, &requested, &json!({}))
+                .unwrap_err()
+                .code,
+            "PUBLICATION_MISMATCH"
+        ); // Physical settings equivalence never relaxes canonical pose equality.
+    }
+
+    #[test]
+    fn t015_delivery_failure_keeps_real_public_poses_and_disables_old_file_fallback() {
+        use crate::native_session::Publication;
+        let (root, core) = fixture();
+        import_fixture(&core);
+        core.start(settings()).unwrap();
+        let previous = complete(&core);
+        assert!(previous.last_error.is_none(), "{previous:?}");
+        assert!(previous.result.is_some());
+        let mut live = previous.live_result.unwrap();
+        let (receipt, _) = core.begin("solve", None).unwrap();
+        let (binding, token) = {
+            let inner = core.inner.lock().unwrap();
+            let object = inner.object.as_ref().unwrap();
+            (
+                Publication {
+                    version: 1,
+                    session_id: inner.state.session_id.clone(),
+                    native_epoch: object.native_epoch.clone().unwrap(),
+                    settings_id: "fresh-settings".into(),
+                },
+                json!(object.native_token),
+            )
+        };
+        live["operation_id"] = json!(receipt.operation_id);
+        live["settings_id"] = json!(binding.settings_id);
+        live["solution_revision"] = json!(1);
+        live["sequence"] = json!(1);
+        assert!(accept_live(
+            &mut core.inner.lock().unwrap(),
+            &binding,
+            &receipt.operation_id,
+            &token,
+            live.clone()
+        ));
+        // This is the same operational error returned by the actual writer-refusal test.
+        core.spawn(&receipt, |_, _| {
+            Err(error(
+                "PUBLICATION_RESOURCE_LIMIT",
+                "Complete record cannot be delivered.",
+            ))
+        });
+        let failed = complete(&core);
+        assert_eq!(failed.last_error.unwrap().code, "PUBLICATION_RESOURCE_LIMIT");
+        assert_eq!(failed.live_result, Some(live));
+        assert!(failed.result.is_none());
+        assert_eq!(
+            core.save_to(&root.path().join("unavailable.spectrapack"), settings())
+                .unwrap_err()
+                .code,
+            "PUBLIC_RESULT_UNAVAILABLE"
+        );
+        for format in ["json", "stl"] {
+            assert_eq!(core.export_to(root.path(), format).unwrap_err().code, "RESULT_REQUIRED");
+        }
+        assert!(!root.path().join("unavailable.spectrapack").exists());
+    }
+
     fn fixture() -> (tempfile::TempDir, Core) {
         let root = tempfile::tempdir().unwrap();
         let engine = PathBuf::from(

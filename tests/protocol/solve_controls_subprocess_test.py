@@ -283,14 +283,16 @@ class SolveControls(unittest.TestCase):
                 "source_sha256": asset["source"]["sha256"],
                 "accepted_solid_sha256": asset["accepted_solid"]["sha256"],
             },
-            "container": {"kind": "box", "dimensions_mm": [20, 20, 20]},
+            # Exact one-copy capacity keeps the physical seed count-dominated.
+            "container": {"kind": "box", "dimensions_mm": [10, 10, 10]},
             "clearance_mm": {"pair": 0, "wall": 0},
             "orientation": {"mode": "fixed", "quaternion_xyzw": [0, 0, 0, 1]},
             "search": {
                 "preset": preset,
                 "seed": "0",
                 "deterministic": True,
-                "work_budget": {"max_candidate_evaluations": 2, "max_search_passes": 2},
+                # CLI apportionment: baseline2, seed1, original FFT1 passes.
+                "work_budget": {"max_candidate_evaluations": 2, "max_search_passes": 4},
             },
             "resolution": {"mode": "manual", "pitch_mm": 1e-9},
             "compute": {"backend": "cpu"},
@@ -351,6 +353,7 @@ class SolveControls(unittest.TestCase):
         self.assertEqual(response["error"]["details"]["result_path"], result_path.as_posix())
         # T009-A1/A3: the native cause survives the transport and the portable result.
         failure = response["error"]["details"]["failure"]
+        self.assertEqual(failure["cause_code"], "FIELD_INDEX_OVERFLOW")
         self.assertTrue(failure["phase"])
         self.assertTrue(failure["cause_code"])
         self.assertTrue(failure["resource"]["name"])

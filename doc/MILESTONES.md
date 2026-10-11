@@ -1,5 +1,75 @@
 # Delivery milestones after T-008
 
+**2026-10-11 priority override:** T-011 and T-010 are merged (PR #13 `977c27c`,
+PR #14 `858940a`). The next delivery is the bounded
+[T015-P1](T-015.md#t015-p1-known-object-quality-and-count-only-live-publication)
+known-object quality/count-only-live package, requiring only merged T-010.
+This user instruction supersedes the older ordering below for that package;
+full T-014, T-015 and T-021 gates and other prerequisites remain open. Latest
+PR #14 CI failed one of 571 native cases; local threading evidence is unchanged.
+
+## Next bounded pass: production and test DRY cleanup
+
+The 2026-10-11 PR-review instruction adds this maintenance slice to the next
+delivery, after T015-P1/PR #15 is merged and before expanding its packing strategy.
+This is a plan, not an implemented refactor or a new milestone completion claim.
+Proposed branch: `feature/QA-01-dry-packing-tests`; do not create or stack it before
+the prerequisite merge. The remaining functional tickets and acceptance IDs stay open.
+
+**Deliverable:** remove demonstrated duplicate mechanics while retaining exact
+packing, validation, resource and publication behavior. The simplest approach is
+two private production extractions, one shared test fixture builder and explicit
+test classification through existing runners. No strategy framework, new solver,
+public contract change, cap increase, new testing framework or deletion quota.
+First observable result: the existing cap-boundary tests still reject/admit exactly
+the same cases after one accounting helper replaces its two implementations.
+
+The independent review of `0da45f2` found these targets, in implementation order:
+
+| Target and evidence | Bounded change | Acceptance / independence to preserve |
+| --- | --- | --- |
+| Pose/report/candidate/solution storage calculations in `engine/pack_solver/src/baseline.cpp:65` and `spectral.cpp:95` | Extend the existing private accounting helper; migrate the two callers | Preserve allocation-free checked arithmetic, overflow/cap boundaries, long IDs and retained snapshots. Keep phase ownership, deduplication and fixed reserves explicit. Geometry's resident-byte calculation has different inclusions and is not an interchangeable total. |
+| Query admission/completion in `engine/pack_solver/src/spectral.cpp:663` and `:882` | Narrow local helpers for residual caps, owner charging, accumulated work and peak checks | Exact work counters and resource causes; Stop checks, scoring/orientation paths and baseline/seed/FFT ledgers remain explicit. Baseline/stagger already share execution machinery; do not add another strategy layer. |
+| Cuboid/context/pose/native-validation setup in CLI `publication_tests.cpp:47`, `publication_allocation_tests.cpp:17`, `publication_writer_tests.cpp:110` | One test-only builder with explicit dimensions, spacing, IDs and revisions across the three files | Keep expected results and invalid proposals independent. Allocation-measurement windows stay local. Preserve 24/equal24/invalid25/valid25/26, escaped-record limits, writer cadence and blocked-reader checks. |
+| Full-asset exports in `engine/pack_solver/tests/t010_tests.cpp:435`; the 548-second Debug pair in `tests/cmake/QualificationTimeouts.cmake:1` | Add explicit qualification labels and fast/qualification selectors to existing runners | Keep required CI qualification and an inventory proving every case still runs in its intended gate. Moving a case is not removing coverage or reporting it as a passing fast test. |
+
+### Unit-test review and guardrails
+
+The reviewed branch adds 2,211 and removes 118 test-source lines, excluding embedded
+Rust tests, fixture JSON and test-plan text. That is substantial growth, but line
+count alone does not show excess coverage. `spectral_tests.cpp` grows from 4,788 to
+4,902 lines while retaining 91 cases; its changes largely preserve actual FFT
+execution after stagger seeds were introduced. These are review measurements at
+`0da45f2`, not a target size or a complete cost inventory.
+
+- **Merge:** repeated fixture construction and duplicated accounting mechanics.
+  Parameterize only cases that share the same contract and oracle; keep scenario
+  names and failure diagnostics visible. No all-purpose fixture/runner abstraction.
+- **Reclassify:** slow full-asset qualification separately from fast unit checks,
+  using existing CTest/runners. Required qualification remains mandatory.
+- **Keep:** independent native witnesses, the 24×24 integer-projection oracle,
+  cap/overflow/allocation/cancellation adversaries, private Rust race-hook cases,
+  and separate native/Rust publication and persistence boundaries. Shared setup
+  must not calculate expected values with the production code being tested.
+- **Remove:** only a demonstrably duplicate case after a case-to-requirement/oracle
+  inventory shows equivalent coverage elsewhere. This review justifies no blanket
+  regression deletion and no weakening of negative or retained-snapshot assertions.
+
+Implement one extraction at a time with one owner and a stable-diff review. Record
+before/after duplicate blocks, helper callers, production/test lines separately,
+case inventory, fast/qualification selection and measured affected-test duration.
+Run the affected existing checks after each extraction, then required gates once.
+Use characterization/equivalence evidence; do not invent a new behavioral red for
+a refactor. Preserve fixed-work ordered poses and counters, native-valid Pryanik340
+and Ulamok36, accepted full sources and simplified rejection under unchanged caps.
+Reuse the existing threading qualification unless a relevant change invalidates it.
+Reassess if an extraction changes ownership, accounting semantics, adds an execution
+path or expands beyond these two helpers/three test files and runner configuration.
+Further packing improvements remain separate work; 340 is `best_found`, not proven
+optimal, and DRY cleanup alone is not a packing-quality improvement.
+
+## Prior delivery baseline
+
 Status: updated 2026-10-09. T-008 merged through PR #10 at `a05fa2c`;
 T-009 merged through PR #12 at `b82117a` under its recorded scope revision.
 T-011 foundations pass local acceptance and await PR/user review; T-010 threading

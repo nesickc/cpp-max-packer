@@ -189,6 +189,14 @@ Geometry computations use double precision and documented scale conditioning. In
 
 Validation may be incremental during search: reuse checks only for unchanged geometry, constraints, and poses, and validate every changed copy against all relevant neighbors and the container. A complete final/export pass bypasses search-derived certificates. Avoid recomputing expensive solid booleans for pairs already separated by a sound bounding-volume test.
 
+For the bounded T015-P1 stagger path, [ADR 0018](../spec/decisions/0018-cardinal-support-stagger.md)
+permits a validation-local outward support-interval certificate over all accepted
+vertices for exact cardinal poses. A positive projected gap must independently
+prove the requested Euclidean pair clearance with guarded interval arithmetic.
+The table, work and scratch remain within existing budgets; inconclusive cases
+retain the existing validator path. Final/export validation rebuilds this
+authoritative-geometry certificate independently of search state.
+
 Report the tolerance, kernel revision, and test method with results. “Validated” means passing this numerical contract; it is not a formal real-arithmetic proof. The implementation must not invent certified error bounds for a third-party operation that supplies none: uncertain cases stay indeterminate, and the M1 tests gate the chosen adapter.
 
 ## 6. Packing algorithm
@@ -199,6 +207,15 @@ For object solid `S`, container `C`, and poses `T_i`, maximize integer `N` subje
 
 Compare layouts lexicographically: larger validated count first, then smaller occupied Z extent, then a deterministic compactness/tie-break score. Secondary scores guide search; they never compensate for losing a copy in the reported incumbent. Internal trials may temporarily contain fewer copies. Never publish them as the best result.
 
+For desktop count-only live publication, retain a separate immutable public
+snapshot. Publish the first complete native-valid nonempty packing, then replace
+its exact poses only for a strictly greater validated count in that run. Internal
+equal-count layouts remain available for search. Terminal Save/export selects the
+same public poses; an equal-count internal improvement cannot silently replace
+them. Reset the watermark for each new operation/settings identity. See
+[ADR 0017](../spec/decisions/0017-count-quality-publication.md) for bounded ownership,
+terminal handling and compatibility with the existing auxiliary desktop adapter.
+
 Compute utilization as `N * volume(S) / volume(C)` from validated solids, not the occupied cluster's bounding box or voxel count. A hollow object's volume excludes its modeled voids. If volume cannot be established reliably, omit utilization. Do not label a failed insertion as an optimum. An optional volume upper bound is displayable only when conservatively bounded volume calculations support it; otherwise omit the bound.
 
 ### 6.2 Baseline before advanced search
@@ -208,6 +225,18 @@ For a box, generate a grid of oriented object AABBs for each allowed baseline or
 `n_j = max(0, floor((L_j - 2*c_w + c_p) / (b_j + c_p)))`
 
 Place the grid deterministically and validate it using authoritative geometry. Preserve its best result as a starting incumbent. Account conservatively for numerical uncertainty in the floor and check boundary placements. This baseline deliberately works in physical coordinates, so a coarse voxel grid cannot prevent an obvious exact box tiling.
+
+The bounded T015-P1 package additionally investigates a physical staggered-row
+seed within the existing permitted rotations and work budget. It preserves the
+AABB incumbent and sends complete proposals to authoritative solid validation;
+it does not silently alter manual pitch, clearance, dimensions or rotation policy.
+Its seed and subsequent FFT work share the existing spectral-phase allowances;
+the baseline keeps its existing separate allowance. Admit only the catalog prefix
+permitted by the remaining pass budget, charging before oriented queries. Additive
+command `diagnostics.stagger` records actual work and completion within that prefix,
+independently of later FFT failure; persistent result schemas are unchanged.
+Detailed bounded ownership and accounting follow [ADR 0018](../spec/decisions/0018-cardinal-support-stagger.md).
+Its practical targets and remaining gates are recorded in [T-015](T-015.md).
 
 For an STL container, create the same enclosing-box candidates, filter each through true containment, and retain a validated subset. A bounding box by itself never defines feasibility for an STL container.
 
@@ -333,6 +362,14 @@ Provide orbit, pan, zoom, fit-to-container, reset view, orthographic/perspective
 Render a shared object mesh with instance transforms. Use display LODs during interaction; offer full-resolution inspection of a selected copy. Do not load `N` full meshes into GPU memory. The visible best packing must correspond to one complete validated solution revision. A separately enabled candidate/debug preview is clearly identified as unvalidated and cannot be exported as the best result.
 
 UI events run independently of engine computation. Throttle progress/preview delivery to at most four updates per second and coalesce obsolete preview revisions. Keyboard focus, resize, window movement, and Stop remain usable during long native work. Missing graphics acceleration may degrade rendering quality, but CPU solving and result export remain available.
+
+For the count-only live desktop path, ignore lower/equal-count, invalid, duplicate,
+stale-operation and out-of-order packing offers. Coalesce to the latest higher
+count in bounded storage, including a final higher-count flush within the same
+4 Hz ceiling. Progress/elapsed/Stop may update independently. Reuse the shared
+mesh and atomically replace instance transforms without camera reset or rendering
+continuously solely because search is active. A final result with equal count
+preserves the displayed canonical poses and their Save/export association.
 
 ## 8. Interfaces, persistence, and export
 

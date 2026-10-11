@@ -247,6 +247,51 @@ std::shared_ptr<const geo::ValidatedSolution> native_solution(
     return checked.validated_solution;
 }
 
+std::shared_ptr<const geo::ValidationContext> narrow_fft_context()
+{
+    const auto context = cuboid_context(
+        {
+            -.25, -.25, -.25
+    },
+        { .25, .25, .25 }, { .5, .5, 1 }, { { 0, 0, 0, 1 } });
+    // Independent native witness: two copies fit along Z; the half-column seed fits one.
+    native_solution(
+        context, {
+                     { "lower", { .25, .25, .25 }, { 0, 0, 0, 1 } },
+                     { "upper", { .25, .25, .75 }, { 0, 0, 0, 1 } }
+    });
+    return context;
+}
+
+std::uint64_t fft_candidates(const solver::SpectralOutcome& outcome)
+{
+    const auto prior = outcome.baseline_stats.candidate_evaluations + outcome.stagger.work.candidate_evaluations;
+    REQUIRE(outcome.run.stats.candidate_evaluations >= prior);
+    return outcome.run.stats.candidate_evaluations - prior;
+}
+
+std::uint64_t fft_passes(const solver::SpectralOutcome& outcome)
+{
+    const auto prior = outcome.baseline_stats.search_passes + outcome.stagger.work.search_passes;
+    REQUIRE(outcome.run.stats.search_passes >= prior);
+    return outcome.run.stats.search_passes - prior;
+}
+
+struct CorrelationEntryObservation {
+    bool entered {};
+    CorrelationEntryObservation()
+    {
+        spectrapack::compute::detail::set_correlation_entry_hook_for_test(
+            [](const spectrapack::compute::CorrelationSpec&, void* raw) noexcept {
+            static_cast<CorrelationEntryObservation*>(raw)->entered = true;
+        }, this);
+    }
+    ~CorrelationEntryObservation()
+    {
+        spectrapack::compute::detail::set_correlation_entry_hook_for_test(nullptr, nullptr);
+    }
+};
+
 }  // namespace
 
 struct BinaryOracleCapture {
@@ -621,7 +666,8 @@ TEST_CASE("T011 numerical refinement uncertainty rejects the trial and continues
     solver::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
     limits.spectral.max_candidate_evaluations = limits.max_refinement_evaluations = 16;
-    limits.spectral.max_search_passes = 1;
+    // Two catalog seed passes plus the original FFT trial pass.
+    limits.spectral.max_search_passes = 3;
     limits.spectral.max_copies = 2;
     const auto outcome = solver::run_cpu_spectral(context, { {}, 1 }, limits, {}, {}, initial);
     CAPTURE(outcome.run.diagnostic_code, outcome.run.stats.candidate_evaluations,
@@ -685,7 +731,9 @@ TEST_CASE("T011 candidate validation distinguishes resource FPU and control fail
         solver::SpectralLimits limits;
         limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
         limits.spectral.max_candidate_evaluations = 8;
-        limits.spectral.max_search_passes = 1;
+        // The retained count dominates the seed; the original FFT candidate still runs.
+        limits.spectral.max_search_passes = 2;
+        limits.spectral.max_copies = 1;
         limits.max_refinement_evaluations = 1;
         if (mode == 0) {
             limits.spectral.per_validation.max_kernel_work = empty.report.kernel_work;
@@ -959,7 +1007,7 @@ TEST_CASE("AT-10 spectral returns a validated empty result for an oversized obje
     limits.baseline.max_search_passes = 1;
     limits.baseline.max_copies = 1;
     limits.spectral.max_candidate_evaluations = 2;
-    limits.spectral.max_search_passes = 1;
+    limits.spectral.max_search_passes = 2;  // Seed prefix1 plus the original FFT pass.
     limits.spectral.max_copies = 1;
     limits.per_representation.max_cells = 10'000;
     limits.per_correlation.max_padded_cells = 100'000;
@@ -974,6 +1022,7 @@ TEST_CASE("AT-10 spectral returns a validated empty result for an oversized obje
     CHECK(outcome.run.best->solution->copies().empty());
     CHECK(outcome.run.retained_solution == outcome.run.best->solution);
     CHECK(outcome.spectral_stats.correlations > 0);
+    CHECK(outcome.stagger.work.candidate_evaluations == 0);
     auto candidate = geo::make_candidate(context, outcome.run.best->solution->copies());
     REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(candidate));
     const auto checked = geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(std::move(candidate)));
@@ -1002,7 +1051,7 @@ TEST_CASE("AT-12 spectral inserts a real catalog proposal", "[solver][T007][AT-1
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
     limits.spectral.max_candidate_evaluations = 2;
-    limits.spectral.max_search_passes = 1;
+    limits.spectral.max_search_passes = 25;  // Cube prefix24 plus original FFT1.
     limits.spectral.max_copies = 1;
     limits.max_refinement_evaluations = 0;
     limits.per_representation.max_cells = 10'000;
@@ -1016,6 +1065,7 @@ TEST_CASE("AT-12 spectral inserts a real catalog proposal", "[solver][T007][AT-1
     REQUIRE(outcome.run.best);
     REQUIRE(outcome.run.best->solution->copies().size() == 1);
     CHECK(outcome.spectral_stats.correlations > 0);
+    CHECK(fft_candidates(outcome) == 1);
     const auto& copy = outcome.run.best->solution->copies().front();
     CHECK(std::ranges::any_of(std::get<solver::OrientationCatalog>(made).quaternions, [&](const auto& q) {
         return q == copy.rotation_xyzw;
@@ -1053,7 +1103,7 @@ TEST_CASE("AT-12 spectral inserts a noncardinal custom catalog proposal", "[solv
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
     limits.spectral.max_candidate_evaluations = 2;
-    limits.spectral.max_search_passes = 1;
+    limits.spectral.max_search_passes = 2;  // Seed prefix1 plus the original FFT pass.
     limits.spectral.max_copies = 1;
     limits.max_refinement_evaluations = 0;
     limits.per_representation.max_cells = 10'000;
@@ -1067,6 +1117,7 @@ TEST_CASE("AT-12 spectral inserts a noncardinal custom catalog proposal", "[solv
     REQUIRE(outcome.run.best);
     REQUIRE(outcome.run.best->solution->copies().size() == 1);
     REQUIRE(outcome.spectral_stats.correlations > 0);
+    CHECK(fft_candidates(outcome) == 1);
     CHECK(outcome.run.best->solution->copies().front().rotation_xyzw == custom_q);
     CHECK(context->object()->frame().dimensions_mm == geo::Vec3 { .5, .5, .5 });
     geo::Constraints fresh_constraints;
@@ -1252,8 +1303,9 @@ TEST_CASE(
     solver::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
-    limits.spectral.max_candidate_evaluations = 1;
-    limits.spectral.max_search_passes = 1;
+    // Two catalog seed passes and one seed candidate precede the original FFT allowance.
+    limits.spectral.max_candidate_evaluations = 2;
+    limits.spectral.max_search_passes = 3;
     limits.spectral.max_copies = 1;
     limits.max_refinement_evaluations = 0;
     limits.per_representation.max_cells = 10'000;
@@ -1271,6 +1323,8 @@ TEST_CASE(
             outcome.spectral_stats.pages_examined, outcome.spectral_stats.discrete_rechecks);
     REQUIRE(outcome.run.best->solution->copies().size() == 1);
     CHECK(outcome.run.best->solution->copies().front().rotation_xyzw == z90);
+    CHECK(outcome.spectral_stats.pages_examined > 0);
+    CHECK(outcome.spectral_stats.discrete_rechecks > 0);
 }
 
 TEST_CASE("T010 exact cardinal admission survives adjacent pitch boundaries", "[solver][T010][admission]")
@@ -1281,8 +1335,9 @@ TEST_CASE("T010 exact cardinal admission survives adjacent pitch boundaries", "[
     solver::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
-    limits.spectral.max_candidate_evaluations = 1;
-    limits.spectral.max_search_passes = 1;
+    // Preserve the original FFT allowance after the two-orientation seed prefix.
+    limits.spectral.max_candidate_evaluations = 2;
+    limits.spectral.max_search_passes = 3;
     limits.spectral.max_copies = 1;
     limits.max_refinement_evaluations = 0;
     limits.per_representation.max_cells = 10'000;
@@ -1298,6 +1353,8 @@ TEST_CASE("T010 exact cardinal admission survives adjacent pitch boundaries", "[
         REQUIRE(outcome.run.best);
         CHECK(outcome.run.best->solution->copies().size() == 1);
         CHECK(outcome.run.best->solution->copies().front().rotation_xyzw == z90);
+        REQUIRE(outcome.field_admission);
+        CHECK(outcome.spectral_stats.correlations > 0);
     }
 }
 
@@ -1342,8 +1399,8 @@ TEST_CASE(
     solver::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
-    limits.spectral.max_candidate_evaluations = 2;
-    limits.spectral.max_search_passes = 1;
+    limits.spectral.max_candidate_evaluations = 3;  // Seed1 plus original FFT2.
+    limits.spectral.max_search_passes = 2;          // Seed prefix1 plus the original FFT pass.
     limits.spectral.max_copies = 2;
     limits.max_refinement_evaluations = 0;
     limits.per_representation.max_cells = 10'000;
@@ -1361,6 +1418,10 @@ TEST_CASE(
     REQUIRE(outcome.run.best);
     CHECK(outcome.run.best->solution->copies().size() == 2);
     CHECK(outcome.spectral_stats.correlations >= 4);
+    CHECK(fft_candidates(outcome) == 2);
+    CHECK(outcome.run.diagnostic_code == "SPECTRAL_COPY_LIMIT");
+    CHECK(outcome.stagger.best_count_after == 2);
+    CHECK(outcome.stagger.work.candidate_evaluations == 1);
     REQUIRE_FALSE(published_counts.empty());
     CHECK(std::is_sorted(published_counts.begin(), published_counts.end()));
     CHECK(published_counts.back() == outcome.run.best->solution->copies().size());
@@ -1451,8 +1512,9 @@ TEST_CASE("T011 spectral runtime phases describe actual fields FFT and candidate
     const auto initial = native_solution(context, {});
     solver::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
-    limits.spectral.max_candidate_evaluations = limits.spectral.max_search_passes = 1;
-    limits.spectral.max_copies = 2;
+    // One whole-layout seed candidate precedes the original single FFT candidate.
+    limits.spectral.max_candidate_evaluations = limits.spectral.max_search_passes = 2;
+    limits.spectral.max_copies = 1;
     limits.max_refinement_evaluations = 0;
     limits.per_representation.max_cells = limits.per_correlation.max_padded_cells = 10'000;
     struct Trace {
@@ -1489,7 +1551,8 @@ TEST_CASE("T011 spectral runtime phases describe actual fields FFT and candidate
     CHECK(outcome.spectral_stats.correlations >= 2);
     CHECK(trace.correlation_entries == outcome.spectral_stats.correlations);
     CHECK(trace.fft_phase_at_every_entry);
-    CHECK(outcome.run.stats.candidate_evaluations == 1);
+    CHECK(outcome.run.stats.candidate_evaluations == outcome.baseline_stats.candidate_evaluations +
+          outcome.stagger.work.candidate_evaluations + 1);
     const auto begin = trace.phases.begin();
     const auto end = begin + static_cast<std::ptrdiff_t>(trace.size);
     const auto fields = std::find(begin, end, runtime::Phase::voxelizing);
@@ -1510,7 +1573,8 @@ TEST_CASE("T011 field and FFT phase interruptions retain the validated incumbent
     solver::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
     limits.spectral.max_candidate_evaluations = 8;
-    limits.spectral.max_search_passes = 1;
+    limits.spectral.max_search_passes = 2;  // Seed prefix1 plus the original FFT pass.
+    limits.spectral.max_copies = 1;         // Retained1 dominates the seed.
     limits.max_refinement_evaluations = 0;
     limits.per_representation.max_cells = limits.per_correlation.max_padded_cells = 10'000;
     for (const auto target : { runtime::Phase::voxelizing, runtime::Phase::planning_fft }) {
@@ -1551,8 +1615,11 @@ TEST_CASE("T011 field and FFT phase interruptions retain the validated incumbent
             REQUIRE(outcome.run.best);
             CHECK(outcome.run.best->solution == initial);
             CHECK(outcome.run.retained_solution == initial);
-            REQUIRE(publications.size() == 1);
-            CHECK(publications.front()->solution == initial);
+            REQUIRE_FALSE(publications.empty());
+            CHECK(std::all_of(publications.begin(), publications.end(), [&](const auto& value) {
+                return value->solution == initial;
+            }));
+            CHECK(outcome.run.best == publications.back());
             CHECK(outcome.run.stats.candidate_evaluations == 0);
             CHECK(outcome.spectral_stats.representation_kernel_work > 0);
             if (target == runtime::Phase::planning_fft) {
@@ -1599,20 +1666,17 @@ TEST_CASE("AT-16 spectral wrapper stops after the first central publication", "[
 
 TEST_CASE("AT-16 spectral wrapper stops after an actual spectral improvement", "[solver][T007][AT-16][wrapper]")
 {
-    const auto context = cuboid_context(
-        {
-            -.25, -.25, -.25
-    },
-        { .25, .25, .25 }, { 2, 2, 2 }, { { 0, 0, 0, 1 } });
+    const auto context = narrow_fft_context();
     solver::SpectralLimits limits;
-    limits.baseline.max_candidate_evaluations = 0;
-    limits.baseline.max_search_passes = 0;
+    limits.baseline.max_candidate_evaluations = 1;
+    limits.baseline.max_search_passes = limits.baseline.max_copies = 1;
     limits.spectral.max_candidate_evaluations = 8;
-    limits.spectral.max_search_passes = 1;
+    limits.spectral.max_search_passes = 2;  // Seed prefix1 plus the original FFT pass.
     limits.spectral.max_copies = 2;
-    limits.max_refinement_evaluations = 0;
+    limits.max_refinement_evaluations = 32;  // Existing face refinement resolves conservative wall-contact vetoes.
     limits.per_representation.max_cells = 10'000;
     limits.per_correlation.max_padded_cells = 10'000;
+    CorrelationEntryObservation correlation;
     std::stop_source stop;
     std::vector<solver::SnapshotHandle> publications;
 
@@ -1620,23 +1684,28 @@ TEST_CASE("AT-16 spectral wrapper stops after an actual spectral improvement", "
         solver::run_cpu_spectral(context,
                                  {
                                      { 0, 0, 0 },
-                                     .5
+                                     .25
     },
                                  limits, { stop.get_token(), {} }, [&](solver::SnapshotHandle snapshot) {
         publications.push_back(snapshot);
-        if (publications.size() == 2) {
+        if (correlation.entered && snapshot->score.count == 2) {
             stop.request_stop();
         }
     });
 
-    REQUIRE(publications.size() == 2);
+    REQUIRE_FALSE(publications.empty());
+    REQUIRE(correlation.entered);
+    CHECK(outcome.spectral_stats.correlations >= 4);
+    CHECK(outcome.stagger.best_count_before == 1);
+    CHECK(outcome.stagger.best_count_after == 1);
     REQUIRE(outcome.run.best);
     CHECK(outcome.run.best == publications.back());
     CHECK(outcome.run.retained_solution == publications.back()->solution);
-    CHECK(outcome.run.best->solution->copies().size() == 1);
+    CHECK(outcome.run.best->solution->copies().size() == 2);
     CHECK(outcome.run.termination_reason == solver::TerminationReason::user_stopped);
-    CHECK(outcome.run.stats.candidate_evaluations == 1);
-    CHECK(outcome.run.stats.search_passes == 0);
+    CHECK(fft_candidates(outcome) == 3);  // Valid first copy, rejected duplicate, valid second copy.
+    CHECK(outcome.spectral_stats.refinement_evaluations == fft_candidates(outcome));
+    CHECK(fft_passes(outcome) == 0);
 }
 
 TEST_CASE("AT-16 spectral wrapper observes a deadline set by an improvement callback", "[solver][T007][AT-16][wrapper]")
@@ -1651,7 +1720,7 @@ TEST_CASE("AT-16 spectral wrapper observes a deadline set by an improvement call
     limits.baseline.max_search_passes = 0;
     limits.spectral.max_candidate_evaluations = 8;
     limits.spectral.max_search_passes = 1;
-    limits.spectral.max_copies = 2;
+    limits.spectral.max_copies = 1;
     limits.max_refinement_evaluations = 0;
     limits.per_representation.max_cells = 10'000;
     limits.per_correlation.max_padded_cells = 10'000;
@@ -1677,7 +1746,7 @@ TEST_CASE("AT-16 spectral wrapper observes a deadline set by an improvement call
     CHECK(outcome.run.best->solution->copies().size() == 1);
     CHECK(outcome.run.termination_reason == solver::TerminationReason::budget_exhausted);
     CHECK(outcome.run.stats.candidate_evaluations == 1);
-    CHECK(outcome.run.stats.search_passes == 0);
+    CHECK(outcome.run.stats.search_passes == 1);
 }
 
 TEST_CASE("AT-16 spectral wrapper applies its outer byte cap to the baseline phase", "[solver][T007][AT-16][wrapper]")
@@ -1737,8 +1806,9 @@ TEST_CASE("AT-16 spectral wrapper attributes and clamps central native query wor
     solver::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
-    limits.spectral.max_candidate_evaluations = 0;
-    limits.spectral.max_search_passes = 0;
+    // Fund an actual native query while keeping the entry count dominant.
+    limits.spectral.max_candidate_evaluations = limits.spectral.max_search_passes = 1;
+    limits.spectral.max_copies = 1;
     const auto generous = solver::run_cpu_spectral(context,
                                                    {
                                                        { 0, 0, 0 },
@@ -1767,20 +1837,24 @@ TEST_CASE("AT-16 spectral wrapper accounts copied long ids during proposal valid
           "[solver][T007][AT-16][wrapper]")
 {
     const geo::Quaternion identity { 0, 0, 0, 1 };
-    const auto context = cuboid_context({ -.5, -.5, -.5 }, { .5, .5, .5 }, { 3, 1, 1 }, { identity });
+    const auto context = cuboid_context({ -.5, -.5, -.5 }, { .5, .5, .5 }, { 1, 1, 2 }, { identity });
+    native_solution(context, {
+                                 { "lower", { .5, .5, .5 },  identity },
+                                 { "upper", { .5, .5, 1.5 }, identity }
+    });
     const auto short_initial = native_solution(context, {
-                                                            { "s", { 1.4, .5, .5 }, identity }
+                                                            { "s", { .5, .5, 1.5 }, identity }
     });
     const std::string long_id(1U << 20, 'x');
     const auto long_initial = native_solution(context, {
-                                                           { long_id, { 1.4, .5, .5 }, identity }
+                                                           { long_id, { .5, .5, 1.5 }, identity }
     });
     solver::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
     limits.spectral.max_candidate_evaluations = 512;
-    limits.spectral.max_search_passes = 2;
-    limits.spectral.max_copies = 4;  // Above physical capacity, so fresh search completes.
+    limits.spectral.max_search_passes = 3;  // Seed1 plus fresh/retained FFT trials.
+    limits.spectral.max_copies = 3;         // Above physical capacity, so fresh search completes.
     limits.max_refinement_evaluations = 512;
     limits.per_representation.max_cells = 10'000;
     limits.per_correlation.max_padded_cells = 10'000;
@@ -1795,23 +1869,28 @@ TEST_CASE("AT-16 spectral wrapper accounts copied long ids during proposal valid
     };
 
     auto fresh_limits = limits;
-    fresh_limits.spectral.max_search_passes = 1;
+    fresh_limits.spectral.max_search_passes = 2;  // Seed1 plus original fresh FFT trial.
     const auto fresh = run(short_initial, fresh_limits);
-    REQUIRE(fresh.run.stats.search_passes == 1);
+    REQUIRE(fft_passes(fresh) == 1);
     REQUIRE(fresh.run.best);
-    REQUIRE(fresh.run.best->score.count == 3);
+    REQUIRE(fresh.run.best->score.count == 2);
     // Fund exactly the first retained-layout proposal after the completed fresh trial.
     limits.spectral.max_candidate_evaluations = fresh.run.stats.candidate_evaluations + 1;
     const auto short_run = run(short_initial, limits);
     const auto long_run = run(long_initial, limits);
     REQUIRE(short_run.run.best);
     REQUIRE(long_run.run.best);
-    REQUIRE(short_run.run.best->solution->copies().size() == 3);
-    REQUIRE(long_run.run.best->solution->copies().size() == 3);
-    REQUIRE(short_run.run.stats.search_passes == 1);
-    REQUIRE(long_run.run.stats.search_passes == 1);
+    REQUIRE(short_run.run.best->solution->copies().size() == 2);
+    REQUIRE(long_run.run.best->solution->copies().size() == 2);
+    REQUIRE(fft_passes(short_run) == 1);
+    REQUIRE(fft_passes(long_run) == 1);
     REQUIRE(long_run.run.stats.candidate_evaluations == fresh.run.stats.candidate_evaluations + 1);
     REQUIRE(long_run.run.stats.validation_kernel_work > fresh.run.stats.validation_kernel_work);
+    REQUIRE(fresh.stagger.work.candidate_evaluations == 0);
+    REQUIRE(fresh.spectral_stats.correlations > 0);
+    REQUIRE(long_run.field_admission);
+    REQUIRE(long_run.field_admission->footprint_copy_count == 1);  // Actual retained-ID trial.
+    REQUIRE(fft_candidates(long_run) == fft_candidates(fresh) + 1);
     const auto id_capacity_delta =
         long_initial->copies().front().copy_id.capacity() - short_initial->copies().front().copy_id.capacity();
     REQUIRE(id_capacity_delta > 0);
@@ -1879,7 +1958,7 @@ TEST_CASE("AT-16 candidate id ownership bounds real spectral validation", "[solv
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
     limits.spectral.max_candidate_evaluations = 512;
-    limits.spectral.max_search_passes = 2;
+    limits.spectral.max_search_passes = 3;  // Seed1 plus fresh/retained FFT trials.
     limits.spectral.max_copies = 3;
     limits.max_refinement_evaluations = 0;
     limits.per_representation.max_cells = 10'000;
@@ -1907,7 +1986,7 @@ TEST_CASE("AT-16 candidate id ownership bounds real spectral validation", "[solv
         return solver::run_cpu_spectral(context, { {}, .5 }, allowance, {}, std::move(sink), seed);
     };
     auto fresh_limits = limits;
-    fresh_limits.spectral.max_search_passes = 1;
+    fresh_limits.spectral.max_search_passes = 2;  // Seed1 plus original fresh FFT trial.
     const auto fresh = run(short_initial, fresh_limits);
     CAPTURE(static_cast<int>(fresh.run.termination_reason), fresh.run.diagnostic_code,
             fresh.run.stats.candidate_evaluations, fresh.run.stats.search_passes,
@@ -1918,7 +1997,7 @@ TEST_CASE("AT-16 candidate id ownership bounds real spectral validation", "[solv
             fresh.spectral_stats.direct_terms, fresh.spectral_stats.proximity_terms,
             fresh.field_admission ? fresh.field_admission->working_bytes_upper_bound : 0,
             fresh.run.failure_details ? fresh.run.failure_details->cause_code() : std::string_view {});
-    REQUIRE(fresh.run.stats.search_passes == 1);
+    REQUIRE(fft_passes(fresh) == 1);
     REQUIRE(fresh.run.best);
     REQUIRE((fresh.run.best->score.count == 1 || fresh.run.best->score.count == 2));
     limits.spectral.max_candidate_evaluations = fresh.run.stats.candidate_evaluations + 1;
@@ -1926,9 +2005,14 @@ TEST_CASE("AT-16 candidate id ownership bounds real spectral validation", "[solv
     const auto measured_short = run(short_initial, limits);
     REQUIRE(measured.run.best);
     REQUIRE(measured.run.best->solution->copies().size() == 2);
-    REQUIRE(measured.run.stats.search_passes == 1);
+    REQUIRE(fft_passes(measured) == 1);
     REQUIRE(measured.run.stats.candidate_evaluations == fresh.run.stats.candidate_evaluations + 1);
     REQUIRE(measured.run.stats.validation_kernel_work > fresh.run.stats.validation_kernel_work);
+    REQUIRE(fresh.stagger.work.indeterminate_candidates == 1);
+    REQUIRE(fresh.spectral_stats.correlations > 0);
+    REQUIRE(measured.field_admission);
+    REQUIRE(measured.field_admission->footprint_copy_count == 1);  // Actual retained-ID validation.
+    REQUIRE(fft_candidates(measured) == fft_candidates(fresh) + 1);
     REQUIRE(measured_short.run.best);
     REQUIRE(measured_short.run.best->solution->copies().size() == 2);
     const auto id_bytes =
@@ -1950,7 +2034,7 @@ TEST_CASE("AT-16 candidate id ownership bounds real spectral validation", "[solv
             limited.run.stats.candidate_evaluations);
     REQUIRE(short_control.run.best);
     CHECK(short_control.run.best->solution->copies().size() == 2);
-    CHECK(limited.run.stats.search_passes == 1);
+    CHECK(fft_passes(limited) == 1);
     CHECK(limited.run.stats.candidate_evaluations == fresh.run.stats.candidate_evaluations + 1);
     CHECK(limited.run.termination_reason == solver::TerminationReason::resource_limit);
     CHECK(limited.run.diagnostic_code == "PHYSICAL_VALIDATION_RESOURCE");
@@ -2005,11 +2089,13 @@ TEST_CASE("AT-16 resolved spectral catches allocation failure after central publ
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
     limits.spectral.max_candidate_evaluations = 2;
-    limits.spectral.max_search_passes = 1;
+    limits.spectral.max_search_passes = 2;  // Seed prefix1 plus the original FFT pass.
+    limits.spectral.max_copies = 1;         // Retained1 dominates the seed.
     limits.per_representation.max_cells = 10'000;
     limits.per_correlation.max_padded_cells = 10'000;
     solver::SpectralOutcome outcome;
     solver::SnapshotHandle published;
+    unsigned publications {};
     bool escaped {};
     {
         AllocationFailureReset reset;
@@ -2021,7 +2107,10 @@ TEST_CASE("AT-16 resolved spectral catches allocation failure after central publ
             },
                                                catalog, limits, {}, [&](solver::SnapshotHandle snapshot) {
                 published = std::move(snapshot);
-                enable_persistent_allocation_failure();
+                if (++publications == 2) {
+                    // Existing FFT-entry same-solution publication, after baseline and dominated seed.
+                    enable_persistent_allocation_failure();
+                }
             }, initial);
         }
         catch (...) {
@@ -2030,6 +2119,8 @@ TEST_CASE("AT-16 resolved spectral catches allocation failure after central publ
     }
 
     CHECK_FALSE(escaped);
+    CHECK(publications == 2);
+    CHECK(outcome.stagger.work.candidate_evaluations == 0);
     CHECK(outcome.run.termination_reason == solver::TerminationReason::resource_limit);
     CHECK(outcome.run.diagnostic_code == "SPECTRAL_ALLOCATION_FAILURE");
     REQUIRE(published);
@@ -2084,8 +2175,11 @@ TEST_CASE("AT-16 spectral wrapper retains the actual spectral improvement when i
     limits.per_representation.max_cells = 10'000;
     limits.per_correlation.max_padded_cells = 10'000;
     solver::SnapshotHandle observed;
-    bool baseline_observed {};
-    std::size_t baseline_copies {};
+    const auto baseline = solver::run_aabb_baseline(context, limits.baseline, {});
+    REQUIRE(baseline.best);
+    const auto baseline_copies = baseline.best->score.count;
+    REQUIRE(baseline_copies == 1);
+    CorrelationEntryObservation correlation;
 
     const auto outcome = solver::run_cpu_spectral(context,
                                                   {
@@ -2093,18 +2187,16 @@ TEST_CASE("AT-16 spectral wrapper retains the actual spectral improvement when i
                                                       1
     },
                                                   limits, {}, [&](solver::SnapshotHandle snapshot) {
-        if (!baseline_observed) {
-            baseline_observed = true;
-            baseline_copies = snapshot->solution->copies().size();
-            return;
+        if (correlation.entered && snapshot->score.count > baseline_copies) {
+            observed = std::move(snapshot);
+            throw std::runtime_error("spectral observer failure");
         }
-        observed = std::move(snapshot);
-        throw std::runtime_error("spectral observer failure");
     });
 
     REQUIRE(observed);
     REQUIRE(observed->solution);
     REQUIRE(outcome.spectral_stats.correlations > 0);
+    CHECK(correlation.entered);
     CHECK(observed->solution->copies().size() > baseline_copies);
     CHECK(outcome.run.termination_reason == solver::TerminationReason::error);
     CHECK(outcome.run.diagnostic_code == "PHYSICAL_OBSERVER_ERROR");
@@ -2116,11 +2208,7 @@ TEST_CASE("AT-16 spectral wrapper retains the actual spectral improvement when i
 TEST_CASE("AT-16 spectral wrapper contains persistent allocation failure after an actual spectral improvement",
           "[solver][T007][AT-16][wrapper]")
 {
-    const auto context = cuboid_context(
-        {
-            -.25, -.25, -.25
-    },
-        { .25, .25, .25 }, { 2, 2, 2 }, { { 0, 0, 0, 1 } });
+    const auto context = narrow_fft_context();
     solver::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = 1;
     limits.baseline.max_search_passes = 1;
@@ -2132,7 +2220,11 @@ TEST_CASE("AT-16 spectral wrapper contains persistent allocation failure after a
     limits.per_representation.max_cells = 10'000;
     limits.per_correlation.max_padded_cells = 10'000;
     solver::SnapshotHandle improved;
-    std::size_t baseline_copies {};
+    const auto baseline = solver::run_aabb_baseline(context, limits.baseline, {});
+    REQUIRE(baseline.best);
+    const auto baseline_copies = baseline.best->score.count;
+    REQUIRE(baseline_copies == 1);
+    CorrelationEntryObservation correlation;
     solver::SpectralOutcome outcome;
     bool escaped {};
     {
@@ -2141,15 +2233,10 @@ TEST_CASE("AT-16 spectral wrapper contains persistent allocation failure after a
             outcome = solver::run_cpu_spectral(context,
                                                {
                                                    { 0, 0, 0 },
-                                                   .5
+                                                   .25
             },
                                                limits, {}, [&](solver::SnapshotHandle snapshot) {
-                if (!improved) {
-                    baseline_copies = snapshot->solution->copies().size();
-                    improved = snapshot;
-                    return;
-                }
-                if (snapshot->solution->copies().size() > baseline_copies) {
+                if (correlation.entered && snapshot->solution->copies().size() > baseline_copies) {
                     improved = std::move(snapshot);
                     enable_persistent_allocation_failure();
                 }
@@ -2164,6 +2251,8 @@ TEST_CASE("AT-16 spectral wrapper contains persistent allocation failure after a
     REQUIRE(improved->solution);
     CHECK_FALSE(escaped);
     CHECK(outcome.spectral_stats.correlations > 0);
+    CHECK(outcome.stagger.best_count_after == baseline_copies);
+    CHECK(correlation.entered);
     CHECK(improved->solution->copies().size() > baseline_copies);
     CHECK(outcome.run.termination_reason == solver::TerminationReason::resource_limit);
     CHECK(outcome.run.retained_solution == improved->solution);
@@ -2213,8 +2302,8 @@ TEST_CASE("AT-12 spectral wrapper clamps direct correlation work across rebuilds
     solver::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
-    limits.spectral.max_candidate_evaluations = 2;
-    limits.spectral.max_search_passes = 1;
+    limits.spectral.max_candidate_evaluations = 3;  // Seed1 plus original FFT2.
+    limits.spectral.max_search_passes = 2;          // Seed prefix1 plus the original FFT pass.
     limits.spectral.max_copies = 2;
     limits.max_refinement_evaluations = 0;
     limits.per_representation.max_cells = 10'000;
@@ -2226,6 +2315,7 @@ TEST_CASE("AT-12 spectral wrapper clamps direct correlation work across rebuilds
     },
                                                    limits, {});
     REQUIRE(generous.spectral_stats.direct_terms > 1);
+    REQUIRE(fft_candidates(generous) == 2);
     REQUIRE(generous.run.best);
     REQUIRE(generous.run.best->solution->copies().size() == 2);
 
@@ -2294,23 +2384,23 @@ TEST_CASE(
     "[solver][T007][SOL-02][AT-12][greedy]")
 {
     const geo::Quaternion identity { 0, 0, 0, 1 };
-    const auto context = cuboid_context({ -.5, -.5, -.5 }, { .5, .5, .5 }, { 3, 1, 1 }, { identity });
+    const auto context = cuboid_context({ -.5, -.5, -.5 }, { .5, .5, .5 }, { 1, 1, 3 }, { identity });
     const auto initial =
         native_solution(context, {
                                      { "left",  { .5, .5, .5 },  identity },
-                                     { "right", { 2.5, .5, .5 }, identity }
+                                     { "right", { .5, .5, 2.5 }, identity }
     });
     native_solution(context, {
                                  { "a", { .5, .5, .5 },  identity },
-                                 { "b", { 1.5, .5, .5 }, identity },
-                                 { "c", { 2.5, .5, .5 }, identity }
+                                 { "b", { .5, .5, 1.5 }, identity },
+                                 { "c", { .5, .5, 2.5 }, identity }
     });
 
     solver::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
     limits.spectral.max_candidate_evaluations = 32;
-    limits.spectral.max_search_passes = 2;
+    limits.spectral.max_search_passes = 3;  // Seed1 plus original fresh/retained FFT allowance.
     limits.spectral.max_copies = 3;
     limits.max_refinement_evaluations = 32;
     limits.per_representation.max_cells = 10'000;
@@ -2322,6 +2412,9 @@ TEST_CASE(
     REQUIRE(prefix.run.best);
     CHECK(prefix.run.best->score.count == 2);
     CHECK(prefix.run.retained_solution == initial);
+    CHECK(prefix.stagger.work.candidate_evaluations == 0);
+    CHECK(fft_candidates(prefix) == 1);
+    CHECK(prefix.spectral_stats.correlations > 0);
     std::vector<std::size_t> publications;
 
     const auto outcome = solver::run_cpu_spectral(context,
@@ -2337,8 +2430,9 @@ TEST_CASE(
     CHECK(outcome.run.termination_reason == solver::TerminationReason::budget_exhausted);
     CHECK(outcome.run.diagnostic_code == "SPECTRAL_COPY_LIMIT");
     CHECK(outcome.run.stats.candidate_evaluations < limits.spectral.max_candidate_evaluations);
-    CHECK(outcome.run.stats.search_passes == 0);
+    CHECK(fft_passes(outcome) == 0);
     CHECK(outcome.run.best->solution->copies().size() == 3);
+    CHECK(outcome.spectral_stats.correlations > 0);
     CHECK(outcome.run.retained_solution != initial);
     CHECK(std::none_of(publications.begin(), publications.end(), [](auto count) {
         return count < 2;
@@ -2354,18 +2448,18 @@ TEST_CASE(
     const geo::Quaternion identity { 0, 0, 0, 1 };
     geo::Constraints constraints;
     constraints.pair_clearance_mm = .125;
-    const auto context = cuboid_context({ -.5, -.5, -.5 }, { .5, .5, .5 }, { 3.25, 1, 1 }, { identity }, constraints);
+    const auto context = cuboid_context({ -.5, -.5, -.5 }, { .5, .5, .5 }, { 1, 1, 3.25 }, { identity }, constraints);
     native_solution(context, {
                                  { "left",   { .5, .5, .5 },    identity },
-                                 { "middle", { 1.625, .5, .5 }, identity },
-                                 { "right",  { 2.75, .5, .5 },  identity }
+                                 { "middle", { .5, .5, 1.625 }, identity },
+                                 { "right",  { .5, .5, 2.75 },  identity }
     });
 
     solver::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
     limits.spectral.max_candidate_evaluations = 32;
-    limits.spectral.max_search_passes = 1;
+    limits.spectral.max_search_passes = 2;  // Seed prefix1 plus the original FFT pass.
     limits.spectral.max_copies = 3;
     limits.max_refinement_evaluations = 32;
     limits.per_representation.max_cells = 10'000;
@@ -2382,10 +2476,12 @@ TEST_CASE(
     CHECK(outcome.run.termination_reason == solver::TerminationReason::budget_exhausted);
     CHECK(outcome.run.diagnostic_code == "SPECTRAL_COPY_LIMIT");
     CHECK(outcome.run.stats.candidate_evaluations < limits.spectral.max_candidate_evaluations);
-    CHECK(outcome.run.stats.search_passes == 0);
+    CHECK(fft_passes(outcome) == 0);
     CHECK(outcome.run.best->solution->copies().size() == 3);
+    CHECK(outcome.spectral_stats.correlations > 0);
+    CHECK(outcome.spectral_stats.refinement_evaluations > 0);
     CHECK(std::ranges::any_of(outcome.run.best->solution->copies(), [](const geo::CopyPose& copy) {
-        return copy.translation_mm == geo::Vec3 { 1.625, .5, .5 };
+        return copy.translation_mm == geo::Vec3 { .5, .5, 1.625 };
     }));
 }
 
@@ -2395,7 +2491,11 @@ TEST_CASE("AT-16 spectral wrapper charges placed-face bounds to the cumulative q
     const geo::Quaternion identity { 0, 0, 0, 1 };
     geo::Constraints constraints;
     constraints.pair_clearance_mm = .125;
-    const auto context = cuboid_context({ -.5, -.5, -.5 }, { .5, .5, .5 }, { 3.25, 1, 1 }, { identity }, constraints);
+    const auto context = cuboid_context({ -.5, -.5, -.5 }, { .5, .5, .5 }, { 1, 1, 2.125 }, { identity }, constraints);
+    native_solution(context, {
+                                 { "lower", { .5, .5, .5 },    identity },
+                                 { "upper", { .5, .5, 1.625 }, identity }
+    });
     const auto initial = native_solution(context, {
                                                       { "left", { .5, .5, .5 }, identity }
     });
@@ -2403,7 +2503,7 @@ TEST_CASE("AT-16 spectral wrapper charges placed-face bounds to the cumulative q
     limits.baseline.max_candidate_evaluations = 0;
     limits.baseline.max_search_passes = 0;
     limits.spectral.max_candidate_evaluations = 32;
-    limits.spectral.max_search_passes = 1;
+    limits.spectral.max_search_passes = 2;  // Seed prefix1 plus the original FFT pass.
     limits.spectral.max_copies = 3;
     limits.max_refinement_evaluations = 0;
     limits.per_representation.max_cells = 10'000;
@@ -2416,6 +2516,9 @@ TEST_CASE("AT-16 spectral wrapper charges placed-face bounds to the cumulative q
     REQUIRE(prefix.run.best);
     REQUIRE(prefix.run.stats.candidate_evaluations == 1);
     REQUIRE(prefix.spectral_stats.refinement_evaluations == 1);
+    REQUIRE(prefix.stagger.work.candidate_evaluations == 0);
+    REQUIRE(fft_candidates(prefix) == 1);
+    REQUIRE(prefix.spectral_stats.correlations > 0);
     const auto prefix_work = prefix.run.stats.geometry_kernel_work - prefix.baseline_stats.geometry_kernel_work;
     const auto catalog =
         std::get<solver::OrientationCatalog>(solver::make_orientation_catalog(context->constraints().orientations, 1));
@@ -3363,10 +3466,12 @@ TEST_CASE("T010 fresh one-candidate spectral trial reaches FFT while baseline st
     solver::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = limits.baseline.max_copies = 8;
     limits.baseline.max_search_passes = 1;
-    limits.spectral.max_candidate_evaluations = limits.spectral.max_search_passes = 1;
+    limits.spectral.max_candidate_evaluations = 1;
+    limits.spectral.max_search_passes = 2;  // Seed prefix1 plus the original FFT pass.
     limits.spectral.max_copies = 8;
     limits.max_refinement_evaluations = 0;
     std::vector<std::size_t> published;
+    solver::SnapshotHandle last_published;
     const auto outcome = solver::run_cpu_spectral(context,
                                                   {
                                                       { 0, 0, 0 },
@@ -3374,14 +3479,19 @@ TEST_CASE("T010 fresh one-candidate spectral trial reaches FFT while baseline st
     },
                                                   limits, {}, [&](solver::SnapshotHandle snapshot) {
         published.push_back(snapshot->score.count);
+        last_published = snapshot;
     });
     REQUIRE(outcome.run.best);
     CHECK(outcome.run.best->score.count == 8);
     CHECK(outcome.baseline_stats.candidate_evaluations == 8);
     CHECK(outcome.run.stats.candidate_evaluations == 9);
     CHECK(outcome.spectral_stats.correlations == 2);
-    REQUIRE(published.size() == 1);
-    CHECK(published.front() == 8);
+    REQUIRE_FALSE(published.empty());
+    CHECK(std::is_sorted(published.begin(), published.end()));
+    CHECK(published.back() == 8);
+    CHECK(outcome.run.best == last_published);
+    CHECK(outcome.stagger.work.candidate_evaluations == 0);
+    CHECK(fft_candidates(outcome) == 1);
     REQUIRE(outcome.field_admission);
     CHECK(outcome.field_admission->footprint_copy_count == 0);
     CHECK(geo::revalidate(outcome.run.best->solution).validated_solution);
@@ -3423,24 +3533,27 @@ TEST_CASE("T010 fresh empty validation preserves control cause and central incum
     };
     solver::SpectralLimits limits;
     limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
-    limits.spectral.max_candidate_evaluations = limits.spectral.max_search_passes = 1;
+    limits.spectral.max_candidate_evaluations = limits.spectral.max_copies = 1;
+    limits.spectral.max_search_passes = 2;  // Seed prefix1 plus the original FFT pass.
     solver::SnapshotHandle published;
     unsigned publications {};
     const auto outcome =
         solver::run_cpu_spectral(context, { {}, .5 }, limits, control, [&](solver::SnapshotHandle snapshot) {
         published = std::move(snapshot);
         ++publications;
+        CHECK(published->solution == initial);
         interrupt.published = true;
     }, initial);
     CAPTURE(deadline, outcome.run.diagnostic_code);
     REQUIRE(interrupt.in_empty_validation);
     CHECK(interrupt.validation_polls >= 3);
-    CHECK(publications == 1);
+    CHECK(publications == 2);  // Baseline entry and existing FFT-entry publication.
     REQUIRE(published);
     CHECK(outcome.run.best == published);
     CHECK(outcome.run.retained_solution == initial);
     CHECK(outcome.run.stats.validation_kernel_work == outcome.baseline_stats.validation_kernel_work + 1);
-    CHECK(outcome.run.stats.candidate_evaluations == 0);
+    CHECK(outcome.stagger.work.candidate_evaluations == 0);
+    CHECK(fft_candidates(outcome) == 0);
     CHECK(outcome.spectral_stats.correlations == 0);
     CHECK(outcome.run.termination_reason ==
           (deadline ? solver::TerminationReason::budget_exhausted : solver::TerminationReason::user_stopped));
@@ -4063,7 +4176,8 @@ TEST_CASE("AT-16 public spectral run contains persistent failure reached inside 
     CHECK(outcome->run.retained_solution == initial);
     REQUIRE(outcome->run.failure_details);
     CHECK(outcome->run.failure_details->cause_code() == "FIELD_CELL_VISIT_LIMIT");
-    CHECK(outcome->run.stats.candidate_evaluations == 0);
+    CHECK(outcome->run.stats.candidate_evaluations == outcome->baseline_stats.candidate_evaluations +
+          outcome->stagger.work.candidate_evaluations);
     CHECK(outcome->spectral_stats.representation_cell_visits == 5);
     REQUIRE(published);
     REQUIRE(outcome->run.best);
@@ -4120,7 +4234,7 @@ TEST_CASE("AT-16 public field diagnostic publication contains transient allocati
         CHECK(outcome->run.retained_solution == initial);
         REQUIRE(outcome->run.failure_details);
         CHECK(outcome->run.failure_details->cause_code() == "FIELD_CELL_VISIT_LIMIT");
-        CHECK(outcome->run.stats.candidate_evaluations == 0);
+        CHECK(fft_candidates(*outcome) == 0);
         CHECK(outcome->spectral_stats.representation_cell_visits == 5);
         REQUIRE(published);
         REQUIRE(outcome->run.best);

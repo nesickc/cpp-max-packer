@@ -84,6 +84,79 @@ class Session:
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_count_publication_matches_terminal_poses(self):
+        """SOL-01/UI-02/DATA-02 ADR0017: real NDJSON count-only snapshots and exact files."""
+        with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).resolve().parents[2]/'.local') as temporary:
+            root = pathlib.Path(temporary)
+            source, report = root/'cube.stl', root/'object.report.json'
+            fixtures.write_cube_stl(source, extent=2)
+            imported = subprocess.run([str(ENGINE), 'inspect', '--stl', str(source), '--units', 'mm',
+                                      '--report', str(report)], capture_output=True, text=True, timeout=15)
+            self.assertEqual(imported.returncode, 0, imported.stdout+imported.stderr)
+            fixture = fixtures.SolveSubprocessTests(); fixture.object_report_path = report
+            settings = fixture.settings(dimensions=(12, 6, 4), candidates=64, passes=2)
+            session = Session()
+            try:
+                preview = root/'preview'; preview.mkdir()
+                prepared, _ = session.request({'runtime_version':1,'request_id':'prepare-live',
+                    'operation_id':'prepare-live-op','method':'prepare','params':{
+                        'object_report':str(report),'output_directory':str(preview)}})
+                self.assertTrue(prepared['ok'], prepared)
+                ticks, frequency = qpc()
+                publication = {'version':1,'session_id':'session-live','native_epoch':'native-live',
+                               'settings_id':'settings-live'}
+                request = {'runtime_version':1,'request_id':'run-live','operation_id':'run-live-op',
+                    'method':'run','params':{'asset_token':prepared['result']['asset_token'],
+                    'settings':settings,'result_path':str(root/'result.json'),'stop_file':str(root/'stop'),
+                    'start_qpc_ticks':ticks,'qpc_frequency_hz':frequency,'publication':publication}}
+                session.child.stdin.write(json.dumps(request)+'\n');session.child.stdin.flush()
+                packings, times = [], []
+                while True:
+                    record = session.records.get(timeout=15)
+                    self.assertIsNotNone(record)
+                    if record['kind'] == 'packing':
+                        self.assertEqual(record['publication'], publication)
+                        self.assertEqual(record['operation_id'], request['operation_id'])
+                        self.assertEqual(record['request_id'], request['request_id'])
+                        packing = record['packing']
+                        self.assertEqual(packing['validation_status'], 'valid')
+                        self.assertEqual(packing['count'], len(packing['placements']))
+                        if packings:
+                            self.assertGreater(packing['count'], packings[-1]['count'])
+                            self.assertGreater(packing['solution_revision'], packings[-1]['solution_revision'])
+                            self.assertGreaterEqual(time.monotonic()-times[-1], 0.23)
+                        packings.append(packing);times.append(time.monotonic())
+                    elif record['kind'] == 'response':
+                        self.assertTrue(record['ok'], record)
+                        break
+                self.assertTrue(packings, 'No native live packing reached the reader')
+                terminal = json.loads((root/'result.json').read_text())
+                self.assertEqual(terminal['placements'], packings[-1]['placements'])
+                self.assertEqual(terminal['solution_revision'], packings[-1]['solution_revision'])
+                print(json.dumps({'case':'count-publication','counts':[p['count'] for p in packings],
+                    'ordered_terminal_poses_match':True,'record':record}),flush=True)
+            finally:
+                session.close()
+
+            # Actual cli::solve path: publication callbacks must not write/flush stderr.
+            self.assertNotIn('solve: validated count=', ''.join(session.stderr))
+            legacy = Session()
+            try:
+                preview = root/'legacy-preview'; preview.mkdir()
+                prepared, _ = legacy.request({'runtime_version':1,'request_id':'prepare-legacy',
+                    'operation_id':'prepare-legacy-op','method':'prepare','params':{
+                        'object_report':str(report),'output_directory':str(preview)}})
+                self.assertTrue(prepared['ok'], prepared)
+                ticks, frequency = qpc()
+                reply, _ = legacy.request({'runtime_version':1,'request_id':'run-legacy','operation_id':'run-legacy-op',
+                    'method':'run','params':{'asset_token':prepared['result']['asset_token'],
+                    'settings':settings,'result_path':str(root/'legacy-result.json'),'stop_file':str(root/'legacy-stop'),
+                    'start_qpc_ticks':ticks,'qpc_frequency_hz':frequency}})
+                self.assertTrue(reply['ok'], reply)
+            finally:
+                legacy.close()
+            self.assertIn('solve: validated count=', ''.join(legacy.stderr))
+
     def test_finalization_deadline_preserves_nonempty_authority_and_previous_result(self):
         """T011-A4 / SOL-06: resource refusal then cleanup expiry preserves authority and both causes."""
         if MEMORY_HELPER is None:
@@ -238,7 +311,8 @@ class RuntimeTests(unittest.TestCase):
                 fixture = fixtures.SolveSubprocessTests()
                 fixture.object_report_path = report
                 settings = fixture.settings(dimensions=(64, 64, 64), candidates=2)
-                settings['search']['work_budget']['max_search_passes'] = 2
+                # CLI splits four passes into baseline2, count-dominated seed1, FFT1.
+                settings['search']['work_budget']['max_search_passes'] = 4
                 settings['resolution']['pitch_mm'] = settings['resolved']['pitch_mm'] = 1
                 reference_placements = None
                 for target in ('voxelizing', 'planning_fft'):
@@ -445,6 +519,12 @@ class RuntimeTests(unittest.TestCase):
                 if monitor_failure:
                     self.assertFalse(reply['ok'],reply)
                     self.assertEqual(reply['error']['code'],'STOP_MONITOR_FAILED')
+                    details=reply['error']['details']
+                    stagger=details['diagnostics']['stagger']
+                    self.assertEqual(stagger['operator'],'half_column_seven_eighths_rows')
+                    self.assertEqual(stagger['state'],'completed')
+                    self.assertEqual(stagger['best_count_after'],document['count'])
+                    self.assertGreater(stagger['work']['search_passes'],0)
                 else:
                     self.assertTrue(reply['ok'],reply)
                     # Search may already have ended when Stop races the final certified commit.
@@ -777,8 +857,9 @@ class RuntimeTests(unittest.TestCase):
                     else:changed['container']['dimensions_mm'][0]=value
                     saved,_=fixed_run('constraints-'+name,options=changed);self.assertEqual(saved['count'],count)
                     if name=='wall':self.assertNotEqual(saved['placements'][0]['translation_mm'],base['placements'][0]['translation_mm'])
-                spectral=copy.deepcopy(fixed);spectral['container']['dimensions_mm']=[40,40,40]
-                spectral['search']['work_budget']={'max_candidate_evaluations':2,'max_search_passes':2}
+                # Exact one-copy capacity leaves the seed dominated before the original FFT candidate.
+                spectral=copy.deepcopy(fixed);spectral['container']['dimensions_mm']=[10,10,10]
+                spectral['search']['work_budget']={'max_candidate_evaluations':2,'max_search_passes':4}
                 coarse,_=fixed_run('pitch-10',options=spectral)
                 spectral['resolution']['pitch_mm']=spectral['resolved']['pitch_mm']=5
                 fine,_=fixed_run('pitch-5',options=spectral)
