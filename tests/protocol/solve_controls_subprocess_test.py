@@ -12,6 +12,7 @@ import math
 import os
 import pathlib
 import queue
+import re
 import signal
 import struct
 import subprocess
@@ -111,6 +112,13 @@ class JobExtendedLimitInformation(ctypes.Structure):
     ]
 
 
+def validated_readiness_count(publication: str) -> int:
+    match = re.fullmatch(r"solve: validated count=([0-9]+)\r?\n?", publication)
+    if match is None:
+        raise AssertionError(f"solve readiness count is missing or malformed: {publication!r}")
+    return int(match[1])
+
+
 def isolated_console_process(command: list[str], send_break: bool,
                              readiness_timeout: float) -> tuple[int, str, str]:
     """Run an owned process tree and optionally signal it after bounded readiness."""
@@ -183,8 +191,7 @@ def isolated_console_process(command: list[str], send_break: bool,
             raise TimeoutError("solve readiness timed out") from error
         if not read_ok:
             raise AssertionError(f"solve readiness read failed: {publication}")
-        if "solve: validated count=" not in publication:
-            raise AssertionError(f"solve never reported a validated snapshot: {publication!r}")
+        validated_readiness_count(publication)
         if send_break:
             kernel32.FreeConsole()
             if not kernel32.AttachConsole(process.pid):
@@ -632,7 +639,16 @@ class SolveControls(unittest.TestCase):
         response = json.loads(stdout)
         self.assertEqual(response["termination_reason"], "user_stopped")
         result = json.loads(result_path.read_text(encoding="utf-8"))
-        self.assertGreater(result["count"], 0)
+        readiness = stderr.splitlines()[0] if stderr else ""
+        observed_count = validated_readiness_count(readiness)
+        # The first validated snapshot may be empty; positive-incumbent Stop is covered by native tests.
+        self.assertGreaterEqual(result["count"], observed_count, (stdout, stderr))
+        self.assertEqual(result["count"], len(result["placements"]))
+        self.assertEqual(response["count"], result["count"])
+        self.assertEqual(result["validation"]["status"], "valid")
+        self.assertEqual(result["label"], "best_found")
+        self.assertEqual(result["metrics"]["termination_reason"], "user_stopped")
+        self.assertEqual(response["no_nonempty_incumbent"], result["count"] == 0)
 
 
 CASES = {
