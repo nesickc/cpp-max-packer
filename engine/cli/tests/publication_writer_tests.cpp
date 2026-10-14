@@ -107,11 +107,12 @@ struct WriterFixture {
         });
     }
 };
-cli::PublishedSnapshotHandle packing(unsigned count, unsigned revision, bool escaped = false)
+cli::PublishedSnapshotHandle packing(unsigned count, unsigned revision, bool escaped = false,
+                                    geo::Constraints constraints = {})
 {
     auto ctx = std::get<std::shared_ptr<const geo::ValidationContext>>(geo::make_validation_context(
         geo::test_support::accepted(geo::test_support::cuboid({ 0, 0, 0 }, { 1, 1, 1 }), geo::AssetRole::object),
-        geo::BoxDimensions { 2000, 4, 4 }, {}));
+        geo::BoxDimensions { 2000, 4, 4 }, std::move(constraints)));
     std::vector<geo::CopyPose> copies;
     for (unsigned i = 0; i < count; ++i) {
         copies.push_back({
@@ -180,7 +181,8 @@ TEST_CASE("AT-14 T015 actual blocked pipe leaves search and Stop independent and
 {
     WriterFixture fixture;
     fixture.session.active_stop = std::make_shared<std::stop_source>();
-    fixture.session.packing(packing(1000, 1), fixture.binding());
+    // Keep the large record while using bounded AABB certificates for its separated copies.
+    fixture.session.packing(packing(1000, 1, false, { .pair_clearance_mm = .125 }), fixture.binding());
     const auto until = runtime::Clock::now() + std::chrono::seconds(2);
     while (!fixture.session.write_started && runtime::Clock::now() < until) {
         std::this_thread::yield();
