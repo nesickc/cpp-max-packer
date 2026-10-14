@@ -517,7 +517,7 @@ def _validation(value, poses, context, limits):
         "fresh report")
     need(report["validity"] == "valid" and report["code"] == "VALID" and
          type(report["message"]) is str and report["message"] and
-         report["kernel_revision"] == "homogeneous-rational-interval-v3",
+         report["kernel_revision"] == "homogeneous-rational-interval-v4",
          "fresh report verdict differs")
     number(report["epsilon_mm"], "fresh epsilon is invalid", 0.0)
     integer(report["aabb_pair_tests"], "fresh pair count is invalid", 0,
@@ -560,7 +560,7 @@ def _snapshot(value, poses, object_bounds, object_volume, container_volume,
 
 
 def _run(run, phase, ordinal, oracle_poses, pass_count, object_bounds,
-         object_volume, container_volume, limits):
+         object_volume, container_volume, limits, observation_counts, workload_id):
     exact_keys(run, {"phase", "ordinal", "search_ms", "fresh_revalidation_ms",
                      "context_identity", "stats", "termination",
                      "diagnostic_code", "observations", "best_found",
@@ -614,17 +614,20 @@ def _run(run, phase, ordinal, oracle_poses, pass_count, object_bounds,
     expected_termination = "search_stalled" if count == 0 else "budget_exhausted"
     need(run["termination"] == expected_termination, "termination differs")
     history = run["observations"]
-    need(isinstance(history, list) and len(history) == count + 1,
-         "observation history differs")
+    history_name = f"{workload_id} {phase}[{ordinal}] observation history"
+    need(isinstance(history, list) and len(history) == len(observation_counts),
+         f"{history_name} differs: expected counts {observation_counts}; "
+         f"received {len(history) if isinstance(history, list) else 'non-list'} snapshots")
     best_poses = run["best_found"].get("poses") \
         if isinstance(run["best_found"], dict) else None
     _same_poses(best_poses, oracle_poses, "best result oracle", bind_ids=False)
-    for revision, observation in enumerate(history, 1):
-        _snapshot(observation, best_poses[:revision - 1], object_bounds,
+    for revision, (observation, admitted_count) in enumerate(
+            zip(history, observation_counts), 1):
+        _snapshot(observation, best_poses[:admitted_count], object_bounds,
                   object_volume, container_volume, revision, context,
-                  f"observation {revision}", True)
+                  f"{history_name} revision {revision}", True)
     best = _snapshot(run["best_found"], best_poses, object_bounds, object_volume,
-                     container_volume, count + 1, context, "best result", False)
+                     container_volume, len(observation_counts), context, "best result", False)
     final_observation = copy.deepcopy(history[-1])
     final_observation.pop("context_identity")
     need(best == final_observation,
@@ -776,12 +779,16 @@ def verify_payload(payload, expectations_path, samples, warmup):
         need(isinstance(runs, list) and len(runs) == samples + warmup,
              "run count differs")
         pass_count = 1 if len(points) <= cap else 0
+        # These two registered 64-copy boxes publish the empty bootstrap,
+        # first copy, complete 32-copy batch, and terminal partial batch.
+        # Mesh-container workloads retain one native-valid admission per copy.
+        observation_counts = [0, 1, 33, 64] if index in (0, 1) else list(range(len(oracle_poses) + 1))
         for run_index, run in enumerate(runs):
             phase = "warmup" if run_index < warmup else "sample"
             ordinal = run_index if phase == "warmup" else run_index - warmup
             recorded_ms += _run(
                 run, phase, ordinal, oracle_poses, pass_count, object_bounds,
-                object_volume, container_volume, run_limits)
+                object_volume, container_volume, run_limits, observation_counts, workload["id"])
             normalized = copy.deepcopy(run)
             for key in ("search_ms", "fresh_revalidation_ms", "context_identity",
                         "phase", "ordinal"):
