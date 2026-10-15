@@ -15,12 +15,15 @@
 #include <numbers>
 #include <set>
 #include <string>
+#include <thread>
 #include <tuple>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
 #include "../../pack_compute/src/correlation_test_hook.hpp"
+#include "../../pack_compute/src/fft_execution_internal.hpp"
 #include "../../pack_geometry/src/field_kernel.hpp"
 #include "../../pack_geometry/src/raster_execution_internal.hpp"
 #include "../../pack_geometry/tests/validation_fixtures.hpp"
@@ -40,6 +43,8 @@ std::atomic_bool fail_test_allocations {};
 std::atomic<std::uint64_t> test_allocation_attempts {};
 std::atomic<std::uint64_t> field_hook_allocation_start {};
 std::atomic<std::int64_t> fail_after_test_allocations { -1 };
+// Correlation/prepare faults belong to their coordinator, not a worker's native TLS initialization.
+constinit thread_local bool fail_next_coordinator_allocation {};
 std::atomic<std::uint64_t> persistent_field_hook_calls {};
 std::int64_t transient_field_fault_ordinal {};
 }
@@ -47,7 +52,8 @@ std::int64_t transient_field_fault_ordinal {};
 void* operator new(std::size_t size)
 {
     test_allocation_attempts.fetch_add(1, std::memory_order_relaxed);
-    if (fail_test_allocations.load(std::memory_order_relaxed) ||
+    if (std::exchange(fail_next_coordinator_allocation, false) ||
+        fail_test_allocations.load(std::memory_order_relaxed) ||
         (fail_after_test_allocations.load(std::memory_order_relaxed) >= 0 &&
          fail_after_test_allocations.fetch_sub(1, std::memory_order_relaxed) == 0)) {
         throw std::bad_alloc {};
@@ -90,6 +96,16 @@ public:
 
     SolverAllocationFailure(const SolverAllocationFailure&) = delete;
     SolverAllocationFailure& operator=(const SolverAllocationFailure&) = delete;
+};
+
+class CoordinatorAllocationFailureReset final {
+public:
+    CoordinatorAllocationFailureReset() = default;
+    ~CoordinatorAllocationFailureReset() { clear(); }
+    void clear() noexcept { fail_next_coordinator_allocation = false; }
+
+    CoordinatorAllocationFailureReset(const CoordinatorAllocationFailureReset&) = delete;
+    CoordinatorAllocationFailureReset& operator=(const CoordinatorAllocationFailureReset&) = delete;
 };
 
 class AllocationFailureReset final {
@@ -1092,6 +1108,93 @@ TEST_CASE("AT-16 T015 Stop and deadline close raster owners without restarting r
     }
 }
 
+TEST_CASE("AT-16 T015 coordinator allocation fault survives a real FFT worker allocation",
+          "[solver][T015-P2][recovery][allocation-owner]")
+{
+    if (solver::cpu_supported_thread_count() < 2) {
+        SKIP("requires a supported two-thread CPU execution");
+    }
+    namespace compute = spectrapack::compute;
+    struct State {
+        std::atomic_bool started {}, release {}, done {}, timed_out {};
+        bool worker_threw {};
+    } state;
+    std::unique_ptr<compute::FftExecution> execution;
+    struct Reset {
+        State& state;
+        std::unique_ptr<compute::FftExecution>& execution;
+        ~Reset()
+        {
+            state.release.store(true, std::memory_order_release);
+            execution.reset();
+            compute::detail::set_fft_test_options({});
+        }
+    } reset { state, execution };
+    compute::detail::set_fft_test_options({ [](void* raw, compute::detail::FftPoint point, std::uint32_t worker) noexcept {
+        if (point != compute::detail::FftPoint::started || worker != 1) {
+            return;
+        }
+        auto& state = *static_cast<State*>(raw);
+        state.started.store(true, std::memory_order_release);  // Native TLS initialization has already completed.
+        const auto deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(2);
+        while (!state.release.load(std::memory_order_acquire)) {
+            if (spectrapack::runtime::Clock::now() >= deadline) {
+                state.timed_out = true;
+                state.done.store(true, std::memory_order_release);
+                return;
+            }
+            std::this_thread::yield();
+        }
+        try {
+            // Explicit allocation-function calls cannot be elided as a new-expression can.
+            void* allocation = ::operator new(1);
+            ::operator delete(allocation);
+        }
+        catch (const std::bad_alloc&) {
+            state.worker_threw = true;
+        }
+        state.done.store(true, std::memory_order_release);
+    }, &state });
+    auto made = compute::make_fft_execution(2, 512ULL << 20);
+    const bool created = std::holds_alternative<std::unique_ptr<compute::FftExecution>>(made);
+    if (created) {
+        execution = std::move(std::get<std::unique_ptr<compute::FftExecution>>(made));
+    }
+    const auto wait = [](const std::atomic_bool& flag) {
+        const auto deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(2);
+        while (!flag.load(std::memory_order_acquire) && spectrapack::runtime::Clock::now() < deadline) {
+            std::this_thread::yield();
+        }
+        return flag.load(std::memory_order_acquire);
+    };
+    const bool started = created && wait(state.started);
+    bool completed {}, coordinator_threw {};
+    if (started) {
+        CoordinatorAllocationFailureReset clear_fault;
+        fail_next_coordinator_allocation = true;
+        state.release.store(true, std::memory_order_release);
+        completed = wait(state.done);
+        if (completed) {
+            try {
+                void* allocation = ::operator new(1);
+                ::operator delete(allocation);
+            }
+            catch (const std::bad_alloc&) {
+                coordinator_threw = true;
+            }
+        }
+    }
+    state.release.store(true, std::memory_order_release);
+    execution.reset();  // Fault is cleared and real worker joined before any Catch assertion.
+    compute::detail::set_fft_test_options({});
+    REQUIRE(created);
+    REQUIRE(started);
+    REQUIRE(completed);
+    CHECK_FALSE(state.timed_out);
+    CHECK_FALSE(state.worker_threw);
+    CHECK(coordinator_threw);
+}
+
 TEST_CASE("AT-16 T015 memory recovery evicts parked workers before real FFT candidates and count improvement",
           "[solver][T015-P2][recovery]")
 {
@@ -1107,6 +1210,7 @@ TEST_CASE("AT-16 T015 memory recovery evicts parked workers before real FFT cand
     limits.spectral.max_copies = 2;
     solver::RunControl control;
     control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
+    CoordinatorAllocationFailureReset clear_fault;
     unsigned entries {};
     struct Reset {
         ~Reset() { spectrapack::compute::detail::set_correlation_entry_hook_for_test(nullptr, nullptr); }
@@ -1114,10 +1218,13 @@ TEST_CASE("AT-16 T015 memory recovery evicts parked workers before real FFT cand
     spectrapack::compute::detail::set_correlation_entry_hook_for_test(
         [](const spectrapack::compute::CorrelationSpec&, void* raw) noexcept {
         if (++*static_cast<unsigned*>(raw) == 1) {
-            fail_after_test_allocations = 0;
+            fail_next_coordinator_allocation = true;
         }
     }, &entries);
     const auto outcome = solver::run_cpu_spectral(context, { {}, .25 }, limits, control);
+    const bool fault_consumed = !fail_next_coordinator_allocation;
+    clear_fault.clear();
+    CHECK(fault_consumed);
     CAPTURE(outcome.run.diagnostic_code, entries, outcome.resource_recovery.deferred);
     REQUIRE(outcome.run.best);
     CHECK(outcome.stagger.best_count_after == 1);
@@ -1419,6 +1526,7 @@ TEST_CASE("AT-16 T015 unaffordable FFT allocation stops after finite changed con
     limits.baseline.max_search_passes = 1;
     limits.baseline.max_copies = 1;
     limits.max_refinement_evaluations = 0;
+    CoordinatorAllocationFailureReset clear_fault;
     unsigned entries {};
     struct Reset {
         ~Reset() { spectrapack::compute::detail::set_correlation_entry_hook_for_test(nullptr, nullptr); }
@@ -1426,11 +1534,14 @@ TEST_CASE("AT-16 T015 unaffordable FFT allocation stops after finite changed con
     spectrapack::compute::detail::set_correlation_entry_hook_for_test(
         [](const spectrapack::compute::CorrelationSpec&, void* raw) noexcept {
         ++*static_cast<unsigned*>(raw);
-        fail_after_test_allocations = 0;
+        fail_next_coordinator_allocation = true;
     }, &entries);
     solver::RunControl control;
     control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
     const auto outcome = solver::run_cpu_spectral(context, { {}, .25 }, limits, control);
+    const bool fault_consumed = !fail_next_coordinator_allocation;
+    clear_fault.clear();
+    CHECK(fault_consumed);
     CHECK(entries >= 1);
     CHECK(entries <= 6);  // At most three changed configurations for each of the two catalog orientations.
     CHECK(outcome.run.termination_reason == solver::TerminationReason::resource_limit);
@@ -1639,9 +1750,9 @@ TEST_CASE("AT-16 T015 review failed field owner retry changes the required threa
         ~Reset()
         {
             geo::detail::set_raster_test_options({});
-            fail_after_test_allocations = -1;
         }
     } reset;
+    CoordinatorAllocationFailureReset clear_fault;
     geo::detail::set_raster_test_options({ [](void* raw, geo::detail::RasterPoint point, std::uint32_t) noexcept {
         if (point == geo::detail::RasterPoint::started) {
             ++static_cast<State*>(raw)->starts;
@@ -1659,10 +1770,13 @@ TEST_CASE("AT-16 T015 review failed field owner retry changes the required threa
         auto& state = *static_cast<State*>(raw);
         if (!state.injected && phase == spectrapack::runtime::Phase::voxelizing) {
             state.injected = true;
-            fail_after_test_allocations = 0;
+            fail_next_coordinator_allocation = true;
         }
     };
     const auto outcome = solver::run_cpu_spectral(context, { {}, .25 }, limits, control);
+    const bool fault_consumed = !fail_next_coordinator_allocation;
+    clear_fault.clear();
+    CHECK(fault_consumed);
     CAPTURE(outcome.run.diagnostic_code, state.starts.load());
     REQUIRE(state.injected);
     CHECK(state.starts == 1);
