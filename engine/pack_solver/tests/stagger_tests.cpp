@@ -27,7 +27,7 @@ std::shared_ptr<const geo::ValidationContext> diamond_context(bool contact = fal
 }
 }  // namespace
 
-TEST_CASE("GEO-06 zero-clearance diamond contact retains native uncertainty", "[solver][stagger][AT-09]")
+TEST_CASE("GEO-06 zero-clearance diamond contact validates without accepting overlap", "[solver][stagger][AT-09]")
 {
     const auto context = diamond_context(true);
     const auto made = geo::make_candidate(
@@ -36,8 +36,17 @@ TEST_CASE("GEO-06 zero-clearance diamond contact retains native uncertainty", "[
                      { "b", { 3, 1, .5 }, { 0, 0, 0, 1 } }
     });
     const auto checked = geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(made));
-    CHECK_FALSE(checked.validated_solution);
-    CHECK(checked.report.code == "KERNEL_CONTACTED_DEGENERACY");
+    REQUIRE(checked.report.validity == geo::Validity::valid);
+    REQUIRE(checked.validated_solution);
+    CHECK(checked.validated_solution->copies().size() == 2);
+    CHECK(geo::revalidate(checked.validated_solution).report.validity == geo::Validity::valid);
+
+    const auto overlap = geo::make_candidate(
+        context, { { "a", { 1, 1, .5 }, { 0, 0, 0, 1 } },
+                   { "b", { std::nextafter(3.0, 1.0), 1, .5 }, { 0, 0, 0, 1 } } });
+    const auto rejected = geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(overlap));
+    CHECK(rejected.report.validity != geo::Validity::valid);
+    CHECK_FALSE(rejected.validated_solution);
 }
 
 TEST_CASE("SOL-04 complete diamond stagger exceeds the two-copy physical baseline", "[solver][stagger][AT-09]")

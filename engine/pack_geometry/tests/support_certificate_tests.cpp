@@ -155,7 +155,8 @@ TEST_CASE("GEO-06 slanted stagger prisms validate within bounded authoritative w
 {
     const double pair_clearance = GENERATE(0.0, 1.0);
     const auto asset = geo::test_support::accepted(slanted_prism(), geo::AssetRole::object);
-    const auto made = geo::make_validation_context(asset, geo::BoxDimensions { 40, 40, 10 }, { pair_clearance, .5, {} });
+    const auto made =
+        geo::make_validation_context(asset, geo::BoxDimensions { 40, 40, 10 }, { pair_clearance, .5, {} });
     REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
     const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
     const auto candidate = geo::make_candidate(context, {
@@ -358,7 +359,6 @@ TEST_CASE("GEO-06 support misses preserve threshold and noncardinal fallback", "
     const auto arbitrary = descriptor(asset, { .625, 1.875, 0 }, { 0, 0, std::sin(.1), std::cos(.1) });
     kernel::Budget budget { 1'000'000, 2 * 1024 * 1024 };
     std::shared_ptr<const kernel::SupportTable> table;
-    CHECK_FALSE(kernel::support_pair_certificate(*a, *b, 0, table, budget));
     CHECK_FALSE(kernel::support_pair_certificate(*a, *arbitrary, 1, table, budget));
     CHECK_FALSE(table);
     // Exact dyadic squared comparisons: gap²=225/160, so (9/8)² passes,

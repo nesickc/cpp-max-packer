@@ -2258,7 +2258,7 @@ Threshold conservative_surface_gap(const PlacedSolid& first,const PlacedSolid& s
 std::optional<PairResult> cardinal_bounds_clearance_certificate(
     const PlacedSolid& first, const PlacedSolid& second, double clearance,
     Budget& budget) {
-  if (clearance == 0.0 || !first.is_cardinal || !second.is_cardinal)
+  if (!first.is_cardinal || !second.is_cardinal)
     return std::nullopt;
   if (!(clearance >= 0.0) || !std::isfinite(clearance))
     return PairResult{Decision::indeterminate,
@@ -2277,7 +2277,7 @@ std::optional<PairResult> cardinal_bounds_clearance_certificate(
   if (proof == CardinalBoundProof::unproved) return std::nullopt;
   if (proof == CardinalBoundProof::at_least_threshold)
     return PairResult{Decision::no,
-                      BoundaryRelation::disjoint,
+                      clearance == 0.0 ? BoundaryRelation::indeterminate : BoundaryRelation::disjoint,
                       Threshold::at_least,
                       "exact-cardinal-bounds-lower-bound",
                       ""};
@@ -2823,6 +2823,10 @@ PairResult classify_pair(const PlacedSolid& first,const PlacedSolid& second,
   }
   if (separated_by_bounds(first,second,clearance,budget))
     return {Decision::no,BoundaryRelation::disjoint,Threshold::above,"outward-aabb",""};
+  // Export validates independently imported, quantized solids through this path.
+  // Apply the same exact source-bounds proof to those actual staged vertices.
+  if (const auto certificate = cardinal_bounds_clearance_certificate(first,second,clearance,budget))
+    return *certificate;
   if (separated_by_bounds(first,second,0.0,budget)) {
     const auto gap=exact_surface_gap(first,second,clearance,budget);
     return {Decision::no,BoundaryRelation::disjoint,gap,"outward-aabb-exact-gap",
