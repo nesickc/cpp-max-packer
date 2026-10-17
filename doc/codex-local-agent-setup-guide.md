@@ -1,6 +1,6 @@
 # Local Codex setup: Astra orchestration with economical workers
 
-> Historical setup template. The user's subsequent additions authorize Astra Extra High (`xhigh`) `architect` and `code_reviewer` workers, Luna log review, and spec-linked TDD. Current project policy is in `AGENTS.md` and `doc/AGENT_SETUP.md`; it supersedes this template's blanket ban on Astra workers. Keep the two-worker cap and economical implementation defaults.
+> Historical setup template, not current configuration. The current workflow and agent policy are in `AGENTS.md` and `.codex/`; they supersede this template. The examples below preserve the original setup context.
 
 **Version:** 1.0 · **Prepared:** 8 September 2026
 
