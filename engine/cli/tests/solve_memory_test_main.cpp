@@ -13,6 +13,18 @@
 
 int main(int argc, char** argv)
 {
+    if (argc >= 5 && std::string_view(argv[1]) == "lowered-host-cap" && std::string_view(argv[3]) == "solve") {
+        spectrapack::cli::test::set_available_ram_hook([](void*) noexcept -> std::optional<std::uint64_t> {
+            return 0;
+        });
+        std::vector<std::string> arguments;
+        for (int index = 4; index < argc; ++index) {
+            arguments.emplace_back(argv[index]);
+        }
+        // run_solve_command creates the ordinary CLI runtime: its optional
+        // desktop cap-notification pointer is absent throughout finalization.
+        return run_solve_command(arguments, "lowered-cap-check", "test-only");
+    }
     if (argc == 3 && (std::string_view(argv[1]) == "session-finalization-expiry" ||
                       std::string_view(argv[1]) == "session-resource-finalization-expiry")) {
         struct Expiry {

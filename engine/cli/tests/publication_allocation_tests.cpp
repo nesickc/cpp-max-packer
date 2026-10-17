@@ -16,7 +16,8 @@ TEST_CASE("T015 reserved serializer pool covers measured legal record and overfl
 {
     auto ctx = std::get<std::shared_ptr<const geo::ValidationContext>>(geo::make_validation_context(
         geo::test_support::accepted(geo::test_support::cuboid({ 0, 0, 0 }, { 1, 1, 1 }), geo::AssetRole::object),
-        geo::BoxDimensions { 3000, 4, 4 }, {}));
+        // Already-separated copies admit bounded AABB certificates at this clearance.
+        geo::BoxDimensions { 3000, 4, 4 }, geo::Constraints { .pair_clearance_mm = .125 }));
     for (const auto count : { 336, 1000, 42, 44 }) {
         const bool escaped = count < 100;
         std::vector<geo::CopyPose> copies;

@@ -578,6 +578,10 @@ BaselineOutcome run_aabb_baseline_impl(
     };
     const auto handle_offer_issue = [&](const OfferOutcome& offer) {
       if (offer.issue == OfferIssue::none) return true;
+      if (!offer.issue_cause.empty()) {
+          out.failure_details =
+              RunFailureDetails { TerminationReason::resource_limit, "scoring", offer.issue_cause, {}, {} };
+      }
       if (offer.issue == OfferIssue::operational_failure ||
           offer.issue == OfferIssue::numerical_failure) {
         out.termination_reason = TerminationReason::error;

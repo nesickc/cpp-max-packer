@@ -12,6 +12,9 @@
 
 namespace spectrapack::solver {
 
+enum class ResourceMode { legacy, fixed_work, timed };
+struct ResourceRecovery;
+
 struct SpectralLimits {
     BaselineLimits baseline {};
     BaselineLimits spectral {};
@@ -25,6 +28,25 @@ struct SpectralLimits {
     std::uint64_t max_proximity_terms { 200'000'000 };
     std::uint64_t max_refinement_evaluations { 128 };
     std::uint32_t cpu_thread_count { 1 };
+    ResourceMode resource_mode { ResourceMode::legacy };
+    std::optional<std::uint64_t> (*available_ram)(void*) noexcept {};
+    void* resource_context {};
+    void (*resource_status_sink)(void*, std::uint64_t, const ResourceRecovery&) noexcept {};
+    void* resource_status_context {};
+};
+
+struct ResourceTransition {
+    std::uint64_t sequence {}, before {}, after {}, consumed {};
+    std::array<char, 65> cause {};
+    std::string_view phase, action;
+};
+struct ResourceRecovery {
+    std::uint32_t actual_final_threads { 1 };
+    std::uint64_t grants {}, recoveries {}, deferred {}, fft_candidate_evaluations {}, native_validations {};
+    std::uint64_t omitted {}, transition_count {};
+    std::array<ResourceTransition, 16> transitions {};
+    void record(std::string_view cause, std::string_view phase, std::string_view action, std::uint64_t before,
+                std::uint64_t after, std::uint64_t consumed) noexcept;
 };
 
 [[nodiscard]] std::uint32_t cpu_supported_thread_count() noexcept;
@@ -70,6 +92,8 @@ struct SpectralOutcome {
     // Maximum successful actual-layout field admission, with its associated
     // copy/thread/policy basis. Speculative empty preflight is not published.
     std::optional<CpuFieldAdmissionEstimate> field_admission;
+    ResourceRecovery resource_recovery;
+    std::uint64_t admitted_host_cap_bytes {};
 };
 
 [[nodiscard]] SpectralOutcome run_cpu_spectral(std::shared_ptr<const geometry::ValidationContext>,

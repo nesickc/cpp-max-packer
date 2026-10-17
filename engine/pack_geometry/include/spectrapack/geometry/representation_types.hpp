@@ -57,6 +57,7 @@ struct RepresentationLimits {
   // accepted/prepared resident input before allocating representation storage.
   std::uint64_t reserved_bytes{};
   std::uint64_t max_input_triangles{5'000'000};
+  bool renewable_work_limits {};
 };
 
 struct RepresentationStats {

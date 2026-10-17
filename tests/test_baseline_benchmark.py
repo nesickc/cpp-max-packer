@@ -212,7 +212,7 @@ def validation_report(count):
         "validity": "valid", "code": "VALID",
         "message": "All requested physical checks completed.",
         "epsilon_mm": 1e-6,
-        "kernel_revision": "homogeneous-rational-interval-v3",
+        "kernel_revision": "homogeneous-rational-interval-v4",
         "aabb_pair_tests": count * (count - 1) // 2,
         "kernel_work": 1000 + count * 10,
         "working_bytes_peak": 4096 + count * 64,
@@ -230,10 +230,13 @@ def run_record(workload_index, phase, ordinal, poses, object_bounds,
     context_identity = (10_000 + workload_index * 100 + ordinal
                         + (0 if phase == "warmup" else 10))
     history = []
-    for admitted_count in range(len(poses) + 1):
+    # The registered analytic boxes publish native-valid complete layouts:
+    # bootstrap, first copy, one full batch, then the terminal partial batch.
+    counts = (0, 1, 33, 64) if workload_index in (0, 1) else range(len(poses) + 1)
+    for revision, admitted_count in enumerate(counts, 1):
         prefix = copy.deepcopy(poses[:admitted_count])
         history.append({
-            "revision": admitted_count + 1,
+            "revision": revision,
             "context_identity": context_identity,
             "invariant": "best_found",
             "score": score(prefix, object_bounds),
@@ -388,8 +391,65 @@ class BaselinePayloadTests(unittest.TestCase):
                         for point in analytic_points(origin, pitch)]
             self.assertEqual(actual, expected)
             self.assertEqual([entry["revision"] for entry in case["runs"][0]["observations"]],
-                             list(range(1, 66)))
+                             [1, 2, 3, 4])
         checks.verify_payload(payload, ROOT / "tests/fixtures/import-expectations.json", 3, 1)
+
+    def test_box_batch_history_keeps_every_native_valid_admission(self):
+        """QA-01/AT-10/AT-17: retain full batch publications, not per-copy fiction."""
+        payload = complete_payload()
+        for case in payload["workloads"][:2]:
+            for run in case["runs"]:
+                self.assertEqual([len(entry["poses"]) for entry in run["observations"]],
+                                 [0, 1, 33, 64])
+                self.assertEqual(run["stats"]["candidate_evaluations"], 64)
+                self.assertEqual(run["best_found"]["revision"], 4)
+        checks.verify_payload(payload, ROOT / "tests/fixtures/import-expectations.json", 3, 1)
+
+    def test_rejects_missing_reordered_or_corrupt_box_batch_history(self):
+        def wrong_batch_boundary(run):
+            entry = run["observations"][2]
+            entry["poses"] = entry["poses"][:32]
+            entry["score"] = score(entry["poses"], {"min": [-5.0] * 3, "max": [5.0] * 3})
+            entry["volumes"] = volumes(32, 1000.0, 40.0 ** 3)
+
+        def reordered(run):
+            run["observations"][1:3] = reversed(run["observations"][1:3])
+
+        mutations = (
+            lambda run: run["observations"].pop(2),
+            lambda run: run["observations"].append(copy.deepcopy(run["observations"][-1])),
+            reordered,
+            wrong_batch_boundary,
+            lambda run: run["observations"][2].update(revision=33),
+            lambda run: run["observations"][2]["poses"][32]["translation_mm"].__setitem__(0, 99.0),
+            lambda run: run["observations"][2]["score"].update(count=32),
+            lambda run: run["observations"][2]["volumes"].update(utilization=0.5),
+            lambda run: run["best_found"].update(revision=65),
+        )
+        for mutate in mutations:
+            with self.subTest(mutate=mutate):
+                payload = complete_payload()
+                # Apply across repeats so determinism cannot mask a weak oracle.
+                for run in self.every_run(payload):
+                    mutate(run)
+                self.assert_rejected(payload)
+
+    def test_current_native_kernel_revision_qualifies(self):
+        """QA-01/AT-17: qualify the v4 original-solid validator report."""
+        payload = complete_payload()
+        revisions = {run["fresh_revalidation"]["report"]["kernel_revision"]
+                     for case in payload["workloads"] for run in case["runs"]}
+        self.assertEqual(revisions, {"homogeneous-rational-interval-v4"})
+        checks.verify_payload(payload, ROOT / "tests/fixtures/import-expectations.json", 3, 1)
+
+    def test_rejects_stale_or_unknown_native_kernel_revision(self):
+        for revision in ("homogeneous-rational-interval-v3", "homogeneous-rational-interval-v5"):
+            with self.subTest(revision=revision):
+                payload = complete_payload()
+                for case in payload["workloads"]:
+                    for run in case["runs"]:
+                        run["fresh_revalidation"]["report"]["kernel_revision"] = revision
+                self.assert_rejected(payload)
 
     def test_rc_utilization_and_grid_completion_are_independent(self):
         payload = complete_payload()
@@ -445,8 +505,8 @@ class BaselinePayloadTests(unittest.TestCase):
             lambda p: p["workloads"][0]["runs"][0]["stats"].update(search_passes=0),
             lambda p: p["workloads"][3]["runs"][0]["stats"].update(
                 tracked_working_bytes_peak=WORKING_BYTES + 1),
-            lambda p: p["workloads"][0]["runs"][0]["observations"][20].update(revision=19),
-            lambda p: p["workloads"][0]["runs"][0]["observations"][10]["poses"][0]
+            lambda p: p["workloads"][0]["runs"][0]["observations"][2].update(revision=19),
+            lambda p: p["workloads"][0]["runs"][0]["observations"][2]["poses"][0]
             ["translation_mm"].__setitem__(0, 7.0),
             lambda p: p["workloads"][0]["runs"][2]["stats"].update(geometry_kernel_work=999),
             lambda p: p["workloads"][0]["runs"][2].update(termination="search_stalled"),

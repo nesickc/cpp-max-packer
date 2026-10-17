@@ -24,6 +24,7 @@ pub(crate) struct NativeSession {
     diagnostic: Arc<Mutex<String>>,
     pub epoch: String,
     pub retained_native_bytes: Option<u64>,
+    pub admitted_host_cap_bytes: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -40,8 +41,33 @@ struct Record {
     phase: Option<String>,
     native_elapsed_seconds: Option<f64>,
     retained_native_bytes: Option<u64>,
+    admitted_host_cap_bytes: Option<u64>,
+    resource_status: Option<ResourceStatus>,
     publication: Option<Publication>,
     packing: Option<Packing>,
+}
+
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ResourceStatus {
+    admitted_host_cap_bytes: String,
+    actual_threads: u32,
+    recovery_count: String,
+    last_cause: String,
+    last_action: String,
+}
+impl ResourceStatus {
+    fn validate(&self) -> Outcome<()> {
+        let counter = |text: &str, positive: bool| {
+            text.parse::<u64>().is_ok_and(|n| !positive || n > 0)
+                && (text == "0" || (!text.starts_with('0') && text.bytes().all(|c| c.is_ascii_digit())))
+        };
+        if !counter(&self.admitted_host_cap_bytes, true) || !counter(&self.recovery_count, false)
+            || !(1..=8).contains(&self.actual_threads) || self.last_cause.len() > 95 || self.last_action.len() > 95 {
+            return Err(error("ENGINE_TRANSPORT", "Native resource status is malformed."));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -231,6 +257,7 @@ impl NativeSession {
             diagnostic,
             epoch: id("native"),
             retained_native_bytes: None,
+            admitted_host_cap_bytes: None,
         })
     }
 
@@ -239,16 +266,16 @@ impl NativeSession {
         method: &str,
         operation_id: Option<&str>,
         params: Value,
-        phase: impl FnMut(u64, &str, f64),
+        mut phase: impl FnMut(u64, &str, f64),
     ) -> Outcome<Value> {
-        self.request_with_packing(method, operation_id, params, phase, None)
+        self.request_with_packing(method, operation_id, params, |seq, name, seconds, _| phase(seq, name, seconds), None)
     }
     pub fn request_with_packing(
         &mut self,
         method: &str,
         operation_id: Option<&str>,
         params: Value,
-        mut phase: impl FnMut(u64, &str, f64),
+        mut phase: impl FnMut(u64, &str, f64, Option<&ResourceStatus>),
         mut packing_sink: Option<&mut dyn FnMut(&Publication, &Packing, u64)>,
     ) -> Outcome<Value> {
         let request_id = id("request");
@@ -408,6 +435,8 @@ impl NativeSession {
                         || record.error.is_some()
                         || record.phase.is_some()
                         || record.retained_native_bytes.is_some()
+                        || record.admitted_host_cap_bytes.is_some()
+                        || record.resource_status.is_some()
                         || !seconds.is_finite()
                         || seconds < 0.0
                         || next == 0
@@ -446,6 +475,8 @@ impl NativeSession {
                         || record.error.is_some()
                         || record.publication.is_some()
                         || record.packing.is_some()
+                        || record.retained_native_bytes.is_some()
+                        || record.admitted_host_cap_bytes.is_some()
                         || ![
                             "loading",
                             "preparing",
@@ -472,19 +503,23 @@ impl NativeSession {
                                 error("ENGINE_TRANSPORT", "Progress timeout overflows.")
                             })?;
                     }
-                    phase(next, &name, seconds);
+                    if let Some(status) = &record.resource_status { status.validate()?; }
+                    phase(next, &name, seconds, record.resource_status.as_ref());
                 }
                 "response"
                     if record.sequence.is_none()
                         && record.phase.is_none()
                         && record.native_elapsed_seconds.is_none()
                         && record.publication.is_none()
+                        && record.resource_status.is_none()
                         && record.packing.is_none() =>
                 {
                     if ["prepare", "run", "release"].contains(&method) {
+                        let cap = record.admitted_host_cap_bytes.filter(|cap| *cap > 0)
+                            .ok_or_else(|| error("ENGINE_TRANSPORT", "Native admitted host ceiling is missing or invalid."))?;
                         let bytes = record
                             .retained_native_bytes
-                            .filter(|bytes| *bytes <= 512 << 20)
+                            .filter(|bytes| *bytes <= cap)
                             .ok_or_else(|| {
                                 error(
                                     "ENGINE_TRANSPORT",
@@ -492,6 +527,7 @@ impl NativeSession {
                                 )
                             })?;
                         self.retained_native_bytes = Some(bytes);
+                        self.admitted_host_cap_bytes = Some(cap);
                     }
                     match (record.ok, record.result, record.error) {
                         (Some(true), Some(result), None) => return Ok(result),
@@ -584,10 +620,12 @@ mod tests {
             "start_qpc_ticks":ticks.to_string(),"qpc_frequency_hz":frequency.to_string()});
         let failure=session.request("run",Some("rejected-prepared-budget"),params.clone(),|_,_,_|{}).unwrap_err();
         assert_eq!(failure.code,"INVALID_SETTINGS");
-        params["settings"]["budget_seconds"]=serde_json::json!(0.25);
+        // This success/epoch case must fund real Start resolution, including contract validation in Debug.
+        params["settings"]["budget_seconds"]=serde_json::json!(2.0);
         let (ticks,frequency)=qpc().unwrap();params["start_qpc_ticks"]=serde_json::json!(ticks.to_string());params["qpc_frequency_hz"]=serde_json::json!(frequency.to_string());
         let response=session.request("run",Some("valid-after-rejected-budget"),params,|_,_,_|{}).unwrap();
         assert_eq!(response["preparation_reused"],true);
+        assert!(output.join("result.json").exists(), "Native terminal without an artifact: {response}");
         let result:Value=serde_json::from_slice(&std::fs::read(output.join("result.json")).unwrap()).unwrap();
         assert_eq!(result["validation"]["status"],"valid");
         assert!(result["count"].as_u64().unwrap()>0);

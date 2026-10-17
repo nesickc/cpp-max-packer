@@ -12,6 +12,9 @@
 #include <variant>
 #include <vector>
 
+namespace spectrapack::solver {
+struct ResourceRecovery;
+}
 namespace spectrapack::cli {
 struct SolveRequest {
     io::ValidatedDocument settings;
@@ -46,6 +49,9 @@ struct SolveRuntime {
     bool preserve_previous_on_empty { true };
     std::uint64_t adapter_reserve_bytes {};
     bool initialize_valid_empty {};
+    void (*resource_status_sink)(void*, std::uint64_t, const solver::ResourceRecovery&) noexcept {};
+    void* resource_status_context {};
+    std::uint64_t* admitted_host_cap_bytes {};
     // Adapters own monitor lifetime. CLI may join here; session samples its
     // still-active monitor and joins only after terminal publication.
     StopMonitorResult (*stop_monitor_status)(void*) {};
@@ -70,5 +76,7 @@ void set_finalization_hook(FinalizationHook hook, void* context) noexcept;
 void set_result_build_max_working_bytes(std::uint64_t bytes) noexcept;
 void set_result_export_max_working_bytes(std::uint64_t bytes) noexcept;
 void set_baseline_validation_max_kernel_work(std::uint64_t work) noexcept;
+using AvailableRamHook = std::optional<std::uint64_t> (*)(void*) noexcept;
+void set_available_ram_hook(AvailableRamHook) noexcept;
 }  // namespace spectrapack::cli::test
 #endif

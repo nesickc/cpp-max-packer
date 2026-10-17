@@ -93,7 +93,7 @@ def _cube_cells(low, high):
 def _validation(translation):
     report = {
         "validity": 0, "code": "VALID", "message": "complete",
-        "epsilon_mm": 1e-6, "kernel_revision": "homogeneous-rational-interval-v3",
+        "epsilon_mm": 1e-6, "kernel_revision": "homogeneous-rational-interval-v4",
         "aabb_pair_tests": 0, "kernel_work": 100, "working_bytes_peak": 1000,
         "affected_ids_truncated": False, "affected_copy_ids": [],
         "checks": [{"check": index, "state": 1, "method": "checked"}
@@ -314,6 +314,44 @@ class RepresentationQualificationChecks(unittest.TestCase):
         pilot["workloads"] = [pilot["workloads"][-1]]
         self.assertEqual(self.checks.verify_large_payload(pilot)["name"],
                          "subdivided_cube_n300")
+
+    def test_current_native_kernel_revision_qualifies_full_payload(self):
+        """QA-01/AT-17: current native reports qualify all representation cases."""
+        payload = valid_payload()
+        for workload in payload["workloads"]:
+            runs = ([workload["run"]] if "run" in workload else
+                    workload["warmups"] + workload["samples"])
+            for run in runs:
+                for side in ("validation_before", "validation_after"):
+                    validation = run[side]
+                    self.assertEqual(validation["report"]["kernel_revision"],
+                                     "homogeneous-rational-interval-v4")
+                    self.assertEqual(validation["snapshot"]["report"]["kernel_revision"],
+                                     "homogeneous-rational-interval-v4")
+                if "through_wall_validation" in run:
+                    self.assertEqual(run["through_wall_validation"]["report"]["kernel_revision"],
+                                     "homogeneous-rational-interval-v4")
+        self.checks.verify_payload(payload, EXPECTATIONS, 3, 1)
+
+    def test_rejects_obsolete_or_unknown_revision_in_each_native_report(self):
+        baseline = valid_payload()
+        locations = (
+            ("validation_before", "report"),
+            ("validation_before", "snapshot", "report"),
+            ("validation_after", "report"),
+            ("validation_after", "snapshot", "report"),
+            ("through_wall_validation", "report"),
+        )
+        for revision in ("homogeneous-rational-interval-v3", "homogeneous-rational-interval-v5"):
+            for location in locations:
+                with self.subTest(revision=revision, location=location):
+                    payload = copy.deepcopy(baseline)
+                    report = payload["workloads"][-1]["run"]
+                    for key in location:
+                        report = report[key]
+                    report["kernel_revision"] = revision
+                    with self.assertRaisesRegex(self.checks.PayloadError, "kernel_revision"):
+                        self.checks.verify_payload(payload, EXPECTATIONS, 3, 1)
 
     def test_bitpacked_field_rejects_nonzero_padding(self):
         field = _field([0, 0, 0], [3, 3, 1], "object_kernel", {(0, 0, 0)})

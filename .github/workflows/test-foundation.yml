@@ -12,8 +12,9 @@ permissions:
 jobs:
   windows-cpu-tests:
     runs-on: windows-2025-vs2026
-    # Cover build/regression gates and both bounded geometry/packing qualifiers.
-    timeout-minutes: 70
+    # Measured pre-qualifier work reaches 68 minutes; both qualifiers retain their
+    # existing 30-minute outer bounds. This envelope does not change test/solver caps.
+    timeout-minutes: 140
     env:
       VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.local/vcpkg-binary-cache
     defaults:

@@ -84,6 +84,47 @@ class Session:
 
 
 class RuntimeTests(unittest.TestCase):
+    def test_t015_p2_new_start_freezes_one_shared_cap_after_prepare(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            source, report = root/'cube.stl', root/'object.report.json'
+            fixtures.write_cube_stl(source)
+            imported = subprocess.run([str(ENGINE), 'inspect', '--stl', str(source), '--units', 'mm',
+                '--report', str(report)], capture_output=True, text=True, timeout=15)
+            self.assertEqual(imported.returncode, 0, imported.stdout + imported.stderr)
+            session = Session()
+            try:
+                preview = root/'preview'; preview.mkdir()
+                prepared, _ = session.request({'runtime_version':1,'request_id':'prepare-cap','operation_id':'prepare-cap',
+                    'method':'prepare','params':{'object_report':str(report),'output_directory':str(preview)}})
+                self.assertTrue(prepared['ok'], prepared)
+                self.assertGreater(prepared['admitted_host_cap_bytes'], 0)
+                for index, cap in enumerate((128 << 20, 96 << 20)):
+                    ticks, frequency = qpc()
+                    output = root/f'result-{index}.json'
+                    terminal, phases = session.request({'runtime_version':1,'request_id':f'run-{index}',
+                        'operation_id':f'run-{index}','method':'run','params':{
+                        'asset_token':prepared['result']['asset_token'], 'settings':{
+                            'desktop_version':1,'box_dimensions_mm':[20,20,20],
+                            'clearance_mm':{'pair':0,'wall':0}, 'pitch_mm':10,
+                            'orientation':{'mode':'fixed','quaternion_xyzw':[0,0,0,1]},
+                            'budget_seconds':1,'seed':'42','thread_count':1,'budget_scope':'total_start',
+                            'host_memory_limit_bytes':str(cap)},
+                        'result_path':str(output),'stop_file':str(root/f'stop-{index}'),
+                        'start_qpc_ticks':ticks,'qpc_frequency_hz':frequency}})
+                    self.assertTrue(terminal['ok'], terminal)
+                    result = json.loads(output.read_text())
+                    policy = result['search']['resolved_settings']['resolved']['resource_policy']
+                    self.assertEqual(int(policy['host_cap_bytes']), cap)
+                    statuses = [phase['resource_status'] for phase in phases if 'resource_status' in phase]
+                    self.assertTrue(statuses)
+                    self.assertEqual(int(statuses[0]['admitted_host_cap_bytes']), cap)
+                    self.assertEqual(terminal['admitted_host_cap_bytes'], cap)
+                    self.assertLessEqual(terminal['retained_native_bytes'], cap)
+                    self.assertEqual(result['validation']['status'], 'valid')
+            finally:
+                session.close()
+
     def test_count_publication_matches_terminal_poses(self):
         """SOL-01/UI-02/DATA-02 ADR0017: real NDJSON count-only snapshots and exact files."""
         with tempfile.TemporaryDirectory(dir=pathlib.Path(__file__).resolve().parents[2]/'.local') as temporary:

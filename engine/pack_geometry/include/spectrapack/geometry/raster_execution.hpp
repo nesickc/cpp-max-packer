@@ -17,6 +17,7 @@ public:
     RasterExecution(const RasterExecution&) = delete;
     RasterExecution& operator=(const RasterExecution&) = delete;
     [[nodiscard]] std::uint64_t reserved_bytes() const noexcept;
+    [[nodiscard]] bool closed() const noexcept;
 
 private:
     struct Storage;

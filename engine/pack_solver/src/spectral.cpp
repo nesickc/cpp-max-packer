@@ -437,10 +437,128 @@ CatalogValidity resolved_catalog_validity(const geometry::ValidationContext& con
 
 SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationContext> context,
                                  geometry::GridLattice lattice, const OrientationCatalog& catalog,
-                                 const SpectralLimits& limits, const RunControl& control, SnapshotSink sink,
+                                 const SpectralLimits& requested_limits, const RunControl& control, SnapshotSink sink,
                                  std::shared_ptr<const geometry::ValidatedSolution> initial)
 {
+    auto limits = requested_limits;
+    const bool timed = limits.resource_mode == ResourceMode::timed && control.deadline.has_value();
     SpectralOutcome outcome;
+    outcome.resource_recovery.actual_final_threads = limits.cpu_thread_count;
+    outcome.admitted_host_cap_bytes = limits.max_working_bytes;
+    const auto resource_status = [&] {
+        outcome.admitted_host_cap_bytes = limits.max_working_bytes;
+        if (limits.resource_status_sink) {
+            limits.resource_status_sink(limits.resource_status_context, limits.max_working_bytes,
+                                        outcome.resource_recovery);
+        }
+    };
+    const auto record_recovery = [&](std::string_view cause, std::string_view phase, std::string_view action,
+                                     std::uint64_t before, std::uint64_t after, std::uint64_t consumed) {
+        outcome.resource_recovery.record(cause, phase, action, before, after, consumed);
+        resource_status();
+    };
+    resource_status();
+    const auto renew_boundary = [&](std::uint64_t& cap, std::uint64_t quantum, std::uint64_t used,
+                                    std::string_view phase) {
+        if (!timed || quantum == 0 || used < cap || boundary(control) != Boundary::none ||
+            quantum > UINT64_MAX - used) {
+            return false;
+        }
+        const auto before = cap;
+        cap = used + quantum;
+        ++outcome.resource_recovery.grants;
+        record_recovery("WORK_QUANTUM_EXHAUSTED", phase, "grant_work", before, cap, used);
+        return true;
+    };
+    const auto known_allowance = [](std::string_view cause) {
+        constexpr std::array causes { "PHYSICAL_WORK_LIMIT",
+                                      "PHYSICAL_VERTEX_LIMIT",
+                                      "PHYSICAL_PASS_LIMIT",
+                                      "PHYSICAL_CANDIDATE_LIMIT",
+                                      "STAGGER_CANDIDATE_LIMIT",
+                                      "VALIDATION_KERNEL_WORK_LIMIT",
+                                      "VALIDATION_COPY_ID_WORK_LIMIT",
+                                      "VALIDATION_ORIENTATION_WORK_LIMIT",
+                                      "KERNEL_WORK_LIMIT",
+                                      "VALIDATION_AABB_PAIR_LIMIT",
+                                      "PHYSICAL_MEMORY_LIMIT",
+                                      "PHYSICAL_ALLOCATION_FAILURE" };
+        return std::find(causes.begin(), causes.end(), cause) != causes.end();
+    };
+    const auto pipeline_denial = [&](std::string_view cause) {
+        constexpr std::array causes { "FIELD_KERNEL_WORK_LIMIT",
+                                      "FIELD_CELL_VISIT_LIMIT",
+                                      "FIELD_CELL_LIMIT",
+                                      "FIELD_INPUT_TRIANGLE_LIMIT",
+                                      "CORRELATION_DIRECT_TERM_LIMIT",
+                                      "CORRELATION_PADDED_CELL_LIMIT",
+                                      "SPECTRAL_PIPELINE_DIRECT_TERM_LIMIT",
+                                      "SPECTRAL_PIPELINE_PROXIMITY_LIMIT",
+                                      "CORRELATION_ALLOCATION",
+                                      "CORRELATION_MEMORY_LIMIT",
+                                      "FIELD_ALLOCATION_FAILURE",
+                                      "FIELD_MEMORY_LIMIT",
+                                      "KERNEL_ALLOCATION_FAILURE",
+                                      "KERNEL_MEMORY_LIMIT",
+                                      "SPECTRAL_MEMORY_LIMIT",
+                                      "SPECTRAL_PIPELINE_ALLOCATION" };
+        return known_allowance(cause) || std::find(causes.begin(), causes.end(), cause) != causes.end();
+    };
+    std::optional<RunFailureDetails> deferred_cause;
+    const auto defer = [&](std::string_view cause, std::string_view phase, std::string_view action) {
+        if (!deferred_cause) {
+            deferred_cause.emplace(TerminationReason::resource_limit, phase, cause, std::nullopt, std::nullopt);
+        }
+        ++outcome.resource_recovery.deferred;
+        record_recovery(cause, phase, action, 0, 0, outcome.run.stats.candidate_evaluations);
+        outcome.run.failure_details.reset();
+        outcome.run.diagnostic_code = {};
+        outcome.run.termination_reason = TerminationReason::search_stalled;
+    };
+    const auto defer_phase = [&](std::string_view phase) {
+        if (!timed || outcome.run.termination_reason == TerminationReason::error) {
+            return false;
+        }
+        const auto cause =
+            outcome.run.failure_details ? outcome.run.failure_details->cause_code() : outcome.run.diagnostic_code;
+        const auto& failure = outcome.run.failure_details;
+        const bool finite_memory = failure && failure->resource && failure->resource->resource == "fixed_metadata" &&
+                                   failure->resource->required > failure->resource->limit;
+        if (!known_allowance(cause) && !finite_memory) {
+            return false;
+        }
+        defer(cause, phase, "defer_phase");
+        return true;
+    };
+    const auto query_headroom = [&] {
+        const auto renew = [&](std::uint64_t& cap, std::uint64_t quantum, std::uint64_t used) {
+            if (!timed || cap == 0 || quantum == 0 || remaining(cap, used) >= quantum) {
+                return true;
+            }
+            if (const auto stop = boundary(control); stop != Boundary::none) {
+                apply_boundary(outcome.run, stop);
+                return false;
+            }
+            if (quantum > UINT64_MAX - used) {
+                outcome.run.termination_reason = TerminationReason::resource_limit;
+                outcome.run.diagnostic_code = "SPECTRAL_COUNTER_LIMIT";
+                return false;
+            }
+            const auto before = cap;
+            cap = used + quantum;
+            ++outcome.resource_recovery.grants;
+            record_recovery("WORK_QUANTUM_EXHAUSTED", "physical_query", "grant_work", before, cap, used);
+            if (const auto stop = boundary(control); stop != Boundary::none) {
+                apply_boundary(outcome.run, stop);
+                return false;
+            }
+            return true;
+        };
+        return renew(limits.spectral.max_geometry_kernel_work, limits.spectral.per_query.max_kernel_work,
+                     outcome.run.stats.geometry_kernel_work - outcome.baseline_stats.geometry_kernel_work) &&
+               renew(limits.spectral.max_geometry_vertex_visits, limits.spectral.per_query.max_vertex_visits,
+                     outcome.run.stats.geometry_vertex_visits - outcome.baseline_stats.geometry_vertex_visits);
+    };
     if (!context || !std::isfinite(lattice.pitch_mm) || lattice.pitch_mm <= 0) {
         outcome.run.termination_reason = TerminationReason::error;
         outcome.run.diagnostic_code = "SPECTRAL_INPUT_UNSUPPORTED";
@@ -493,14 +611,19 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                                                        std::move(initial));
     outcome.baseline_stats = outcome.run.stats;
     auto retained = outcome.run.best ? outcome.run.best->solution : outcome.run.retained_solution;
-    if (outcome.run.termination_reason == TerminationReason::resource_limit ||
-        outcome.run.termination_reason == TerminationReason::error) {
-        return outcome;
-    }
     if (const auto after_baseline = boundary(control); after_baseline != Boundary::none) {
         outcome.run.retained_solution = retained;
         apply_boundary(outcome.run, after_baseline);
         return outcome;
+    }
+    if ((outcome.run.termination_reason == TerminationReason::resource_limit ||
+         outcome.run.termination_reason == TerminationReason::error) &&
+        !defer_phase("baseline")) {
+        return outcome;
+    }
+    if (timed && (outcome.run.diagnostic_code == "PHYSICAL_PASS_LIMIT" ||
+                  outcome.run.diagnostic_code == "PHYSICAL_CANDIDATE_LIMIT")) {
+        defer_phase("baseline");
     }
 
     outcome.stagger.best_count_before = outcome.stagger.best_count_after = retained ? retained->copies().size() : 0;
@@ -520,20 +643,40 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         return outcome;
     }
     auto aggregate = outcome.run.stats;
-    auto seeded = detail::run_stagger_seed_with_seeds(context, seed_limits, control, catalog.quaternions,
-                                                      outcome.stagger, sink, outcome.run.best);
-    const bool counters_ok = add_run_stats(aggregate, seeded.stats);
-    outcome.run = std::move(seeded);
-    outcome.run.stats = aggregate;
-    retained = outcome.run.best ? outcome.run.best->solution : outcome.run.retained_solution;
-    if (!counters_ok) {
-        outcome.run.termination_reason = TerminationReason::resource_limit;
-        outcome.run.diagnostic_code = "STAGGER_COUNTER_LIMIT";
-        return outcome;
+    if (outcome.run.best || !timed) {
+        const auto prior_best = outcome.run.best;
+        const auto prior_raw = retained;
+        auto seeded = detail::run_stagger_seed_with_seeds(context, seed_limits, control, catalog.quaternions,
+                                                          outcome.stagger, sink, outcome.run.best);
+        const bool counters_ok = add_run_stats(aggregate, seeded.stats);
+        outcome.run = std::move(seeded);
+        outcome.run.stats = aggregate;
+        if (!outcome.run.best) {
+            outcome.run.best = prior_best;
+        }
+        if (!outcome.run.retained_solution) {
+            outcome.run.retained_solution = prior_raw;
+        }
+        retained = outcome.run.best ? outcome.run.best->solution : outcome.run.retained_solution;
+        if (!counters_ok) {
+            outcome.run.termination_reason = TerminationReason::resource_limit;
+            outcome.run.diagnostic_code = "STAGGER_COUNTER_LIMIT";
+            return outcome;
+        }
+        if (outcome.stagger.state == StaggerState::interrupted) {
+            if (const auto stop = boundary(control); stop != Boundary::none) {
+                apply_boundary(outcome.run, stop);
+                return outcome;
+            }
+            if (!defer_phase("stagger")) {
+                return outcome;
+            }
+        }
     }
-    if (outcome.stagger.state == StaggerState::interrupted) {
-        return outcome;
-    }
+    renew_boundary(limits.spectral.max_candidate_evaluations, requested_limits.spectral.max_candidate_evaluations,
+                   outcome.stagger.work.candidate_evaluations, "candidates");
+    renew_boundary(limits.spectral.max_search_passes, requested_limits.spectral.max_search_passes,
+                   outcome.stagger.work.search_passes, "passes");
     if (outcome.stagger.work.candidate_evaluations >= limits.spectral.max_candidate_evaluations ||
         outcome.stagger.work.search_passes >= limits.spectral.max_search_passes) {
         outcome.run.termination_reason = TerminationReason::budget_exhausted;
@@ -544,8 +687,29 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         return outcome;
     }
 
-    if (!admission_failure) {
+    if (!admission_failure || timed) {
         admission_failure = detail::spectral_admission(context, lattice, limits, retained, &catalog);
+    }
+    if (timed && admission_failure && admission_failure->cause_code() == "SPECTRAL_MEMORY_LIMIT" &&
+        admission_failure->resource && admission_failure->resource->resource == "working_bytes") {
+        auto smaller = limits;
+        for (; smaller.cpu_thread_count > 1;) {
+            if (const auto stop = boundary(control); stop != Boundary::none) {
+                apply_boundary(outcome.run, stop);
+                return outcome;
+            }
+            --smaller.cpu_thread_count;
+            if (!detail::spectral_admission(context, lattice, smaller, retained, &catalog)) {
+                const auto before = limits.cpu_thread_count;
+                limits.cpu_thread_count = smaller.cpu_thread_count;
+                outcome.resource_recovery.actual_final_threads = limits.cpu_thread_count;
+                ++outcome.resource_recovery.recoveries;
+                record_recovery("SPECTRAL_MEMORY_LIMIT", "preflight", "reduce_threads", before, limits.cpu_thread_count,
+                                0);
+                admission_failure.reset();
+                break;
+            }
+        }
     }
     if (admission_failure) {
         // The first trial is empty. Resident baseline copies do not impose a
@@ -662,6 +826,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             }
         };
         const auto offer = [&](const std::shared_ptr<const geometry::ValidatedSolution>& solution) {
+            if (!honor_boundary() || !query_headroom()) {
+                return false;
+            }
             auto query_limits = limits.spectral.per_query;
             query_limits.max_kernel_work = std::min(
                 query_limits.max_kernel_work,
@@ -727,6 +894,10 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 }
             }
             if (offered.issue != OfferIssue::none) {
+                if (timed && known_allowance(offered.issue_cause) && honor_boundary()) {
+                    defer(offered.issue_cause, "scoring", "defer_score");
+                    return true;
+                }
                 outcome.run.termination_reason =
                     offered.issue == OfferIssue::resource_limit || offered.issue == OfferIssue::allocation_failure
                         ? TerminationReason::resource_limit
@@ -792,7 +963,86 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             }
             return nested;
         };
+        const auto validate_trial = [&](const std::shared_ptr<const geometry::Candidate>& candidate,
+                                        std::uint64_t validation_extra, geometry::ValidationOutcome& checked,
+                                        bool& validation_limit_exceeded) {
+            unsigned validation_retries {};
+            for (;;) {
+                if (!honor_boundary()) {
+                    return false;
+                }
+                checked = {};
+                checked = geometry::validate(context, candidate, validation_limits(validation_extra), control);
+                ++outcome.resource_recovery.native_validations;
+                validation_limit_exceeded =
+                    checked.report.kernel_work >
+                        remaining(limits.spectral.max_validation_kernel_work, spectral_validation_kernel_work) ||
+                    checked.report.aabb_pair_tests >
+                        remaining(limits.spectral.max_validation_aabb_pair_tests, spectral_validation_aabb_pair_tests);
+                if (!add(spectral_validation_kernel_work, checked.report.kernel_work) ||
+                    !add(spectral_validation_aabb_pair_tests, checked.report.aabb_pair_tests) ||
+                    !add(outcome.run.stats.validation_kernel_work, checked.report.kernel_work) ||
+                    !add(outcome.run.stats.validation_aabb_pair_tests, checked.report.aabb_pair_tests)) {
+                    if (!honor_boundary()) {
+                        return false;
+                    }
+                    outcome.run.termination_reason = TerminationReason::resource_limit;
+                    outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
+                    return false;
+                }
+                std::uint64_t validation_peak = wrapper_live;
+                if (!include_workspace(validation_peak) || !add(validation_peak, incumbent_dynamic_bytes) ||
+                    !add(validation_peak, wrapper_dynamic_bytes) || !add(validation_peak, validation_extra) ||
+                    !add(validation_peak, checked.report.working_bytes_peak) ||
+                    validation_peak > limits.max_working_bytes || validation_peak > limits.spectral.max_working_bytes) {
+                    if (!honor_boundary()) {
+                        return false;
+                    }
+                    outcome.run.termination_reason = TerminationReason::resource_limit;
+                    outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
+                    return false;
+                }
+                outcome.run.stats.tracked_working_bytes_peak =
+                    std::max(outcome.run.stats.tracked_working_bytes_peak, validation_peak);
+                if (!honor_boundary()) {
+                    return false;
+                }
+                constexpr std::array<std::string_view, 5> work_causes {
+                    "VALIDATION_KERNEL_WORK_LIMIT", "VALIDATION_COPY_ID_WORK_LIMIT",
+                    "VALIDATION_ORIENTATION_WORK_LIMIT", "KERNEL_WORK_LIMIT", "VALIDATION_AABB_PAIR_LIMIT"
+                };
+                const auto cause = std::find(work_causes.begin(), work_causes.end(), checked.report.code);
+                if (!timed || checked.report.validity != geometry::Validity::indeterminate ||
+                    cause == work_causes.end() || validation_retries == 2) {
+                    break;
+                }
+                ++outcome.run.stats.indeterminate_candidates;
+                const auto multiplier = 2ULL << validation_retries++;
+                const bool pairs = *cause == "VALIDATION_AABB_PAIR_LIMIT";
+                auto& cumulative =
+                    pairs ? limits.spectral.max_validation_aabb_pair_tests : limits.spectral.max_validation_kernel_work;
+                auto& per_call = pairs ? limits.spectral.per_validation.max_aabb_pair_tests
+                                       : limits.spectral.per_validation.max_kernel_work;
+                const auto quantum = pairs ? requested_limits.spectral.max_validation_aabb_pair_tests
+                                           : requested_limits.spectral.max_validation_kernel_work;
+                const auto call_quantum = pairs ? requested_limits.spectral.per_validation.max_aabb_pair_tests
+                                                : requested_limits.spectral.per_validation.max_kernel_work;
+                const auto used = pairs ? spectral_validation_aabb_pair_tests : spectral_validation_kernel_work;
+                const auto before = cumulative;
+                if (quantum == 0 || call_quantum == 0 || quantum > UINT64_MAX / multiplier ||
+                    call_quantum > UINT64_MAX / multiplier || quantum * multiplier > UINT64_MAX - used ||
+                    used + quantum * multiplier <= before) {
+                    break;
+                }
+                cumulative = used + quantum * multiplier;
+                per_call = call_quantum * multiplier;
+                ++outcome.resource_recovery.grants;
+                record_recovery(*cause, "validation", "grant_work", before, cumulative, checked.report.kernel_work);
+            }
+            return true;
+        };
         const auto phase_limits = [&](const std::shared_ptr<const geometry::ValidatedSolution>& working) {
+            static_cast<void>(query_headroom());
             auto phase = limits;
             phase.max_working_bytes = std::min(limits.max_working_bytes, limits.spectral.max_working_bytes);
             phase.reserved_bytes = limits.reserved_bytes;
@@ -853,6 +1103,151 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             }
             return true;
         };
+        const auto run_page = [&](const detail::CandidatePageQuery& query,
+                                  const std::shared_ptr<const geometry::ValidatedSolution>& working) {
+            unsigned work_retries {};
+            bool evicted {}, reduced {};
+            for (;;) {
+                auto phase = phase_limits(working);
+                if (timed && limits.available_ram && honor_boundary()) {
+                    const auto available = limits.available_ram(limits.resource_context);
+                    if (!available) {
+                        detail::SpectralPipelineResult failed;
+                        failed.diagnostic = "MEMORY_SAMPLE_UNAVAILABLE";
+                        failed.failure_details =
+                            RunFailureDetails { TerminationReason::error, "admission", failed.diagnostic, {}, {} };
+                        return failed;
+                    }
+                    auto live = wrapper_live;
+                    const auto workspace_bytes = workspace.resident_bytes();
+                    SolutionOwnerLedger pressure_owners;
+                    if (available && workspace_bytes && add(live, *workspace_bytes) &&
+                        add(live, incumbent_dynamic_bytes) && add(live, wrapper_dynamic_bytes) &&
+                        pressure_owners.include(retained, true) && pressure_owners.include(latest) &&
+                        pressure_owners.include(working) && add(live, pressure_owners.bytes())) {
+                        const auto headroom = *available / 2;
+                        const auto cap = live > UINT64_MAX - headroom
+                                             ? limits.max_working_bytes
+                                             : std::min(limits.max_working_bytes, live + headroom);
+                        const auto before = limits.max_working_bytes;
+                        limits.max_working_bytes = cap;
+                        limits.spectral.max_working_bytes = std::min(limits.spectral.max_working_bytes, cap);
+                        if (cap < before) {
+                            ++outcome.resource_recovery.recoveries;
+                            record_recovery("HOST_MEMORY_PRESSURE", "admission", "lower_ceiling", before, cap, 0);
+                        }
+                        phase = phase_limits(working);
+                    }
+                }
+                auto page = detail::build_spectral_pipeline(workspace, context, lattice, phase, working, catalog, query,
+                                                            nullptr, control);
+                if (!add_pipeline_stats(page) || !honor_boundary() || page.complete || !timed ||
+                    !page.failure_details || page.failure_details->reason != TerminationReason::resource_limit) {
+                    return page;
+                }
+                const auto cause = page.failure_details->cause_code();
+                const auto stage = page.failure_details->phase;
+                const bool work = cause == "FIELD_KERNEL_WORK_LIMIT" || cause == "FIELD_CELL_VISIT_LIMIT" ||
+                                  cause == "KERNEL_WORK_LIMIT" || cause == "CORRELATION_DIRECT_TERM_LIMIT" ||
+                                  cause == "SPECTRAL_PIPELINE_DIRECT_TERM_LIMIT" ||
+                                  cause == "SPECTRAL_PIPELINE_PROXIMITY_LIMIT";
+                if (work && work_retries < 2) {
+                    const auto multiplier = 2ULL << work_retries++;
+                    const auto grow = [&](std::uint64_t quantum, std::uint64_t consumed, std::uint64_t& cap) {
+                        if (quantum > UINT64_MAX / multiplier || quantum * multiplier > UINT64_MAX - consumed) {
+                            return false;
+                        }
+                        cap = consumed + quantum * multiplier;
+                        return true;
+                    };
+                    auto before = limits.max_representation_kernel_work;
+                    std::uint64_t* changed = &limits.max_representation_kernel_work;
+                    bool granted {};
+                    if (cause == "SPECTRAL_PIPELINE_PROXIMITY_LIMIT" || stage == "proximity_fft") {
+                        changed = &limits.max_proximity_terms;
+                        before = *changed;
+                        auto expanded = *changed;
+                        granted = grow(requested_limits.max_proximity_terms, outcome.spectral_stats.proximity_terms,
+                                       expanded);
+                        const auto attempted = page.failure_details->resource;
+                        if (cause == "CORRELATION_DIRECT_TERM_LIMIT" &&
+                            (!attempted || attempted->resource != "direct_terms" ||
+                             std::min(limits.per_correlation.max_direct_terms,
+                                      remaining(expanded, outcome.spectral_stats.proximity_terms)) <=
+                                 attempted->limit)) {
+                            granted = false;
+                        }
+                        if (granted) {
+                            *changed = expanded;
+                        }
+                    }
+                    else if (cause == "CORRELATION_DIRECT_TERM_LIMIT" ||
+                             cause == "SPECTRAL_PIPELINE_DIRECT_TERM_LIMIT") {
+                        changed = &limits.max_direct_terms;
+                        before = *changed;
+                        granted =
+                            grow(requested_limits.max_direct_terms, outcome.spectral_stats.direct_terms, *changed);
+                        limits.per_correlation.max_direct_terms =
+                            requested_limits.per_correlation.max_direct_terms > UINT64_MAX / multiplier
+                                ? requested_limits.per_correlation.max_direct_terms
+                                : requested_limits.per_correlation.max_direct_terms * multiplier;
+                    }
+                    else {
+                        granted = grow(requested_limits.max_representation_kernel_work,
+                                       outcome.spectral_stats.representation_kernel_work,
+                                       limits.max_representation_kernel_work) &&
+                                  grow(requested_limits.max_representation_cell_visits,
+                                       outcome.spectral_stats.representation_cell_visits,
+                                       limits.max_representation_cell_visits) &&
+                                  grow(requested_limits.per_representation.max_kernel_work, 0,
+                                       limits.per_representation.max_kernel_work) &&
+                                  grow(requested_limits.per_representation.max_cell_visits, 0,
+                                       limits.per_representation.max_cell_visits);
+                    }
+                    if (granted && *changed > before) {
+                        ++outcome.resource_recovery.grants;
+                        record_recovery(cause, stage, "grant_work", before, *changed,
+                                        page.stats.representation_kernel_work + page.stats.proximity_terms);
+                        continue;
+                    }
+                }
+                const bool memory = cause == "CORRELATION_ALLOCATION" || cause == "CORRELATION_MEMORY_LIMIT" ||
+                                    cause == "FIELD_ALLOCATION_FAILURE" || cause == "FIELD_MEMORY_LIMIT" ||
+                                    cause == "KERNEL_ALLOCATION_FAILURE" || cause == "KERNEL_MEMORY_LIMIT" ||
+                                    cause == "PHYSICAL_ALLOCATION_FAILURE" || cause == "PHYSICAL_MEMORY_LIMIT" ||
+                                    cause == "SPECTRAL_MEMORY_LIMIT" || cause == "SPECTRAL_PIPELINE_ALLOCATION";
+                if (memory && !evicted) {
+                    evicted = true;
+                    const auto before = workspace.resident_bytes();
+                    const bool correlation_stage = stage == "correlation" || stage == "proximity_fft";
+                    if (workspace.release_disposable(!correlation_stage, correlation_stage)) {
+                        ++outcome.resource_recovery.recoveries;
+                        record_recovery(cause, stage, "evict_disposable", before.value_or(0),
+                                        workspace.resident_bytes().value_or(0), 0);
+                        continue;
+                    }
+                }
+                if (memory && !reduced && limits.cpu_thread_count > 1) {
+                    reduced = true;
+                    auto smaller = limits;
+                    for (--smaller.cpu_thread_count; smaller.cpu_thread_count > 0; --smaller.cpu_thread_count) {
+                        if (!detail::spectral_admission(context, lattice, smaller, working, &catalog)) {
+                            static_cast<void>(workspace.release_disposable());
+                            const auto before = limits.cpu_thread_count;
+                            limits.cpu_thread_count = smaller.cpu_thread_count;
+                            outcome.resource_recovery.actual_final_threads = limits.cpu_thread_count;
+                            ++outcome.resource_recovery.recoveries;
+                            record_recovery(cause, stage, "reduce_threads", before, limits.cpu_thread_count, 0);
+                            break;
+                        }
+                    }
+                    if (limits.cpu_thread_count == smaller.cpu_thread_count) {
+                        continue;
+                    }
+                }
+                return page;
+            }
+        };
         const auto observe_wrapper_dynamic =
             [&](std::optional<std::uint64_t> bytes,
                 const std::shared_ptr<const geometry::ValidatedSolution>& current_working = {}) {
@@ -879,10 +1274,12 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             outcome.run.stats.tracked_working_bytes_peak = std::max(outcome.run.stats.tracked_working_bytes_peak, live);
             return true;
         };
+        bool query_deferred {};
         const auto query_oriented = [&](const geometry::Quaternion& rotation,
                                         const std::shared_ptr<const geometry::ValidatedSolution>& current_working)
             -> std::optional<geometry::OrientedBounds> {
-            if (!honor_boundary()) {
+            query_deferred = false;
+            if (!honor_boundary() || !query_headroom()) {
                 return {};
             }
             auto query_limits = limits.spectral.per_query;
@@ -929,6 +1326,11 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             }
             outcome.run.stats.tracked_working_bytes_peak = std::max(outcome.run.stats.tracked_working_bytes_peak, peak);
             if (const auto* failure = std::get_if<geometry::PhysicalQueryFailure>(&queried)) {
+                if (timed && known_allowance(failure->code) && honor_boundary()) {
+                    defer(failure->code, "physical_query", "defer_orientation");
+                    query_deferred = true;
+                    return {};
+                }
                 const auto resource = failure->code.find("LIMIT") != std::string::npos ||
                                       failure->code.find("RESOURCE") != std::string::npos ||
                                       failure->code.find("ALLOCATION") != std::string::npos;
@@ -941,6 +1343,17 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         };
         std::uint64_t spectral_candidates { outcome.stagger.work.candidate_evaluations };
         std::uint64_t spectral_passes { outcome.stagger.work.search_passes };
+        const auto candidate_budget = [&] {
+            return spectral_candidates < limits.spectral.max_candidate_evaluations ||
+                   renew_boundary(limits.spectral.max_candidate_evaluations,
+                                  requested_limits.spectral.max_candidate_evaluations, spectral_candidates,
+                                  "candidates");
+        };
+        const auto refinement_budget = [&] {
+            return outcome.spectral_stats.refinement_evaluations < limits.max_refinement_evaluations ||
+                   renew_boundary(limits.max_refinement_evaluations, requested_limits.max_refinement_evaluations,
+                                  outcome.spectral_stats.refinement_evaluations, "refinement");
+        };
         std::uint64_t next_copy_id {};
         const auto make_id = [&](const std::shared_ptr<const geometry::ValidatedSolution>& working) {
             for (;;) {
@@ -955,7 +1368,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         };
         const auto try_pose = [&](std::shared_ptr<const geometry::ValidatedSolution>& working, geometry::CopyPose pose,
                                   bool refinement) -> bool {
-            if (!honor_boundary() || spectral_candidates >= limits.spectral.max_candidate_evaluations) {
+            if (!honor_boundary() || !candidate_budget()) {
                 return false;
             }
             const std::vector<geometry::CopyPose> empty_copies;
@@ -1012,38 +1425,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
                 return false;
             }
-            const auto checked = geometry::validate(context, candidate, validation_limits(*validation_extra), control);
-            const bool validation_limit_exceeded =
-                checked.report.kernel_work >
-                    remaining(limits.spectral.max_validation_kernel_work, spectral_validation_kernel_work) ||
-                checked.report.aabb_pair_tests >
-                    remaining(limits.spectral.max_validation_aabb_pair_tests, spectral_validation_aabb_pair_tests);
-            if (!add(spectral_validation_kernel_work, checked.report.kernel_work) ||
-                !add(spectral_validation_aabb_pair_tests, checked.report.aabb_pair_tests) ||
-                !add(outcome.run.stats.validation_kernel_work, checked.report.kernel_work) ||
-                !add(outcome.run.stats.validation_aabb_pair_tests, checked.report.aabb_pair_tests)) {
-                if (!honor_boundary()) {
-                    return false;
-                }
-                outcome.run.termination_reason = TerminationReason::resource_limit;
-                outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
-                return false;
-            }
-            std::uint64_t validation_peak = wrapper_live;
-            if (!include_workspace(validation_peak) || !add(validation_peak, incumbent_dynamic_bytes) ||
-                !add(validation_peak, wrapper_dynamic_bytes) || !add(validation_peak, *validation_extra) ||
-                !add(validation_peak, checked.report.working_bytes_peak) ||
-                validation_peak > limits.max_working_bytes || validation_peak > limits.spectral.max_working_bytes) {
-                if (!honor_boundary()) {
-                    return false;
-                }
-                outcome.run.termination_reason = TerminationReason::resource_limit;
-                outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
-                return false;
-            }
-            outcome.run.stats.tracked_working_bytes_peak =
-                std::max(outcome.run.stats.tracked_working_bytes_peak, validation_peak);
-            if (!honor_boundary()) {
+            geometry::ValidationOutcome checked;
+            bool validation_limit_exceeded {};
+            if (!validate_trial(candidate, *validation_extra, checked, validation_limit_exceeded)) {
                 return false;
             }
             if (validation_limit_exceeded) {
@@ -1055,6 +1439,10 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 if (checked.report.validity == geometry::Validity::indeterminate) {
                     ++outcome.run.stats.indeterminate_candidates;
                     if (validation_resource_code(checked.report.code)) {
+                        if (timed && known_allowance(checked.report.code)) {
+                            defer(checked.report.code, "validation", "defer_candidate");
+                            return true;
+                        }
                         outcome.run.termination_reason = TerminationReason::resource_limit;
                         outcome.run.diagnostic_code = "PHYSICAL_VALIDATION_RESOURCE";
                         return false;
@@ -1168,11 +1556,31 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                     return TrialStatus::failed;
                 }
                 bool admitted {};
+                bool deferred {};
+                std::optional<RunFailureDetails> deferred_failure;
+                const auto finish_trial = [&] {
+                    if (deferred) {
+                        outcome.run.termination_reason = TerminationReason::resource_limit;
+                        outcome.run.diagnostic_code = "SPECTRAL_NO_AFFORDABLE_WORK";
+                        outcome.run.failure_details = std::move(deferred_failure);
+                        return TrialStatus::failed;
+                    }
+                    return TrialStatus::complete;
+                };
+                std::size_t next_orientation {};
                 for (;;) {
-                    if (spectral_candidates >= limits.spectral.max_candidate_evaluations) {
+                    if (!candidate_budget()) {
                         return interrupt_trial("SPECTRAL_CANDIDATE_LIMIT");
                     }
-                    for (std::size_t orientation = 0; orientation != catalog.quaternions.size(); ++orientation) {
+                    bool ready_page {};
+                    for (std::size_t index = 0; index != ordinary_pages.size(); ++index) {
+                        ready_page = ready_page ||
+                                     (ordinary_pages[index] && ordinary_indices[index] < ordinary_pages[index]->size());
+                    }
+                    for (std::size_t offset = 0; offset != catalog.quaternions.size() && !(timed && ready_page);
+                         ++offset) {
+                        const auto orientation =
+                            timed ? (next_orientation + offset) % catalog.quaternions.size() : offset;
                         if (ordinary_exhausted[orientation] ||
                             ordinary_indices[orientation] !=
                                 (ordinary_pages[orientation] ? ordinary_pages[orientation]->size() : 0)) {
@@ -1183,16 +1591,24 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                         if (!honor_boundary()) {
                             return TrialStatus::failed;
                         }
-                        auto pipeline =
-                            detail::build_spectral_pipeline(workspace, context, lattice, phase_limits(working), working,
-                                                            catalog, query, nullptr, control);
-                        if (!add_pipeline_stats(pipeline)) {
-                            return TrialStatus::failed;
-                        }
+                        auto pipeline = run_page(query, working);
                         if (!honor_boundary()) {
                             return TrialStatus::failed;
                         }
                         if (!pipeline.complete) {
+                            if (timed && pipeline.failure_details &&
+                                pipeline.failure_details->reason == TerminationReason::resource_limit &&
+                                pipeline_denial(pipeline.failure_details->cause_code())) {
+                                ++outcome.resource_recovery.deferred;
+                                record_recovery(pipeline.failure_details->cause_code(), pipeline.failure_details->phase,
+                                                "defer_operation", 0, 0, 0);
+                                deferred = true;
+                                if (!deferred_failure) {
+                                    deferred_failure = std::move(pipeline.failure_details);
+                                }
+                                ordinary_exhausted[orientation] = true;
+                                continue;
+                            }
                             outcome.run.termination_reason = pipeline.failure_details
                                                                  ? pipeline.failure_details->reason
                                                                  : TerminationReason::resource_limit;
@@ -1209,6 +1625,10 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                         }
                         if (!ordinary_pages[orientation] || ordinary_pages[orientation]->empty()) {
                             ordinary_exhausted[orientation] = true;
+                        }
+                        else if (timed) {
+                            ready_page = true;
+                            next_orientation = (orientation + 1) % catalog.quaternions.size();
                         }
                     }
                     std::optional<std::size_t> chosen_orientation;
@@ -1239,6 +1659,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                         catalog.quaternions[chosen.orientation_index]
                     };
                     const auto before = working;
+                    ++outcome.resource_recovery.fft_candidate_evaluations;
                     if (!try_pose(working, pose, false)) {
                         return TrialStatus::failed;
                     }
@@ -1256,9 +1677,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 if (limits.max_refinement_evaluations == 0) {
                     ++spectral_passes;
                     ++outcome.run.stats.search_passes;
-                    return TrialStatus::complete;
+                    return finish_trial();
                 }
-                if (outcome.spectral_stats.refinement_evaluations >= limits.max_refinement_evaluations) {
+                if (!refinement_budget()) {
                     return interrupt_trial("SPECTRAL_REFINEMENT_LIMIT");
                 }
 
@@ -1274,6 +1695,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                     }
                     const auto oriented = query_oriented(catalog.quaternions[orientation], working);
                     if (!oriented) {
+                        if (query_deferred) {
+                            continue;
+                        }
                         return TrialStatus::failed;
                     }
                     const auto object_bounds = oriented->bounds_mm;
@@ -1301,6 +1725,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                             }
                             const auto placed_oriented = query_oriented(placed.rotation_xyzw, working);
                             if (!placed_oriented) {
+                                if (query_deferred) {
+                                    break;
+                                }
                                 return TrialStatus::failed;
                             }
                             const auto placed_bounds = placed_oriented->bounds_mm;
@@ -1313,6 +1740,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                                                      object_bounds.max[axis]);
                             }
                         }
+                    }
+                    if (query_deferred) {
+                        continue;
                     }
                     for (std::size_t axis = 0; axis != axes.size(); ++axis) {
                         auto& values = axes[axis];
@@ -1333,11 +1763,10 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                     for (const double z : axes[2]) {
                         for (const double y : axes[1]) {
                             for (const double x : axes[0]) {
-                                if (spectral_candidates >= limits.spectral.max_candidate_evaluations) {
+                                if (!candidate_budget()) {
                                     return interrupt_trial("SPECTRAL_CANDIDATE_LIMIT");
                                 }
-                                if (outcome.spectral_stats.refinement_evaluations >=
-                                    limits.max_refinement_evaluations) {
+                                if (!refinement_budget()) {
                                     return interrupt_trial("SPECTRAL_REFINEMENT_LIMIT");
                                 }
                                 const auto before = working;
@@ -1386,32 +1815,56 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 if (!observe_refinement_pages()) {
                     return TrialStatus::failed;
                 }
-                for (std::size_t orientation = 0; orientation != catalog.quaternions.size(); ++orientation) {
-                    const detail::CandidatePageQuery query { orientation, {}, detail::CandidatePageMode::low_overlap };
-                    if (!honor_boundary()) {
-                        return TrialStatus::failed;
-                    }
-                    auto pipeline = detail::build_spectral_pipeline(workspace, context, lattice, phase_limits(working),
-                                                                    working, catalog, query, nullptr, control);
-                    if (!add_pipeline_stats(pipeline)) {
-                        return TrialStatus::failed;
-                    }
-                    if (!honor_boundary()) {
-                        return TrialStatus::failed;
-                    }
-                    if (!pipeline.complete) {
-                        outcome.run.termination_reason = pipeline.failure_details ? pipeline.failure_details->reason
-                                                                                  : TerminationReason::resource_limit;
-                        outcome.run.failure_details = std::move(pipeline.failure_details);
-                        outcome.run.diagnostic_code = pipeline.diagnostic;
-                        return TrialStatus::failed;
-                    }
-                    refinement_pages[orientation] = std::move(pipeline.ranked_candidates);
-                    if (!observe_refinement_pages()) {
-                        return TrialStatus::failed;
-                    }
-                }
+                std::size_t refinement_next {};
                 for (;;) {
+                    bool ready_refinement {};
+                    for (std::size_t index = 0; index != refinement_pages.size(); ++index) {
+                        ready_refinement =
+                            ready_refinement ||
+                            (refinement_pages[index] && refinement_indices[index] < refinement_pages[index]->size());
+                    }
+                    for (; refinement_next != catalog.quaternions.size() && !(timed && ready_refinement);
+                         ++refinement_next) {
+                        const auto orientation = refinement_next;
+                        const detail::CandidatePageQuery query { orientation,
+                                                                 {},
+                                                                 detail::CandidatePageMode::low_overlap };
+                        if (!honor_boundary()) {
+                            return TrialStatus::failed;
+                        }
+                        auto pipeline = run_page(query, working);
+                        if (!honor_boundary()) {
+                            return TrialStatus::failed;
+                        }
+                        if (!pipeline.complete) {
+                            if (timed && pipeline.failure_details &&
+                                pipeline.failure_details->reason == TerminationReason::resource_limit &&
+                                pipeline_denial(pipeline.failure_details->cause_code())) {
+                                ++outcome.resource_recovery.deferred;
+                                record_recovery(pipeline.failure_details->cause_code(), pipeline.failure_details->phase,
+                                                "defer_operation", 0, 0, 0);
+                                deferred = true;
+                                if (!deferred_failure) {
+                                    deferred_failure = std::move(pipeline.failure_details);
+                                }
+                                continue;
+                            }
+                            outcome.run.termination_reason = pipeline.failure_details
+                                                                 ? pipeline.failure_details->reason
+                                                                 : TerminationReason::resource_limit;
+                            outcome.run.failure_details = std::move(pipeline.failure_details);
+                            outcome.run.diagnostic_code = pipeline.diagnostic;
+                            return TrialStatus::failed;
+                        }
+                        refinement_pages[orientation] = std::move(pipeline.ranked_candidates);
+                        if (!observe_refinement_pages()) {
+                            return TrialStatus::failed;
+                        }
+                        if (timed) {
+                            ++refinement_next;
+                            break;
+                        }
+                    }
                     std::optional<std::size_t> chosen_orientation;
                     for (std::size_t orientation = 0; orientation != refinement_pages.size(); ++orientation) {
                         if (refinement_indices[orientation] ==
@@ -1426,14 +1879,17 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                         }
                     }
                     if (!chosen_orientation) {
+                        if (refinement_next != catalog.quaternions.size()) {
+                            continue;
+                        }
                         ++spectral_passes;
                         ++outcome.run.stats.search_passes;
-                        return TrialStatus::complete;
+                        return finish_trial();
                     }
-                    if (spectral_candidates >= limits.spectral.max_candidate_evaluations) {
+                    if (!candidate_budget()) {
                         return interrupt_trial("SPECTRAL_CANDIDATE_LIMIT");
                     }
-                    if (outcome.spectral_stats.refinement_evaluations >= limits.max_refinement_evaluations) {
+                    if (!refinement_budget()) {
                         return interrupt_trial("SPECTRAL_REFINEMENT_LIMIT");
                     }
                     const auto& chosen =
@@ -1446,6 +1902,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                         catalog.quaternions[chosen.orientation_index]
                     };
                     const auto before = working;
+                    ++outcome.resource_recovery.fft_candidate_evaluations;
                     if (!try_pose(working, pose, true)) {
                         return TrialStatus::failed;
                     }
@@ -1499,36 +1956,13 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                     outcome.run.retained_solution = outcome.run.best ? outcome.run.best->solution : latest;
                     return outcome;
                 }
-                auto empty_checked = geometry::validate(context, candidate, validation_limits(*empty_extra), control);
-                const bool empty_validation_limit_exceeded =
-                    empty_checked.report.kernel_work >
-                        remaining(limits.spectral.max_validation_kernel_work, spectral_validation_kernel_work) ||
-                    empty_checked.report.aabb_pair_tests >
-                        remaining(limits.spectral.max_validation_aabb_pair_tests, spectral_validation_aabb_pair_tests);
-                if (!add(spectral_validation_kernel_work, empty_checked.report.kernel_work) ||
-                    !add(spectral_validation_aabb_pair_tests, empty_checked.report.aabb_pair_tests) ||
-                    !add(outcome.run.stats.validation_kernel_work, empty_checked.report.kernel_work) ||
-                    !add(outcome.run.stats.validation_aabb_pair_tests, empty_checked.report.aabb_pair_tests)) {
-                    outcome.run.termination_reason = TerminationReason::resource_limit;
-                    outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
+                geometry::ValidationOutcome empty_checked;
+                bool empty_validation_limit_exceeded {};
+                if (!validate_trial(candidate, *empty_extra, empty_checked, empty_validation_limit_exceeded)) {
                     outcome.run.best = incumbent.best();
                     outcome.run.retained_solution = outcome.run.best ? outcome.run.best->solution : latest;
                     return outcome;
                 }
-                std::uint64_t empty_validation_peak = wrapper_live;
-                if (!include_workspace(empty_validation_peak) || !add(empty_validation_peak, incumbent_dynamic_bytes) ||
-                    !add(empty_validation_peak, wrapper_dynamic_bytes) || !add(empty_validation_peak, *empty_extra) ||
-                    !add(empty_validation_peak, empty_checked.report.working_bytes_peak) ||
-                    empty_validation_peak > limits.max_working_bytes ||
-                    empty_validation_peak > limits.spectral.max_working_bytes) {
-                    outcome.run.termination_reason = TerminationReason::resource_limit;
-                    outcome.run.diagnostic_code = "SPECTRAL_RESOURCE_LIMIT";
-                    outcome.run.best = incumbent.best();
-                    outcome.run.retained_solution = outcome.run.best ? outcome.run.best->solution : latest;
-                    return outcome;
-                }
-                outcome.run.stats.tracked_working_bytes_peak =
-                    std::max(outcome.run.stats.tracked_working_bytes_peak, empty_validation_peak);
                 if (!honor_boundary()) {
                     return outcome;
                 }
@@ -1574,6 +2008,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 outcome.run.stats.tracked_working_bytes_peak =
                     std::max(outcome.run.stats.tracked_working_bytes_peak, empty_retained_peak);
                 empty_start = std::move(empty_checked.validated_solution);
+                if (!latest && !offer(empty_start)) {
+                    return outcome;
+                }
             }
             const auto empty_status = run_trial(std::move(empty_start));
             if (empty_status != TrialStatus::complete) {
@@ -1582,6 +2019,8 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 return outcome;
             }
         }
+        renew_boundary(limits.spectral.max_search_passes, requested_limits.spectral.max_search_passes, spectral_passes,
+                       "passes");
         if (spectral_passes < limits.spectral.max_search_passes &&
             spectral_passes - outcome.stagger.work.search_passes < 2 && retained &&
             spectral_candidates < limits.spectral.max_candidate_evaluations) {
@@ -1596,10 +2035,12 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         if (outcome.run.best) {
             outcome.run.retained_solution = outcome.run.best->solution;
         }
-        outcome.run.termination_reason = spectral_candidates >= limits.spectral.max_candidate_evaluations
+        outcome.run.termination_reason = deferred_cause ? TerminationReason::resource_limit
+                                         : spectral_candidates >= limits.spectral.max_candidate_evaluations
                                              ? TerminationReason::budget_exhausted
                                              : TerminationReason::search_stalled;
-        outcome.run.diagnostic_code = "SPECTRAL_PROPOSALS_EXHAUSTED";
+        outcome.run.diagnostic_code = deferred_cause ? "SPECTRAL_NO_AFFORDABLE_WORK" : "SPECTRAL_PROPOSALS_EXHAUSTED";
+        outcome.run.failure_details = std::move(deferred_cause);
         return outcome;
     }
     catch (const std::bad_alloc&) {
@@ -1757,5 +2198,21 @@ SpectralOutcome run_cpu_spectral(std::shared_ptr<const geometry::ValidationConte
         return out;
     }
     return run_with_catalog(std::move(context), lattice, catalog, limits, control, std::move(sink), std::move(initial));
+}
+void ResourceRecovery::record(std::string_view cause, std::string_view phase, std::string_view action,
+                              std::uint64_t before, std::uint64_t after, std::uint64_t consumed) noexcept
+{
+    const auto sequence = transition_count + omitted + 1;
+    if (transition_count == transitions.size()) {
+        std::move(transitions.begin() + 1, transitions.end(), transitions.begin());
+        ++omitted;
+        --transition_count;
+    }
+    auto& transition = transitions[transition_count++];
+    transition = { sequence, before, after, consumed, {}, phase, action };
+    if (cause.size() >= transition.cause.size()) {
+        cause = "DIAGNOSTIC_CAUSE_CODE_OVERFLOW";
+    }
+    std::copy(cause.begin(), cause.end(), transition.cause.begin());
 }
 }  // namespace spectrapack::solver
