@@ -2824,9 +2824,13 @@ PairResult classify_pair(const PlacedSolid& first,const PlacedSolid& second,
   if (separated_by_bounds(first,second,clearance,budget))
     return {Decision::no,BoundaryRelation::disjoint,Threshold::above,"outward-aabb",""};
   // Export validates independently imported, quantized solids through this path.
-  // Apply the same exact source-bounds proof to those actual staged vertices.
-  if (const auto certificate = cardinal_bounds_clearance_certificate(first,second,clearance,budget))
-    return *certificate;
+  // Apply the zero-clearance proof to those actual staged vertices, preserving
+  // the exact below/equal/above distance classification at positive clearance.
+  if (clearance == 0.0) {
+    if (const auto certificate = cardinal_bounds_clearance_certificate(first,second,clearance,budget)) {
+      return *certificate;
+    }
+  }
   if (separated_by_bounds(first,second,0.0,budget)) {
     const auto gap=exact_surface_gap(first,second,clearance,budget);
     return {Decision::no,BoundaryRelation::disjoint,gap,"outward-aabb-exact-gap",
