@@ -417,6 +417,88 @@ TEST_CASE("AT-06 accepts zero-clearance contact and rejects overlap") {
   CHECK(geo::validate(value, std::get<std::shared_ptr<const geo::Candidate>>(std::move(overlap))).report.validity == geo::Validity::invalid);
 }
 
+TEST_CASE("AT-06 zero-clearance noncuboid contact preserves exact physical validity", "[zero_clearance][AT-06]")
+{
+    const auto solid = geo::test_support::accepted(geo::test_support::u_prism(), geo::AssetRole::object);
+    const auto make_context = [&](double pair) {
+        const auto made = geo::make_validation_context(solid,
+                                                       geo::BoxDimensions {
+                                                           12, 12, 12
+        },
+                                                       { pair, 0, { geo::OrientationMode::cube, {} } });
+        REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+        return std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+    };
+    const auto value = make_context(0);
+    const geo::CopyPose first {
+        "first", { 3, 3, 3 },
+         { 0, 0, 0, 1 }
+    };
+    for (const auto offset : std::array<geo::Vec3, 4> {
+             { { 3, 0, 0 }, { 0, 3, 0 }, { 0, 0, 1 }, { 3, 3, 1 } }
+    }) {
+        INFO("contact offset " << offset[0] << ',' << offset[1] << ',' << offset[2]);
+        const geo::CopyPose second {
+            "second", { 3 + offset[0], 3 + offset[1], 3 + offset[2] },
+             { 0, 0, 0, 1 }
+        };
+        const auto checked = validate_copies(value, { first, second });
+        INFO(checked.report.code);
+        REQUIRE(checked.report.validity == geo::Validity::valid);
+        REQUIRE(checked.validated_solution);
+        CHECK(checked.validated_solution->copies().size() == 2);
+        CHECK(geo::revalidate(checked.validated_solution).report.validity == geo::Validity::valid);
+    }
+
+    for (const double x : { 3.0, 5.875, std::nextafter(6.0, 3.0) }) {
+        const auto checked = validate_copies(value, {
+                                                        first, { "overlap", { x, 3, 3 }, { 0, 0, 0, 1 } }
+        });
+        CHECK(checked.report.validity != geo::Validity::valid);
+        CHECK_FALSE(checked.validated_solution);
+    }
+    const auto positive_gap =
+        validate_copies(make_context(.125), {
+                                                first, { "touching", { 6, 3, 3 }, { 0, 0, 0, 1 } }
+    });
+    CHECK(positive_gap.report.validity != geo::Validity::valid);
+    CHECK_FALSE(positive_gap.validated_solution);
+
+    // Swap the thin axis and reverse signs: the proof must use posed bounds.
+    const double half_sqrt = std::sqrt(.5);
+    for (const geo::Quaternion rotation : {
+             geo::Quaternion { 0,  half_sqrt, 0,   half_sqrt },
+              geo::Quaternion { .5, -.5,       -.5, .5        }
+    }) {
+        const auto checked =
+            validate_copies(value, {
+                                       { "first",  { 3, 3, 3 }, rotation },
+                                       { "second", { 4, 3, 3 }, rotation }
+        });
+        INFO(checked.report.code);
+        REQUIRE(checked.report.validity == geo::Validity::valid);
+        REQUIRE(checked.validated_solution);
+        CHECK(geo::revalidate(checked.validated_solution).report.validity == geo::Validity::valid);
+    }
+}
+
+TEST_CASE("AT-06 zero-clearance bounds cannot round away local overlap", "[zero_clearance][AT-09]")
+{
+    const auto solid = geo::test_support::accepted(geo::test_support::u_prism(), geo::AssetRole::object);
+    const auto made = geo::make_validation_context(solid, geo::BoxDimensions { 1e16 + 16, 12, 12 }, {});
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+    const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
+    for (const double offset : { 2.0, 4.0 }) {
+        const auto checked = validate_copies(value, {
+                                                        { "first",  { 1e16, 3, 3 },          { 0, 0, 0, 1 } },
+                                                        { "second", { 1e16 + offset, 3, 3 }, { 0, 0, 0, 1 } }
+        });
+        CAPTURE(offset, checked.report.code);
+        CHECK((checked.report.validity == geo::Validity::valid) == (offset == 4));
+        CHECK(static_cast<bool>(checked.validated_solution) == (offset == 4));
+    }
+}
+
 TEST_CASE("AT-06 rejects context substitution and never publishes a validated handle") {
   const auto first = context();
   const auto second = context();
