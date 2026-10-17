@@ -2330,7 +2330,7 @@ std::optional<SupportPairResult> support_pair_certificate(const PosedBounds& fir
                                                           double clearance, std::shared_ptr<const SupportTable>& table,
                                                           Budget& budget)
 {
-    if (clearance == 0.0 || !first.is_cardinal || !second.is_cardinal || first.asset != second.asset ||
+    if (!first.is_cardinal || !second.is_cardinal || first.asset != second.asset ||
         (table && table->asset != first.asset)) {
         return std::nullopt;
     }
@@ -2344,7 +2344,7 @@ std::optional<SupportPairResult> support_pair_certificate(const PosedBounds& fir
     if (!scratch.held()) {
         return unresolved(exact_failure_code(budget));
     }
-    if (!(clearance > 0.0) || !std::isfinite(clearance)) {
+    if (!(clearance >= 0.0) || !std::isfinite(clearance)) {
         return unresolved("KERNEL_CLEARANCE_INVALID");
     }
     if (!supported_floating_environment()) {
@@ -2465,6 +2465,8 @@ std::optional<SupportPairResult> support_pair_certificate(const PosedBounds& fir
             return unresolved("KERNEL_INTERVAL_OVERFLOW");
         }
         const double gap = std::max(forward.low, backward.low);
+        // Also valid at zero requested clearance: require a strictly positive
+        // enclosed gap here; only the exact cardinal AABB proof accepts contact.
         if (!(gap > 0.0)) {
             continue;
         }
