@@ -1,61 +1,76 @@
 # SpectraPack project guidance
 
-## Read only what the task needs
+SpectraPack packs as many rigid copies of one STL solid as it can into a fixed
+container. The goal of development is **more validated copies, faster, in a
+usable desktop app**. Process exists only to serve that.
 
-- Start with [project status](doc/PROJECT_STATUS.md) and `git status --short`.
-- [spectrapack-spec.md](doc/spectrapack-spec.md) is the authoritative product baseline. Preserve requirement IDs. Read the relevant sections and acceptance cases before changing behavior; this file is a router, not a replacement spec.
-- Use `./tools/Read-Spec.ps1` for a heading index, or `./tools/Read-Spec.ps1 -Section 5.2,5.3 -Id GEO-06,AT-09` for selected text. Avoid loading the full spec, setup guide, or logs on routine tasks.
-- Consult status for the current tranche and available checks; do not assume planned build commands or product modules exist. Read [architecture](doc/ARCHITECTURE.md) when changing module boundaries.
+## Start here
 
-| Task | Spec sections | Load skill when relevant |
-| --- | --- | --- |
-| Build, dependencies, module boundaries | 3, 4, 11 | None required |
-| STL, units, solids, containment, clearance | 5 | `spectrapack-geometry` |
-| FFT, voxelization, orientations, count search, Vulkan | 6 | `spectrapack-spectral` |
-| Desktop, protocol, persistence, export | 7, 8 | `spectrapack-contracts` |
-| Fixtures, regression evidence, milestone/release claims | 9, 10, 11 | `spectrapack-acceptance` |
+- [Project status](doc/PROJECT_STATUS.md) (one page) and `git status --short`.
+- [Spec](doc/spectrapack-spec.md): product contract. Read only the sections the task
+  touches (`./tools/Read-Spec.ps1 -Section 5.3`). Requirement IDs are stable.
+- [Architecture](doc/ARCHITECTURE.md) when changing module boundaries.
+- [Build](docs/BUILDING.md). Skills in `.agents/skills/` hold domain notes for geometry,
+  spectral search and contracts; open the one that applies.
 
-Skills live in `.agents/skills/<name>/SKILL.md`; open only the applicable skill. Keep the spec at `doc/spectrapack-spec.md` until an explicit migration updates all references. Planned product directories are in §11.2.
+## Non-negotiable product rules
 
-## Model allocation and delegation
+- The independent full-resolution validator alone decides validity. Voxels, FFT
+  scores, LODs and screenshots never authorize a placement. Only `valid` replaces the
+  incumbent; `indeterminate` is rejected.
+- Preserve rigid physical dimensions, millimetres, Z-up frames, separate pair/wall
+  clearances and STL interior-volume semantics. Never shrink geometry, clearance or
+  the container to make something fit. Results are `best_found`, never "optimal".
+- C++20 owns geometry/packing, Tauri/Rust owns desktop integration, React/Three.js
+  presents state. CPU pocketfft first; Vulkan/VkFFT later. No CUDA/HIP/ROCm.
+- `rc/` assets are millimetres and must stay byte-identical.
 
-Primary: **Astra Ultra** handles coordination, final interface decisions, integration acceptance, and user communication. Delegate implementation/integration edits to workers; route architecture and review by the risk rules below. The primary may maintain specifications/configuration/status and run targeted checks.
+## How work is done
 
-| Role | Model / effort | Assignment |
-| --- | --- | --- |
-| `implementation_worker` | `gpt-6.1-sol` / `high` | Default bounded feature, module, integration, or repair |
-| `expert_worker` | `gpt-6.1-sol` / `xhigh` | Known difficult features, bounded numerical/C++/Vulkan diagnosis, or focused expert review |
-| `code_reviewer` | `gpt-6.1-sol` / `xhigh` | Routine independent review of code, tests, and contracts |
-| `process_reviewer` | `gpt-6.1-sol` / `high` | After-PR orchestration review; recommendations for human approval, no code review or edits |
-| `architect` | `gpt-6-astra` / `xhigh` | Selective architecture, shared contracts, and critical validity decisions |
-| `critical_reviewer` | `gpt-6-astra` / `xhigh` | Selective high-risk review or consequential uncertainty unresolved by Sol |
-| `light_worker` | `gpt-6-luna` / `low` | Low-risk/difficulty edits, fixtures, focused tests, inspection, documentation |
-| `log_reviewer` | `gpt-6-luna` / `low` | Notable log lines with a short evidence-based summary |
+- **One agent, full context.** Do the work yourself. Spawn a helper only for a
+  clearly separate, parallel job (e.g. an unrelated script) or when the user asks.
+- **Independent review** (`code_reviewer`) only when the user asks, or when a change
+  touches the validator, clearance semantics, transforms or result contracts.
+- **Measure with the scoreboard.** `python tools/scoreboard.py` runs the fixed cases
+  and prints count, time and validity. A packing change is done when no case loses
+  count or validity and the targeted case improves. Record notable results with
+  `--record` (appends to `benchmarks/SCOREBOARD.md`).
+- **Time-box.** Before starting, write in the PR description: the goal (ideally a
+  scoreboard number), the simplest approach, and what is out of scope. If a few days
+  pass without moving the scoreboard or the user-visible goal, stop and tell the user
+  rather than adding more mechanism.
+- **Prefer deleting to adding.** Simplify an existing path before adding a second
+  one. Do not add configuration, compatibility shims or accounting layers "just in
+  case"; there are no external users before v1.
 
-- The unqualified worker default is **6.1 Sol High**. Assign known difficult features directly to `expert_worker`; do not require failed High attempts first. Extra High is selective, not an automatic quality guarantee.
-- Use `architect` when shared boundaries, contracts, or critical validity decisions need design. Select `critical_reviewer` for changes to authoritative validity, clearance semantics, numerical uncertainty, difficult concurrency, or consequential concerns unresolved by Sol. Choose the appropriate reviewer for the scope; do not automatically run both Sol and Astra reviews. Use fresh review context with requirements, diff, and evidence.
-- Keep at most **two open workers**, excluding the primary; queue additional roles. Astra workers are authorized only as `architect` and `critical_reviewer` at **Extra High (`xhigh`)**, never Ultra. Workers are leaves: no delegation, nested Codex, or external model sessions.
-- Settle shared interfaces before parallel edits. Give each worker: deliverable, relevant requirement IDs, exact inputs, exclusive write scope, dependencies, acceptance checks, and stop condition. Use fresh/limited context when sufficient.
-- Do useful independent work while a worker runs; do not duplicate its implementation. Review the diff and evidence. Reuse workers for related corrections, close completed workers where supported, and avoid repeated status polling.
-- After two failed repair attempts, obtain one bounded `expert_worker` diagnosis and reassess. If Sol Extra High has already failed to resolve the issue, use one focused `critical_reviewer` diagnosis and reassess rather than repeating the same escalation. Do not grow an escalating agent tree.
-- Offload low-risk work to Luna. Send raw logs to `log_reviewer` with paths and a question; return a few notable lines with file/line references, failure counts, and a short summary. The primary/reviewer reads deeper only for an unresolved issue. A truncated or filtered log cannot establish success.
-- Where named roles are unavailable or their exposed settings are stale, explicitly pass the role's exact model **and** effort with fresh/limited context, and include its role-file instructions. See [setup status](doc/AGENT_SETUP.md) for verified capabilities. Report unavailable settings; never silently promote or substitute models.
-- Preserve existing ChatGPT sign-in and permissions. No API billing or Fast-speed changes. Leaf behavior is policy, not a claimed permission boundary.
+## Tests
 
-## Scope checkpoints and process feedback
+- Test observable behaviour at public boundaries: validator verdicts, geometry and
+  import results, contract round-trips, FFT correlation against the direct oracle,
+  packing counts on analytic fixtures. Fix bugs with a reproducer first.
+- Do not write tests that assert internal counters, work units, allocation
+  sequences, owner lifetimes or ticket-specific recovery paths. When such an existing
+  test blocks a simplification, delete it instead of preserving the mechanism.
+- Run the affected tests and the scoreboard. Full suites before opening a PR; long
+  hosted qualification only before a release.
 
-- Before substantial implementation, state the deliverable, simplest plausible approach, exclusions, first observable result, and rough expected scope in the existing ticket/plan; do not create a separate planning artifact by default.
-- Reassess unexpected growth: roughly 1,000 added handwritten production lines, a substantial overrun of planned scope, an unplanned subsystem/second execution path, or two failed repairs. Use the existing reviewer/diagnosis to decide continue, simplify, split, or redesign before expanding implementation. These are review triggers, not deletion quotas or permission requests. See [review procedure](doc/PROCESS_REVIEW.md).
-- Once a ready PR is opened, dispatch one fresh `process_reviewer` within the existing worker cap. It reviews orchestration evidence, not product code, and returns at most three recommendations for the user to approve, deny, or defer. Do not apply its recommendations without explicit human approval. This advisory pass does not gate product acceptance or run after every push.
+## Docs
 
-## Shared product rules
+- Keep [PROJECT_STATUS.md](doc/PROJECT_STATUS.md) to one readable page: what works,
+  current goal, known problems, scoreboard snapshot. No evidence ledgers.
+- Change the spec only when product behaviour or a contract changes. Write a decision
+  record only for choices that are hard to reverse (dependencies, file formats, the
+  validity contract). Algorithm details live in code comments and `docs/ALGORITHM.md`.
+- Logs and run artifacts stay in `.local/`; link them, do not copy them into docs.
+- `doc/T-*.md`, `doc/MILESTONES.md`, `doc/NEXT_WORK.md`, `doc/TEST_FOUNDATION_EVIDENCE.md`,
+  `tests/TEST_PLAN.md` and `spec/decisions/` up to 0019 are frozen history. Do not
+  update them; broken links inside them are acceptable.
 
-- Deliver one ticket/task per `feature/<requirement-or-AT-ID>-<short-description>` branch. Incremental commits and pushes to the configured feature remote are authorized. The agent may open a ready pull/merge request targeting `main`; the user performs review/testing/merge, and the agent never merges automatically. **Wait for prerequisite merges before starting dependent branches; do not stack them.** See [delivery queue](doc/DELIVERY.md).
+## Delivery
 
-- C++20 owns geometry/packing; Tauri/Rust owns desktop integration; React/Three.js presents state. CPU pocketfft and Vulkan VkFFT are the selected compute paths. No CUDA/HIP/ROCm dependency.
-- Authoritative accepted solids determine validity/export. LODs, voxels, FFT scores, and screenshots cannot authorize a placement. Only `valid` may replace the incumbent; `indeterminate` is rejected.
-- Preserve rigid physical dimensions, millimeters, Z-up frames, separate pair/wall clearances, and STL interior-volume semantics. Results are `best_found`, never an optimality claim.
-- Follow §11.3: identify requirements and acceptance first; update contracts/spec before behavior changes. Semantic changes require a decision record and compatibility assessment. No speculative dependency versions or invented build/test commands.
-- Use test-driven development for behavior: add a practical spec-linked failing test, observe the intended failure, implement the smallest passing change, then refactor and rerun affected gates. Fix bugs with a reproducer first. Avoid tests that mirror the implementation or assert only stubs/mocks; record red/green evidence. Documentation-only edits need relevant validation, not artificial unit tests.
-- [Test plan](tests/TEST_PLAN.md) maps AT-01–AT-17 to observable checks. `rc/` assets are user-confirmed millimeters; containers represent closed usable interior volumes. Preserve source bytes and hashes. Import/solid validity still needs validation; file names and a closed-edge check do not prove it. Use analytic fixtures for exact outcomes and `rc/` for practical regressions.
-- Run relevant checks and required gates; broaden only for an unresolved risk. Keep long logs in `.local/`, return actual results/failures with artifact paths, and update `doc/PROJECT_STATUS.md` when scope or verified status changes. Distinguish configured, implemented, and verified.
+- Short-lived `feature/<short-description>` branches, one goal each. Commits and
+  pushes to feature branches are authorized; open a ready PR to `main`. The user
+  reviews and merges; never merge automatically.
+- Stacking a branch on an unmerged one is fine when it saves waiting; say so in the PR.
+- Preserve existing ChatGPT sign-in and permissions. No API billing or Fast-speed
+  changes.

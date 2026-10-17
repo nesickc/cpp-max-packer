@@ -1,9 +1,9 @@
 # Project defaults; a live app selection or launch override can take precedence.
+# One primary agent does the work with full context; see AGENTS.md.
 model = "gpt-6-astra"
-model_reasoning_effort = "ultra"
+model_reasoning_effort = "high"
 
 [agents]
 enabled = true
-default_subagent_model = "gpt-6.1-sol"
-default_subagent_reasoning_effort = "high"
+# Only for the optional code_reviewer or a clearly separate parallel job.
 max_concurrent_threads_per_session = 2

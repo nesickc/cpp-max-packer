@@ -1,5 +1,7 @@
 # Spec-linked test plan
 
+> Frozen history as of spec v0.3 (2026-10-17). Current gates: spec §9 scoreboard and §10 with the Core/Later tiers.
+
 The rows below describe full product acceptance gates; implemented slices and
 remaining qualification are tracked in the linked tickets and
 [project status](../doc/PROJECT_STATUS.md). Executable foundation checks are listed

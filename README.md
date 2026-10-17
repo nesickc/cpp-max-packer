@@ -13,10 +13,10 @@ are tracked separately from the remaining full-product acceptance gates.
 - [Product specification](doc/spectrapack-spec.md)
 - [Current status and next milestone](doc/PROJECT_STATUS.md)
 - [Project instructions](AGENTS.md)
-- [Agent configuration and verification](doc/AGENT_SETUP.md)
+- [Packing algorithm design](docs/ALGORITHM.md) and [scoreboard](benchmarks/SCOREBOARD.md) (`python tools/scoreboard.py`)
 - [Initial architecture](doc/ARCHITECTURE.md) and [architecture decision](spec/decisions/0001-initial-architecture.md)
 - [Executable fixture checks](tests/README.md) and [spec-linked TDD plan](tests/TEST_PLAN.md)
-- [Native build instructions](docs/BUILDING.md), [CPU dependency inventory](docs/DEPENDENCIES.md), [reference timings](benchmarks/README.md), and [feature delivery queue](doc/DELIVERY.md)
+- [Native build instructions](docs/BUILDING.md), [CPU dependency inventory](docs/DEPENDENCIES.md), and [reference timings](benchmarks/README.md)
 - [Desktop workflow](docs/DESKTOP.md) and [T-008 scope/evidence](doc/T-008.md)
 - [Original setup guide](doc/codex-local-agent-setup-guide.md)
 
@@ -28,4 +28,4 @@ From PowerShell, retrieve only the relevant spec text:
 ./tools/Read-Spec.ps1 -Id GEO-06,AT-09    # Requirement and acceptance rows
 ```
 
-Project skills in `.agents/skills/` cover geometry, spectral search, desktop/data contracts, and acceptance evidence. They link back to the specification and load only when relevant.
+Project skills in `.agents/skills/` cover geometry, spectral search, and desktop/data contracts. They link back to the specification and load only when relevant.

@@ -1,13 +1,70 @@
 # Project status
 
-Updated: 2026-10-11.
+Updated 2026-10-17. Keep this to one page: what works, the current goal, known
+problems and the latest scoreboard. Details belong in PRs and `.local/` logs.
 
-- **Current tranche:** [T015-P1 known-object quality and count-only live publication](T-015.md#t015-p1-known-object-quality-and-count-only-live-publication), on `feature/SOL-04-pryanik-live-count` from merged PR #14 `858940a`, is locally verified and ready for review. The frozen build improves full Pryanik-2 from 306 to 340 native-valid copies at requested 2 mm and explicit 4 mm, in 1.888/5.245 s after Start, with unchanged constraints and caps. Later FFT memory/field-work failures remain explicit. Repeated fixed-work poses/counters, independent 340-copy revalidation and Ulamok36 pass. Actual GUI shows 340 while search continues; Save/JSON export match exactly and Open revalidates 340. Native/Rust/React gates, Release153/153, Debug31/31, strengthened FFT checks, accepted full-asset/rejection regressions and critical reviews pass. The flat-shaded viewer follow-up passes nine viewer tests, TypeScript, desktop build and GUI revalidation of 340; Clip Z 100% restores the complete view. The reviewed [next DRY pass](MILESTONES.md#next-bounded-pass-production-and-test-dry-cleanup) awaits PR #15 merge. Hosted Debug exposed six seed/FFT fixture prerequisite failures; the reviewed four-file test-only repair now passes all six cases in both Debug and Release with original oracles retained. Updated hosted CI and user review/merge remain; full T-014/T-015/T-021 remain open.
-- **Architecture/build:** [initial boundaries](ARCHITECTURE.md), [CPU build ADR 0003](../spec/decisions/0003-pinned-cpu-build.md) and [contract ADR 0004](../spec/decisions/0004-versioned-contracts.md) are recorded. The C++20 static CPU build pins its geometry, compute and JSON/schema dependencies with checked toolchain/dependency records and upstream notices. [T-001 hosted Windows CI passed](https://github.com/nesickc/cpp-max-packer/actions/runs/34276058437) on `c828f2d`; [build instructions](../docs/BUILDING.md). M0 remains incomplete.
-- **Fixtures/tests:** Current T-006 native Debug/Release gates pass 211/211 each on the separately measured `local-windows-2026-20260921` profile; Python passes 92 and shared contract fixtures/generated-type checks pass 31. Staged Release runtime/service/import checks pass. The prior complete hosted qualification retains all 364 validation observations, 84 baseline runs and the million-triangle representation case. Source bytes remain unchanged; nine supplied solids are accepted and the simplified Pryanik remains rejected. [T-006 evidence and limits](T-006.md), [T-005 evidence and limits](T-005.md), [reviewed import expectations](../tests/fixtures/import-expectations.json), [test plan](../tests/TEST_PLAN.md).
-- **Product state:** versioned contracts, semantic validation, generated TypeScript, asset identities, capabilities CLI/stdio, source-preserving STL import/diagnostics, explicit repair acceptance and the native T-006 packing baseline are implemented. Independent native validation and immutable valid snapshots remain authoritative. T-005 adds shared display LOD, conservative object/container/clearance fields and transactional reference counts. T-007 adds CPU spectral proposals and independently checked JSON/STL export through the auxiliary `solve` command. T-008 adds the first native box/packing/viewer/portable-project/export journey; service jobs and checkpoint recovery remain pending. M0–M6 and full AT-10/M2/AT-13/AT-14 gates are not complete.
-- **Delivery evidence:** [PR #14](https://github.com/nesickc/cpp-max-packer/pull/14) is merged; latest hosted native CI passes 570/571 cases, with two refinement-counter assertions failing in one full-Pryanik case. [T-010 local acceptance](T-010-ACCEPTANCE.md#final-fft-performance-matrix-on-3d3343e) retains all 144 FFT observations, critical review, Stop and 36/2/2-copy journeys; do not repeat unaffected threading qualification. Existing exact-budget runs retain 36/306 valid copies after resource failures: Pryanik 2 mm fails memory admission and explicit 4 mm reaches field-work limits before selecting a spectral candidate. New quality, live publication and inherited-failure work are tracked in the [queue](DELIVERY.md); no optimality claim. Full AT-13–AT-15/M3 and simplified-Pryanik repair remain open.
-- **Canonical spec:** [version 0.2](spectrapack-spec.md) adds SOL-08, Ulamok 36-copy and accepted reconstructed-Pryanik gates, plus the CPU-first delivery sequence. Existing M0–M6/AT identities and schema versions are unchanged. [Test plan](../tests/TEST_PLAN.md) maps the future tickets to required evidence; no new product test result is claimed by these documentation changes.
-- **Agent allocation:** [Configuration](AGENT_SETUP.md) retains existing models and adds Sol High `process_reviewer`: one advisory orchestration review after PR creation, with recommendations requiring human approval. [Scope checkpoints](PROCESS_REVIEW.md) reuse existing reviews. Primary stays Astra Ultra; the new role still needs runtime confirmation on first use. Product requirements and acceptance gates are unchanged.
+## What works
 
-Keep this note short. Record completed scope and its evidence, the next bounded task, and unresolved decisions. Link detailed logs instead of copying them. Do not mark a product requirement complete without its acceptance evidence.
+- **Engine (C++20, CPU):** STL import with diagnostics and safe cleanup; accepted
+  full-resolution solids; independent validator (overlap, containment, pair/wall
+  clearance); AABB grid baseline, staggered-row seed and CPU spectral (FFT)
+  placement with cube/custom rotations; multithreaded CPU search; JSON result and
+  validated binary STL export. CLI: `inspect`, `solve`, `capabilities`, `serve --stdio`.
+- **Desktop (Tauri/React/Three.js):** import, box settings, Start/Stop, live count,
+  shared-mesh viewer, Save/Open project, export.
+- **Build/tests:** pinned Windows CPU build ([docs/BUILDING.md](../docs/BUILDING.md)),
+  native Catch2/CTest suites, Python tool tests, hosted Windows CI.
+
+Not yet: Vulkan, STL containers, upright/free-3D rotations, library repair, crash
+recovery, installer. These are mostly **Later** in spec v0.3.
+
+## Scoreboard
+
+`python tools/scoreboard.py` (Release build, 8 threads). First run 2026-10-17 with
+the engine built from PR #16 (`feature/SOL-05-resource-recovery`):
+
+| Case | Count | Floor | Target | Block layout | Termination |
+| --- | --- | --- | --- | --- | --- |
+| cube64 | 64 | 64 | 64 | 64 | budget_exhausted |
+| lprism2 | 1 | 1 | 2 | 1 | search_stalled |
+| pryanik2 (1/1 mm) | 340 | 340 | 350 | 343 | resource_limit |
+| pryanik2-0 (0/1 mm) | 1 | 1 | 350 | 388 | resource_limit |
+| ulamok | 36 | 36 | 36 | 36 | resource_limit |
+
+"Block layout" is a simple bounding-box reference computed by the script, not a
+bound. History: [benchmarks/SCOREBOARD.md](../benchmarks/SCOREBOARD.md).
+
+## Known problems (priority order)
+
+1. **Zero pair clearance is effectively broken for real models.** Validating touching
+   Pryanik copies exhausts the validator's kernel-work cap after ~33 candidates; the
+   run returns 1 copy (`PHYSICAL_VALIDATION_RESOURCE`). Hand packing reaches 350.
+2. **Most of the time budget goes to preparation.** Pryanik-2 at 4 mm: ~27 s
+   preparing, ~12 s voxelizing, ~7 s validating of a 60 s Start; search itself gets
+   seconds before stopping at `FIELD_KERNEL_WORK_LIMIT`.
+3. **Search ends instead of degrading** at resource limits (spec v0.3 §6.6 now asks
+   for degrade-and-continue). Pryanik 2 mm fails memory admission outright.
+4. **The baseline is weaker than simple block layouts** (315 grid vs 343 blocks for
+   pryanik2). The L-prism pair (`lprism2`) is not found in a 10 s timed run.
+5. `rc/containers/10_kg_np.stl` is 400×350×285 mm; the real Nova Post 10 kg box is
+   400×340×285 mm. Use box dimensions, not that STL.
+
+## Current goal
+
+Raise the Pryanik scoreboard counts, starting with problem 1, then 2–4. Each step is
+one short PR with a scoreboard result.
+
+## Open PRs and branches
+
+- [PR #16](https://github.com/nesickc/cpp-max-packer/pull/16) `feature/SOL-05-resource-recovery`:
+  resource recovery (T015-P2). Retains 340/36; no count improvement. Local branch also
+  has an unpushed WIP commit `3b76463` with agent-configuration edits superseded by
+  this reset.
+- `feature/process-reset`: this workflow reset (slim AGENTS.md, spec v0.3, scoreboard).
+
+## Process
+
+[AGENTS.md](../AGENTS.md) is the whole workflow. Spec v0.3 ([spec](spectrapack-spec.md))
+splits Core v1.0 from Later work; algorithm details are in
+[docs/ALGORITHM.md](../docs/ALGORITHM.md). Tickets `doc/T-*.md`, milestone and
+evidence documents and decision records 0001–0019 are frozen history.

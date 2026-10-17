@@ -14,4 +14,4 @@ Before implementation, identify source/accepted-solid ownership and the exact fr
 - Clearance: pair and wall values are separate Euclidean distances. Tolerance classifies uncertainty; it cannot reduce the requested gap or permit positive overlap. Resolve borderline cases robustly or return `indeterminate`.
 - Representation (§5.1): display LOD changes cannot alter authoritative hashes, voxel fields, validation, or export. Voxelize authoritative geometry; ordinary simplification is not an enclosing proxy.
 
-Verify the affected invariant with analytic/adversarial cases, including the failure mode a surface-only or voxel-only test would miss. Report unresolved kernel behavior to the primary; the Manifold/FCL adapter is gated by M1, not presumed correct from library import success.
+Verify the affected invariant with analytic/adversarial cases, including the failure mode a surface-only or voxel-only test would miss. Do not presume the Manifold/FCL adapter correct from library import success; unresolved kernel behaviour stays `indeterminate`.
