@@ -2,7 +2,16 @@ cmake_minimum_required(VERSION 3.25)
 
 project(SpectraPack VERSION 0.0.0 LANGUAGES CXX)
 
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER "CMake")
+# Most executables are tests or test helpers; production targets are grouped below.
+set(CMAKE_FOLDER "Tests")
+
 include(CTest)
+get_property(ctest_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+if(ctest_targets)
+  set_target_properties(${ctest_targets} PROPERTIES FOLDER "CMake")
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -60,3 +69,8 @@ add_subdirectory(engine/service)
 add_subdirectory(engine/cli)
 add_subdirectory(tests)
 add_subdirectory(benchmarks)
+
+set_target_properties(pack_geometry pack_compute pack_solver pack_io pack_service
+  PROPERTIES FOLDER "Libs")
+set_target_properties(spectrapack-engine PROPERTIES FOLDER "SpectraPack")
+set_target_properties(spectrapack_service_replay_perf PROPERTIES FOLDER "Benchmarks")

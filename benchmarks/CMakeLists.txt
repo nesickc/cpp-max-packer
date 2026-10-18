@@ -1,3 +1,5 @@
+set(CMAKE_FOLDER "Benchmarks")
+
 add_executable(spectrapack_reference_benchmark native/reference_benchmark.cpp)
 target_link_libraries(spectrapack_reference_benchmark PRIVATE spectrapack_test_support)
 target_compile_features(spectrapack_reference_benchmark PRIVATE cxx_std_20)
@@ -41,6 +43,7 @@ set_target_properties(spectrapack_baseline_benchmark PROPERTIES
 )
 
 add_executable(spectrapack_baseline_support_tests native/baseline_support_tests.cpp)
+set_target_properties(spectrapack_baseline_support_tests PROPERTIES FOLDER "Tests")
 target_link_libraries(spectrapack_baseline_support_tests PRIVATE
   pack_solver spectrapack_dependency_json spectrapack_test_support
   Catch2::Catch2WithMain
