@@ -28,14 +28,29 @@ independently of later FFT failure; persistent result schemas are unchanged.
 Detailed bounded ownership and accounting follow [ADR 0018](../spec/decisions/0018-cardinal-support-stagger.md).
 Its practical targets and remaining gates are recorded in [T-015](T-015.md).
 
-Known gaps (2026-10-17, see the scoreboard `blocks` column):
+Zero-clearance validation uses the same authoritative bounds as positive clearance.
+For cardinal poses, exact dyadic comparisons keep source extrema and translations
+separate: a nonnegative axis gap excludes positive interior overlap, including
+exact contact. The oblique support certificate still requires a strictly positive
+enclosed projected gap, even when the requested clearance is zero. Inconclusive
+bounds retain full solid validation; no tolerance is subtracted from clearance.
+Fresh result loading rebuilds these proofs from authoritative geometry and poses.
+STL export applies the same exact bounds proof to the independently imported
+quantized vertices, so original-model bounds cannot authorize a staged mesh.
+
+This raises the zero-clearance Pryanik-2 result from 1 to 360 valid copies at both
+2 and 4 mm manual pitch under the existing 60-second settings. The existing grid
+produces 330 and the generated staggered proposal improves it to 360; no saved
+item-specific poses are used. The positive-clearance result remains 340.
+
+Known gaps (2026-10-18, see the scoreboard `blocks` column):
 
 - The baseline is a single uniform grid per orientation (315 Pryanik-2 copies in
   400×340×285 mm at 1/1 mm). A recursive block (guillotine) layout of bounding boxes
   reaches 343; the solver currently returns 340.
-- At zero pair clearance the validator exhausts its 1.3e9 kernel-work cap on touching
-  full-resolution Pryanik copies after about 33 candidates, so the run returns 1 copy
-  where a block layout fits 388.
+- Zero-clearance Pryanik reaches 360 where the block reference fits 388. The
+  validator now completes the staggered proposal; subsequent spectral work still
+  stops at a resource limit before using the whole 60-second allowance.
 
 ## Conservative fields and FFT placement
 
@@ -105,6 +120,11 @@ on top. Spec v0.3 §6.6 replaces those obligations with a simpler policy: estima
 dominant buffers, fit the batch, degrade visibly on failure and keep searching.
 Simplify the existing accounting toward that policy when it gets in the way.
 
-Observed 2026-10-17 with the PR #16 engine build (Pryanik-2, 4 mm, 60 s, 8 threads): about 27 s preparing, 12 s
-voxelizing and 7 s validating; the run then stops with `FIELD_KERNEL_WORK_LIMIT`
-after four correlations, retaining the 340-copy staggered seed.
+Observed 2026-10-18 after the zero-clearance fix (Release, 60 s, 8 threads):
+Pryanik-2 at 4 mm retains 340 copies with 1 mm pair clearance and 360 with zero
+pair clearance, then stops with `FIELD_KERNEL_WORK_LIMIT` after four correlations.
+At 2 mm both layouts survive `SPECTRAL_MEMORY_LIMIT` during spectral preflight.
+The remaining work is to use the unspent time for useful improvements without
+changing manual pitch or physical constraints. See the
+[scoreboard artifacts](../.local/scoreboard/20261018-132633/scoreboard.json) and
+[2 mm results](../.local/zero-clearance/pitch2-result.json).
