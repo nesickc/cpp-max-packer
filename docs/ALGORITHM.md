@@ -43,14 +43,19 @@ This raises the zero-clearance Pryanik-2 result from 1 to 360 valid copies at bo
 produces 330 and the generated staggered proposal improves it to 360; no saved
 item-specific poses are used. The positive-clearance result remains 340.
 
-Known gaps (2026-10-18, see the scoreboard `blocks` column):
+Timed runs extend the physical grid search with residual block layouts. For each
+allowed orientation, fill a rectangular region with a uniform grid, then consider
+all six orders of cutting its unused space into three disjoint slabs. Recursively
+fill those slabs with permitted orientations. Search depths 1–3 in order; memoize
+region dimensions/depth with a bounded cache (at most 32,768 nodes, also limited by
+available scratch). Only complete proposals exceeding the retained count enter
+full native validation. This rearranges the layout without changing manual pitch.
+Positive pair/wall distances receive a small additional proposal margin, never a
+reduction; zero pair clearance remains zero. The fixed-work path is unchanged.
 
-- The baseline is a single uniform grid per orientation (315 Pryanik-2 copies in
-  400Ã—340Ã—285 mm at 1/1 mm). A recursive block (guillotine) layout of bounding boxes
-  reaches 343; the solver currently returns 340.
-- Zero-clearance Pryanik reaches 360 where the block reference fits 388. The
-  validator now completes the staggered proposal; subsequent spectral work still
-  stops at a resource limit before using the whole 60-second allowance.
+The first measured 60-second run improves the positive-clearance Pryanik result
+from 340 to 343. The zero-clearance floor remains 360; the 388-copy bounding-box
+reference is still only a reference, not a native-validated solver result.
 
 ## Conservative fields and FFT placement
 
@@ -86,45 +91,55 @@ Refine promising layouts by translation steps `h/2`, `h/4`, `h/8`, and, for free
 
 ## Count controller
 
+The current implementation is narrower than the original design:
+
 ```text
-prepare authoritative assets, baseline, fields, and orientation catalogs
-best = best validated baseline, or a validated empty packing
-while search budget remains:
-    choose a reproducible fresh start or a neighborhood of best
-    greedily insert identical copies using spectral candidates
-    refine feasible poses to expose additional space
-    try inserting another copy
-    if blocked:
-        remove a spatial neighborhood of k copies, k in {1, 2, 4, 8}
-        attempt to reinsert those k copies plus at least one extra
-        vary poses, candidate ranking, and neighborhood selection
-    validate each proposed improvement before replacing best
-    checkpoint best and emit its immutable solution revision
-return best with the actual termination reason
+retain the validated uniform-grid baseline and staggered proposal
+for timed runs, validate improving residual-block proposals (depths 1–3)
+if FFT admission is affordable:
+    greedily insert from an empty layout using cached spectral pages
+    on stall, try bounded physical face alignments and low-overlap candidates
+    if the first trial completes, try insertion into the retained layout
+return the highest validated count with the actual termination reason
 ```
 
-Use a mixture of compact neighborhoods and dispersed removals. Identical-copy ID permutations are not useful restarts; diversify geometry, orientations, grid phases, and candidate choices. Keep a separate feasible working layout for equal-count exploration. Discard a failed neighborhood without damaging the saved incumbent.
+Every phase shares the Start deadline and Stop control. Physical block trials keep
+the entry incumbent while testing complete replacement layouts. This is the only
+implemented whole-layout rearrangement beyond the stagger seed. The spectral
+controller does **not** yet perform the originally proposed spatial-neighborhood
+removal/reinsertion, equal-count pose exploration, multiple randomized restarts or
+continuous local pose refinement. Extra time can evaluate more candidates but does
+not guarantee an improved retained count. These remain possible future changes,
+not descriptions of current behavior.
 
-Reserve budget for both a fresh greedy spectral run and subsequent improvement. Schedule multiple seeds within the chosen total budget, not one full budget per seed hidden from the user. All modes retain the AABB baseline. The full controller retains its initial spectral result as well. With identical configuration and a fixed work budget, continuing the same job cannot decrease the reported count.
-
-Use coarse-to-fine passes where memory permits: start at `2h`, then `h`, preserving physical poses and rebuilding fields. A coarser pitch may miss feasible arrangements, but it cannot invalidate an already validated incumbent. Stop with `budget_exhausted`, `user_stopped`, `search_stalled`, `resource_limit`, or `error`; none of these means globally optimal.
-
-In deterministic CPU mode, replace time-dependent search decisions with `search.work_budget.max_candidate_evaluations` and `max_search_passes`; stop at the first reached cap. One candidate evaluation is one proposed pose submitted to authoritative feasibility checking, including rejected proposals. A pass is one complete scheduled insertion/refinement/neighborhood attempt. Record both counters, RNG algorithm/state, and thread configuration. A watchdog may abort a hung run but cannot present that abort as a completed deterministic comparison. Wall-clock budgets remain the normal interactive mode.
+Fixed-work mode preserves its candidate/pass limits and ordering. Timed recovery
+can renew cumulative work allowances; per-operation safety bounds, finite retry
+ladders, memory admission and cancellation remain enforced. Publication exposes
+only strictly higher counts through the existing count-publication adapter.
 
 ## Resource handling
 
-Spec v0.2 Â§6.6 required complete preflight accounting of every nested owner, a
-50%-of-RAM host cap and terminal refusal for an unaffordable manual pitch. PR #16
-(T015-P2, ADR 0019, not merged when this was written) adds a bounded recovery ladder
-on top. Spec v0.3 Â§6.6 replaces those obligations with a simpler policy: estimate the
-dominant buffers, fit the batch, degrade visibly on failure and keep searching.
-Simplify the existing accounting toward that policy when it gets in the way.
+Spec §6.6 governs: estimate the dominant live buffers, fit available memory, keep
+the incumbent and exhaust affordable work before reporting a resource limit.
+Manual pitch is never changed by this implementation.
 
-Observed 2026-10-18 after the zero-clearance fix (Release, 60 s, 8 threads):
-Pryanik-2 at 4 mm retains 340 copies with 1 mm pair clearance and 360 with zero
-pair clearance, then stops with `FIELD_KERNEL_WORK_LIMIT` after four correlations.
-At 2 mm both layouts survive `SPECTRAL_MEMORY_LIMIT` during spectral preflight.
-The remaining work is to use the unspent time for useful improvements without
-changing manual pitch or physical constraints. See the
-[scoreboard artifacts](../.local/scoreboard/20261018-132633/scoreboard.json) and
-[2 mm results](../.local/zero-clearance/pitch2-result.json).
+The early 340/360-copy benchmark stops had two separate causes. Hand-written CLI
+settings without `resolved.resource_policy` silently selected legacy execution,
+even for a timed job: cumulative raster work stopped 4 mm runs after four
+correlations. The same path used a fixed 512 MiB fallback; the 2 mm preflight
+estimated about 710 MB and refused admission. Neither result established physical
+infeasibility.
+
+Policy-less timed CLI runs now select the same measured-RAM-share policy as
+desktop Start, honoring an explicit host-memory cap. Explicit resolved policies
+and fixed-work behavior remain intact. Existing recovery retains completed
+geometry, masks, kernels and correlation pages, can evict disposable state/reduce
+threads, and grants bounded additional work. Incomplete raster operations can
+still restart on a larger allowance; resumable raster cursors across failed calls
+are not implemented. The physical block phase is independent of field admission
+and provides useful rearrangement even when a field cannot fit.
+
+The first 4 mm run reached 16 correlations and eight FFT candidates submitted to
+native validation, compared with four correlations and no FFT candidates before
+the fix. It retained 343 and ran to the unchanged 60-second deadline. Logs and
+subsequent budget-scaling measurements are in `.local/continued-packing/`.

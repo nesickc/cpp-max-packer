@@ -23,6 +23,8 @@ if(BUILD_TESTING)
   target_compile_features(spectrapack_result_contract_check PRIVATE cxx_std_20)
 
   foreach(solve_case IN ITEMS
+    solve_timed_memory_cap
+    solve_timed_repacking
     solve_cube_64
     solve_empty
     solve_unicode_relocation

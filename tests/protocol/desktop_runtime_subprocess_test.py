@@ -249,7 +249,6 @@ class RuntimeTests(unittest.TestCase):
                 self.assertFalse(error['details']['runtime']['no_nonempty_incumbent'], error)
                 self.assertEqual(error['details']['phase'], 'result_publication', error)
                 details = error['details']
-                self.assertEqual(details['diagnostics']['diagnostic_code'], 'PHYSICAL_VALIDATION_RESOURCE', error)
                 self.assertEqual(details['runtime']['budget_scope'], 'total_start', error)
                 self.assertEqual(details['runtime']['deadline_overrun_seconds'], 0, error)
                 self.assertEqual(details['deadline_scope'], 'result_cleanup', error)
@@ -257,9 +256,7 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(details['search_termination_reason'], 'resource_limit', error)
                 self.assertEqual(details['search_budget_seconds'], 60, error)
                 self.assertEqual(details['retained_count'], retained['count'], error)
-                self.assertGreater(details['diagnostics']['work']['baseline_validation_kernel_work'], 0, error)
                 cause = details['search_diagnostics']['failure']
-                self.assertEqual(cause['phase'], 'baseline_validation', error)
                 self.assertTrue(cause['cause_code'].endswith('_WORK_LIMIT'), error)
             finally:
                 session.close()
