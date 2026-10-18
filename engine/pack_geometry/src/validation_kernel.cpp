@@ -359,8 +359,8 @@ constexpr std::array<SupportDirection, 30> support_directions() noexcept
 
 constexpr auto kSupportDirections = support_directions();
 
-// Every direction has exactly two nonzero integer coefficients. Arithmetic
-// encloses the original doubles, never a rounded transformed world vertex.
+// Axial/oblique integer directions enclose the original doubles, never a
+// rounded transformed world vertex. Multiplication by +/-1 is exact.
 Interval support_projection(const SupportDirection& direction, const Vec3& point) noexcept
 {
     Interval projection {};
@@ -370,7 +370,10 @@ Interval support_projection(const SupportDirection& direction, const Vec3& point
             continue;
         }
         const auto term =
-            multiply_interval(point_interval(static_cast<double>(direction[axis])), point_interval(point[axis]));
+            direction[axis] == 1 ? point_interval(point[axis])
+            : direction[axis] == -1
+                ? point_interval(-point[axis])
+                : multiply_interval(point_interval(static_cast<double>(direction[axis])), point_interval(point[axis]));
         projection = first ? term : add_interval(projection, term);
         first = false;
     }
@@ -648,6 +651,20 @@ class SupportTable {
 public:
     std::shared_ptr<const AcceptedSolid> asset;
     std::array<Interval, 30> supports {};
+};
+
+class LayerSupportTable {
+public:
+    static constexpr std::size_t count = 64;
+    struct Slice {
+        // Axial and diagonal supports of complete authoritative triangles.
+        std::array<Interval, 33> supports {};
+        bool occupied {};
+    };
+    std::shared_ptr<const AcceptedSolid> asset;
+    int axis {};
+    std::array<double, count + 1> cuts {};
+    std::array<Slice, count> slices {};
 };
 
 std::optional<std::uint64_t> prepared_owned_bytes(const PreparedSolid& solid) noexcept
@@ -2487,6 +2504,281 @@ std::optional<SupportPairResult> support_pair_certificate(const PosedBounds& fir
         }
     }
     return std::nullopt;
+}
+
+std::optional<SupportPairResult> layer_support_pair_certificate(const PosedBounds& first, const PosedBounds& second,
+                                                                double clearance,
+                                                                std::shared_ptr<const LayerSupportTable>& table,
+                                                                Budget& budget)
+{
+    if (!first.is_cardinal || !second.is_cardinal || first.asset != second.asset ||
+        (table && table->asset != first.asset)) {
+        return std::nullopt;
+    }
+    const auto unresolved = [](std::string_view code) {
+        return SupportPairResult { Decision::indeterminate, BoundaryRelation::indeterminate, Threshold::indeterminate,
+                                   "authoritative-layer-supports", code };
+    };
+    if (!supported_floating_environment()) {
+        return unresolved("KERNEL_FLOATING_ENVIRONMENT");
+    }
+    if (!(clearance >= 0) || !std::isfinite(clearance)) {
+        return unresolved("KERNEL_CLEARANCE_INVALID");
+    }
+    const auto bounds = first.asset->bounds_mm();
+    int local_axis = 0;
+    for (int axis = 1; axis != 3; ++axis) {
+        if (bounds.max[axis] - bounds.min[axis] < bounds.max[local_axis] - bounds.min[local_axis]) {
+            local_axis = axis;
+        }
+    }
+    const auto world_axis = [local_axis](const PosedBounds& posed) {
+        for (int axis = 0; axis != 3; ++axis) {
+            if (posed.cardinal.source_axis[axis] == local_axis) {
+                return axis;
+            }
+        }
+        return -1;
+    };
+    const int axis = world_axis(first);
+    if (axis < 0 || axis != world_axis(second)) {
+        return std::nullopt;
+    }
+    const auto direction = [](std::size_t index) {
+        if (index < kSupportDirections.size()) {
+            return kSupportDirections[index];
+        }
+        SupportDirection axial {};
+        axial[index - kSupportDirections.size()] = 1;
+        return axial;
+    };
+    struct WorldSlice {
+        Interval height;
+        std::array<Interval, 12> supports;
+    };
+    using WorldTable = std::array<WorldSlice, LayerSupportTable::count>;
+    // Covers construction projections too, including cancellation during build.
+    ScratchCharge scratch(budget, 2 * sizeof(WorldTable) + 2048);
+    if (!scratch.held()) {
+        return unresolved(exact_failure_code(budget));
+    }
+    // A closed slab is an enclosure of material, not just of its boundary.
+    // Every in-plane material extremum lies on an authoritative boundary
+    // triangle intersecting the slab. Including that triangle's COMPLETE
+    // supports avoids clipping/intersection rounding and fills cavities safely.
+    if (!table) {
+        if (!budget.reserve_bytes(sizeof(LayerSupportTable) + 64)) {
+            return unresolved(exact_failure_code(budget));
+        }
+        try {
+            auto complete = std::make_shared<LayerSupportTable>();
+            complete->asset = first.asset;
+            complete->axis = local_axis;
+            for (std::size_t cut = 0; cut <= LayerSupportTable::count; ++cut) {
+                complete->cuts[cut] =
+                    std::lerp(bounds.min[local_axis], bounds.max[local_axis], double(cut) / LayerSupportTable::count);
+                if (!std::isfinite(complete->cuts[cut]) || (cut && complete->cuts[cut] < complete->cuts[cut - 1])) {
+                    return unresolved("KERNEL_INTERVAL_OVERFLOW");
+                }
+            }
+            // These exact stored planes partition the entire axis interval;
+            // adjacent closed slabs share exactly the same double endpoint.
+            complete->cuts.front() = bounds.min[local_axis];
+            complete->cuts.back() = bounds.max[local_axis];
+            const auto mesh = first.asset->mesh();
+            for (const auto& triangle : mesh.triangles) {
+                if (!budget.consume_work(12 * 3 * 20 + LayerSupportTable::count)) {
+                    return unresolved(exact_failure_code(budget));
+                }
+                std::array<Interval, 33> supports {};
+                double low = std::numeric_limits<double>::infinity(), high = -low;
+                for (const auto vertex_index : triangle) {
+                    const auto& vertex = mesh.vertices[vertex_index];
+                    low = std::min(low, vertex[local_axis]);
+                    high = std::max(high, vertex[local_axis]);
+                    for (std::size_t index = 0; index != supports.size(); ++index) {
+                        const auto normal = direction(index);
+                        if (normal[local_axis] != 0) {
+                            continue;
+                        }
+                        const auto projection = support_projection(normal, vertex);
+                        if (!projection.valid) {
+                            return unresolved("KERNEL_INTERVAL_OVERFLOW");
+                        }
+                        auto& support = supports[index];
+                        if (!support.valid) {
+                            support = projection;
+                        }
+                        else {
+                            support.low = std::min(support.low, projection.low);
+                            support.high = std::max(support.high, projection.high);
+                        }
+                    }
+                }
+                for (std::size_t slab = 0; slab != LayerSupportTable::count; ++slab) {
+                    if (low > complete->cuts[slab + 1] || high < complete->cuts[slab]) {
+                        continue;
+                    }
+                    if (!budget.consume_work(33)) {
+                        return unresolved(exact_failure_code(budget));
+                    }
+                    auto& slice = complete->slices[slab];
+                    for (std::size_t index = 0; index != supports.size(); ++index) {
+                        if (!slice.occupied) {
+                            slice.supports[index] = supports[index];
+                        }
+                        else if (supports[index].valid) {
+                            slice.supports[index].low = std::min(slice.supports[index].low, supports[index].low);
+                            slice.supports[index].high = std::max(slice.supports[index].high, supports[index].high);
+                        }
+                    }
+                    slice.occupied = true;
+                }
+            }
+            if (!budget.reserve_bytes(0)) {
+                return unresolved(exact_failure_code(budget));
+            }
+            if (!supported_floating_environment()) {
+                return unresolved("KERNEL_FLOATING_ENVIRONMENT");
+            }
+            table = std::move(complete);
+        }
+        catch (const std::bad_alloc&) {
+            return unresolved("KERNEL_ALLOCATION_FAILURE");
+        }
+    }
+    std::array<SupportDirection, 12> normals {};
+    std::size_t next {};
+    for (std::size_t index = 0; index != 33; ++index) {
+        // Axial planes cheaply resolve the common body/body slab pairs.
+        const auto normal = direction((index + 30) % 33);
+        if (normal[axis] == 0) {
+            normals[next++] = normal;
+        }
+    }
+    const auto world_table = [&](const PosedBounds& posed, WorldTable& world) {
+        for (std::size_t slab = 0; slab != table->count; ++slab) {
+            if (!table->slices[slab].occupied) {
+                continue;
+            }
+            if (!budget.consume_work(12 * 32)) {
+                return false;
+            }
+            auto& target = world[slab];
+            target.height = add_interval(multiply_interval({ table->cuts[slab], table->cuts[slab + 1], true },
+                                                           point_interval(posed.cardinal.sign[axis])),
+                                         point_interval(posed.translation[axis]));
+            if (!target.height.valid) {
+                return false;
+            }
+            for (std::size_t index = 0; index != normals.size(); ++index) {
+                SupportDirection local {};
+                for (int coordinate = 0; coordinate != 3; ++coordinate) {
+                    local[posed.cardinal.source_axis[coordinate]] =
+                        posed.cardinal.sign[coordinate] * normals[index][coordinate];
+                }
+                bool reverse {};
+                for (const int coefficient : local) {
+                    if (coefficient) {
+                        reverse = coefficient < 0;
+                        break;
+                    }
+                }
+                if (reverse) {
+                    for (auto& coefficient : local) {
+                        coefficient = -coefficient;
+                    }
+                }
+                std::size_t source {};
+                while (source != 33 && direction(source) != local) {
+                    ++source;
+                }
+                if (source == 33) {
+                    return false;
+                }
+                auto support = table->slices[slab].supports[source];
+                if (reverse) {
+                    support = { -support.high, -support.low, support.valid };
+                }
+                target.supports[index] = add_interval(support, support_projection(normals[index], posed.translation));
+                if (!target.supports[index].valid) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    };
+    WorldTable a {}, b {};
+    if (!world_table(first, a) || !world_table(second, b)) {
+        return unresolved(budget.exhausted() ? exact_failure_code(budget) : "KERNEL_INTERVAL_OVERFLOW");
+    }
+    const auto gap_lower = [](Interval a, Interval b) {
+        const auto forward = subtract_interval(point_interval(b.low), point_interval(a.high));
+        const auto backward = subtract_interval(point_interval(a.low), point_interval(b.high));
+        return Interval { std::max({ 0.0, forward.low, backward.low }), 0, forward.valid && backward.valid };
+    };
+    const auto requested = multiply_interval(point_interval(clearance), point_interval(clearance));
+    if (!requested.valid) {
+        return unresolved("KERNEL_INTERVAL_OVERFLOW");
+    }
+    for (const auto& first_slice : a) {
+        if (!first_slice.height.valid) {
+            continue;
+        }
+        for (const auto& second_slice : b) {
+            if (!second_slice.height.valid) {
+                continue;
+            }
+            if (!budget.consume_work(24)) {
+                return unresolved(exact_failure_code(budget));
+            }
+            const auto height_gap = gap_lower(first_slice.height, second_slice.height);
+            if (!height_gap.valid) {
+                return unresolved("KERNEL_INTERVAL_OVERFLOW");
+            }
+            if (height_gap.low > 0 && height_gap.low >= clearance) {
+                continue;
+            }
+            const auto height_squared =
+                multiply_interval(point_interval(height_gap.low), point_interval(height_gap.low));
+            if (!height_squared.valid) {
+                return unresolved("KERNEL_INTERVAL_OVERFLOW");
+            }
+            bool separated {};
+            for (std::size_t index = 0; index != normals.size(); ++index) {
+                if (!budget.consume_work(32)) {
+                    return unresolved(exact_failure_code(budget));
+                }
+                const auto gap = gap_lower(first_slice.supports[index], second_slice.supports[index]);
+                int norm_squared {};
+                for (const int coefficient : normals[index]) {
+                    norm_squared += coefficient * coefficient;
+                }
+                const auto norm = point_interval(double(norm_squared));
+                const auto distance = add_interval(multiply_interval(norm, height_squared),
+                                                   multiply_interval(point_interval(gap.low), point_interval(gap.low)));
+                const auto threshold = multiply_interval(norm, requested);
+                if (!gap.valid || !distance.valid || !threshold.valid) {
+                    return unresolved("KERNEL_INTERVAL_OVERFLOW");
+                }
+                if ((gap.low > 0 || height_gap.low > 0) && distance.low >= threshold.high) {
+                    separated = true;
+                    break;
+                }
+            }
+            if (!separated) {
+                return std::nullopt;
+            }
+        }
+    }
+    if (!budget.reserve_bytes(0)) {
+        return unresolved(exact_failure_code(budget));
+    }
+    if (!supported_floating_environment()) {
+        return unresolved("KERNEL_FLOATING_ENVIRONMENT");
+    }
+    return SupportPairResult { Decision::no, BoundaryRelation::disjoint, Threshold::at_least,
+                               "authoritative-layer-supports", "" };
 }
 
 std::optional<ContainmentResult> bounds_box_certificate(const PosedBounds& object, BoxDimensions box, double clearance,

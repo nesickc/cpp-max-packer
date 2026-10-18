@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "spectrapack/geometry/validation.hpp"
+#include "spectrapack/geometry/rigid_transform.hpp"
 #include "validation_fixtures.hpp"
 
 namespace geo = spectrapack::geometry;
@@ -48,6 +49,113 @@ geo::Quaternion x_rotation(double angle, double scale = 1.0) {
           scale * std::cos(angle / 2.0)};
 }
 }  // namespace
+
+TEST_CASE("Authoritative validation resolves deeply interlocked elevated bodies", "[layer-support]")
+{
+    auto mesh = geo::test_support::cuboid({ -1, -1, .5 }, { 1, 1, 1 });
+    geo::test_support::append_cuboid(mesh, { .8, -.4, 0 }, { 2, .4, .2 });
+    auto solid = geo::test_support::accepted(mesh, geo::AssetRole::object);
+    auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(
+        geo::make_validation_context(solid, geo::BoxDimensions { 10, 10, 10 }, { .125, .125, {} }));
+    const auto outcome =
+        validate_copies(value, {
+                                   { "a", { 2, 2, 2 },   { 0, 0, 0, 1 } },
+                                   { "b", { 4.4, 2, 2 }, { 0, 0, 0, 1 } }
+    });
+    INFO(outcome.report.code);
+    REQUIRE(outcome.report.validity == geo::Validity::valid);
+    REQUIRE(outcome.validated_solution);
+    CHECK(geo::revalidate(outcome.validated_solution).report.validity == geo::Validity::valid);
+}
+
+TEST_CASE("Layer enclosures preserve interlocking clearance under cardinal transforms", "[layer-support]")
+{
+    auto mesh = geo::test_support::cuboid({ -1, -1, .5 }, { 1, 1, 1 });
+    geo::test_support::append_cuboid(mesh, { .8, -.4, 0 }, { 2, .4, .2 });
+    const auto solid = geo::test_support::accepted(mesh, geo::AssetRole::object);
+    const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(
+        geo::make_validation_context(solid,
+                                     geo::BoxDimensions {
+                                         20, 20, 20
+    },
+                                     { .125, .125, { geo::OrientationMode::cube, {} } }));
+    const double half = std::sqrt(.5);
+    for (const geo::Quaternion rotation : {
+             geo::Quaternion { 0,    0,    0,   1    },
+             { 1,    0,    0,   0    },
+             { 0,    half, 0,   half },
+             { half, 0,    0,   half },
+             { .5,   -.5,  -.5, .5   }
+    }) {
+        const auto transform = geo::RigidTransform::make(rotation, { 7, 7, 7 });
+        REQUIRE(transform);
+        for (double pitch : { 0., 1., 1.999, 2.1, 2.4 }) {
+            const auto result = validate_copies(value, {
+                                                           { "a", transform->apply({ 0, 0, 0 }),     rotation },
+                                                           { "b", transform->apply({ pitch, 0, 0 }), rotation }
+            });
+            INFO("pitch=" << pitch << " code=" << result.report.code);
+            if (pitch == 2.4) {
+                REQUIRE(result.report.validity == geo::Validity::valid);
+                CHECK(geo::revalidate(result.validated_solution).report.validity == geo::Validity::valid);
+            }
+            else {
+                CHECK(result.report.validity != geo::Validity::valid);
+                CHECK_FALSE(result.validated_solution);
+            }
+        }
+    }
+}
+
+TEST_CASE("Interlocking validation rejects interrupted or under-resourced proofs", "[layer-support]")
+{
+    auto mesh = geo::test_support::cuboid({ -1, -1, .5 }, { 1, 1, 1 });
+    geo::test_support::append_cuboid(mesh, { .8, -.4, 0 }, { 2, .4, .2 });
+    const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(
+        geo::make_validation_context(geo::test_support::accepted(mesh, geo::AssetRole::object),
+                                     geo::BoxDimensions { 10, 10, 10 }, { .125, .125, {} }));
+    const auto candidate = std::get<std::shared_ptr<const geo::Candidate>>(
+        geo::make_candidate(value, {
+                                       { "a", { 2, 2, 2 },   { 0, 0, 0, 1 } },
+                                       { "b", { 4.4, 2, 2 }, { 0, 0, 0, 1 } }
+    }));
+    for (const std::uint64_t bytes : { 0ULL, 1024ULL, 32768ULL }) {
+        geo::ValidationLimits limits;
+        limits.max_working_bytes = bytes;
+        const auto result = geo::validate(value, candidate, limits);
+        CHECK(result.report.validity == geo::Validity::indeterminate);
+        CHECK_FALSE(result.validated_solution);
+    }
+    std::stop_source stop;
+    stop.request_stop();
+    const auto result = geo::validate(value, candidate, {}, { stop.get_token(), {} });
+    CHECK(result.report.validity == geo::Validity::indeterminate);
+    CHECK_FALSE(result.validated_solution);
+}
+
+TEST_CASE("Layer supports preserve diagonal clearance at shared cuts", "[layer-support]")
+{
+    // Each long cuboid side crosses many cuts; horizontal faces lie exactly
+    // on cuts. The closest wing/body corners differ by .375 in X and .5 in Z,
+    // so their Euclidean distance is exactly .625, not either component alone.
+    auto mesh = geo::test_support::cuboid({ -1, -1, .625 }, { 1, 1, 1 });
+    geo::test_support::append_cuboid(mesh, { .8, -.4, 0 }, { 2, .4, .125 });
+    const auto solid = geo::test_support::accepted(mesh, geo::AssetRole::object);
+    for (const double gap : { .6, std::nextafter(.625, 0.), .625, std::nextafter(.625, 1.), .65 }) {
+        const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(
+            geo::make_validation_context(solid, geo::BoxDimensions { 20, 20, 20 }, { gap, .1, {} }));
+        const auto result = validate_copies(
+            value, {
+                       { "a", { 3, 3, 3 },     { 0, 0, 0, 1 } },
+                       { "b", { 6.375, 3, 3 }, { 0, 0, 0, 1 } }
+        });
+        INFO("gap=" << gap << " code=" << result.report.code);
+        CHECK(result.report.validity == (gap <= .625 ? geo::Validity::valid : geo::Validity::invalid));
+        if (result.validated_solution) {
+            CHECK(geo::revalidate(result.validated_solution).report.validity == geo::Validity::valid);
+        }
+    }
+}
 
 TEST_CASE("AT-06 accepts a single authoritative cube inside a box") {
   auto outcome = validate_one(context(), {5, 5, 5});

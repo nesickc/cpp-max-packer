@@ -34,7 +34,7 @@ CUBE_CATALOG_SHA256 = 'fe7ba7524cabd7dbb20a4c1acc053d1ca518df6c6c5f2949f78f9b3a0
 CASES = {
     'cube64':     ('gen:cube10', (40, 40, 40), 0.0, 0.0, 1.0, 10, 64, 64),
     'lprism2':    ('gen:lprism', (3, 2, 1), 0.0, 0.0, 0.25, 10, 1, 2),
-    'pryanik2':   ('rc/items/pryanik_2.STL', (400, 340, 285), 1.0, 1.0, 4.0, 60, 340, 350),
+    'pryanik2':   ('rc/items/pryanik_2.STL', (400, 340, 285), 1.0, 1.0, 4.0, 60, 350, 400),
     'pryanik2-0': ('rc/items/pryanik_2.STL', (400, 340, 285), 0.0, 1.0, 4.0, 60, 360, 360),
     'ulamok':     ('rc/items/ulamok_2kg_simplified.stl', (400, 350, 285), 0.1, 1.0, 4.0, 60, 36, 36),
 }

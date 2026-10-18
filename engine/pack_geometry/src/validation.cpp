@@ -390,6 +390,7 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
         return true;
     };
     std::shared_ptr<const kernel::SupportTable> support_table;
+    std::shared_ptr<const kernel::LayerSupportTable> layer_support_table;
     for (std::size_t first = 0; first != placed.size(); ++first)
         for (std::size_t second = 0; second != first; ++second) {
             if (outcome.report.aabb_pair_tests >= limits.max_aabb_pair_tests)
@@ -408,9 +409,14 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
                                   { candidate->copies()[first].copy_id, candidate->copies()[second].copy_id });
                 continue;
             }
-            const auto support = kernel::support_pair_certificate(*descriptors[first], *descriptors[second],
-                                                                  expected_context->constraints().pair_clearance_mm,
-                                                                  support_table, budget);
+            auto support = kernel::support_pair_certificate(*descriptors[first], *descriptors[second],
+                                                            expected_context->constraints().pair_clearance_mm,
+                                                            support_table, budget);
+            if (!support) {
+                support = kernel::layer_support_pair_certificate(*descriptors[first], *descriptors[second],
+                                                                 expected_context->constraints().pair_clearance_mm,
+                                                                 layer_support_table, budget);
+            }
             if (support) {
                 outcome.report.checks[3].method = support->method;
                 if (support->material_overlap == kernel::Decision::indeterminate ||

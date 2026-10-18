@@ -11,7 +11,7 @@
 
 namespace spectrapack::geometry::detail::validation_kernel {
 
-inline constexpr std::string_view kRevision = "homogeneous-rational-interval-v4";
+inline constexpr std::string_view kRevision = "homogeneous-rational-interval-v5";
 
 enum class Decision : std::uint8_t { no, yes, indeterminate };
 // `at_least` certifies that a lower bound meets the requested threshold. It
@@ -79,6 +79,7 @@ class PreparedSolid;
 class PlacedSolid;
 class PosedBounds;
 class SupportTable;
+class LayerSupportTable;
 
 [[nodiscard]] std::optional<std::uint64_t> prepared_owned_bytes(const PreparedSolid&) noexcept;
 [[nodiscard]] std::optional<std::uint64_t> placed_owned_bytes(const PlacedSolid&) noexcept;
@@ -174,6 +175,9 @@ struct PhysicalBounds {
 [[nodiscard]] std::optional<SupportPairResult> support_pair_certificate(
     const PosedBounds&, const PosedBounds&, double clearance_mm,
     std::shared_ptr<const SupportTable>& validation_local_table, Budget&);
+[[nodiscard]] std::optional<SupportPairResult> layer_support_pair_certificate(
+    const PosedBounds&, const PosedBounds&, double clearance_mm,
+    std::shared_ptr<const LayerSupportTable>& validation_local_table, Budget&);
 [[nodiscard]] std::optional<ContainmentResult> bounds_box_certificate(const PosedBounds&, BoxDimensions,
                                                                       double clearance_mm, Budget&);
 [[nodiscard]] PhysicalBounds physical_bounds(
