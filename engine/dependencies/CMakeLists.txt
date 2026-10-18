@@ -18,7 +18,7 @@ target_link_libraries(spectrapack_dependency_geometry INTERFACE
 # Retain FCL's directory-scoped imported targets without adding the diagnostic
 # aggregate's Manifold/meshoptimizer libraries to the import engine.
 add_library(spectrapack_dependency_import_geometry INTERFACE)
-target_link_libraries(spectrapack_dependency_import_geometry INTERFACE fcl)
+target_link_libraries(spectrapack_dependency_import_geometry INTERFACE fcl manifold::manifold)
 
 add_library(spectrapack_dependency_display_geometry INTERFACE)
 target_link_libraries(spectrapack_dependency_display_geometry INTERFACE

@@ -53,6 +53,8 @@ pub struct State {
     pub last_error: Option<DesktopError>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub cpu_runtime: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub repair: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,6 +90,13 @@ pub struct StopResponse {
 pub struct ImportRequest {
     pub units: String,
     pub scale_mm: Option<f64>,
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RepairRequest {
+    Propose { algorithm: String, tolerance_mm: f64 },
+    Accept { token: String },
+    Reject { token: String },
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -167,7 +167,8 @@ int run_engine(int argc, Character** argv) {
         const bool known = equals_ascii(flag, "--stl") || equals_ascii(flag, "--units") ||
                            equals_ascii(flag, "--report") || equals_ascii(flag, "--role") ||
                            equals_ascii(flag, "--scale-mm") || equals_ascii(flag, "--weld-tolerance-mm") ||
-                           equals_ascii(flag, "--accept-repair") || equals_ascii(flag, "--available-host-bytes");
+                           equals_ascii(flag, "--reconstruct-resolution-mm") || equals_ascii(flag, "--accept-repair") ||
+                           equals_ascii(flag, "--available-host-bytes");
         if (!known || index + 1 >= argc) {
           return machine_error("INVALID_REQUEST", "Inspection options are invalid.", 2);
         }
@@ -201,14 +202,20 @@ int run_engine(int argc, Character** argv) {
               return machine_error("INVALID_REQUEST", "--scale-mm must be a complete finite number.", 2);
             }
             seen.scale = true;
-          } else if (equals_ascii(flag, "--weld-tolerance-mm")) {
-            if (seen.weld) return machine_error("INVALID_REQUEST", "Duplicate inspection option.", 2);
-            request.weld_tolerance_mm = strict_double(*converted);
-            if (!request.weld_tolerance_mm) {
-              return machine_error(
-                  "INVALID_REQUEST", "--weld-tolerance-mm must be a complete finite number.", 2);
-            }
-            seen.weld = true;
+          }
+          else if (equals_ascii(flag, "--weld-tolerance-mm") || equals_ascii(flag, "--reconstruct-resolution-mm")) {
+              if (seen.weld) {
+                  return machine_error("INVALID_REQUEST", "Duplicate inspection option.", 2);
+              }
+              request.weld_tolerance_mm = strict_double(*converted);
+              if (!request.weld_tolerance_mm) {
+                  return machine_error("INVALID_REQUEST", "--weld-tolerance-mm must be a complete finite number.", 2);
+              }
+              seen.weld = true;
+              if (equals_ascii(flag, "--reconstruct-resolution-mm")) {
+                  request.reconstruct_resolution_mm = request.weld_tolerance_mm;
+                  request.weld_tolerance_mm.reset();
+              }
           }
           else if (equals_ascii(flag, "--available-host-bytes")) {
               if (seen.available) {

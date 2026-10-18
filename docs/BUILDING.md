@@ -138,6 +138,21 @@ before/after diagnostics and previews, then repeat the same options with
 candidate. Only a fully valid candidate can be accepted; the original STL remains
 unchanged. Full CLI/report semantics are in ADR 0005.
 
+For explicitly approximate closed-surface reconstruction, use
+`--reconstruct-resolution-mm VALUE` instead of the weld option. The proposal uses
+the locked Manifold library and still requires `--accept-repair SHA256`; see
+[ADR 0020](../spec/decisions/0020-explicit-desktop-repair.md). Repair resolution is
+independent of packing pitch. Very fine grids can exceed the memory/sample/work
+limits; coarser grids can lose thin features or leave invalid topology. No
+surface-deviation bound is certified. Invalid or indeterminate candidates stay
+unaccepted. Source STL bytes are retained.
+
+In the desktop Object panel, choose **Repair model**, a method and its millimetre
+parameter, then **Propose repair**. Compare the original/candidate previews and
+metrics before accepting or rejecting. Acceptance prepares the same native solid
+used by packing, project replay and export. Import/replacement preserves unsaved
+settings; New and Open deliberately reset/restore them.
+
 ## Run the bounded CPU solver
 
 The synchronous T-007 command consumes an accepted object inspection report and

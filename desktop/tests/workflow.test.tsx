@@ -4,13 +4,94 @@ import type { Desktop } from '../src/generated/contracts';
 import fixtures from '../../tests/contracts/schema-fixtures.json';
 import { defaultSettings, snapshotSettings } from '../src/state';
 
-const native = vi.hoisted(() => ({ state: vi.fn(), save: vi.fn(), start: vi.fn(), newProject: vi.fn() }));
+const native = vi.hoisted(() => ({ state: vi.fn(), save: vi.fn(), start: vi.fn(), newProject: vi.fn(), importObject: vi.fn(), open: vi.fn(), repair: vi.fn() }));
 vi.mock('../src/bridge', () => ({ nativeAvailable: () => true, bridge: native }));
 vi.mock('../src/Viewer', () => ({ Viewer: (props: { dimensions: number[]; preview: { preview_id: string } | null }) => <div data-testid="viewer">{props.dimensions.join(',')} / {props.preview?.preview_id}</div> }));
 import { App } from '../src/App';
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
+  it('preserves edits made before the first state response', async () => {
+    let respond!: (state: Desktop.State) => void;
+    native.state.mockImplementation(() => new Promise<Desktop.State>(resolve => { respond=resolve; }));
+    render(<App/>);
+    fireEvent.change(screen.getByLabelText('Width'), {target:{value:'420'}});
+    respond({desktop_version:1,session_id:'initial-edits',revision:1,object:null,
+      draft_settings:structuredClone(defaultSettings),result:null,operation:null,last_error:null});
+    await waitFor(()=>expect(screen.getByRole('button',{name:/Import STL/}).hasAttribute('disabled')).toBe(false));
+    expect((screen.getByLabelText('Width') as HTMLInputElement).value).toBe('420');
+  });
+  it.each(['valid','invalid','indeterminate'] as const)('shows repair previews and gates %s acceptance', async status => {
+    const fixture=fixtures.find(f=>f.kind==='results'&&f.schema_valid&&f.semantic_valid)!;
+    const document=structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];
+    const report=structuredClone(document.assets.object);
+    const artifact={path:'assets/candidate.ply',sha256:'b'.repeat(64)};
+    report.repair_proposal={sha256:'a'.repeat(64),path:'assets/recipe.json',algorithm:'manifold',candidate_status:status,
+      tolerance_mm:1,max_displacement_mm:null,before:artifact,after:artifact};
+    const mesh={format:'ply' as const,sha256:'b'.repeat(64),byte_length:10,triangle_count:12,coordinate_frame:'object_local_mm' as const};
+    native.state.mockResolvedValue({desktop_version:1,session_id:'repair-ui',revision:1,
+      object:{id:'object',display_name:'Object.stl',report:document.assets.object,preview:{...mesh,preview_id:'original'}},
+      draft_settings:structuredClone(defaultSettings),result:null,operation:null,last_error:null,
+      repair:{object_id:'object',token:'a'.repeat(64),algorithm:'manifold',tolerance_mm:1,report,
+        before:{...mesh,preview_id:'before'},after:{...mesh,preview_id:'after'}}} satisfies Desktop.State);
+    native.repair.mockResolvedValue({operation_id:'repair-command'});
+    render(<App/>);
+    await waitFor(()=>expect(screen.getByTestId('viewer').textContent).toContain('after'));
+    fireEvent.change(screen.getByLabelText('Preview geometry'),{target:{value:'before'}});
+    expect(screen.getByTestId('viewer').textContent).toContain('before');
+    expect(screen.getByRole('button',{name:'▶ Start packing'}).hasAttribute('disabled')).toBe(true);
+    const accept=screen.getByRole('button',{name:'Accept repaired geometry'});
+    expect(accept.hasAttribute('disabled')).toBe(status!=='valid');
+    fireEvent.click(status==='valid' ? accept : screen.getByRole('button',{name:'Reject repair'}));
+    await waitFor(()=>expect(native.repair).toHaveBeenCalledWith({action:status==='valid'?'accept':'reject',token:'a'.repeat(64)}));
+  });
+  it.each(['finished', 'failed', 'canceled'])('preserves unsaved settings through %s import and late completion', async phase => {
+    const initial: Desktop.State = { desktop_version:1, session_id:'import-edits', revision:1, object:null,
+      draft_settings:structuredClone(defaultSettings), result:null, operation:null, last_error:null };
+    native.state.mockResolvedValue(initial);
+    let finish!: () => void;
+    native.importObject.mockImplementation(() => new Promise<void>(resolve => { finish = resolve; }));
+    render(<App/>);
+    await waitFor(() => expect(screen.getByRole('button', {name:/Import STL/}).hasAttribute('disabled')).toBe(false));
+    fireEvent.change(screen.getByLabelText('Width'), {target:{value:'405'}});
+    fireEvent.change(screen.getByLabelText('Between copies'), {target:{value:'2.5'}});
+    fireEvent.change(screen.getByLabelText('Voxel pitch'), {target:{value:'3'}});
+    fireEvent.change(screen.getByLabelText('Search budget'), {target:{value:'123'}});
+    fireEvent.change(screen.getByLabelText('Allowed rotations'), {target:{value:'cube'}});
+    fireEvent.change(screen.getByLabelText('Host memory ceiling'), {target:{value:'123456789'}});
+    fireEvent.change(screen.getByLabelText('Seed'), {target:{value:'987654321'}});
+    fireEvent.click(screen.getByRole('button', {name:/Import STL/}));
+    await waitFor(() => expect(native.importObject).toHaveBeenCalledOnce());
+    fireEvent.change(screen.getByLabelText('Width'), {target:{value:'410'}});
+    // An incomplete field is still an edit and must survive asynchronous events.
+    fireEvent.change(screen.getByLabelText('Depth'), {target:{value:''}});
+    const next = {...initial, revision:2, draft_settings:{...defaultSettings, pitch_mm:99},
+      operation:phase === 'canceled' ? null : {id:'import-1',kind:'import' as const,phase:phase as 'finished'|'failed',
+        started_at:'2026-10-18T00:00:00Z',finished_at:'2026-10-18T00:00:01Z',result_id:null,detail:null}};
+    native.state.mockResolvedValue(next); finish();
+    await waitFor(() => expect(screen.getByRole('button', {name:/Import STL/}).hasAttribute('disabled')).toBe(false));
+    for (const [label,value] of Object.entries({'Width':'410','Depth':'','Between copies':'2.5','Voxel pitch':'3',
+      'Search budget':'123','Allowed rotations':'cube','Host memory ceiling':'123456789','Seed':'987654321'}))
+      expect((screen.getByLabelText(label) as HTMLInputElement).value).toBe(value);
+  });
+  it('New restores defaults and Open deliberately restores saved settings', async () => {
+    const initial: Desktop.State = {desktop_version:1,session_id:'new-open',revision:1,object:null,
+      draft_settings:{...defaultSettings,pitch_mm:7},result:null,operation:null,last_error:null};
+    native.state.mockResolvedValue(initial);
+    native.newProject.mockImplementation(async () => {
+      const fresh = {...initial,revision:2,draft_settings:null}; native.state.mockResolvedValue(fresh); return fresh;
+    });
+    native.open.mockImplementation(async () => {
+      native.state.mockResolvedValue({...initial,revision:3,draft_settings:{...defaultSettings,pitch_mm:9},
+        operation:{id:'open-1',kind:'open',phase:'finished',started_at:'2026-10-18T00:00:00Z',finished_at:'2026-10-18T00:00:01Z',result_id:null,detail:null}});
+    });
+    render(<App/>);
+    await waitFor(()=>expect((screen.getByLabelText('Voxel pitch') as HTMLInputElement).value).toBe('7'));
+    fireEvent.click(screen.getByRole('button',{name:'New'}));
+    await waitFor(()=>expect((screen.getByLabelText('Voxel pitch') as HTMLInputElement).value).toBe(String(defaultSettings.pitch_mm)));
+    fireEvent.click(screen.getByRole('button',{name:'Open project'}));
+    await waitFor(()=>expect((screen.getByLabelText('Voxel pitch') as HTMLInputElement).value).toBe('9'));
+  });
   it('T015 displays operational resource recovery and sends an exact lower byte ceiling', async () => {
     const fixture = fixtures.find(f => f.kind === 'results' && f.schema_valid && f.semantic_valid)!;
     const document = structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];

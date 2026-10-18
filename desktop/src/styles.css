@@ -5,3 +5,9 @@
 @media(min-width:761px) and (max-width:1150px){.workspace{grid-template-columns:270px minmax(280px,1fr) 235px}.results-panel{grid-column:auto;border-top:0;padding:24px 17px}.configuration{grid-row:auto}.viewer{min-height:0}.header-center{display:none}.viewer-toolbar{left:10px;right:10px}.viewer-toolbar label input{width:44px}}
 @media(max-width:760px){.config-scroll{padding:0}.configuration>.search-actions{margin-bottom:15px}.app-shell{height:auto}.workspace{overflow:visible}}
 .error-banner details{display:inline-block;margin-left:12px}.error-banner pre{max-height:180px;max-width:70vw;overflow:auto;white-space:pre-wrap}
+.repair-panel { margin-top: 12px; font-size: 12px; }
+.repair-panel summary { cursor: pointer; font-weight: 600; }
+.repair-panel button { margin: 8px 4px 0 0; }
+.repair-comparison { margin-top: 12px; overflow-wrap: anywhere; }
+.repair-comparison table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.repair-comparison th, .repair-comparison td { padding: 6px 3px; border-bottom: 1px solid #304152; text-align: left; }

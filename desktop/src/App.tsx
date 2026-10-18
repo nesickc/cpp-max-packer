@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { Desktop, Results } from './generated/contracts';
+import type { Assets, Desktop, Results } from './generated/contracts';
 import { bridge, nativeAvailable } from './bridge';
 import { acceptState, activeOperation, defaultSettings, settingsError, snapshotSettings } from './state';
 import { Viewer } from './Viewer';
@@ -31,12 +31,36 @@ function NumberField({ label, value, onChange, min = 0, suffix = 'mm' }: { label
   return <label className="number-field"><span>{label}</span><div><input aria-label={label} type="number" min={min} step="any" value={Number.isFinite(value) ? value : ''} onChange={e => onChange(e.target.value === '' ? NaN : Number(e.target.value))} /><span>{suffix}</span></div></label>;
 }
 
+function RepairComparison({proposal}: {proposal: NonNullable<Assets.RepairProposal>}) {
+  const before=proposal.before_diagnostics?.import, after=proposal.after_diagnostics?.import;
+  const dimensions=(d: typeof before) => d?.mesh_bounds_mm ? d.mesh_bounds_mm.max.map((v,i)=>(v-d.mesh_bounds_mm!.min[i]).toFixed(4)).join(' × ') : 'Unknown';
+  const cavities=(d: typeof before) => d?.containment_check==='complete' ? d.shells.filter(s=>s.depth!==null && s.depth!==undefined && s.depth%2===1).length : 'Unknown';
+  return <div className="repair-comparison"><strong>Candidate: {proposal.candidate_status}</strong>
+    <table><thead><tr><th>Measurement</th><th>Before</th><th>After</th></tr></thead><tbody>
+      <tr><td>Bounds (mm)</td><td>{dimensions(before)}</td><td>{dimensions(after)}</td></tr>
+      <tr><td>Surface (mm²)</td><td>{proposal.surface_area_before_mm2?.toFixed(3)}</td><td>{proposal.surface_area_after_mm2?.toFixed(3)}</td></tr>
+      <tr><td>Triangles</td><td>{before?.triangle_count}</td><td>{after?.triangle_count}</td></tr>
+      <tr><td>Surface components</td><td>{before?.component_count}</td><td>{after?.component_count}</td></tr>
+      <tr><td>Cavity shells</td><td>{cavities(before)}</td><td>{cavities(after)}</td></tr>
+      <tr><td>Volume (mm³)</td><td>{before?.volume_mm3?.toFixed(3) ?? 'Unknown'}</td><td>{after?.volume_mm3?.toFixed(3) ?? 'Unknown'}</td></tr>
+    </tbody></table>
+    <p>No certified surface-deviation bound or sampled surface-deviation measurement is available.{proposal.max_displacement_mm!=null && <> Maximum mapped vertex displacement: {proposal.max_displacement_mm.toPrecision(5)} mm; this is not a surface bound.</>}</p>
+    {after?.issues.slice(0,5).map((issue,i)=><p key={i}>{issue.reason}: {issue.message}</p>)}
+    {proposal.candidate_status!=='valid' && <p>Acceptance is blocked. Remaining invalid or indeterminate geometry needs further repair; changing packing pitch cannot resolve it.</p>}
+  </div>;
+}
+
 export function App() {
   const native = nativeAvailable();
   const [state, setState] = useState<Desktop.State | null>(null);
-  const [settings, setSettings] = useState<Desktop.Settings>(() => structuredClone(defaultSettings));
+  const [settings, storeSettings] = useState<Desktop.Settings>(() => structuredClone(defaultSettings));
+  const edited = useRef(false);
+  const setSettings: typeof storeSettings = value => { edited.current = true; storeSettings(value); };
   const [units, setUnits] = useState<Desktop.ImportRequest['units']>('mm');
   const [scale, setScale] = useState(1);
+  const [repairAlgorithm, setRepairAlgorithm] = useState<'weld'|'manifold'>('manifold');
+  const [repairTolerance, setRepairTolerance] = useState(1);
+  const [repairView, setRepairView] = useState<'before'|'after'>('after');
   const [error, setError] = useState<unknown>(null);
   const [commandPending, setCommandPending] = useState(false);
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
@@ -51,8 +75,8 @@ export function App() {
     const first = !current.current;
     current.current = accepted; setState(accepted);
     const op = accepted.operation;
-    if ((first || ((op?.kind === 'open' || op?.kind === 'import') && op.phase === 'finished' && opened.current !== op.id)) && accepted.draft_settings) {
-      setSettings(structuredClone(accepted.draft_settings)); if (op?.kind === 'open' || op?.kind === 'import') opened.current = op.id;
+    if (((first && !edited.current) || (op?.kind === 'open' && op.phase === 'finished' && opened.current !== op.id)) && accepted.draft_settings) {
+      storeSettings(structuredClone(accepted.draft_settings)); if (op?.kind === 'open') { opened.current = op.id; edited.current = false; }
     }
   }, []);
   useEffect(() => {
@@ -76,8 +100,8 @@ export function App() {
   };
   const newProject = () => run(async () => {
     generation.current++; const fresh = await bridge.newProject();
-    current.current = null; opened.current = null; updateState(fresh);
-    setSettings(structuredClone(fresh.draft_settings ?? defaultSettings));
+    current.current = null; opened.current = null; edited.current = false; updateState(fresh);
+    storeSettings(structuredClone(fresh.draft_settings ?? defaultSettings));
   });
   const busy = activeOperation(state), disabled = !native || commandPending || busy;
   const accepted = state?.object?.report.state === 'accepted' && state.object.report.diagnostics.status === 'valid';
@@ -92,12 +116,13 @@ export function App() {
   const supportedThreads = state?.cpu_runtime?.supported_max ?? 1;
   const resource = state?.cpu_runtime?.resource_status;
   const poses = live?.placements ?? result?.document.placements ?? emptyPoses;
-  const preview = live ? live.preview : result ? result.preview : state?.object?.preview ?? null;
+  const repair = state?.repair;
+  const preview = repair ? repair[repairView] : live ? live.preview : result ? result.preview : state?.object?.preview ?? null;
   const displayedDimensions = useMemo(() => resultSettings?.box_dimensions_mm ?? (settings.box_dimensions_mm.every(v => Number.isFinite(v) && v > 0) ? settings.box_dimensions_mm : defaultSettings.box_dimensions_mm), [resultSettings, settings.box_dimensions_mm]);
   const report = state?.object?.report;
   // Native polling clones unchanged snapshots. Their revision and physical
   // dimensions, rather than transport object identities, own display updates.
-  const displayPoses = useMemo<Results.Placement[]>(() => live ? live.placements : result ? result.document.placements : report?.state === 'accepted' ? [{ copy_id: 'object-preview', translation_mm: displayedDimensions.map(v => v / 2) as [number,number,number], quaternion_xyzw: [0,0,0,1], local_to_world: [[1,0,0,displayedDimensions[0]/2],[0,1,0,displayedDimensions[1]/2],[0,0,1,displayedDimensions[2]/2],[0,0,0,1]] }] : emptyPoses, [poseKey, report?.state, displayedDimensions[0], displayedDimensions[1], displayedDimensions[2]]);
+  const displayPoses = useMemo<Results.Placement[]>(() => !repair && live ? live.placements : !repair && result ? result.document.placements : state?.object?.preview ? [{ copy_id: 'object-preview', translation_mm: displayedDimensions.map(v => v / 2) as [number,number,number], quaternion_xyzw: [0,0,0,1], local_to_world: [[1,0,0,displayedDimensions[0]/2],[0,1,0,displayedDimensions[1]/2],[0,0,1,displayedDimensions[2]/2],[0,0,0,1]] }] : emptyPoses, [poseKey, repair?.token, state?.object?.preview?.preview_id, displayedDimensions[0], displayedDimensions[1], displayedDimensions[2]]);
   useEffect(() => {
     const ids = new Set(displayPoses.map(p => p.copy_id));
     setSelected(old => old && ids.has(old) ? old : null);
@@ -125,7 +150,21 @@ export function App() {
           <div className="import-card"><span className="file-icon">◇</span><strong>{state?.object?.display_name ?? 'Select an object'}</strong><p>{report ? `${report.dimensions_mm.join(' × ')} mm` : 'Choose an STL with explicit source units.'}</p><button className="secondary" disabled={disabled || (units === 'custom' && (!Number.isFinite(scale) || scale <= 0))} onClick={importObject}>{report ? 'Replace STL' : 'Import STL'} <span>↗</span></button></div>
           <label className="select-label">Source units<select aria-label="Source units" value={units} onChange={e => setUnits(e.target.value as typeof units)}><option value="mm">Millimeters (mm)</option><option value="inch">Inches (in)</option><option value="custom">Custom scale</option></select></label>
           {units === 'custom' && <NumberField label="Millimeters per source unit" value={scale} min={0.000001} onChange={setScale} />}
-          {report && <div className="diagnostics"><strong>{report.diagnostics.status === 'valid' ? 'Geometry validated' : `Geometry ${report.diagnostics.status}`}</strong><p>{report.accepted_solid ? `${report.accepted_solid.triangle_count.toLocaleString()} accepted triangles` : 'No accepted solid available. Start is unavailable.'}</p>{report.diagnostics.messages.map((message, i) => <p key={i}>{message}</p>)}</div>}
+          {report && <div className="diagnostics"><strong>{report.diagnostics.status === 'valid' ? 'Geometry validated' : `Geometry ${report.diagnostics.status}`}</strong><p>{report.accepted_solid ? `${report.accepted_solid.triangle_count.toLocaleString()} accepted triangles` : 'No accepted solid available. Start is unavailable.'}</p>{report.repair_record && <p>Repair explicitly accepted. Original STL and repair provenance retained.</p>}{report.diagnostics.messages.map((message, i) => <p key={i}>{message}</p>)}
+            {report.diagnostics.import && <><p>{report.diagnostics.import.boundary_edges} boundary edges · {report.diagnostics.import.nonmanifold_edges} non-manifold edges · {report.diagnostics.import.nonmanifold_vertices} non-manifold vertices</p><p>Intersection check: {report.diagnostics.import.intersection_check}; containment: {report.diagnostics.import.containment_check}.</p><details><summary>Geometry issues</summary>{report.diagnostics.import.issues.map((issue,i)=><p key={i}>{issue.reason}: {issue.message}</p>)}</details></>}
+          </div>}
+          {report && <details className="repair-panel" open={!accepted}><summary>Repair model</summary>
+            <p>Repair creates a new candidate. Original STL bytes are retained. Inspect the preview and measurements before accepting.</p>
+            <label className="select-label">Repair method<select aria-label="Repair method" value={repairAlgorithm} onChange={e=>setRepairAlgorithm(e.target.value as typeof repairAlgorithm)}><option value="manifold">Closed-surface reconstruction</option><option value="weld">Bounded vertex welding</option></select></label>
+            <NumberField label={repairAlgorithm==='manifold'?'Repair resolution':'Weld tolerance'} value={repairTolerance} min={0.000001} onChange={setRepairTolerance}/>
+            <p className="hint">Independent of voxel pitch. Reconstruction uses even/odd material sampling. Features, separate components and cavities below this resolution can disappear. It cannot infer missing walls or prove the intended shape. Inspect all changes before accepting.</p>
+            <button disabled={disabled || !Number.isFinite(repairTolerance) || repairTolerance<=0} onClick={()=>void run(()=>bridge.repair({action:'propose',algorithm:repairAlgorithm,tolerance_mm:repairTolerance}))}>Propose repair</button>
+            {repair && <><RepairComparison proposal={repair.report.repair_proposal!}/>
+              <label className="select-label">Preview geometry<select aria-label="Preview geometry" value={repairView} onChange={e=>setRepairView(e.target.value as typeof repairView)}><option value="before">Original inspected mesh</option><option value="after">Repair candidate (not accepted)</option></select></label>
+              <button disabled={disabled || repair.report.repair_proposal?.candidate_status!=='valid'} onClick={()=>void run(()=>bridge.repair({action:'accept',token:repair.token}))}>Accept repaired geometry</button>
+              <button disabled={disabled} onClick={()=>void run(()=>bridge.repair({action:'reject',token:repair.token}))}>Reject repair</button>
+            </>}
+          </details>}
         </section>
         <section className="config-section"><div className="section-title"><span className="step">02</span><h2>Container</h2><span className="pill">Box interior</span></div><div className="dimension-fields">{['Width', 'Depth', 'Height'].map((label, i) => <NumberField key={label} label={label} value={settings.box_dimensions_mm[i]} min={0.000001} onChange={v => setDimension(i, v)} />)}</div><p className="hint">Internal dimensions · millimeters · Z up</p></section>
         <section className="config-section"><div className="section-title"><span className="step">03</span><h2>Clearance & orientation</h2></div><div className="two-fields"><NumberField label="Between copies" value={settings.clearance_mm.pair} onChange={v => setSettings(s => ({ ...s, clearance_mm: { ...s.clearance_mm, pair: v } }))} /><NumberField label="To walls" value={settings.clearance_mm.wall} onChange={v => setSettings(s => ({ ...s, clearance_mm: { ...s.clearance_mm, wall: v } }))} /></div><label className="select-label">Allowed rotations<select aria-label="Allowed rotations" value={settings.orientation.mode} onChange={e => setSettings(s => ({ ...s, orientation: e.target.value === 'cube' ? { mode: 'cube' } : { mode: 'fixed', quaternion_xyzw: [0, 0, 0, 1] } }))}><option value="fixed">Fixed orientation</option><option value="cube">Cube rotations (24)</option></select></label></section>
@@ -140,8 +179,8 @@ export function App() {
           {pending && <p className="pending-note">Pending settings for the next run. The viewer retains the result's original settings.</p>}
 
         </section>
-      </div><div className="search-actions"><button className="primary" disabled={disabled || !accepted || !!validationError} onClick={() => void startPacking()}>▶ Start packing</button><button className="stop" disabled={!native || commandPending || !busy || operation?.kind !== 'solve' || operation.phase === 'stopping'} onClick={() => void run(() => bridge.stop({ operation_id: operation!.id }))}>{operation?.phase === 'stopping' ? 'Stopping…' : 'Stop & keep'}</button></div></aside>
-      <div className="center-panel"><Viewer mode={live || result ? 'result' : 'object'} preview={preview} placements={displayPoses} dimensions={displayedDimensions} hidden={hidden} selected={selected} onSelect={setSelected} />
+      </div><div className="search-actions"><button className="primary" disabled={disabled || !!repair || !accepted || !!validationError} onClick={() => void startPacking()}>▶ Start packing</button><button className="stop" disabled={!native || commandPending || !busy || operation?.kind !== 'solve' || operation.phase === 'stopping'} onClick={() => void run(() => bridge.stop({ operation_id: operation!.id }))}>{operation?.phase === 'stopping' ? 'Stopping…' : 'Stop & keep'}</button></div></aside>
+      <div className="center-panel"><Viewer mode={!repair && (live || result) ? 'result' : 'object'} preview={preview} placements={displayPoses} dimensions={displayedDimensions} hidden={hidden} selected={selected} onSelect={setSelected} />
         <section className="run-panel" aria-label="Operation status"><div><span className="eyebrow">{busy ? 'NATIVE OPERATION' : 'READY WHEN YOU ARE'}</span><h3>{operation ? `${operation.kind} · ${operation.phase}` : 'Start with an object and a box'}</h3><p>{operation?.detail ?? 'Import an STL, check its dimensions, then start packing.'}</p></div>{resource && <p aria-label="Resource status">Host ceiling {(Number(resource.admitted_host_cap_bytes) / 2 ** 30).toFixed(2)} GiB | Actual threads {resource.actual_threads} | Recoveries {resource.recovery_count}{resource.last_action && <> | {resource.last_action.replaceAll('_', ' ')} ({resource.last_cause})</>}</p>}<div className="elapsed"><strong>{elapsed.toFixed(1)}<small>s</small></strong><span>Total operation elapsed</span></div>{busy && <div className="activity-bar" />}</section>
       </div>
       <aside className="results-panel" aria-label="Packing results"><span className="eyebrow">RESULTS</span><h2>Best found</h2><div className="result-count">{live ? live.count.toLocaleString() : result ? result.document.count.toLocaleString() : '—'}<span>validated copies</span></div>

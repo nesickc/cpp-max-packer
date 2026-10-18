@@ -130,20 +130,20 @@ TEST_CASE("T011 repair uses the caller remaining allowance before candidate allo
     const auto bytes = practical_bytes("ulamok_2kg_simplified.stl");
     const auto draft = geo::inspect_stl(bytes, { geo::AssetRole::object, geo::Units::mm });
     REQUIRE(std::holds_alternative<std::shared_ptr<const geo::AssetDraft>>(draft));
-    geo::WeldOptions options { .01 };
+    geo::RepairOptions options { .01 };
     options.max_working_bytes = 0;
-    const auto proposal = geo::propose_weld(std::get<std::shared_ptr<const geo::AssetDraft>>(draft), options);
+    const auto proposal = geo::propose_repair(std::get<std::shared_ptr<const geo::AssetDraft>>(draft), options);
     REQUIRE(std::holds_alternative<geo::ImportFailure>(proposal));
     CHECK(std::get<geo::ImportFailure>(proposal).code == "MEMORY_LIMIT");
     CHECK(std::get<geo::ImportFailure>(proposal).reason == "WELD_WORKING_BYTES");
     const auto source = std::get<std::shared_ptr<const geo::AssetDraft>>(draft);
-    const auto estimate = geo::estimate_weld_admission(*source, options);
+    const auto estimate = geo::estimate_repair_admission(*source, options);
     REQUIRE(std::holds_alternative<geo::ImportAdmission>(estimate));
     options.max_working_bytes = std::get<geo::ImportAdmission>(estimate).working_bytes_upper_bound - 1;
-    const auto too_small = geo::propose_weld(source, options);
+    const auto too_small = geo::propose_repair(source, options);
     REQUIRE(std::holds_alternative<geo::ImportFailure>(too_small));
     options.max_working_bytes += 1;
-    const auto accepted = geo::propose_weld(source, options);
+    const auto accepted = geo::propose_repair(source, options);
     REQUIRE(std::holds_alternative<std::shared_ptr<const geo::RepairProposal>>(accepted));
     CHECK(std::get<std::shared_ptr<const geo::RepairProposal>>(accepted)->original() == source);
     CHECK(std::get<std::shared_ptr<const geo::RepairProposal>>(accepted)->candidate()->report().validity ==

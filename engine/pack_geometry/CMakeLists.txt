@@ -1,5 +1,5 @@
 add_library(pack_geometry STATIC
-  src/import.cpp src/solid_analysis.cpp src/exact_predicates.cpp
+  src/import.cpp src/reconstruction.cpp src/solid_analysis.cpp src/exact_predicates.cpp
   src/validation.cpp src/validation_kernel.cpp src/raster_execution.cpp
   src/display_lod.cpp src/conservative_fields.cpp src/physical_bounds.cpp
   src/rigid_transform.cpp src/export_validation.cpp)

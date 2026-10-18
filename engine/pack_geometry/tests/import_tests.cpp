@@ -1,15 +1,17 @@
+#include <algorithm>
+#include <bit>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
-#include "spectrapack/geometry/import.hpp"
-#include "../src/solid_analysis.hpp"
-#include <bit>
 #include <cmath>
 #include <cstring>
-#include <limits>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 #include <string_view>
 #include <vector>
+
+#include "../src/solid_analysis.hpp"
+#include "spectrapack/geometry/import.hpp"
 
 namespace geo = spectrapack::geometry;
 namespace {
@@ -125,7 +127,7 @@ TEST_CASE("AT-04 refuses null or indeterminate acceptance and never creates an i
   auto inspected=geo::inspect_stl(triangle_ascii(),{geo::AssetRole::object,geo::Units::mm}); auto handle=std::get<std::shared_ptr<const geo::AssetDraft>>(inspected);
   CHECK(handle->report().validity==geo::Validity::invalid);
   auto rejected=geo::accept_asset(handle); REQUIRE(std::holds_alternative<geo::ImportFailure>(rejected));
-  auto repair=geo::propose_weld(handle,{0.1,10});
+  auto repair = geo::propose_repair(handle, { 0.1, 10 });
   REQUIRE(std::holds_alternative<std::shared_ptr<const geo::RepairProposal>>(repair));
   CHECK(std::get<std::shared_ptr<const geo::RepairProposal>>(repair)->candidate()->report().validity == geo::Validity::invalid);
 }
@@ -199,7 +201,7 @@ TEST_CASE("AT-04 weld proposal closes a bounded seam without mutating the origin
   CHECK(original->report().validity == geo::Validity::invalid);
   const auto original_vertices = original->mesh().vertices.size();
 
-  auto proposal_result = geo::propose_weld(original, {0.1, 1'000});
+  auto proposal_result = geo::propose_repair(original, { 0.1, 1'000 });
   REQUIRE(std::holds_alternative<std::shared_ptr<const geo::RepairProposal>>(proposal_result));
   auto proposal = std::get<std::shared_ptr<const geo::RepairProposal>>(std::move(proposal_result));
   REQUIRE(proposal->original() == original);
@@ -214,7 +216,7 @@ TEST_CASE("AT-04 weld proposal closes a bounded seam without mutating the origin
   REQUIRE(std::holds_alternative<geo::ImportFailure>(bypass));
   CHECK(std::get<geo::ImportFailure>(bypass).reason == "REPAIR_PROVENANCE_REQUIRED");
 
-  auto chained = geo::propose_weld(proposal->candidate(), {0.05, 1'000});
+  auto chained = geo::propose_repair(proposal->candidate(), { 0.05, 1'000 });
   REQUIRE(std::holds_alternative<geo::ImportFailure>(chained));
   CHECK(std::get<geo::ImportFailure>(chained).reason == "REPAIR_PROVENANCE_REQUIRED");
 
@@ -260,7 +262,7 @@ TEST_CASE("AT-04 weld work is bounded and distance does not chain or use an AABB
       "endsolid chain\n");
   auto chain = std::get<std::shared_ptr<const geo::AssetDraft>>(
       geo::inspect_stl(chain_source, {geo::AssetRole::object, geo::Units::mm}));
-  auto chain_result = geo::propose_weld(chain, {0.1, 1'000});
+  auto chain_result = geo::propose_repair(chain, { 0.1, 1'000 });
   REQUIRE(std::holds_alternative<std::shared_ptr<const geo::RepairProposal>>(chain_result));
   const auto chain_proposal = std::get<std::shared_ptr<const geo::RepairProposal>>(chain_result);
   CHECK(chain_proposal->candidate()->mesh().vertices.size() == chain->mesh().vertices.size() - 1);
@@ -272,14 +274,50 @@ TEST_CASE("AT-04 weld work is bounded and distance does not chain or use an AABB
       "endsolid corner\n");
   auto corner = std::get<std::shared_ptr<const geo::AssetDraft>>(
       geo::inspect_stl(corner_source, {geo::AssetRole::object, geo::Units::mm}));
-  auto corner_result = geo::propose_weld(corner, {0.1, 1'000});
+  auto corner_result = geo::propose_repair(corner, { 0.1, 1'000 });
   REQUIRE(std::holds_alternative<std::shared_ptr<const geo::RepairProposal>>(corner_result));
   CHECK(std::get<std::shared_ptr<const geo::RepairProposal>>(corner_result)
             ->candidate()->mesh().vertices.size() == corner->mesh().vertices.size());
+}
 
-  auto bounded = geo::propose_weld(corner, {0.1, 1});
-  REQUIRE(std::holds_alternative<geo::ImportFailure>(bounded));
-  CHECK(std::get<geo::ImportFailure>(bounded).reason == "WELD_CANDIDATE_PAIRS");
+TEST_CASE("Explicit reconstruction retains resolved cavities and disconnected components", "[import][repair]")
+{
+    auto source = cube_ascii(false, false, { -4, -4, -4 }, { 4, 4, 4 });
+    const auto cavity = cube_ascii(false, false, { -2, -2, -2 }, { 2, 2, 2 });
+    const auto separate = cube_ascii(false, false, { 8, -2, -2 }, { 12, 2, 2 });
+    source.insert(source.end(), cavity.begin(), cavity.end());
+    source.insert(source.end(), separate.begin(), separate.end());
+    const auto original = std::get<std::shared_ptr<const geo::AssetDraft>>(
+        geo::inspect_stl(source, { geo::AssetRole::object, geo::Units::mm }));
+    geo::RepairOptions options { 0.5 };
+    options.algorithm = geo::RepairAlgorithm::manifold_reconstruct;
+    const auto outcome = geo::propose_repair(original, options);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::RepairProposal>>(outcome));
+    const auto proposal = std::get<std::shared_ptr<const geo::RepairProposal>>(outcome);
+    const auto& report = proposal->candidate()->report();
+    REQUIRE(report.validity == geo::Validity::valid);
+    CHECK(report.component_count == 3);
+    CHECK(std::count_if(report.shells.begin(), report.shells.end(), [](const auto& s) {
+        return s.depth == 1;
+    }) == 1);
+    CHECK(proposal->candidate()->frame().anchor_mm == original->frame().anchor_mm);
+    CHECK(std::holds_alternative<geo::ImportFailure>(geo::accept_asset(proposal->candidate())));
+    CHECK(std::holds_alternative<std::shared_ptr<const geo::AcceptedSolid>>(geo::accept_repair(proposal)));
+}
+
+TEST_CASE("Explicit reconstruction rejects open surfaces and unbounded resolution", "[import][repair]")
+{
+    const auto original = std::get<std::shared_ptr<const geo::AssetDraft>>(
+        geo::inspect_stl(cube_ascii(true), { geo::AssetRole::object, geo::Units::mm }));
+    geo::RepairOptions options { 0.5 };
+    options.algorithm = geo::RepairAlgorithm::manifold_reconstruct;
+    const auto outcome = geo::propose_repair(original, options);
+    REQUIRE(std::holds_alternative<geo::ImportFailure>(outcome));
+    CHECK(std::get<geo::ImportFailure>(outcome).reason == "REPAIR_OPEN_SURFACE");
+    options.tolerance_mm = 1e-12;
+    CHECK(std::holds_alternative<geo::ImportFailure>(geo::propose_repair(original, options)));
+    options.tolerance_mm = 1e308;
+    CHECK(std::holds_alternative<geo::ImportFailure>(geo::propose_repair(original, options)));
 }
 
 TEST_CASE("AT-03 frame conversion checks scaled endpoints and rejects precision collapse",

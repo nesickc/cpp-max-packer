@@ -432,8 +432,13 @@ export interface RepairProposal {
   before: Preview;
   after: Preview;
   tolerance_mm: number;
-  max_displacement_mm: number;
+  max_displacement_mm: number | null;
   candidate_status: "valid" | "invalid" | "indeterminate";
+  algorithm?: "weld" | "manifold";
+  before_diagnostics?: Diagnostics;
+  after_diagnostics?: Diagnostics;
+  surface_area_before_mm2?: number;
+  surface_area_after_mm2?: number;
 }
 
 }
@@ -691,8 +696,13 @@ export interface RepairProposal {
   before: Preview;
   after: Preview;
   tolerance_mm: number;
-  max_displacement_mm: number;
+  max_displacement_mm: number | null;
   candidate_status: "valid" | "invalid" | "indeterminate";
+  algorithm?: "weld" | "manifold";
+  before_diagnostics?: Diagnostics;
+  after_diagnostics?: Diagnostics;
+  surface_area_before_mm2?: number;
+  surface_area_after_mm2?: number;
 }
 export interface ContentRef {
   source_sha256: Hash;
@@ -3120,7 +3130,9 @@ export type HttpsSpectrapackInvalidSchemasV1DesktopSchemaJson =
   | PreviewRequest
   | OperationReceipt
   | StopResponse
-  | ProjectManifest;
+  | ProjectManifest
+  | RepairRequest
+  | RepairPreview;
 /**
  * @minItems 4
  * @maxItems 4
@@ -3164,6 +3176,20 @@ export type ImportRequest = {
   units: "mm" | "inch" | "custom";
   scale_mm?: number;
 };
+export type RepairRequest =
+  | {
+      action: "propose";
+      algorithm: "weld" | "manifold";
+      tolerance_mm: number;
+    }
+  | {
+      action: "accept" | "reject";
+      /**
+       * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+       * via the `definition` "hash".
+       */
+      token: string;
+    };
 
 export interface Settings {
   desktop_version: 1;
@@ -3220,6 +3246,7 @@ export interface State {
     resource_status?: ResourceStatus;
   };
   live_result?: LiveResult | null;
+  repair?: RepairPreview | null;
 }
 export interface ImportedObject {
   id: string;
@@ -3450,8 +3477,13 @@ export interface RepairProposal {
   before: Preview;
   after: Preview;
   tolerance_mm: number;
-  max_displacement_mm: number;
+  max_displacement_mm: number | null;
   candidate_status: "valid" | "invalid" | "indeterminate";
+  algorithm?: "weld" | "manifold";
+  before_diagnostics?: Diagnostics;
+  after_diagnostics?: Diagnostics;
+  surface_area_before_mm2?: number;
+  surface_area_after_mm2?: number;
 }
 export interface Preview1 {
   preview_id: string;
@@ -5751,7 +5783,7 @@ export interface Placement {
 }
 export interface Operation {
   id: string;
-  kind: "import" | "solve" | "open" | "save" | "export";
+  kind: "import" | "solve" | "open" | "save" | "export" | "repair";
   phase:
     | "preparing"
     | "running"
@@ -5809,6 +5841,19 @@ export interface LiveResult {
   validation_status: "valid";
   settings: Settings;
   preview: Preview1 | null;
+}
+export interface RepairPreview {
+  object_id: string;
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "hash".
+   */
+  token: string;
+  algorithm: "weld" | "manifold";
+  tolerance_mm: number;
+  report: HttpsSpectrapackInvalidSchemasV1AssetsSchemaJson;
+  before: Preview1 | null;
+  after: Preview1 | null;
 }
 export interface StartRequest {
   settings: Settings;

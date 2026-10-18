@@ -56,10 +56,12 @@ struct ImportOptions {
       : role(selected_role), units(selected_units), custom_scale_mm(custom_scale),
         limits(selected_limits) {}
 };
-struct WeldOptions {
-  double tolerance_mm{};
-  std::uint64_t max_candidate_pairs{10'000'000};
-  std::uint64_t max_working_bytes { std::numeric_limits<std::uint64_t>::max() };
+enum class RepairAlgorithm { weld, manifold_reconstruct };
+struct RepairOptions {
+    double tolerance_mm {};
+    std::uint64_t max_candidate_pairs { 10'000'000 };
+    std::uint64_t max_working_bytes { std::numeric_limits<std::uint64_t>::max() };
+    RepairAlgorithm algorithm { RepairAlgorithm::weld };
 };
 struct ImportFailure {
   std::string code;
@@ -77,8 +79,8 @@ using ImportAdmissionOutcome = std::variant<ImportAdmission, ImportFailure>;
                                                                const runtime::OperationControl& = {});
 // Includes the original draft payload once and the new candidate/scratch;
 // caller-owned pinned artifacts and other accepted-solid owners are excluded.
-[[nodiscard]] ImportAdmissionOutcome estimate_weld_admission(const AssetDraft&, const WeldOptions& = {},
-                                                             const runtime::OperationControl& = {});
+[[nodiscard]] ImportAdmissionOutcome estimate_repair_admission(const AssetDraft&, const RepairOptions& = {},
+                                                               const runtime::OperationControl& = {});
 struct ImportIssue {
   std::string reason;
   std::string message;
@@ -149,10 +151,10 @@ class AssetDraft {
   friend ImportOutcome<AssetDraft> inspect_stl(std::span<const std::byte>, const ImportOptions&,
                                                const runtime::OperationControl&);
   friend class detail::ImportAccess;
-  friend ImportAdmissionOutcome estimate_weld_admission(const AssetDraft&, const WeldOptions&,
-                                                        const runtime::OperationControl&);
-  friend ImportOutcome<RepairProposal> propose_weld(std::shared_ptr<const AssetDraft>, const WeldOptions&,
-                                                    const runtime::OperationControl&);
+  friend ImportAdmissionOutcome estimate_repair_admission(const AssetDraft&, const RepairOptions&,
+                                                          const runtime::OperationControl&);
+  friend ImportOutcome<RepairProposal> propose_repair(std::shared_ptr<const AssetDraft>, const RepairOptions&,
+                                                      const runtime::OperationControl&);
   friend ImportOutcome<AcceptedSolid> accept_asset(std::shared_ptr<const AssetDraft>);
   friend class AcceptedSolid;
 };
@@ -166,12 +168,14 @@ class RepairProposal {
   [[nodiscard]] std::shared_ptr<const AssetDraft> candidate() const noexcept;
   [[nodiscard]] double tolerance_mm() const noexcept;
   [[nodiscard]] double max_displacement_mm() const noexcept;
- private:
+  [[nodiscard]] std::optional<std::uint64_t> resident_buffer_bytes() const noexcept;
+
+  private:
   struct Storage;
   std::shared_ptr<const Storage> storage_;
   explicit RepairProposal(std::shared_ptr<const Storage> storage) noexcept;
-  friend ImportOutcome<RepairProposal> propose_weld(std::shared_ptr<const AssetDraft>, const WeldOptions&,
-                                                    const runtime::OperationControl&);
+  friend ImportOutcome<RepairProposal> propose_repair(std::shared_ptr<const AssetDraft>, const RepairOptions&,
+                                                      const runtime::OperationControl&);
 };
 class AcceptedSolid {
  public:
@@ -201,8 +205,8 @@ class AcceptedSolid {
 
 [[nodiscard]] ImportOutcome<AssetDraft> inspect_stl(std::span<const std::byte>, const ImportOptions&,
                                                     const runtime::OperationControl& = {});
-[[nodiscard]] ImportOutcome<RepairProposal> propose_weld(std::shared_ptr<const AssetDraft>, const WeldOptions&,
-                                                         const runtime::OperationControl& = {});
+[[nodiscard]] ImportOutcome<RepairProposal> propose_repair(std::shared_ptr<const AssetDraft>, const RepairOptions&,
+                                                           const runtime::OperationControl& = {});
 [[nodiscard]] ImportOutcome<AcceptedSolid> accept_asset(std::shared_ptr<const AssetDraft>);
 [[nodiscard]] ImportOutcome<AcceptedSolid> accept_repair(std::shared_ptr<const RepairProposal>);
 

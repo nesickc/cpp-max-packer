@@ -62,6 +62,11 @@ class InspectorTests(unittest.TestCase):
     def test_manifest_deterministic_and_pinned(self):
         root=Path(__file__).parents[1]; m=json.loads((root/'tests/fixtures/rc-manifest.json').read_text()); self.assertEqual(len(m['records']),10)
         with tempfile.TemporaryDirectory() as t:
-            out=Path(t)/'m.json'; subprocess.check_call([sys.executable,str(root/'tools/Inspect-StlFixtures.py'),'--root',str(root),'--out',str(out),'--diagnostics',str(Path(t)/'d')]); self.assertEqual(json.loads(out.read_text()),m)
+            # User imports can coexist in rc/. Qualify precisely the pinned set.
+            fixtures=Path(t)/'fixtures'
+            for record in m['records']:
+                target=fixtures/record['path']; target.parent.mkdir(parents=True,exist_ok=True)
+                target.write_bytes((root/record['path']).read_bytes())
+            out=Path(t)/'m.json'; subprocess.check_call([sys.executable,str(root/'tools/Inspect-StlFixtures.py'),'--root',str(fixtures),'--out',str(out),'--diagnostics',str(Path(t)/'d')]); self.assertEqual(json.loads(out.read_text()),m)
 
 if __name__=='__main__': unittest.main()

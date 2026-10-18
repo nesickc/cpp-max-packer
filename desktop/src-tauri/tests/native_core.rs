@@ -316,24 +316,6 @@ fn stop_receipt_is_prompt_and_retains_real_native_valid_solution() {
 }
 
 #[test]
-fn mismatched_object_save_is_rejected_without_silent_result_loss() {
-    let (root, core, source) = fixture();
-    import(&core, &source);
-    core.start(settings(0.2)).unwrap();
-    let previous = wait(&core);
-    assert!(previous.last_error.is_none(), "{previous:?}");
-    assert!(previous.result.is_some());
-    let replacement = root.path().join("different.stl");
-    let mut bytes = std::fs::read(&source).unwrap();
-    bytes[0] = b'X';
-    std::fs::write(&replacement, bytes).unwrap();
-    import(&core, &replacement);
-    let saved = core.save_to(&root.path().join("mismatch.spectrapack"), settings(0.2));
-    assert_eq!(saved.unwrap_err().code, "ASSET_MISMATCH");
-    assert_eq!(core.state().result, previous.result);
-}
-
-#[test]
 fn save_cannot_overwrite_original_stl_or_hardlink() {
     let (root, core, source) = fixture();
     let owned = root.path().join("original.stl");
@@ -678,4 +660,125 @@ fn application_shutdown_kills_active_native_child() {
         "closing the desktop owner must terminate its active native child"
     );
     eprintln!("native shutdown: child_pid={pid}, exited_within_5s={closed}");
+}
+
+
+#[test]
+fn replacement_keeps_settings_and_invalidates_old_asset_results_only_on_success() {
+    let (root, core, source) = fixture(); import(&core,&source);
+    let mut request=settings(0.5); request["thread_count"]=json!(2);
+    request["seed"]=json!("12345678901234567890");
+    request["host_memory_limit_bytes"]=json!("536870912");
+    core.start(request.clone()).unwrap(); let prior=wait(&core);
+    assert!(prior.last_error.is_none(),"{prior:?}"); assert!(prior.result.is_some());
+    let bad=root.path().join("bad.stl");std::fs::write(&bad,b"not an STL").unwrap();
+    core.import_path(&bad,ImportRequest{units:"mm".into(),scale_mm:None}).unwrap();
+    let failed=wait(&core);assert!(failed.last_error.is_some());
+    assert_eq!(failed.object,prior.object);assert_eq!(failed.result,prior.result);
+    assert_eq!(failed.draft_settings,prior.draft_settings);
+    import(&core,&source);let replaced=core.state();
+    assert_eq!(replaced.draft_settings,prior.draft_settings);
+    assert!(replaced.result.is_none());assert!(replaced.live_result.is_none());
+    let saved=root.path().join("saved.spectrapack");core.save_to(&saved,request.clone()).unwrap();
+    assert!(wait(&core).last_error.is_none());core.new_project().unwrap();
+    assert!(core.state().draft_settings.is_none());assert!(core.state().object.is_none());
+    core.open_path(&saved).unwrap();let opened=wait(&core);
+    assert!(opened.last_error.is_none(),"{opened:?}");assert_eq!(opened.draft_settings,Some(request));
+}
+
+fn seam_fixture(path:&std::path::Path) {
+    let vertices=[[0.,0.,0.],[10.,0.,0.],[10.,10.,0.],[0.,10.,0.],
+                  [0.,0.,10.],[10.,0.,10.],[10.,10.,10.],[0.,10.,10.]];
+    let faces=[[0,2,1],[0,3,2],[4,5,6],[4,6,7],[0,1,5],[0,5,4],[3,7,6],[3,6,2],[0,4,7],[0,7,3],[1,2,6],[1,6,5]];
+    let mut text=String::from("solid seam\n");
+    for (f,face) in faces.iter().enumerate() {
+        text.push_str("facet normal 0 0 0\nouter loop\n");
+        for (i,v) in face.iter().enumerate() {
+            let mut p=vertices[*v];if f==0 && i==0 {p[0]+=0.05;}
+            text.push_str(&format!("vertex {} {} {}\n",p[0],p[1],p[2]));
+        }
+        text.push_str("endloop\nendfacet\n");
+    }
+    text.push_str("endsolid seam\n");std::fs::write(path,text).unwrap();
+}
+
+#[test]
+fn explicit_repair_preview_reject_accept_roundtrip_and_export() {
+    use spectrapack_desktop::model::RepairRequest;
+    let (root,core,_)=fixture();let source=root.path().join("seam.stl");seam_fixture(&source);
+    let original=std::fs::read(&source).unwrap();
+    core.import_path(&source,ImportRequest{units:"mm".into(),scale_mm:None}).unwrap();
+    let inspected=wait(&core);assert!(inspected.last_error.is_none(),"{inspected:?}");
+    assert_eq!(inspected.object.as_ref().unwrap()["report"]["diagnostics"]["status"],"invalid");
+    assert!(core.start(settings(1.)).is_err());
+    for reject in [true,false] {
+        core.repair(RepairRequest::Propose{algorithm:"weld".into(),tolerance_mm:0.1}).unwrap();
+        let proposal=wait(&core);assert!(proposal.last_error.is_none(),"{proposal:?}");
+        let repair=proposal.repair.unwrap();assert_eq!(repair["report"]["repair_proposal"]["candidate_status"],"valid");
+        for side in ["before","after"] {assert!(!core.read_preview(repair[side]["preview_id"].as_str().unwrap()).unwrap().is_empty());}
+        assert_eq!(core.state().object,inspected.object);
+        assert!(core.repair(RepairRequest::Accept{token:"0".repeat(64)}).is_err());
+        let token=repair["token"].as_str().unwrap().to_owned();
+        core.repair(if reject {RepairRequest::Reject{token}} else {RepairRequest::Accept{token}}).unwrap();
+        let state=wait(&core);assert!(state.last_error.is_none(),"{state:?}");assert!(state.repair.is_none());
+        if reject {assert_eq!(state.object,inspected.object);}
+    }
+    let accepted=core.state().object.unwrap();
+    assert_eq!(accepted["report"]["repair_record"]["accepted_by_user"],true);
+    let mut request=settings(1.);request["box_dimensions_mm"]=json!([12,12,12]);
+    request["clearance_mm"]=json!({"pair":1,"wall":1});request["pitch_mm"]=json!(2);
+    core.start(request.clone()).unwrap();let packed=wait(&core);assert!(packed.last_error.is_none(),"{packed:?}");
+    assert_eq!(packed.result.as_ref().unwrap()["document"]["count"],1);
+    let archive=root.path().join("repaired.spectrapack");core.save_to(&archive,request).unwrap();assert!(wait(&core).last_error.is_none());
+    core.new_project().unwrap();core.open_path(&archive).unwrap();let opened=wait(&core);
+    assert!(opened.last_error.is_none(),"{opened:?}");
+    assert_eq!(opened.object.unwrap()["report"]["repair_record"],accepted["report"]["repair_record"]);
+    let export=root.path().join("export");std::fs::create_dir(&export).unwrap();core.export_to(&export,"stl").unwrap();
+    assert!(wait(&core).last_error.is_none());assert_eq!(std::fs::read(&source).unwrap(),original);
+}
+
+
+#[test]
+#[ignore = "requires an explicitly supplied STL; writes qualification evidence under .local"]
+fn supplied_model_repair_native_journey() {
+    use spectrapack_desktop::model::RepairRequest;
+    let source=PathBuf::from(std::env::var_os("SPECTRAPACK_REPAIR_SOURCE").unwrap());
+    let output=PathBuf::from(std::env::var_os("SPECTRAPACK_REPAIR_OUTPUT").unwrap());
+    std::fs::create_dir_all(&output).unwrap();
+    let original=std::fs::read(&source).unwrap();
+    let engine=PathBuf::from(std::env::var_os("SPECTRAPACK_TEST_ENGINE").unwrap());
+    let core=Core::new(engine,output.join("session")).unwrap();
+    core.import_path(&source,ImportRequest{units:"mm".into(),scale_mm:None}).unwrap();
+    let inspected=wait(&core);assert!(inspected.last_error.is_none(),"{inspected:?}");
+    std::fs::write(output.join("original.json"),serde_json::to_vec_pretty(&inspected).unwrap()).unwrap();
+    let resolution=std::env::var("SPECTRAPACK_REPAIR_RESOLUTION").unwrap().parse().unwrap();
+    core.repair(RepairRequest::Propose{algorithm:"manifold".into(),tolerance_mm:resolution}).unwrap();
+    let proposed=wait(&core);assert!(proposed.last_error.is_none(),"{proposed:?}");
+    std::fs::write(output.join("proposal.json"),serde_json::to_vec_pretty(&proposed).unwrap()).unwrap();
+    let repair=proposed.repair.unwrap();let token=repair["token"].as_str().unwrap().to_owned();
+    if repair["report"]["repair_proposal"]["candidate_status"]!="valid" {
+        assert!(core.start(settings(1.)).is_err());
+        core.repair(RepairRequest::Accept{token:token.clone()}).unwrap();
+        let refused=wait(&core);assert!(refused.last_error.is_some());
+        assert_eq!(refused.object,inspected.object);
+        std::fs::write(output.join("rejected.json"),serde_json::to_vec_pretty(&refused).unwrap()).unwrap();
+        core.repair(RepairRequest::Reject{token}).unwrap();assert!(wait(&core).last_error.is_none());
+    } else {
+        core.repair(RepairRequest::Accept{token}).unwrap();let accepted=wait(&core);
+        assert!(accepted.last_error.is_none(),"{accepted:?}");
+        std::fs::write(output.join("accepted.json"),serde_json::to_vec_pretty(&accepted).unwrap()).unwrap();
+        let mut request=settings(30.);request["box_dimensions_mm"]=Value::Array(accepted.object.as_ref().unwrap()["report"]["dimensions_mm"].as_array().unwrap().iter().map(|v|json!(v.as_f64().unwrap()+4.)).collect());
+        request["pitch_mm"]=json!(4);request["clearance_mm"]=json!({"pair":1,"wall":1});request["thread_count"]=json!(8);
+        core.start(request.clone()).unwrap();let packed=wait(&core);
+        assert!(packed.last_error.is_none(),"{packed:?}");assert_eq!(packed.result.as_ref().unwrap()["document"]["count"],1);
+        std::fs::write(output.join("packed.json"),serde_json::to_vec_pretty(&packed).unwrap()).unwrap();
+        let archive=output.join("repaired.spectrapack");core.save_to(&archive,request).unwrap();assert!(wait(&core).last_error.is_none());
+        core.new_project().unwrap();core.open_path(&archive).unwrap();let opened=wait(&core);
+        assert!(opened.last_error.is_none(),"{opened:?}");
+        assert_eq!(opened.object.as_ref().unwrap()["report"]["accepted_solid"],accepted.object.as_ref().unwrap()["report"]["accepted_solid"]);
+        std::fs::write(output.join("opened.json"),serde_json::to_vec_pretty(&opened).unwrap()).unwrap();
+        let export=output.join("export");std::fs::create_dir_all(&export).unwrap();core.export_to(&export,"stl").unwrap();let exported=wait(&core);
+        std::fs::write(output.join("exported.json"),serde_json::to_vec_pretty(&exported).unwrap()).unwrap();assert!(exported.last_error.is_none(),"{exported:?}");
+    }
+    assert_eq!(std::fs::read(&source).unwrap(),original);
 }
