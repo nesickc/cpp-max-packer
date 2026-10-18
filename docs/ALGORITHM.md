@@ -41,20 +41,22 @@ quantized vertices, so original-model bounds cannot authorize a staged mesh.
 This raises the zero-clearance Pryanik-2 result from 1 to 360 valid copies at both
 2 and 4 mm manual pitch under the existing 60-second settings. The existing grid
 produces 330 and the generated staggered proposal improves it to 360; no saved
-item-specific poses are used. The positive-clearance result remains 340.
+item-specific poses are used. That validation fix alone left the positive-clearance
+result at 340.
 
 Timed runs extend the physical grid search with residual block layouts. For each
 allowed orientation, fill a rectangular region with a uniform grid, then consider
 all six orders of cutting its unused space into three disjoint slabs. Recursively
-fill those slabs with permitted orientations. Search depths 1–3 in order; memoize
+fill those slabs with permitted orientations. Search depths 1â€“3 in order; memoize
 region dimensions/depth with a bounded cache (at most 32,768 nodes, also limited by
 available scratch). Only complete proposals exceeding the retained count enter
 full native validation. This rearranges the layout without changing manual pitch.
 Positive pair/wall distances receive a small additional proposal margin, never a
 reduction; zero pair clearance remains zero. The fixed-work path is unchanged.
 
-The first measured 60-second run improves the positive-clearance Pryanik result
-from 340 to 343. The zero-clearance floor remains 360; the 388-copy bounding-box
+The unchanged 60-second benchmark improves the positive-clearance Pryanik result
+from 340 to 343 at both 2 and 4 mm manual pitch. Both saved layouts pass fresh
+native validation. The zero-clearance floor remains 360; the 388-copy bounding-box
 reference is still only a reference, not a native-validated solver result.
 
 ## Conservative fields and FFT placement
@@ -95,7 +97,7 @@ The current implementation is narrower than the original design:
 
 ```text
 retain the validated uniform-grid baseline and staggered proposal
-for timed runs, validate improving residual-block proposals (depths 1–3)
+for timed runs, validate improving residual-block proposals (depths 1â€“3)
 if FFT admission is affordable:
     greedily insert from an empty layout using cached spectral pages
     on stall, try bounded physical face alignments and low-overlap candidates
@@ -119,7 +121,7 @@ only strictly higher counts through the existing count-publication adapter.
 
 ## Resource handling
 
-Spec §6.6 governs: estimate the dominant live buffers, fit available memory, keep
+Spec Â§6.6 governs: estimate the dominant live buffers, fit available memory, keep
 the incumbent and exhaust affordable work before reporting a resource limit.
 Manual pitch is never changed by this implementation.
 
@@ -139,7 +141,18 @@ still restart on a larger allowance; resumable raster cursors across failed call
 are not implemented. The physical block phase is independent of field admission
 and provides useful rearrangement even when a field cannot fit.
 
-The first 4 mm run reached 16 correlations and eight FFT candidates submitted to
-native validation, compared with four correlations and no FFT candidates before
-the fix. It retained 343 and ran to the unchanged 60-second deadline. Logs and
-subsequent budget-scaling measurements are in `.local/continued-packing/`.
+The final 4 mm benchmark reached 18 correlations and nine FFT candidates submitted
+to native validation, compared with four correlations and no FFT candidates before
+the fix. It retained 343 and ran to the unchanged 60-second deadline. The 2 mm run
+passed memory admission and reached one correlation, but submitted no FFT
+candidates within 60 seconds; its count improvement came from physical blocks.
+Logs and budget-scaling measurements are in `.local/continued-packing/`.
+
+Explicit 180- and 300-second runs at 4 mm still retained 343, despite reaching
+76/138 correlations and 38/69 FFT candidates respectively. Each ended at its
+requested budget and passed fresh native validation. This demonstrates continued
+candidate evaluation, not continued count improvement or an optimality proof.
+At 2 mm, an explicit 180-second run also retained 343, reaching 12 correlations
+and six FFT candidates before budget exhaustion. Its peak host memory was about
+462 MiB, versus 341 MiB for 60 seconds at 2 mm and about 90-91 MiB for the 4 mm
+runs. Its saved layout also passed fresh native validation.
