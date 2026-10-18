@@ -793,14 +793,19 @@ BaselineOutcome run_aabb_baseline_impl(
                        std::tuple { oriented.bounds_mm.max[b] - oriented.bounds_mm.min[b], b };
             });
             const auto query = query_limits(limits, out.stats, live);
-            detail::StaggerEnvelope envelope(control, std::min<std::uint64_t>(8'000'000, query.max_kernel_work),
+            detail::StaggerEnvelope envelope(control, std::min<std::uint64_t>(32'000'000, query.max_kernel_work),
                                              query.max_vertex_visits);
             std::optional<detail::InterlockingLayout> plan;
             if (envelope.build(context->object()->mesh(), seeds[seed], oriented.bounds_mm, axes[2], axes[1],
                                axes[0])) {
-                plan = envelope.plan(*bounds, context->constraints().pair_clearance_mm,
-                                     context->constraints().wall_clearance_mm, incumbent.best()->score.count,
-                                     limits.max_copies, limits.max_axis_cells);
+                plan = envelope.plan_height(*bounds, context->constraints().pair_clearance_mm,
+                                            context->constraints().wall_clearance_mm, incumbent.best()->score.count,
+                                            limits.max_copies, limits.max_axis_cells);
+                if (!plan) {
+                    plan = envelope.plan(*bounds, context->constraints().pair_clearance_mm,
+                                         context->constraints().wall_clearance_mm, incumbent.best()->score.count,
+                                         limits.max_copies, limits.max_axis_cells);
+                }
             }
             geometry::PhysicalQueryStats work;
             work.kernel_work = envelope.work();
@@ -827,9 +832,13 @@ BaselineOutcome run_aabb_baseline_impl(
                             return finish("STAGGER_INTERRUPTED", TerminationReason::budget_exhausted);
                         }
                         auto translation = plan->origin;
+                        const double height = plan->column_rise != 0 ? plan->height_offset(x, y) : 0;
+                        if (plan->column_rise != 0 && height + z * plan->pitch[plan->layer] > plan->height_span) {
+                            continue;
+                        }
                         translation[plan->column] += x * plan->pitch[plan->column] + plan->offsets[y];
                         translation[plan->row] += y * plan->pitch[plan->row];
-                        translation[plan->layer] += z * plan->pitch[plan->layer];
+                        translation[plan->layer] += height + z * plan->pitch[plan->layer];
                         const auto id = copy_id_buffer(seed, copies.size(), "interlock-");
                         copies.push_back({ std::string(id.text.data(), id.size), translation, seeds[seed] });
                     }

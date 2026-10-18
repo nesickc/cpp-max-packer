@@ -61,24 +61,41 @@ reference is still only a reference, not a native-validated solver result.
 
 Timed runs then search interlocking rows using the accepted mesh. For each of up
 to 24 permitted orientations, choose the shortest AABB axis for layers and the
-longest for columns. Clip mesh triangles into 32 x 32 row/height bins and retain
+longest for columns. Clip mesh triangles into 64 x 32 row/height bins and retain
 their column intervals. These envelopes preserve sloping edges and thin wings
 better than whole-triangle bounding boxes, but fill cavities and are only search
 screens. They never establish validity.
 
-Sweep up to 64 rows/columns, 16 lateral phases, box-fitting and fractional column
-pitches, and both alternating and progressive row offsets. Derive the minimum
-within-row pitch from the envelopes, screen neighboring rows with the requested
-Euclidean pair gap, and keep full AABB layer spacing. Work is bounded at eight
-million units per orientation, with shared cancellation, deadline and memory
-admission. Only the highest improving proposal from each orientation enters full
-native validation; invalid or indeterminate results cannot replace the incumbent.
+First search height-staggered rows: sweep box-fitting pitches, four lateral row
+offsets, signed column rises derived from object height, and 32 vertical phases.
+Wrap each column's height into a periodic stack and count its individual layers.
+Screen neighboring columns, rows and layers against the requested Euclidean pair
+gap. Extra proposal spacing is not an additional required clearance in the screen.
+If no improving height proposal survives, try coplanar rows with 16 lateral
+phases, fractional pitches and alternating/progressive offsets as before.
+Work is bounded at 32 million units per orientation, with half the remaining work
+reserved for the coplanar fallback. Shared cancellation, deadline and memory
+admission remain enforced. Only the highest improving proposal from each
+orientation enters native validation; invalid or indeterminate results cannot
+replace the incumbent.
 The search uses no asset names, saved poses or altered physical constraints, and
 does not change manual voxel pitch or the fixed-work path.
 
-This finds 350 validated Pryanik-2 copies in the unchanged positive-clearance
-benchmark, exceeding the previous 343. The bounded envelope search can still miss
-layouts; a larger proposal count alone is not evidence of a valid packing.
+Deep interlocking also needs an efficient independent native proof. Validator v5
+can partition the authoritative solid into 64 closed slabs along its shortest
+local axis. Every intersecting triangle contributes its complete in-plane
+supports, so the slabs enclose material, including filled cavities. For compatible
+cardinal poses, every occupied slab pair must prove the requested distance using
+orthogonal slab-axis and normalized in-plane lower bounds. Directed interval
+arithmetic encloses the original doubles; zero clearance still requires a real
+separating gap in this certificate. Unsupported or inconclusive pairs use the
+existing full classifier. Arithmetic/resource/control failures stay indeterminate.
+Tables belong to one validation call and are rebuilt during fresh result loading.
+
+The positive-clearance benchmark now finds 425 validated Pryanik-2 copies, up
+from 350, without changing the box, 1/1 mm clearances, permitted rotations or
+60-second budget. The bounded search can still miss layouts; these counts are
+best found, not optimality claims.
 
 ## Conservative fields and FFT placement
 
