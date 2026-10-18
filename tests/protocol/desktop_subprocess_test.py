@@ -24,6 +24,30 @@ def run(*arguments):
 
 
 class DesktopTests(unittest.TestCase):
+    def test_t015_p2_prepare_admits_asset_under_the_user_ceiling(self):
+        self.request["host_memory_limit_bytes"] = "1"
+        completed, output = self.prepare()
+        self.assertNotEqual(completed.returncode, 0, completed.stdout)
+        self.assertFalse((output / "settings.json").exists())
+
+    def test_t015_p2_new_start_resolves_hardware_and_lower_user_ceiling(self):
+        """SOL-05/AT-16: a new Start records one aggregate cap and every nested cap."""
+        self.request["budget_scope"] = "total_start"
+        self.request["host_memory_limit_bytes"] = str(128 << 20)
+        completed, _ = self.prepare()
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        response = json.loads(completed.stdout)["result"]
+        settings = json.loads(pathlib.Path(response["settings_path"]).read_text(encoding="utf-8"))
+        policy = settings["resolved"]["resource_policy"]
+        self.assertEqual(policy["version"], 1)
+        self.assertEqual(int(policy["host_cap_bytes"]), min(int(policy["available_ram_bytes"]) // 2, 128 << 20))
+        self.assertEqual(policy["work_mode"], "timed")
+        self.assertEqual(policy["search_order"], "completed-page-round-robin-v1")
+        self.assertEqual(settings["compute"]["host_memory_limit_bytes"], str(128 << 20))
+        for name, value in policy["limits"].items():
+            if name.endswith("max_working_bytes"):
+                self.assertEqual(int(value), int(policy["host_cap_bytes"]), name)
+
     def test_t009_failed_and_timed_out_invocations_keep_evidence(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -69,6 +93,59 @@ class DesktopTests(unittest.TestCase):
         output.mkdir()
         return run("desktop-prepare", "--object-report", self.report,
                    "--request", request_path, "--output", output), output
+
+    def test_t015_p2_explicit_fixed_caps_replay_exactly_and_reject_partition_drift(self):
+        vertices = [(-1,-1,-.5),(1,-1,-.5),(1,0,-.5),(0,0,-.5),(0,1,-.5),(-1,1,-.5),
+                    (-1,-1,.5),(1,-1,.5),(1,0,.5),(0,0,.5),(0,1,.5),(-1,1,.5)]
+        faces = [(0,2,1),(0,3,2),(0,5,3),(3,5,4),(6,7,8),(6,8,9),(6,9,11),(9,10,11),
+                 (0,1,7),(0,7,6),(1,2,8),(1,8,7),(2,3,9),(2,9,8),(3,4,10),(3,10,9),
+                 (4,5,11),(4,11,10),(5,0,6),(5,6,11)]
+        payload = bytearray(80) + struct.pack('<I', len(faces))
+        for face in faces:
+            payload.extend(struct.pack('<12fH', 0, 0, 0, *(v for index in face for v in vertices[index]), 0))
+        self.source.write_bytes(payload)
+        imported = run('inspect', '--stl', self.source, '--units', 'mm', '--report', self.report)
+        self.assertEqual(imported.returncode, 0, imported.stdout + imported.stderr)
+        self.request.update(box_dimensions_mm=[3.75,2.75,1.5], pitch_mm=.25,
+                            clearance_mm={'pair':.125,'wall':0},
+                            orientation={'mode':'cube'})
+        settings_path, _ = self.prepared()
+        settings = json.loads(settings_path.read_text())
+        settings['search'] = {'preset':'desktop-cpu-v1', 'seed':'42', 'deterministic':True,
+                             'work_budget':{'max_candidate_evaluations':64, 'max_search_passes':64}}
+        resource = settings['resolved']['resource_policy']
+        resource['work_mode'] = 'fixed_work'
+        resource['search_order'] = 'catalog-merge-v1'
+        for prefix in ('baseline_', 'spectral_'):
+            resource['limits'][prefix+'max_candidate_evaluations'] = '32'
+            resource['limits'][prefix+'max_search_passes'] = '32'
+        resource['limits']['baseline_max_copies'] = '1'
+        resource['limits']['spectral_max_copies'] = '2'
+        settings_path.write_text(json.dumps(settings))
+        results = []
+        for repeat in range(2):
+            output = self.root / f'fixed-{repeat}'
+            output.mkdir()
+            result_path = output / 'result.json'
+            completed = run('solve', '--object-report', self.report, '--settings', settings_path, '--result', result_path)
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            result = json.loads(result_path.read_text())
+            self.assertEqual(result['search']['resolved_settings'], settings)
+            self.assertEqual(result['search']['diagnostics']['resource_recovery']['grants'], '0')
+            self.assertGreater(int(result['search']['diagnostics']['resource_recovery']['fft_candidate_evaluations']), 0)
+            self.assertGreater(result['count'], 0)
+            self.assertGreater(int(result['search']['diagnostics']['resource_recovery']['native_validations']), 0)
+            self.assertIn(json.loads(completed.stdout)['termination_reason'], ('budget_exhausted', 'search_stalled'))
+            results.append(result)
+        self.assertEqual(results[0]['placements'], results[1]['placements'])
+        self.assertEqual(results[0]['search']['work_counts'], results[1]['search']['work_counts'])
+        resource['limits']['baseline_max_candidate_evaluations'] = '9'
+        settings_path.write_text(json.dumps(settings))
+        drift = self.root / 'drift.json'
+        completed = run('solve', '--object-report', self.report, '--settings', settings_path, '--result', drift)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(json.loads(completed.stdout)['error']['code'], 'UNSUPPORTED_RESOURCE_POLICY')
+        self.assertFalse(drift.exists())
 
     def prepared(self):
         completed, output = self.prepare()

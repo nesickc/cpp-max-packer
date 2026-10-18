@@ -8,10 +8,21 @@ This user instruction supersedes the older ordering below for that package;
 full T-014, T-015 and T-021 gates and other prerequisites remain open. Latest
 PR #14 CI failed one of 571 native cases; local threading evidence is unchanged.
 
+## Next functional delivery: resource recovery
+
+The latest 2026-10-11 user instruction prioritizes reliable continued search over
+further incremental packing, appearance changes or cleanup. After PR #15 merges,
+deliver [T015-P2](T-015.md#t015-p2-hardware-aware-budgets-and-resource-recovery):
+resolve budgets from the PC's available resources, recover from local resource
+pressure, and continue useful affordable work while preserving valid results and
+the user's deadline. The existing spec already requires hardware-aware memory
+admission; timed work-budget recovery needs a documented policy and compatibility
+decision before implementation. No implementation or passing evidence is claimed.
+
 ## Next bounded pass: production and test DRY cleanup
 
-The 2026-10-11 PR-review instruction adds this maintenance slice to the next
-delivery, after T015-P1/PR #15 is merged and before expanding its packing strategy.
+The earlier 2026-10-11 PR-review instruction requested this maintenance slice.
+The later resource-recovery priority defers it until T015-P2 is accepted and merged.
 This is a plan, not an implemented refactor or a new milestone completion claim.
 Proposed branch: `feature/QA-01-dry-packing-tests`; do not create or stack it before
 the prerequisite merge. The remaining functional tickets and acceptance IDs stay open.

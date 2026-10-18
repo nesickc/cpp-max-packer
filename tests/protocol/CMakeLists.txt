@@ -43,6 +43,7 @@ if(BUILD_TESTING)
     solve_retained_resource
     solve_deadline
     solve_console_stop
+    solve_lowered_finalization
     solve_caller_reserve)
     add_test(NAME spectrapack_${control_case}_subprocess
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/solve_controls_subprocess_test.py"

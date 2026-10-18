@@ -6,6 +6,7 @@
 #include <spectrapack/solver/spectral.hpp>
 
 #include "host_admission.hpp"
+#include "resource_policy.hpp"
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -190,14 +191,10 @@ std::optional<geo::OrientationPolicy> policy(const Json& value)
 }
 
 int prepare(const std::map<std::string, std::filesystem::path>& options, const Asset& asset, HostAdmission& budget,
-            std::uint64_t available)
+            std::uint64_t available, const Json& request, std::uint64_t sampled_ram)
 {
-    auto request = read_json(options.at("--request"), 1ULL << 20, io::ContractKind::desktop, budget);
     io::ContractValidator validator;
-    if (!request || !request->contains("desktop_version") || !request->contains("orientation")) {
-        return fail("INVALID_SETTINGS", "Desktop settings do not satisfy version 1.");
-    }
-    const auto resolved = resolve_desktop_settings(*request, asset);
+    const auto resolved = resolve_desktop_settings(request, asset, sampled_ram);
     if (const auto* error = std::get_if<io::Error>(&resolved)) {
         return fail(error->code, error->message, 2, error->details);
     }
@@ -375,9 +372,8 @@ int run_desktop_command(const std::string& command, const std::vector<std::strin
         if (options.contains("--available-host-bytes")) {
             const auto text = path_text(options.at("--available-host-bytes"));
             const auto [end, cause] = std::from_chars(text.data(), text.data() + text.size(), available);
-            if (cause != std::errc {} || end != text.data() + text.size() || available == 0 ||
-                available > (512ULL << 20)) {
-                return fail("INVALID_REQUEST", "--available-host-bytes must be an integer in [1,536870912].");
+            if (cause != std::errc {} || end != text.data() + text.size() || available == 0) {
+                return fail("INVALID_REQUEST", "--available-host-bytes must be a positive uint64 integer.");
             }
         }
         if (!options.contains("--object-report") || !options.contains("--output") ||
@@ -389,7 +385,26 @@ int run_desktop_command(const std::string& command, const std::vector<std::strin
             !std::filesystem::is_empty(options.at("--output"), error) || error) {
             return fail("OUTPUT_PATH_INVALID", "Desktop output must be an existing empty private directory.");
         }
+        std::optional<Json> request;
+        std::optional<std::uint64_t> sampled_ram;
+        HostAdmission request_budget(32ULL << 20);
+        if (command == "desktop-prepare") {
+            request = read_json(options.at("--request"), 1ULL << 20, io::ContractKind::desktop, request_budget);
+            if (!request || !request->contains("orientation")) {
+                return fail("INVALID_SETTINGS", "Desktop settings do not satisfy version 1.");
+            }
+            sampled_ram = spectrapack::cli::sample_available_ram();
+            const auto user = request->contains("host_memory_limit_bytes")
+                                  ? spectrapack::cli::decimal_bytes(request->at("host_memory_limit_bytes"))
+                                  : std::nullopt;
+            const auto cap = spectrapack::cli::resolve_host_cap(sampled_ram, user);
+            if (!cap) {
+                return fail("MEMORY_SAMPLE_UNAVAILABLE", "Available physical RAM could not be resolved.");
+            }
+            available = options.contains("--available-host-bytes") ? std::min(available, *cap) : *cap;
+        }
         HostAdmission budget(available);
+        budget.charge(request_budget.used() - (16ULL << 20));
         auto loaded = io::load_accepted_asset(options.at("--object-report"),
                                               {
         },
@@ -407,7 +422,7 @@ int run_desktop_command(const std::string& command, const std::vector<std::strin
         if (asset->solid()->role() != geo::AssetRole::object) {
             return fail("ASSET_MISMATCH", "Desktop object report has the wrong role.");
         }
-        return command == "desktop-prepare" ? prepare(options, asset, budget, available)
+        return command == "desktop-prepare" ? prepare(options, asset, budget, available, *request, *sampled_ram)
                                             : restore(options, asset, budget);
     }
     catch (const spectrapack::cli::HostMemoryLimit&) {
@@ -422,8 +437,8 @@ int run_desktop_command(const std::string& command, const std::vector<std::strin
     }
 }
 
-std::variant<spectrapack::io::Json, spectrapack::io::Error> resolve_desktop_settings(const Json& request,
-                                                                                     const Asset& asset)
+std::variant<spectrapack::io::Json, spectrapack::io::Error> resolve_desktop_settings(
+    const Json& request, const Asset& asset, std::optional<std::uint64_t> sampled_ram)
 {
     io::ContractValidator validator;
     if (auto failure = unsupported_threads(request)) {
@@ -495,6 +510,23 @@ std::variant<spectrapack::io::Json, spectrapack::io::Error> resolve_desktop_sett
     settings["resolved"]["cpu_runtime"] = {
         {"version", 1},
         {"scheduling_policy", solver::cpu_scheduling_policy(threads)}};
+    const auto available = sampled_ram ? sampled_ram : spectrapack::cli::sample_available_ram();
+    const auto user = request.contains("host_memory_limit_bytes")
+                          ? spectrapack::cli::decimal_bytes(request.at("host_memory_limit_bytes"))
+                          : std::nullopt;
+    if (request.contains("host_memory_limit_bytes") && (!user || *user == 0)) {
+        return io::Error { "INVALID_SETTINGS", "Host memory ceiling must be a positive uint64 decimal string.",
+                           Json::object(), true };
+    }
+    const auto cap = spectrapack::cli::resolve_host_cap(available, user);
+    if (!cap) {
+        return io::Error { "MEMORY_SAMPLE_UNAVAILABLE", "Available physical RAM could not be resolved.", Json::object(),
+                           true };
+    }
+    if (user) {
+        settings["compute"]["host_memory_limit_bytes"] = std::to_string(*user);
+    }
+    settings["resolved"]["resource_policy"] = spectrapack::cli::resolve_resource_policy(*available, *cap, false);
     if (!std::holds_alternative<io::ValidatedDocument>(
             validator.validate(io::ContractKind::settings, settings, { 16, 256 }))) {
         return io::Error { "INVALID_SETTINGS", "Resolved settings are not valid; check the quaternion and uint64 seed.",

@@ -56,6 +56,99 @@
         },
         "failure": {
           "$ref": "#/definitions/failure"
+        },
+        "resource_recovery": {
+          "type": "object",
+          "properties": {
+            "version": {
+              "const": 1
+            },
+            "actual_final_threads": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 8
+            },
+            "grants": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$"
+            },
+            "recoveries": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$"
+            },
+            "deferred": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$"
+            },
+            "fft_candidate_evaluations": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$"
+            },
+            "native_validations": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$"
+            },
+            "omitted_records": {
+              "type": "string",
+              "pattern": "^(0|[1-9][0-9]{0,19})$"
+            },
+            "transitions": {
+              "type": "array",
+              "maxItems": 16,
+              "items": {
+                "type": "object",
+                "properties": {
+                  "sequence": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]{0,19})$"
+                  },
+                  "before": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]{0,19})$"
+                  },
+                  "after": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]{0,19})$"
+                  },
+                  "consumed": {
+                    "type": "string",
+                    "pattern": "^(0|[1-9][0-9]{0,19})$"
+                  },
+                  "cause": {
+                    "type": "string"
+                  },
+                  "phase": {
+                    "type": "string"
+                  },
+                  "action": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "sequence",
+                  "before",
+                  "after",
+                  "consumed",
+                  "cause",
+                  "phase",
+                  "action"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "version",
+            "actual_final_threads",
+            "grants",
+            "recoveries",
+            "deferred",
+            "fft_candidate_evaluations",
+            "native_validations",
+            "omitted_records",
+            "transitions"
+          ],
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

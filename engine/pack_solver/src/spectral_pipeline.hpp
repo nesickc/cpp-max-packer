@@ -77,6 +77,9 @@ public:
     // already held by the coordinator. Overflow/missing ownership fails closed.
     [[nodiscard]] std::optional<std::uint64_t> resident_bytes() const noexcept;
     [[nodiscard]] std::uint64_t layout_revision() const noexcept;
+    // Required owners remain live so a retry cannot merely recreate the same
+    // team/plan and claim the temporary residency drop as useful recovery.
+    [[nodiscard]] bool release_disposable(bool retain_raster = false, bool retain_fft = false) noexcept;
 
 private:
     struct Storage;

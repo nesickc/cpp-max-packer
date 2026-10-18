@@ -51,6 +51,7 @@ struct Prepared {
   std::vector<PoseKey> keys;
   geometry::PhysicalQueryStats work;
   OfferIssue issue{OfferIssue::none};
+  std::string_view issue_cause;
   bool snapshot_storage_available{true};
 };
 
@@ -207,6 +208,12 @@ void prepare(const geometry::ValidatedSolution& solution,
             std::get_if<geometry::PhysicalQueryFailure>(&query)) {
       add_work(result.work, failure->stats, persistent_bytes);
       result.issue = classify_failure(*failure);
+      for (const std::string_view cause :
+           { "PHYSICAL_WORK_LIMIT", "PHYSICAL_VERTEX_LIMIT", "PHYSICAL_MEMORY_LIMIT", "PHYSICAL_ALLOCATION_FAILURE" }) {
+          if (failure->code == cause) {
+              result.issue_cause = cause;
+          }
+      }
       result.score.enclosing_z_span_mm.reset();
       result.score.enclosing_xy_span_sum_mm.reset();
       return;
@@ -325,13 +332,13 @@ OfferOutcome Incumbent::offer(
   }
 
   if (!offered.snapshot_storage_available) {
-    return {OfferStatus::not_better, storage_->best, offered.work, offered.issue,
-            storage_->retained_bytes};
+      return { OfferStatus::not_better, storage_->best,           offered.work,
+               offered.issue,           storage_->retained_bytes, offered.issue_cause };
   }
   try {
     if (storage_->best && !better(offered, storage_->best->score, storage_->keys)) {
-      return {OfferStatus::not_better, storage_->best, offered.work, offered.issue,
-              storage_->retained_bytes};
+        return { OfferStatus::not_better, storage_->best,           offered.work,
+                 offered.issue,           storage_->retained_bytes, offered.issue_cause };
     }
 
     const auto retained_keys =
@@ -350,8 +357,8 @@ OfferOutcome Incumbent::offer(
     storage_->keys = std::move(offered.keys);
     storage_->best = std::move(snapshot);
     storage_->retained_bytes = retained_bytes;
-    return {OfferStatus::accepted, storage_->best, offered.work, offered.issue,
-            storage_->retained_bytes};
+    return { OfferStatus::accepted, storage_->best,           offered.work,
+             offered.issue,         storage_->retained_bytes, offered.issue_cause };
   } catch (const std::bad_alloc&) {
     return {OfferStatus::not_better, storage_->best, offered.work,
             OfferIssue::allocation_failure, storage_->retained_bytes};

@@ -45,6 +45,24 @@ discovered test names, not executable names. A target-only build uses
 targets require either an explicit test selection or build-only mode; selecting
 no tests is an error. Omit these options for the complete build/test gate.
 
+### Exploratory runs and copied source
+
+For the [adopted workflow checks](../doc/PROCESS_REVIEW.md#adopted-workflow-checks),
+prefer the focused wrapper command above. It invokes CTest with `--timeout 30`
+per case and `--no-tests=error`; documented exception durations remain governing.
+Declare the finite watchdog in the task evidence before broad exploration. If
+running a test executable directly, set a whole-process bound and assign cleanup
+ownership before launch. Save complete build/test output and terminal exit status
+in `.local/`; classify timeout or manual abort as incomplete coverage.
+
+When copying or restoring changed source, record SHA256 hashes of the changed
+inputs (PowerShell `Get-FileHash -Algorithm SHA256 -LiteralPath <path>`). Ensure
+the destination timestamps/build dependencies trigger recompilation, or explicitly
+force a rebuild of the affected target. Retain the compile/relink lines and record
+the tested executable's exact path and SHA256 hash alongside red/green results.
+`-Fresh` only resets CMake configuration; it is not a forced rebuild. Use affected
+targets and relevant tests; this check does not require a full clean or full suite.
+
 The wrapper verifies and seeds the original locked validator patch before CMake.
 Set `VCPKG_DOWNLOADS` to use a separate writable asset cache. The same Python
 interpreter supplied to the wrapper runs CMake's process-level protocol checks.

@@ -43,6 +43,12 @@ describe('UI-01/UI-03 immutable routing and settings', () => {
     expect(settingsError({ ...defaultSettings, box_dimensions_mm: [1, NaN, 3] })).toMatch(/box/i);
     expect(settingsError({ ...defaultSettings, clearance_mm: { pair: 0, wall: 0 } })).toBeNull();
   });
+  it('preserves an exact downward byte ceiling and rejects zero or overflowing requests', () => {
+    expect(settingsError({...defaultSettings, host_memory_limit_bytes:'134217728'})).toBeNull();
+    for (const cap of ['0','01','-1','18446744073709551616'])
+      expect(settingsError({...defaultSettings, host_memory_limit_bytes:cap})).toMatch(/memory ceiling/i);
+    expect(settingsError({...defaultSettings, host_memory_limit_bytes:undefined})).toBeNull();
+  });
 });
 
 describe('UI-02 T015 count publication identity', () => {

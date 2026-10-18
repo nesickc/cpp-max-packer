@@ -447,6 +447,7 @@ std::optional<geometry::RepresentationLimits> representation_limits(
         return {};
     }
     auto nested = limits.per_representation;
+    nested.renewable_work_limits = limits.resource_mode == ResourceMode::timed;
     nested.max_working_bytes = std::min(nested.max_working_bytes, limits.max_working_bytes);
     nested.max_kernel_work = std::min(nested.max_kernel_work, remaining(limits.max_representation_kernel_work,
                                                                         result.stats.representation_kernel_work));
@@ -579,7 +580,8 @@ const compute::CorrelationStats& correlation_stats(const compute::CorrelationOut
     return std::get<compute::CorrelationFailure>(outcome).stats;
 }
 
-void record_correlation_failure(SpectralPipelineResult& result, const compute::CorrelationFailure& failure)
+void record_correlation_failure(SpectralPipelineResult& result, const compute::CorrelationFailure& failure,
+                                std::string_view phase = "correlation")
 {
     result.diagnostic = failure.code;
     const bool resource = failure.code == "CORRELATION_PADDED_CELL_LIMIT" ||
@@ -591,7 +593,7 @@ void record_correlation_failure(SpectralPipelineResult& result, const compute::C
                             : failure.code == "DEADLINE_EXCEEDED" ? TerminationReason::budget_exhausted
                             : resource                            ? TerminationReason::resource_limit
                                                                   : TerminationReason::error,
-                            "correlation",
+                            phase,
                             failure.code,
                             {},
                             {} };
@@ -673,6 +675,24 @@ std::optional<std::uint64_t> SpectralWorkspace::resident_bytes() const noexcept
     return add_optional(bytes, ledger.bytes()) ? std::optional { bytes } : std::nullopt;
 }
 std::uint64_t SpectralWorkspace::layout_revision() const noexcept { return storage_ ? storage_->revision : 0; }
+
+bool SpectralWorkspace::release_disposable(bool retain_raster, bool retain_fft) noexcept
+{
+    const auto before = resident_bytes();
+    if (!storage_ || !before) {
+        return false;
+    }
+    storage_->ranked.reset();
+    storage_->kernels[1] = {};
+    if (!retain_fft) {
+        storage_->fft.reset();
+    }
+    if (!retain_raster) {
+        storage_->raster.reset();
+    }
+    const auto after = resident_bytes();
+    return after && *after < *before;
+}
 
 std::optional<RunFailureDetails> spectral_admission(const std::shared_ptr<const geometry::ValidationContext>& context,
                                                     geometry::GridLattice lattice, const SpectralLimits& limits,
@@ -1002,6 +1022,9 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
         return result;
     }
     try {
+        if (workspace.storage_ && workspace.storage_->raster && workspace.storage_->raster->closed()) {
+            workspace.storage_->raster.reset();
+        }
         PipelineOwners owners { context, baseline };
         owners.catalog = &supplied_catalog;
         owners.workspace = workspace.storage_.get();
@@ -1089,7 +1112,12 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             };
             return result;
         }
-        if (!state.raster && limits.cpu_thread_count > 1) {
+        const bool cached_kernel = std::any_of(state.kernels.begin(), state.kernels.end(), [&](const auto& entry) {
+            return entry.field && entry.rotation == supplied_catalog.quaternions[query.orientation_index];
+        });
+        const bool needs_raster = !state.geometry || !state.mask || !state.blocked || !cached_kernel ||
+                                  state.poses.size() != (baseline ? baseline->copies().size() : 0);
+        if (!state.raster && limits.cpu_thread_count > 1 && needs_raster) {
             const auto live = current_bytes(owners, limits);
             const auto cap = std::min(limits.max_working_bytes, limits.per_representation.max_working_bytes);
             auto team = geometry::make_raster_execution(limits.cpu_thread_count,
@@ -1413,14 +1441,16 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
         }
 
         const auto& rotation = rotations[query.orientation_index];
-        bool current_correlation = state.binary && state.ranked && state.correlation_revision == state.revision;
-        for (std::size_t axis = 0; axis != 4 && current_correlation; ++axis) {
-            current_correlation = charge() && same_value(rotation[axis], state.correlation_rotation[axis]);
+        bool current_binary = state.binary && state.correlation_revision == state.revision &&
+                              (limits.resource_mode == ResourceMode::timed || state.ranked);
+        for (std::size_t axis = 0; axis != 4 && current_binary; ++axis) {
+            current_binary = charge() && same_value(rotation[axis], state.correlation_rotation[axis]);
         }
+        const bool current_correlation = current_binary && state.ranked;
         if (!work_ok || interrupted()) {
             return result;
         }
-        if (!current_correlation) {
+        if (!current_binary) {
             // No retained alias survives eviction; the compute preflight sees
             // only currently live output/scratch and the bounded kernel LRU.
             state.binary.reset();
@@ -1491,11 +1521,10 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             state.kernels[0] = { rotation, owners.kernel, {}, occupied };
         }
 
+        compute::CorrelationSpec spec { environment->shape, owners.kernel->window().shape, environment->first,
+                                        owners.kernel->window().first };
+        auto correlation_limits = limits.per_correlation;
         if (!current_correlation) {
-            profile.phase(PipelineProfilePhase::binary_fft);
-            compute::CorrelationSpec spec { environment->shape, owners.kernel->window().shape, environment->first,
-                                            owners.kernel->window().first };
-            auto correlation_limits = limits.per_correlation;
             correlation_limits.max_working_bytes =
                 std::min(correlation_limits.max_working_bytes, limits.max_working_bytes);
             correlation_limits.max_direct_terms = std::min(
@@ -1536,6 +1565,9 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             // The compute estimate owns its FFT team; all other live owners,
             // including the parked raster team, remain in the caller reserve.
             correlation_limits.reserved_bytes = *live - (state.fft ? state.fft->reserved_bytes() : 0);
+        }
+        if (!current_binary) {
+            profile.phase(PipelineProfilePhase::binary_fft);
             control.phase(runtime::Phase::planning_fft);
             auto binary = compute::correlate_binary_cpu(spec, occupancy, owners.kernel->cells(), correlation_limits,
                                                         control, state.fft.get());
@@ -1561,6 +1593,8 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             }
             state.binary = std::move(std::get<compute::CorrelationResult>(binary));
             owners.binary = &*state.binary;
+            state.correlation_revision = state.revision;
+            state.correlation_rotation = rotation;
             if (binary_observation) {
                 binary_observation({ *environment,
                                      owners.kernel->window(),
@@ -1572,6 +1606,8 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                                      owners.binary->translation_first,
                                      owners.binary->shape });
             }
+        }
+        if (!current_correlation) {
             profile.phase(PipelineProfilePhase::proximity_fft);
             live = current_bytes(owners, limits);
             if (!live || !observe(result, limits, *live)) {
@@ -1603,7 +1639,12 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             }
             if (!std::holds_alternative<compute::CorrelationResult>(ranked)) {
                 state.fft.reset();
-                record_correlation_failure(result, std::get<compute::CorrelationFailure>(ranked));
+                record_correlation_failure(result, std::get<compute::CorrelationFailure>(ranked), "proximity_fft");
+                if (result.failure_details->cause_code() == "CORRELATION_DIRECT_TERM_LIMIT") {
+                    const auto cap = correlation_limits.max_direct_terms;
+                    result.failure_details->resource =
+                        ResourceLimitDetails { "direct_terms", cap == UINT64_MAX ? cap : cap + 1, cap };
+                }
                 return result;
             }
             state.ranked = std::move(std::get<compute::CorrelationResult>(ranked));

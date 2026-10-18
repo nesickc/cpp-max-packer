@@ -141,6 +141,8 @@ pub fn validate_settings(value: &Value) -> Outcome<()> {
         thread_count: Option<u32>,
         #[serde(default)]
         budget_scope: Option<String>,
+        #[serde(default)]
+        host_memory_limit_bytes: Option<String>,
     }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -178,6 +180,12 @@ pub fn validate_settings(value: &Value) -> Outcome<()> {
         return Err(error("INVALID_SETTINGS", "Budget scope is unsupported."));
     }
     let positive = |x: f64| x.is_finite() && x > 0.0;
+    if settings.host_memory_limit_bytes.as_ref().is_some_and(|text| {
+        text.starts_with('0') || !text.bytes().all(|c| c.is_ascii_digit())
+            || !text.parse::<u64>().is_ok_and(|n| n > 0)
+    }) {
+        return Err(error("INVALID_SETTINGS", "Host memory ceiling must be a positive uint64 decimal string."));
+    }
     let seed_ok = settings.seed.parse::<u64>().is_ok()
         && (settings.seed == "0"
             || (!settings.seed.starts_with('0')

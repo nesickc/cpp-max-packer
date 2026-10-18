@@ -423,6 +423,13 @@ std::vector<ValidationIssue> semantics(ContractKind kind, const Json& value) {
         !core::AssetId::parse(value.at("container").at("asset_id").get_ref<const std::string&>()))
       semantic_issue(issues, "/container/asset_id", "ASSET_ID_INVALID", "Requested container asset ID is invalid.");
     const auto& search = value.at("search");
+    if (value.at("compute").contains("host_memory_limit_bytes")) {
+        const auto& cap = value.at("compute").at("host_memory_limit_bytes").get_ref<const std::string&>();
+        if (cap == "0" || !seed_in_range(cap)) {
+            semantic_issue(issues, "/compute/host_memory_limit_bytes", "HOST_CAP_INVALID",
+                           "Host cap must be positive uint64.");
+        }
+    }
     const auto seed = search.at("seed").get<std::string>();
     if (!seed_in_range(seed)) semantic_issue(issues, "/search/seed", "SEED_OUT_OF_RANGE", "Seed exceeds uint64 maximum.");
     const bool deterministic = search.at("deterministic").get<bool>();
@@ -440,6 +447,43 @@ std::vector<ValidationIssue> semantics(ContractKind kind, const Json& value) {
     if (orientation.contains("quaternions_xyzw")) for (std::size_t i=0;i<orientation.at("quaternions_xyzw").size();++i)
       if (!unit_quaternion(orientation.at("quaternions_xyzw")[i], false)) semantic_issue(issues,"/orientation/quaternions_xyzw/"+std::to_string(i),"QUATERNION_NOT_NORMALIZED","Requested quaternion must be unit length.");
     if (value.contains("resolved")) {
+        if (value.at("resolved").contains("resource_policy")) {
+            const auto& policy = value.at("resolved").at("resource_policy");
+            bool numeric = true;
+            for (const auto name : { "available_ram_bytes", "host_cap_bytes" }) {
+                numeric =
+                    numeric && seed_in_range(policy.at(name).get_ref<const std::string&>()) && policy.at(name) != "0";
+            }
+            for (const auto& limit : policy.at("limits")) {
+                numeric = numeric && seed_in_range(limit.get_ref<const std::string&>());
+            }
+            if (!numeric) {
+                semantic_issue(issues, "/resolved/resource_policy", "RESOURCE_LIMIT_INVALID",
+                               "Resolved limits must fit uint64.");
+            }
+            else {
+                const auto available = std::stoull(policy.at("available_ram_bytes").get<std::string>());
+                const auto cap = std::stoull(policy.at("host_cap_bytes").get<std::string>());
+                if (cap > available / 2 ||
+                    (value.at("compute").contains("host_memory_limit_bytes") &&
+                     seed_in_range(value.at("compute").at("host_memory_limit_bytes").get<std::string>()) &&
+                     cap > std::stoull(value.at("compute").at("host_memory_limit_bytes").get<std::string>()))) {
+                    semantic_issue(issues, "/resolved/resource_policy/host_cap_bytes", "HOST_CAP_MISMATCH",
+                                   "Host cap exceeds admission.");
+                }
+                for (const auto& [name, limit] : policy.at("limits").items()) {
+                    if (name.ends_with("max_working_bytes") && std::stoull(limit.get<std::string>()) != cap) {
+                        semantic_issue(issues, "/resolved/resource_policy/limits", "NESTED_CAP_MISMATCH",
+                                       "Nested host caps must agree.");
+                    }
+                }
+            }
+            if ((policy.at("work_mode") == "fixed_work") != deterministic ||
+                policy.at("search_order") != (deterministic ? "catalog-merge-v1" : "completed-page-round-robin-v1")) {
+                semantic_issue(issues, "/resolved/resource_policy", "RESOURCE_MODE_MISMATCH",
+                               "Work mode and ordering disagree.");
+            }
+        }
       const auto resolved_backend = value.at("resolved").at("backend").get<std::string>();
       if (compute_backend != "auto" && compute_backend != resolved_backend)
         semantic_issue(issues, "/resolved/backend", "BACKEND_RESOLUTION_MISMATCH",

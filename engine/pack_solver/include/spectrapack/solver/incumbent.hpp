@@ -57,6 +57,7 @@ struct OfferOutcome {
   // Retained NativeSnapshot and score-key vector capacity. The referenced
   // solution buffers are reported separately by their owning solver.
   std::uint64_t retained_storage_bytes{};
+  std::string_view issue_cause;
 };
 
 class Incumbent {

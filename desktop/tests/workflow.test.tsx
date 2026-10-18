@@ -11,6 +11,29 @@ import { App } from '../src/App';
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
+  it('T015 displays operational resource recovery and sends an exact lower byte ceiling', async () => {
+    const fixture = fixtures.find(f => f.kind === 'results' && f.schema_valid && f.semantic_valid)!;
+    const document = structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];
+    const initial: Desktop.State = {desktop_version:1, session_id:'resource-live', revision:1,
+      object:{id:'object', display_name:'Cube.stl', report:document.assets.object, preview:null},
+      draft_settings:{...defaultSettings, host_memory_limit_bytes:'134217728'}, result:null, operation:null, last_error:null,
+      cpu_runtime:{version:1, supported_min:1, supported_max:8, default_thread_count:8,
+        resource_status:{admitted_host_cap_bytes:'5368709120', actual_threads:4, recovery_count:'3',
+          last_cause:'VALIDATION_KERNEL_WORK_LIMIT', last_action:'grant_work'}}};
+    native.state.mockResolvedValue(initial);
+    native.start.mockResolvedValue({operation_id:'next-start'});
+    render(<App/>);
+    await waitFor(()=>expect(screen.getByLabelText('Resource status').textContent).toContain('Actual threads 4'));
+    expect(screen.getByLabelText('Resource status').textContent).toContain('5.00 GiB');
+    expect(screen.getByLabelText('Resource status').textContent).toContain('Recoveries 3');
+    const ceiling = screen.getByLabelText('Host memory ceiling') as HTMLInputElement;
+    fireEvent.change(ceiling, {target:{value:'0'}});
+    expect(screen.getByRole('button',{name:'▶ Start packing'}).hasAttribute('disabled')).toBe(true);
+    fireEvent.change(ceiling, {target:{value:'134217728'}});
+    fireEvent.click(screen.getByRole('button',{name:'▶ Start packing'}));
+    await waitFor(()=>expect(native.start).toHaveBeenCalledOnce());
+    expect(native.start.mock.calls[0][0].settings.host_memory_limit_bytes).toBe('134217728');
+  });
   it('UI-02 T015 shows the native live packing while Save and export stay unavailable', async () => {
     const fixture = fixtures.find(f => f.kind === 'results' && f.schema_valid && f.semantic_valid)!;
     const document = structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];
