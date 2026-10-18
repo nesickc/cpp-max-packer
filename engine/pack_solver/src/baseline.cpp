@@ -498,7 +498,7 @@ BaselineOutcome run_aabb_baseline_impl(
     const BaselineLimits& limits, const RunControl& control, SnapshotSink sink,
     std::shared_ptr<const geometry::ValidatedSolution> initial,
     const std::vector<geometry::Quaternion>* exact_seeds, StaggerSummary* stagger = nullptr,
-    SnapshotHandle entry = {}, bool blocks = false, bool interlocking = false) {
+    SnapshotHandle entry = {}, bool blocks = false, bool interlocking = false, bool mixed = false) {
   BaselineOutcome out;
   if ((stagger || blocks || interlocking) && entry && entry->solution && entry->solution->context() == context &&
       entry->score.count == entry->solution->copies().size()) {
@@ -759,10 +759,49 @@ BaselineOutcome run_aabb_baseline_impl(
         if (!add_optional(persistent, checked_product(seeds.capacity(), sizeof(geometry::Quaternion))) ||
             !add_optional(persistent, solution_bytes(entry ? entry->solution : nullptr)) ||
             !checked_add(persistent,
-                         sizeof(detail::StaggerEnvelope) + 8 * sizeof(detail::InterlockingLayout) + 4096)) {
+                         2 * sizeof(detail::StaggerEnvelope) + 8 * sizeof(detail::InterlockingLayout) + 4096)) {
             return finish("STAGGER_MEMORY_LIMIT", TerminationReason::resource_limit);
         }
-        for (std::size_t seed = 0; seed < std::min<std::size_t>(24, seeds.size()); ++seed) {
+        std::array<std::pair<std::size_t, std::size_t>, 96> trials {};
+        std::size_t trial_count {};
+        const auto seed_count = std::min<std::size_t>(24, seeds.size());
+        for (std::size_t seed = 0; seed != seed_count; ++seed) {
+            if (!mixed) {
+                trials[trial_count++] = { seed, seed };
+                continue;
+            }
+            const auto a = geometry::RigidTransform::make(seeds[seed], {});
+            if (!a) {
+                continue;
+            }
+            for (std::size_t partner = 0; partner != seed_count; ++partner) {
+                const auto b = geometry::RigidTransform::make(seeds[partner], {});
+                if (!b || partner == seed) {
+                    continue;
+                }
+                unsigned reversed {};
+                bool half_turn = true;
+                for (std::size_t axis = 0; axis != 3; ++axis) {
+                    double dot {};
+                    for (std::size_t local = 0; local != 3; ++local) {
+                        dot += a->local_to_world()[axis][local] * b->local_to_world()[axis][local];
+                    }
+                    half_turn = half_turn && std::abs(std::abs(dot) - 1) < 1e-10;
+                    reversed += dot < 0;
+                }
+                if (half_turn && reversed == 2 && trial_count < trials.size()) {
+                    trials[trial_count++] = { seed, partner };
+                }
+            }
+        }
+        if (mixed && entry && entry->solution && !entry->solution->copies().empty()) {
+            const auto preferred = entry->solution->copies().front().rotation_xyzw;
+            std::sort(trials.begin(), trials.begin() + trial_count, [&](const auto& a, const auto& b) {
+                return std::tuple { seeds[a.first] != preferred, a } < std::tuple { seeds[b.first] != preferred, b };
+            });
+        }
+        for (std::size_t trial_index = 0; trial_index != trial_count; ++trial_index) {
+            const auto [seed, partner] = trials[trial_index];
             if (boundary(control) != Boundary::none) {
                 return finish("STAGGER_INTERRUPTED", TerminationReason::budget_exhausted);
             }
@@ -792,24 +831,52 @@ BaselineOutcome run_aabb_baseline_impl(
                 return std::tuple { oriented.bounds_mm.max[a] - oriented.bounds_mm.min[a], a } <
                        std::tuple { oriented.bounds_mm.max[b] - oriented.bounds_mm.min[b], b };
             });
+            auto alternate_bounds = oriented.bounds_mm;
+            if (mixed) {
+                const auto query_other =
+                    geometry::oriented_bounds(context->object(), seeds[partner], query_limits(limits, out.stats, live));
+                if (const auto* failure = std::get_if<geometry::PhysicalQueryFailure>(&query_other)) {
+                    record_geometry(out.stats, failure->stats, live, limits);
+                    return finish(failure->code, TerminationReason::resource_limit);
+                }
+                const auto& other = std::get<geometry::OrientedBounds>(query_other);
+                if (!record_geometry(out.stats, other.stats, live, limits)) {
+                    return finish("STAGGER_RESOURCE_LIMIT", TerminationReason::resource_limit);
+                }
+                alternate_bounds = other.bounds_mm;
+            }
             const auto query = query_limits(limits, out.stats, live);
-            detail::StaggerEnvelope envelope(control, std::min<std::uint64_t>(32'000'000, query.max_kernel_work),
-                                             query.max_vertex_visits);
+            detail::StaggerEnvelope envelope(
+                control, std::min<std::uint64_t>(32'000'000, query.max_kernel_work / (mixed ? 2 : 1)),
+                query.max_vertex_visits / (mixed ? 2 : 1));
+            detail::StaggerEnvelope alternate(
+                control, std::min<std::uint64_t>(32'000'000, query.max_kernel_work / (mixed ? 2 : 1)),
+                query.max_vertex_visits / (mixed ? 2 : 1));
             std::optional<detail::InterlockingLayout> plan;
-            if (envelope.build(context->object()->mesh(), seeds[seed], oriented.bounds_mm, axes[2], axes[1],
-                               axes[0])) {
-                plan = envelope.plan_height(*bounds, context->constraints().pair_clearance_mm,
-                                            context->constraints().wall_clearance_mm, incumbent.best()->score.count,
-                                            limits.max_copies, limits.max_axis_cells);
-                if (!plan) {
-                    plan = envelope.plan(*bounds, context->constraints().pair_clearance_mm,
-                                         context->constraints().wall_clearance_mm, incumbent.best()->score.count,
-                                         limits.max_copies, limits.max_axis_cells);
+            if (envelope.build(context->object()->mesh(), seeds[seed], oriented.bounds_mm, axes[2], axes[1], axes[0])) {
+                if (mixed) {
+                    if (alternate.build(context->object()->mesh(), seeds[partner], alternate_bounds, axes[2], axes[1],
+                                        axes[0])) {
+                        plan =
+                            envelope.plan_mixed(alternate, *bounds, context->constraints().pair_clearance_mm,
+                                                context->constraints().wall_clearance_mm, incumbent.best()->score.count,
+                                                limits.max_copies, limits.max_axis_cells);
+                    }
+                }
+                else {
+                    plan = envelope.plan_height(*bounds, context->constraints().pair_clearance_mm,
+                                                context->constraints().wall_clearance_mm, incumbent.best()->score.count,
+                                                limits.max_copies, limits.max_axis_cells);
+                    if (!plan) {
+                        plan = envelope.plan(*bounds, context->constraints().pair_clearance_mm,
+                                             context->constraints().wall_clearance_mm, incumbent.best()->score.count,
+                                             limits.max_copies, limits.max_axis_cells);
+                    }
                 }
             }
             geometry::PhysicalQueryStats work;
-            work.kernel_work = envelope.work();
-            work.vertex_visits = envelope.vertices();
+            work.kernel_work = envelope.work() + alternate.work();
+            work.vertex_visits = envelope.vertices() + alternate.vertices();
             if (!record_geometry(out.stats, work, live, limits)) {
                 return finish("STAGGER_RESOURCE_LIMIT", TerminationReason::resource_limit);
             }
@@ -832,15 +899,25 @@ BaselineOutcome run_aabb_baseline_impl(
                             return finish("STAGGER_INTERRUPTED", TerminationReason::budget_exhausted);
                         }
                         auto translation = plan->origin;
-                        const double height = plan->column_rise != 0 ? plan->height_offset(x, y) : 0;
-                        if (plan->column_rise != 0 && height + z * plan->pitch[plan->layer] > plan->height_span) {
+                        const auto state = plan->orientation(x, y, z);
+                        const double height = mixed                    ? state * plan->alternate_height
+                                              : plan->column_rise != 0 ? plan->height_offset(x, y)
+                                                                       : 0;
+                        if ((mixed || plan->column_rise != 0) &&
+                            height + z * plan->pitch[plan->layer] > plan->height_span) {
                             continue;
                         }
                         translation[plan->column] += x * plan->pitch[plan->column] + plan->offsets[y];
                         translation[plan->row] += y * plan->pitch[plan->row];
                         translation[plan->layer] += height + z * plan->pitch[plan->layer];
                         const auto id = copy_id_buffer(seed, copies.size(), "interlock-");
-                        copies.push_back({ std::string(id.text.data(), id.size), translation, seeds[seed] });
+                        if (state) {
+                            for (std::size_t axis = 0; axis != 3; ++axis) {
+                                translation[axis] += oriented.bounds_mm.min[axis] - alternate_bounds.min[axis];
+                            }
+                        }
+                        copies.push_back(
+                            { std::string(id.text.data(), id.size), translation, seeds[state ? partner : seed] });
                     }
                 }
             }
@@ -1682,11 +1759,11 @@ namespace detail {
 BaselineOutcome run_interlocking_stagger_with_seeds(std::shared_ptr<const geometry::ValidationContext> context,
                                                     const BaselineLimits& limits, const RunControl& control,
                                                     const std::vector<geometry::Quaternion>& seeds, SnapshotSink sink,
-                                                    SnapshotHandle initial)
+                                                    SnapshotHandle initial, bool mixed)
 {
     const auto solution = initial ? initial->solution : nullptr;
     return run_aabb_baseline_impl(std::move(context), limits, control, std::move(sink), solution, &seeds, nullptr,
-                                  std::move(initial), false, true);
+                                  std::move(initial), false, true, mixed);
 }
 
 BaselineOutcome run_block_layout_with_seeds(std::shared_ptr<const geometry::ValidationContext> context,

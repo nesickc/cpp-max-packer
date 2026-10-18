@@ -674,7 +674,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         }
     }
     auto preparation_stats = outcome.stagger.work;
-    for (const bool interlocking : { false, true }) {
+    for (unsigned layout = 0; layout != 3; ++layout) {
         if (!timed || !outcome.run.best || boundary(control) != Boundary::none) {
             break;
         }
@@ -683,10 +683,11 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         block_limits.max_candidate_evaluations =
             remaining(limits.spectral.max_candidate_evaluations, preparation_stats.candidate_evaluations);
         const auto previous = outcome.run;
-        auto blocked = interlocking ? detail::run_interlocking_stagger_with_seeds(
-                                          context, block_limits, control, catalog.quaternions, sink, outcome.run.best)
-                                    : detail::run_block_layout_with_seeds(context, block_limits, control,
-                                                                          catalog.quaternions, sink, outcome.run.best);
+        auto blocked =
+            layout ? detail::run_interlocking_stagger_with_seeds(context, block_limits, control, catalog.quaternions,
+                                                                 sink, outcome.run.best, layout == 2)
+                   : detail::run_block_layout_with_seeds(context, block_limits, control, catalog.quaternions, sink,
+                                                         outcome.run.best);
         auto total = outcome.run.stats;
         const bool counted = add_run_stats(total, blocked.stats) && add_run_stats(preparation_stats, blocked.stats);
         if (!blocked.best) {
