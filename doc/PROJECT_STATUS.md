@@ -1,6 +1,6 @@
 # Project status
 
-Updated 2026-10-17. Keep this to one page: what works, the current goal, known
+Updated 2026-10-18. Keep this to one page: what works, the current goal, known
 problems and the latest scoreboard. Details belong in PRs and `.local/` logs.
 
 ## What works
@@ -20,47 +20,46 @@ recovery, installer. These are mostly **Later** in spec v0.3.
 
 ## Scoreboard
 
-`python tools/scoreboard.py` (Release build, 8 threads). First run 2026-10-17 with
-the engine built from PR #16 (`feature/SOL-05-resource-recovery`):
+`python tools/scoreboard.py` (Release, 8 threads), 2026-10-18 at `e9904ba`.
+All cases freshly revalidated through native result loading:
 
 | Case | Count | Floor | Target | Block layout | Termination |
 | --- | --- | --- | --- | --- | --- |
 | cube64 | 64 | 64 | 64 | 64 | budget_exhausted |
 | lprism2 | 1 | 1 | 2 | 1 | search_stalled |
 | pryanik2 (1/1 mm) | 340 | 340 | 350 | 343 | resource_limit |
-| pryanik2-0 (0/1 mm) | 1 | 1 | 350 | 388 | resource_limit |
+| pryanik2-0 (0/1 mm) | 360 | 360 | 360 | 388 | resource_limit |
 | ulamok | 36 | 36 | 36 | 36 | resource_limit |
 
 "Block layout" is a simple bounding-box reference computed by the script, not a
 bound. History: [benchmarks/SCOREBOARD.md](../benchmarks/SCOREBOARD.md).
+Pryanik also retains 340/360 at 2 mm pitch with the same 60-second settings.
 
 ## Known problems (priority order)
 
-1. **Zero pair clearance is effectively broken for real models.** Validating touching
-   Pryanik copies exhausts the validator's kernel-work cap after ~33 candidates; the
-   run returns 1 copy (`PHYSICAL_VALIDATION_RESOURCE`). Hand packing reaches 350.
-2. **Most of the time budget goes to preparation.** Pryanik-2 at 4 mm: ~27 s
-   preparing, ~12 s voxelizing, ~7 s validating of a 60 s Start; search itself gets
-   seconds before stopping at `FIELD_KERNEL_WORK_LIMIT`.
-3. **Search ends instead of degrading** at resource limits (spec v0.3 §6.6 now asks
-   for degrade-and-continue). Pryanik 2 mm fails memory admission outright.
-4. **The baseline is weaker than simple block layouts** (315 grid vs 343 blocks for
+1. **Search still ends early at resource limits.** At 4 mm, Pryanik stops at
+   `FIELD_KERNEL_WORK_LIMIT`; at 2 mm, `SPECTRAL_MEMORY_LIMIT` stops spectral
+   admission. The validated 340/360-copy incumbents survive, but time remains unused.
+2. **Preparation leaves little actual search.** The 4 mm runs reach only four FFT
+   correlations before the resource stop.
+3. **The baseline is weaker than simple block layouts** (315 grid vs 343 blocks for
    pryanik2). The L-prism pair (`lprism2`) is not found in a 10 s timed run.
-5. `rc/containers/10_kg_np.stl` is 400×350×285 mm; the real Nova Post 10 kg box is
+4. `rc/containers/10_kg_np.stl` is 400×350×285 mm; the real Nova Post 10 kg box is
    400×340×285 mm. Use box dimensions, not that STL.
 
 ## Current goal
 
-Raise the Pryanik scoreboard counts, starting with problem 1, then 2–4. Each step is
-one short PR with a scoreboard result.
+Zero-clearance validation is fixed: 1 → 360 copies using existing generated layouts.
+Next, use the remaining 60-second budget to improve the retained 340-copy layout
+at 1 mm pair clearance, preserving manual pitch and physical constraints.
 
 ## Open PRs and branches
 
 - [PR #16](https://github.com/nesickc/cpp-max-packer/pull/16) `feature/SOL-05-resource-recovery`:
-  resource recovery (T015-P2). Retains 340/36; no count improvement. Local branch also
-  has an unpushed WIP commit `3b76463` with agent-configuration edits superseded by
-  this reset.
-- `feature/process-reset`: this workflow reset (slim AGENTS.md, spec v0.3, scoreboard).
+  resource recovery (T015-P2), rebased onto main's merged process reset. Retains 340/36;
+  both hosted Windows CI runs passed.
+- `feature/zero-clearance-validation`, stacked on PR #16: exact contact and oblique
+  separation at zero requested clearance; no new packing strategy or saved poses.
 
 ## Process
 

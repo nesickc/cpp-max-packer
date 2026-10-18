@@ -1284,7 +1284,7 @@ template <class Solid>
 CardinalBoundProof cardinal_bounds_clearance_proof(const Solid& first, const Solid& second, double clearance,
                                                    Budget& budget) noexcept
 {
-    if (!(clearance > 0.0) || !first.is_cardinal || !second.is_cardinal)
+    if (!(clearance >= 0.0) || !first.is_cardinal || !second.is_cardinal)
         return CardinalBoundProof::unproved;
     ScratchCharge stack_charge(budget, 2 * sizeof(CardinalExtrema));
     if (!stack_charge.held())
@@ -2258,7 +2258,7 @@ Threshold conservative_surface_gap(const PlacedSolid& first,const PlacedSolid& s
 std::optional<PairResult> cardinal_bounds_clearance_certificate(
     const PlacedSolid& first, const PlacedSolid& second, double clearance,
     Budget& budget) {
-  if (clearance == 0.0 || !first.is_cardinal || !second.is_cardinal)
+  if (!first.is_cardinal || !second.is_cardinal)
     return std::nullopt;
   if (!(clearance >= 0.0) || !std::isfinite(clearance))
     return PairResult{Decision::indeterminate,
@@ -2277,7 +2277,7 @@ std::optional<PairResult> cardinal_bounds_clearance_certificate(
   if (proof == CardinalBoundProof::unproved) return std::nullopt;
   if (proof == CardinalBoundProof::at_least_threshold)
     return PairResult{Decision::no,
-                      BoundaryRelation::disjoint,
+                      clearance == 0.0 ? BoundaryRelation::indeterminate : BoundaryRelation::disjoint,
                       Threshold::at_least,
                       "exact-cardinal-bounds-lower-bound",
                       ""};
@@ -2291,9 +2291,6 @@ std::optional<PairResult> cardinal_bounds_clearance_certificate(
 std::optional<PairResult> bounds_pair_certificate(const PosedBounds& first, const PosedBounds& second, double clearance,
                                                   Budget& budget)
 {
-    if (clearance == 0.0) {
-        return std::nullopt;
-    }
     const auto unresolved = [&](const char* code) {
         return PairResult { Decision::indeterminate, BoundaryRelation::indeterminate, Threshold::indeterminate,
                             "posed-bounds", code };
@@ -2302,7 +2299,7 @@ std::optional<PairResult> bounds_pair_certificate(const PosedBounds& first, cons
     if (!result_storage.held()) {
         return unresolved("KERNEL_MEMORY_LIMIT");
     }
-    if (!(clearance > 0.0) || !std::isfinite(clearance)) {
+    if (!(clearance >= 0.0) || !std::isfinite(clearance)) {
         return unresolved("KERNEL_CLEARANCE_INVALID");
     }
     if (!supported_floating_environment()) {
@@ -2321,7 +2318,11 @@ std::optional<PairResult> bounds_pair_certificate(const PosedBounds& first, cons
     if (proof == CardinalBoundProof::indeterminate) {
         return unresolved(exact_failure_code(budget));
     }
-    return PairResult { Decision::no, BoundaryRelation::disjoint, Threshold::at_least,
+    // A nonnegative exact gap between authoritative bounds proves disjoint
+    // interiors, including contact at zero clearance. It does not distinguish
+    // boundary contact from a positive surface gap; neither is required at zero.
+    const auto boundary = clearance == 0.0 ? BoundaryRelation::indeterminate : BoundaryRelation::disjoint;
+    return PairResult { Decision::no, boundary, Threshold::at_least,
                         "exact-cardinal-bounds-lower-bound", "" };
 }
 
@@ -2329,7 +2330,7 @@ std::optional<SupportPairResult> support_pair_certificate(const PosedBounds& fir
                                                           double clearance, std::shared_ptr<const SupportTable>& table,
                                                           Budget& budget)
 {
-    if (clearance == 0.0 || !first.is_cardinal || !second.is_cardinal || first.asset != second.asset ||
+    if (!first.is_cardinal || !second.is_cardinal || first.asset != second.asset ||
         (table && table->asset != first.asset)) {
         return std::nullopt;
     }
@@ -2343,7 +2344,7 @@ std::optional<SupportPairResult> support_pair_certificate(const PosedBounds& fir
     if (!scratch.held()) {
         return unresolved(exact_failure_code(budget));
     }
-    if (!(clearance > 0.0) || !std::isfinite(clearance)) {
+    if (!(clearance >= 0.0) || !std::isfinite(clearance)) {
         return unresolved("KERNEL_CLEARANCE_INVALID");
     }
     if (!supported_floating_environment()) {
@@ -2464,6 +2465,8 @@ std::optional<SupportPairResult> support_pair_certificate(const PosedBounds& fir
             return unresolved("KERNEL_INTERVAL_OVERFLOW");
         }
         const double gap = std::max(forward.low, backward.low);
+        // Also valid at zero requested clearance: require a strictly positive
+        // enclosed gap here; only the exact cardinal AABB proof accepts contact.
         if (!(gap > 0.0)) {
             continue;
         }
@@ -2820,6 +2823,14 @@ PairResult classify_pair(const PlacedSolid& first,const PlacedSolid& second,
   }
   if (separated_by_bounds(first,second,clearance,budget))
     return {Decision::no,BoundaryRelation::disjoint,Threshold::above,"outward-aabb",""};
+  // Export validates independently imported, quantized solids through this path.
+  // Apply the zero-clearance proof to those actual staged vertices, preserving
+  // the exact below/equal/above distance classification at positive clearance.
+  if (clearance == 0.0) {
+    if (const auto certificate = cardinal_bounds_clearance_certificate(first,second,clearance,budget)) {
+      return *certificate;
+    }
+  }
   if (separated_by_bounds(first,second,0.0,budget)) {
     const auto gap=exact_surface_gap(first,second,clearance,budget);
     return {Decision::no,BoundaryRelation::disjoint,gap,"outward-aabb-exact-gap",
