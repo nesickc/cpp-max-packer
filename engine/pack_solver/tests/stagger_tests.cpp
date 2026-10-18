@@ -10,6 +10,18 @@ namespace geo = spectrapack::geometry;
 namespace sol = spectrapack::solver;
 
 namespace {
+std::shared_ptr<const geo::ValidationContext> wing_context()
+{
+    // A rigid elevated body and low wing. Adjacent AABBs overlap, but the
+    // wing fits below the next body with more than the requested clearance.
+    auto mesh = geo::test_support::cuboid({ -1, -1, .5 }, { 1, 1, 1 });
+    geo::test_support::append_cuboid(mesh, { .8, -.4, 0 }, { 2, .4, .2 });
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = .125;
+    return std::get<std::shared_ptr<const geo::ValidationContext>>(geo::make_validation_context(
+        geo::test_support::accepted(mesh, geo::AssetRole::object), geo::BoxDimensions { 9.25, 2.4, 1.4 }, constraints));
+}
+
 std::shared_ptr<const geo::ValidationContext> diamond_context(bool contact = false)
 {
     auto mesh = geo::test_support::cuboid({ -.5, -.5, 0 }, { .5, .5, 1 });
@@ -26,6 +38,64 @@ std::shared_ptr<const geo::ValidationContext> diamond_context(bool contact = fal
         contact ? geo::BoxDimensions { 5, 3.75, 1 } : geo::BoxDimensions { 5.5, 4, 1 }, constraints));
 }
 }  // namespace
+
+TEST_CASE("Timed stagger fits wings beneath neighboring bodies", "[solver][interlocking]")
+{
+    const bool stop_after_improvement = GENERATE(false, true);
+    const auto context = wing_context();
+    const auto baseline = sol::run_aabb_baseline(context, {}, {});
+    REQUIRE(baseline.best);
+    REQUIRE(baseline.best->score.count == 2);
+    const auto witness = geo::make_candidate(context, {
+                                                          { "a", { 1.65, 1.2, .7 }, { 0, 0, 0, 1 } },
+                                                          { "b", { 4.6, 1.2, .7 },  { 0, 0, 0, 1 } },
+                                                          { "c", { 7.55, 1.2, .7 }, { 0, 0, 0, 1 } }
+    });
+    const auto checked = geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(witness));
+    CAPTURE(checked.report.code, checked.report.message, context->object()->bounds_mm().min,
+            context->object()->bounds_mm().max);
+    REQUIRE(checked.validated_solution);
+    std::stop_source stop;
+    sol::RunControl control;
+    control.stop = stop.get_token();
+    control.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    sol::SpectralLimits limits;
+    limits.resource_mode = sol::ResourceMode::timed;
+    std::vector<std::uint64_t> counts;
+    const auto run = sol::run_cpu_spectral(context, { {}, .001 }, limits, control, [&](sol::SnapshotHandle snapshot) {
+        counts.push_back(snapshot->score.count);
+        if (stop_after_improvement && snapshot->score.count >= 3) {
+            stop.request_stop();
+        }
+    }, baseline.best->solution);
+    REQUIRE(run.run.best);
+    CHECK(run.run.best->score.count >= 3);
+    CHECK(geo::revalidate(run.run.best->solution).validated_solution);
+    CHECK(std::is_sorted(counts.begin(), counts.end()));
+    CHECK(run.run.best->solution->context() == context);
+    if (stop_after_improvement) {
+        CHECK(run.run.termination_reason == sol::TerminationReason::user_stopped);
+    }
+}
+
+TEST_CASE("Timed stagger searches row spacing beyond the fixed seed", "[solver][interlocking]")
+{
+    const auto original = diamond_context();
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(
+        geo::make_validation_context(original->object(), geo::BoxDimensions { 5.5, 4.5, 1 }, original->constraints()));
+    sol::SpectralLimits fixed;
+    const auto seed = sol::run_cpu_spectral(context, { {}, .001 }, fixed, {});
+    REQUIRE(seed.run.best);
+    REQUIRE(seed.run.best->score.count == 4);
+    sol::RunControl control;
+    control.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    auto timed = fixed;
+    timed.resource_mode = sol::ResourceMode::timed;
+    const auto improved = sol::run_cpu_spectral(context, { {}, .001 }, timed, control, {}, seed.run.best->solution);
+    REQUIRE(improved.run.best);
+    CHECK(improved.run.best->score.count >= 6);
+    CHECK(geo::revalidate(improved.run.best->solution).validated_solution);
+}
 
 TEST_CASE("GEO-06 zero-clearance diamond contact validates without accepting overlap", "[solver][stagger][AT-09]")
 {

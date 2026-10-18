@@ -19,6 +19,7 @@
 #include "allocation_fault.hpp"
 #include "baseline_internal.hpp"
 #include "block_layout.hpp"
+#include "interlocking_stagger.hpp"
 #include "orientation_cube.hpp"
 #include "pipeline_profile.hpp"
 #include "storage_accounting.hpp"
@@ -497,9 +498,9 @@ BaselineOutcome run_aabb_baseline_impl(
     const BaselineLimits& limits, const RunControl& control, SnapshotSink sink,
     std::shared_ptr<const geometry::ValidatedSolution> initial,
     const std::vector<geometry::Quaternion>* exact_seeds, StaggerSummary* stagger = nullptr,
-    SnapshotHandle entry = {}, bool blocks = false) {
+    SnapshotHandle entry = {}, bool blocks = false, bool interlocking = false) {
   BaselineOutcome out;
-  if ((stagger || blocks) && entry && entry->solution && entry->solution->context() == context &&
+  if ((stagger || blocks || interlocking) && entry && entry->solution && entry->solution->context() == context &&
       entry->score.count == entry->solution->copies().size()) {
     out.best = entry;
   }
@@ -545,7 +546,7 @@ BaselineOutcome run_aabb_baseline_impl(
     std::uint64_t incumbent_bytes = detail::kIncumbentFixedOwnerBytes;
     std::shared_ptr<const geometry::ValidatedSolution> admitted_solution;
     if (entry) {
-      if ((!stagger && !blocks) || !detail::IncumbentResumeAccess::resume(incumbent, entry)) {
+      if ((!stagger && !blocks && !interlocking) || !detail::IncumbentResumeAccess::resume(incumbent, entry)) {
         out.diagnostic_code = "STAGGER_ENTRY_INVALID";
         return out;
       }
@@ -736,6 +737,136 @@ BaselineOutcome run_aabb_baseline_impl(
       out.termination_reason = TerminationReason::budget_exhausted;
       out.diagnostic_code = "PHYSICAL_ORIENTATION_LIMIT";
       return out;
+    }
+
+    if (interlocking) {
+        if (!std::holds_alternative<geometry::BoxDimensions>(context->container())) {
+            retain_best();
+            out.termination_reason = TerminationReason::search_stalled;
+            return out;
+        }
+        const auto finish = [&](std::string_view code, TerminationReason reason) {
+            retain_best();
+            out.diagnostic_code = code;
+            out.termination_reason = reason;
+            const auto stop = boundary(control);
+            if (stop != Boundary::none) {
+                apply_boundary(out, stop);
+            }
+            return out;
+        };
+        std::uint64_t persistent = *base;
+        if (!add_optional(persistent, checked_product(seeds.capacity(), sizeof(geometry::Quaternion))) ||
+            !add_optional(persistent, solution_bytes(entry ? entry->solution : nullptr)) ||
+            !checked_add(persistent,
+                         sizeof(detail::StaggerEnvelope) + 8 * sizeof(detail::InterlockingLayout) + 4096)) {
+            return finish("STAGGER_MEMORY_LIMIT", TerminationReason::resource_limit);
+        }
+        for (std::size_t seed = 0; seed < std::min<std::size_t>(24, seeds.size()); ++seed) {
+            if (boundary(control) != Boundary::none) {
+                return finish("STAGGER_INTERRUPTED", TerminationReason::budget_exhausted);
+            }
+            if (out.stats.search_passes >= limits.max_search_passes ||
+                out.stats.candidate_evaluations >= limits.max_candidate_evaluations) {
+                return finish("STAGGER_CANDIDATE_LIMIT", TerminationReason::budget_exhausted);
+            }
+            auto live = persistent;
+            if (!add_optional(live, solution_bytes(admitted_solution)) || !checked_add(live, incumbent_bytes) ||
+                !update_peak(out.stats, live, limits)) {
+                return finish("STAGGER_MEMORY_LIMIT", TerminationReason::resource_limit);
+            }
+            const auto queried =
+                geometry::oriented_bounds(context->object(), seeds[seed], query_limits(limits, out.stats, live));
+            if (const auto* failure = std::get_if<geometry::PhysicalQueryFailure>(&queried)) {
+                record_geometry(out.stats, failure->stats, live, limits);
+                return finish(failure->code, TerminationReason::resource_limit);
+            }
+            const auto& oriented = std::get<geometry::OrientedBounds>(queried);
+            if (!record_geometry(out.stats, oriented.stats, live, limits)) {
+                return finish("STAGGER_RESOURCE_LIMIT", TerminationReason::resource_limit);
+            }
+            ++out.stats.orientations_started;
+            ++out.stats.search_passes;
+            std::array<std::size_t, 3> axes { 0, 1, 2 };
+            std::sort(axes.begin(), axes.end(), [&](auto a, auto b) {
+                return std::tuple { oriented.bounds_mm.max[a] - oriented.bounds_mm.min[a], a } <
+                       std::tuple { oriented.bounds_mm.max[b] - oriented.bounds_mm.min[b], b };
+            });
+            const auto query = query_limits(limits, out.stats, live);
+            detail::StaggerEnvelope envelope(control, std::min<std::uint64_t>(8'000'000, query.max_kernel_work),
+                                             query.max_vertex_visits);
+            std::optional<detail::InterlockingLayout> plan;
+            if (envelope.build(context->object()->mesh(), seeds[seed], oriented.bounds_mm, axes[2], axes[1],
+                               axes[0])) {
+                plan = envelope.plan(*bounds, context->constraints().pair_clearance_mm,
+                                     context->constraints().wall_clearance_mm, incumbent.best()->score.count,
+                                     limits.max_copies, limits.max_axis_cells);
+            }
+            geometry::PhysicalQueryStats work;
+            work.kernel_work = envelope.work();
+            work.vertex_visits = envelope.vertices();
+            if (!record_geometry(out.stats, work, live, limits)) {
+                return finish("STAGGER_RESOURCE_LIMIT", TerminationReason::resource_limit);
+            }
+            if (boundary(control) != Boundary::none) {
+                return finish("STAGGER_INTERRUPTED", TerminationReason::budget_exhausted);
+            }
+            if (!plan) {
+                continue;
+            }
+            if (!add_optional(live, checked_product(plan->count, 3 * (sizeof(geometry::CopyPose) + 65))) ||
+                !update_peak(out.stats, live, limits)) {
+                return finish("STAGGER_MEMORY_LIMIT", TerminationReason::resource_limit);
+            }
+            std::vector<geometry::CopyPose> copies;
+            copies.reserve(plan->count);
+            for (std::uint64_t z = 0; z < plan->layers && copies.size() < plan->count; ++z) {
+                for (std::uint64_t y = 0; y < plan->rows && copies.size() < plan->count; ++y) {
+                    for (std::uint64_t x = 0; x < plan->columns[y] && copies.size() < plan->count; ++x) {
+                        if (boundary(control) != Boundary::none) {
+                            return finish("STAGGER_INTERRUPTED", TerminationReason::budget_exhausted);
+                        }
+                        auto translation = plan->origin;
+                        translation[plan->column] += x * plan->pitch[plan->column] + plan->offsets[y];
+                        translation[plan->row] += y * plan->pitch[plan->row];
+                        translation[plan->layer] += z * plan->pitch[plan->layer];
+                        const auto id = copy_id_buffer(seed, copies.size(), "interlock-");
+                        copies.push_back({ std::string(id.text.data(), id.size), translation, seeds[seed] });
+                    }
+                }
+            }
+            const auto made = geometry::make_candidate(context, std::move(copies));
+            if (!std::holds_alternative<std::shared_ptr<const geometry::Candidate>>(made)) {
+                return finish("STAGGER_CANDIDATE_ERROR", TerminationReason::error);
+            }
+            ++out.stats.candidate_evaluations;
+            control.phase(runtime::Phase::validating);
+            auto checked = geometry::validate(context, std::get<std::shared_ptr<const geometry::Candidate>>(made),
+                                              validation_limits(limits, out.stats, live), control);
+            if (!record_validation(out.stats, checked.report, live, limits)) {
+                return finish("STAGGER_VALIDATION_LIMIT", TerminationReason::resource_limit);
+            }
+            if (boundary(control) != Boundary::none) {
+                return finish("STAGGER_INTERRUPTED", TerminationReason::budget_exhausted);
+            }
+            if (checked.validated_solution) {
+                if (!add_optional(live, solution_bytes(checked.validated_solution)) ||
+                    !add_optional(live, retained_report_bytes(checked.report)) ||
+                    !update_peak(out.stats, live, limits)) {
+                    return finish("STAGGER_MEMORY_LIMIT", TerminationReason::resource_limit);
+                }
+                if (!offer(checked.validated_solution, live)) {
+                    return out;
+                }
+            }
+            else if (checked.report.validity == geometry::Validity::invalid) {
+                ++out.stats.invalid_candidates;
+            }
+            else {
+                ++out.stats.indeterminate_candidates;
+            }
+        }
+        return finish("INTERLOCKING_STAGGER_EXHAUSTED", TerminationReason::search_stalled);
     }
 
     if (blocks) {
@@ -1539,6 +1670,16 @@ BaselineOutcome run_aabb_baseline(
 }
 
 namespace detail {
+BaselineOutcome run_interlocking_stagger_with_seeds(std::shared_ptr<const geometry::ValidationContext> context,
+                                                    const BaselineLimits& limits, const RunControl& control,
+                                                    const std::vector<geometry::Quaternion>& seeds, SnapshotSink sink,
+                                                    SnapshotHandle initial)
+{
+    const auto solution = initial ? initial->solution : nullptr;
+    return run_aabb_baseline_impl(std::move(context), limits, control, std::move(sink), solution, &seeds, nullptr,
+                                  std::move(initial), false, true);
+}
+
 BaselineOutcome run_block_layout_with_seeds(std::shared_ptr<const geometry::ValidationContext> context,
                                             const BaselineLimits& limits, const RunControl& control,
                                             const std::vector<geometry::Quaternion>& seeds, SnapshotSink sink,

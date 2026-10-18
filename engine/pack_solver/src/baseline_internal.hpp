@@ -33,4 +33,9 @@ struct IncumbentResumeAccess {
                                                           const std::vector<geometry::Quaternion>&, SnapshotSink,
                                                           SnapshotHandle);
 
+[[nodiscard]] BaselineOutcome run_interlocking_stagger_with_seeds(std::shared_ptr<const geometry::ValidationContext>,
+                                                                  const BaselineLimits&, const RunControl&,
+                                                                  const std::vector<geometry::Quaternion>&,
+                                                                  SnapshotSink, SnapshotHandle);
+
 }  // namespace spectrapack::solver::detail
