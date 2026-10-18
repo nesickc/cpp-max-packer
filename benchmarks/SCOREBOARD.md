@@ -13,3 +13,5 @@ or two copies.
 | 2026-10-18 | e9904ba | cube64=64 \| lprism2=1 \| pryanik2=340 \| pryanik2-0=360 \| ulamok=36 |
 | 2026-10-18 | f8e16fd | cube64=64 \| lprism2=1 \| pryanik2=343 \| pryanik2-0=360 \| ulamok=36 |
 | 2026-10-18 | bee20f2 | cube64=64 \| lprism2=1 \| pryanik2=350 \| pryanik2-0=360 \| ulamok=36 |
+| 2026-10-18 | aa97af9 | cube64=64 \| lprism2=1 \| pryanik2=425 \| pryanik2-0=416 \| ulamok=36 |
+| 2026-10-18 | 185015f | cube64=64 \| lprism2=1 \| pryanik2=425 \| pryanik2-0=416 \| ulamok=36 |
