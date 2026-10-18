@@ -81,6 +81,20 @@ replace the incumbent.
 The search uses no asset names, saved poses or altered physical constraints, and
 does not change manual voxel pitch or the fixed-work path.
 
+After retaining those uniform layouts, timed search tries mixed orientations.
+Pairs come from the permitted catalog and differ by a half-turn around a world
+axis. Prioritize the retained layout's orientation, then test two-state patterns
+alternating columns, rows, layers, or their checkerboards. Align each rotated
+AABB minimum independently and sweep the second state's height offset. Pitches
+come from the box spans, and every stack is counted within its actual wall limits.
+Reject impossible vertical stacks and column chains before sweeping row spacing
+and offsets; these independent screens avoid repeating the expensive mesh checks.
+The two envelopes share the remaining work/vertex allowance, with a 32-million
+work cap each. Neighbor screens cover both orientations and nearby layers. Only
+an improving complete layout that passes the unchanged native validator replaces
+the incumbent. Fixed/catalog rotation permissions and the fixed-work path remain
+unchanged.
+
 Deep interlocking also needs an efficient independent native proof. Validator v5
 can partition the authoritative solid into 64 closed slabs along its shortest
 local axis. Every intersecting triangle contributes its complete in-plane
@@ -92,8 +106,8 @@ separating gap in this certificate. Unsupported or inconclusive pairs use the
 existing full classifier. Arithmetic/resource/control failures stay indeterminate.
 Tables belong to one validation call and are rebuilt during fresh result loading.
 
-The positive-clearance benchmark now finds 425 validated Pryanik-2 copies, up
-from 350, without changing the box, 1/1 mm clearances, permitted rotations or
+The positive-clearance benchmark now finds 435 validated Pryanik-2 copies, up
+from 425 with mixed orientations, without changing the box, 1/1 mm clearances, permitted rotations or
 60-second budget. The bounded search can still miss layouts; these counts are
 best found, not optimality claims.
 

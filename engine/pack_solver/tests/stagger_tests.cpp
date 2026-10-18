@@ -459,3 +459,39 @@ TEST_CASE("Timed search repacks residual boxes when manual pitch cannot admit a 
         CHECK(result.run.termination_reason == sol::TerminationReason::user_stopped);
     }
 }
+
+TEST_CASE("Timed mixed interlocking alternates permitted upside-down copies",
+          "[solver][interlocking][mixed-interlocking]")
+{
+    const bool flipped_allowed = GENERATE(false, true);
+    auto mesh = geo::test_support::cuboid({ -.5, -1.25, -.5 }, { .5, 1.25, .5 });
+    geo::test_support::append_cuboid(mesh, { .6, -.2, -.9 }, { 1.5, .2, -.8 });
+    geo::test_support::append_cuboid(mesh, { -1.5, -.2, -.9 }, { -.6, .2, -.8 });
+    geo::test_support::append_cuboid(mesh, { -.1, -.1, .8 }, { .1, .1, .9 });
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = .1;
+    constraints.orientations.mode = geo::OrientationMode::catalog;
+    constraints.orientations.catalog_xyzw = {
+        { 0, 0, 0, 1 }
+    };
+    if (flipped_allowed) {
+        constraints.orientations.catalog_xyzw.push_back({ 1, 0, 0, 0 });
+    }
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(geo::make_validation_context(
+        geo::test_support::accepted(mesh, geo::AssetRole::object), geo::BoxDimensions { 5.3, 3, 2.2 }, constraints));
+    const auto baseline = sol::run_aabb_baseline(context, {}, {});
+    REQUIRE(baseline.best);
+    REQUIRE(baseline.best->score.count == 1);
+    sol::SpectralLimits limits;
+    limits.resource_mode = sol::ResourceMode::timed;
+    sol::RunControl control;
+    control.deadline = control.now() + std::chrono::seconds(5);
+    const auto result = sol::run_cpu_spectral(context, { {}, .001 }, limits, control, {}, baseline.best->solution);
+    REQUIRE(result.run.best);
+    CHECK(result.run.best->score.count == (flipped_allowed ? 2 : 1));
+    CHECK(geo::revalidate(result.run.best->solution).report.validity == geo::Validity::valid);
+    if (flipped_allowed && result.run.best->score.count == 2) {
+        const auto& copies = result.run.best->solution->copies();
+        CHECK(copies[0].rotation_xyzw != copies[1].rotation_xyzw);
+    }
+}

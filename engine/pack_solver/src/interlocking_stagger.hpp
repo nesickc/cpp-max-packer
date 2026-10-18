@@ -19,6 +19,13 @@ struct InterlockingLayout {
     std::size_t column {}, row {}, layer {};
     double offset {};
     double column_rise {}, phase {}, height_span {};
+    unsigned orientation_mask {};
+    double alternate_height {};
+
+    unsigned orientation(std::uint64_t x, std::uint64_t y, std::uint64_t z) const
+    {
+        return ((orientation_mask & 1 ? x : 0) ^ (orientation_mask & 2 ? y : 0) ^ (orientation_mask & 4 ? z : 0)) & 1;
+    }
 
     double height_offset(std::uint64_t x, std::uint64_t y) const
     {
@@ -293,6 +300,134 @@ public:
     std::uint64_t work() const { return work_; }
     std::uint64_t vertices() const { return vertices_; }
 
+    std::optional<InterlockingLayout> plan_mixed(const StaggerEnvelope& other, const geometry::Bounds& container,
+                                                 double pair, double wall, std::uint64_t incumbent,
+                                                 std::uint64_t max_copies, std::uint64_t max_axis_cells)
+    {
+        max_axis_cells = std::min<std::uint64_t>({ max_axis_cells, max_copies, 1'000'000 });
+        const double gap = pair + (pair > 0 ? std::min(.001, pair / 100) : 0);
+        const double inset = wall + (wall > 0 ? std::min(.001, wall / 100) : 0);
+        geometry::Vec3 extent {}, span {};
+        InterlockingLayout best;
+        best.column = column_;
+        best.row = row_;
+        best.layer = layer_;
+        for (std::size_t axis = 0; axis != 3; ++axis) {
+            extent[axis] =
+                std::max(bounds_.max[axis] - bounds_.min[axis], other.bounds_.max[axis] - other.bounds_.min[axis]);
+            span[axis] = container.max[axis] - container.min[axis] - 2 * inset - extent[axis];
+            best.origin[axis] = container.min[axis] + inset - bounds_.min[axis];
+            if (span[axis] < 0) {
+                return {};
+            }
+        }
+        best.height_span = span[layer_];
+        const auto cap = std::min<std::uint64_t>(64, max_axis_cells);
+        const auto nc = cells(span[column_], (extent[column_] + gap) / 2, cap);
+        const auto nr = cells(span[row_], (extent[row_] + gap) / 2, cap);
+        const auto nz = cells(span[layer_], (extent[layer_] + gap) / 2, cap);
+        // A two-state periodic cell can alternate columns, rows, layers, or
+        // their checkerboards. All poses use catalog rotations; height shifts
+        // only translate the second state. The native validator remains final.
+        const auto neighbors_fit = [&](const InterlockingLayout& trial, int first_row, int last_row, int first_column,
+                                       int last_column) {
+            for (int dy = first_row; dy <= last_row; ++dy) {
+                for (int dx = first_column; dx <= last_column; ++dx) {
+                    for (int dz = -3; dz <= 3; ++dz) {
+                        if (dy == 0 && dx == 0 && dz <= 0) {
+                            continue;
+                        }
+                        for (unsigned row_parity = 0; row_parity != 2; ++row_parity) {
+                            for (unsigned first = 0; first != 2; ++first) {
+                                if (trial.orientation_mask == 2 && first != row_parity) {
+                                    continue;
+                                }
+                                const auto second = first ^ trial.orientation(dx & 1, dy & 1, dz & 1);
+                                const double shift = dy % 2 ? (row_parity ? -trial.offset : trial.offset) : 0;
+                                if (!separated_pair(
+                                        first ? other : *this, second ? other : *this,
+                                        dx * trial.pitch[column_] + shift, dy * trial.pitch[row_], pair,
+                                        dz * trial.pitch[layer_] + (double(second) - first) * trial.alternate_height)) {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return true;
+        };
+        // Reject impossible stacks and column chains before sweeping row
+        // pitches. These checks do not depend on the remaining dimensions.
+        for (unsigned mask : { 1u, 4u, 2u, 3u, 5u, 6u, 7u }) {
+            for (unsigned rise = 0; rise <= 8; ++rise) {
+                for (std::uint64_t layers = nz; layers >= 1; --layers) {
+                    if (!spend(1)) {
+                        return best.count > incumbent ? std::optional { best } : std::nullopt;
+                    }
+                    auto trial = best;
+                    trial.orientation_mask = mask;
+                    trial.alternate_height = rise * extent[layer_] / 16;
+                    trial.pitch[layer_] = layers > 1 ? span[layer_] / (layers - 1) : extent[layer_] + gap;
+                    trial.layers = layers;
+                    trial.offset = 0;
+                    if (nc * nr * layers <= std::max(incumbent, best.count)) {
+                        break;
+                    }
+                    if (!neighbors_fit(trial, 0, 0, 0, 0)) {
+                        continue;
+                    }
+                    for (std::uint64_t columns = nc; columns >= 1; --columns) {
+                        if (!spend(1)) {
+                            return best.count > incumbent ? std::optional { best } : std::nullopt;
+                        }
+                        if (columns * nr * layers <= std::max(incumbent, best.count)) {
+                            break;
+                        }
+                        trial.pitch[column_] = columns > 1 ? span[column_] / (columns - 1) : extent[column_] + gap;
+                        if (!neighbors_fit(trial, 0, 0, 1, 2)) {
+                            continue;
+                        }
+                        for (std::uint64_t rows = nr; rows >= 1; --rows) {
+                            if (columns * rows * layers <= std::max(incumbent, best.count)) {
+                                break;
+                            }
+                            trial.rows = rows;
+                            trial.pitch[row_] = rows > 1 ? span[row_] / (rows - 1) : extent[row_] + gap;
+                            for (double fraction : { .5, 0., .25, .75 }) {
+                                if (!spend(rows * columns)) {
+                                    return best.count > incumbent ? std::optional { best } : std::nullopt;
+                                }
+                                trial.offset = fraction * trial.pitch[column_];
+                                std::uint64_t total {};
+                                for (std::uint64_t y = 0; y != rows; ++y) {
+                                    trial.offsets[y] = (y % 2) * trial.offset;
+                                    trial.columns[y] =
+                                        cells(span[column_] - trial.offsets[y], trial.pitch[column_], cap);
+                                    for (std::uint64_t x = 0; x != trial.columns[y]; ++x) {
+                                        for (unsigned parity = 0; parity != 2; ++parity) {
+                                            const double height =
+                                                parity * trial.pitch[layer_] +
+                                                trial.orientation(x, y, parity) * trial.alternate_height;
+                                            total +=
+                                                cells(span[layer_] - height, 2 * trial.pitch[layer_], max_axis_cells);
+                                        }
+                                    }
+                                }
+                                trial.count = std::min(total, max_copies);
+                                if (trial.count > std::max(incumbent, best.count) &&
+                                    neighbors_fit(trial, 1, 2, -2, 2)) {
+                                    best = trial;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return best.count > incumbent ? std::optional { best } : std::nullopt;
+    }
+
 private:
     Interval clip(const std::array<geometry::Vec3, 3>& triangle, std::size_t row, std::size_t layer)
     {
@@ -358,25 +493,34 @@ private:
     }
     bool separated(double dx, double dy, double gap, double height = 0)
     {
-        if (std::abs(dx) > bounds_.max[column_] - bounds_.min[column_] + gap ||
-            std::abs(dy) > bounds_.max[row_] - bounds_.min[row_] + gap ||
-            std::abs(height) > bounds_.max[layer_] - bounds_.min[layer_] + gap) {
+        return separated_pair(*this, *this, dx, dy, gap, height);
+    }
+
+    bool separated_pair(const StaggerEnvelope& left, const StaggerEnvelope& right, double dx, double dy, double gap,
+                        double height)
+    {
+        if (dx > left.bounds_.max[column_] - left.bounds_.min[column_] + gap ||
+            -dx > right.bounds_.max[column_] - right.bounds_.min[column_] + gap ||
+            dy > left.bounds_.max[row_] - left.bounds_.min[row_] + gap ||
+            -dy > right.bounds_.max[row_] - right.bounds_.min[row_] + gap ||
+            height > left.bounds_.max[layer_] - left.bounds_.min[layer_] + gap ||
+            -height > right.bounds_.max[layer_] - right.bounds_.min[layer_] + gap) {
             return true;
         }
         for (std::size_t z = 0; z < kLayers; ++z) {
             for (std::size_t zz = 0; zz < kLayers; ++zz) {
-                const double dz =
-                    std::max(0.0, std::abs((double(zz) - double(z)) * layer_step_ + height) - layer_step_);
+                const double dz = std::max({ 0.0, zz * right.layer_step_ + height - (z + 1) * left.layer_step_,
+                                             z * left.layer_step_ - (zz + 1) * right.layer_step_ - height });
                 if (dz > gap) {
                     continue;
                 }
                 for (std::size_t r = 0; r < kRows; ++r) {
-                    const auto& a = intervals_[z * kRows + r];
+                    const auto& a = left.intervals_[z * kRows + r];
                     if (a.low > a.high) {
                         continue;
                     }
-                    const double center = double(r) - dy / row_step_;
-                    const double radius = 1 + gap / row_step_;
+                    const double center = ((r + .5) * left.row_step_ - dy) / right.row_step_ - .5;
+                    const double radius = (.5 * (left.row_step_ + right.row_step_) + gap) / right.row_step_;
                     if (!std::isfinite(center) || !std::isfinite(radius)) {
                         return false;
                     }
@@ -390,12 +534,14 @@ private:
                         if (!spend(1)) {
                             return false;
                         }
-                        const auto& b = intervals_[zz * kRows + rr];
-                        const double sy = std::max(0.0, std::abs((double(rr) - r) * row_step_ + dy) - row_step_);
+                        const auto& b = right.intervals_[zz * kRows + rr];
+                        const double sy = std::max({ 0.0, rr * right.row_step_ + dy - (r + 1) * left.row_step_,
+                                                     r * left.row_step_ - (rr + 1) * right.row_step_ - dy });
                         if (b.low > b.high || sy > gap) {
                             continue;
                         }
-                        const double sx = std::max({ 0.0, b.low + dx - a.high, a.low - b.high - dx });
+                        const double shift = dx + left.bounds_.min[column_] - right.bounds_.min[column_];
+                        const double sx = std::max({ 0.0, b.low + shift - a.high, a.low - b.high - shift });
                         if (sx * sx + sy * sy + dz * dz <= gap * gap) {
                             return false;
                         }
