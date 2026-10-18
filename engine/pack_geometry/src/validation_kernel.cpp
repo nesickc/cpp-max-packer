@@ -2657,6 +2657,43 @@ std::optional<SupportPairResult> layer_support_pair_certificate(const PosedBound
         }
     }
     const auto world_table = [&](const PosedBounds& posed, WorldTable& world) {
+        struct Mapping {
+            std::size_t source {};
+            bool reverse {};
+            Interval translation;
+        };
+        std::array<Mapping, 12> mappings {};
+        // The signed direction and translation are shared by every slab.
+        // Compute their identical interval projections once per posed table.
+        if (!budget.consume_work(12 * 32)) {
+            return false;
+        }
+        for (std::size_t index = 0; index != normals.size(); ++index) {
+            auto& mapping = mappings[index];
+            SupportDirection local {};
+            for (int coordinate = 0; coordinate != 3; ++coordinate) {
+                local[posed.cardinal.source_axis[coordinate]] =
+                    posed.cardinal.sign[coordinate] * normals[index][coordinate];
+            }
+            for (const int coefficient : local) {
+                if (coefficient) {
+                    mapping.reverse = coefficient < 0;
+                    break;
+                }
+            }
+            if (mapping.reverse) {
+                for (auto& coefficient : local) {
+                    coefficient = -coefficient;
+                }
+            }
+            while (mapping.source != 33 && direction(mapping.source) != local) {
+                ++mapping.source;
+            }
+            mapping.translation = support_projection(normals[index], posed.translation);
+            if (mapping.source == 33 || !mapping.translation.valid) {
+                return false;
+            }
+        }
         for (std::size_t slab = 0; slab != table->count; ++slab) {
             if (!table->slices[slab].occupied) {
                 continue;
@@ -2672,35 +2709,12 @@ std::optional<SupportPairResult> layer_support_pair_certificate(const PosedBound
                 return false;
             }
             for (std::size_t index = 0; index != normals.size(); ++index) {
-                SupportDirection local {};
-                for (int coordinate = 0; coordinate != 3; ++coordinate) {
-                    local[posed.cardinal.source_axis[coordinate]] =
-                        posed.cardinal.sign[coordinate] * normals[index][coordinate];
-                }
-                bool reverse {};
-                for (const int coefficient : local) {
-                    if (coefficient) {
-                        reverse = coefficient < 0;
-                        break;
-                    }
-                }
-                if (reverse) {
-                    for (auto& coefficient : local) {
-                        coefficient = -coefficient;
-                    }
-                }
-                std::size_t source {};
-                while (source != 33 && direction(source) != local) {
-                    ++source;
-                }
-                if (source == 33) {
-                    return false;
-                }
-                auto support = table->slices[slab].supports[source];
-                if (reverse) {
+                const auto& mapping = mappings[index];
+                auto support = table->slices[slab].supports[mapping.source];
+                if (mapping.reverse) {
                     support = { -support.high, -support.low, support.valid };
                 }
-                target.supports[index] = add_interval(support, support_projection(normals[index], posed.translation));
+                target.supports[index] = add_interval(support, mapping.translation);
                 if (!target.supports[index].valid) {
                     return false;
                 }
