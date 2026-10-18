@@ -4,8 +4,8 @@ This is the current search design. Unlike the [spec](../doc/spectrapack-spec.md)
 everything here is **tunable**: change weights, page sizes, catalogs, schedules and
 recovery behaviour freely when `python tools/scoreboard.py` shows an improvement and
 the validity rules in spec §5.3 and §6 still hold. Update this file with the change;
-no decision record is needed. The text below was moved from spec v0.2 §6 unchanged
-and describes the code as of 2026-10-17. Historical rationale lives in
+no decision record is needed. This file began with spec v0.2 §6 and is updated
+through 2026-10-18. Historical rationale lives in
 `spec/decisions/` and `doc/T-*.md` (frozen).
 
 ## Baseline and staggered seed
@@ -59,6 +59,27 @@ from 340 to 343 at both 2 and 4 mm manual pitch. Both saved layouts pass fresh
 native validation. The zero-clearance floor remains 360; the 388-copy bounding-box
 reference is still only a reference, not a native-validated solver result.
 
+Timed runs then search interlocking rows using the accepted mesh. For each of up
+to 24 permitted orientations, choose the shortest AABB axis for layers and the
+longest for columns. Clip mesh triangles into 32 x 32 row/height bins and retain
+their column intervals. These envelopes preserve sloping edges and thin wings
+better than whole-triangle bounding boxes, but fill cavities and are only search
+screens. They never establish validity.
+
+Sweep up to 64 rows/columns, 16 lateral phases, box-fitting and fractional column
+pitches, and both alternating and progressive row offsets. Derive the minimum
+within-row pitch from the envelopes, screen neighboring rows with the requested
+Euclidean pair gap, and keep full AABB layer spacing. Work is bounded at eight
+million units per orientation, with shared cancellation, deadline and memory
+admission. Only the highest improving proposal from each orientation enters full
+native validation; invalid or indeterminate results cannot replace the incumbent.
+The search uses no asset names, saved poses or altered physical constraints, and
+does not change manual voxel pitch or the fixed-work path.
+
+This finds 350 validated Pryanik-2 copies in the unchanged positive-clearance
+benchmark, exceeding the previous 343. The bounded envelope search can still miss
+layouts; a larger proposal count alone is not evidence of a valid packing.
+
 ## Conservative fields and FFT placement
 
 Use one physical voxel pitch `h` and a common world grid per search level. Do not independently normalize the object and container into unrelated voxel scales.
@@ -98,6 +119,7 @@ The current implementation is narrower than the original design:
 ```text
 retain the validated uniform-grid baseline and staggered proposal
 for timed runs, validate improving residual-block proposals (depths 1–3)
+for timed runs, validate improving mesh-envelope stagger proposals
 if FFT admission is affordable:
     greedily insert from an empty layout using cached spectral pages
     on stall, try bounded physical face alignments and low-overlap candidates
@@ -105,9 +127,9 @@ if FFT admission is affordable:
 return the highest validated count with the actual termination reason
 ```
 
-Every phase shares the Start deadline and Stop control. Physical block trials keep
-the entry incumbent while testing complete replacement layouts. This is the only
-implemented whole-layout rearrangement beyond the stagger seed. The spectral
+Every phase shares the Start deadline and Stop control. Physical block and
+interlocking-row trials keep the entry incumbent while testing complete replacement
+layouts. The spectral
 controller does **not** yet perform the originally proposed spatial-neighborhood
 removal/reinsertion, equal-count pose exploration, multiple randomized restarts or
 continuous local pose refinement. Extra time can evaluate more candidates but does
@@ -141,7 +163,7 @@ still restart on a larger allowance; resumable raster cursors across failed call
 are not implemented. The physical block phase is independent of field admission
 and provides useful rearrangement even when a field cannot fit.
 
-The final 4 mm benchmark reached 18 correlations and nine FFT candidates submitted
+Before the interlocking-row extension, the 4 mm benchmark reached 18 correlations and nine FFT candidates submitted
 to native validation, compared with four correlations and no FFT candidates before
 the fix. It retained 343 and ran to the unchanged 60-second deadline. The 2 mm run
 passed memory admission and reached one correlation, but submitted no FFT

@@ -12,3 +12,4 @@ or two copies.
 | 2026-10-17 | 1db851c | pryanik2-0=360 \| cube64=64 \| lprism2=1 \| pryanik2=340 \| ulamok=36 |
 | 2026-10-18 | e9904ba | cube64=64 \| lprism2=1 \| pryanik2=340 \| pryanik2-0=360 \| ulamok=36 |
 | 2026-10-18 | f8e16fd | cube64=64 \| lprism2=1 \| pryanik2=343 \| pryanik2-0=360 \| ulamok=36 |
+| 2026-10-18 | bee20f2 | cube64=64 \| lprism2=1 \| pryanik2=350 \| pryanik2-0=360 \| ulamok=36 |
