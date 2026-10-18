@@ -1,69 +1,60 @@
 # Project status
 
-Updated 2026-10-18. Keep this to one page: what works, the current goal, known
-problems and the latest scoreboard. Details belong in PRs and `.local/` logs.
+Updated 2026-10-18. Details belong in PRs and `.local/` logs.
 
 ## What works
 
-- **Engine (C++20, CPU):** STL import with diagnostics and safe cleanup; accepted
-  full-resolution solids; independent validator (overlap, containment, pair/wall
-  clearance); AABB grid baseline, staggered-row seed and CPU spectral (FFT)
-  placement with cube/custom rotations; multithreaded CPU search; JSON result and
-  validated binary STL export. CLI: `inspect`, `solve`, `capabilities`, `serve --stdio`.
+- **Engine (C++20, CPU):** STL import and cleanup; authoritative solids;
+  independent overlap, containment and pair/wall-clearance validation; grid,
+  stagger and residual-block layout proposals; CPU FFT placement with permitted
+  cube/custom rotations; JSON results and validated binary STL export.
 - **Desktop (Tauri/React/Three.js):** import, box settings, Start/Stop, live count,
-  shared-mesh viewer, Save/Open project, export.
-- **Build/tests:** pinned Windows CPU build ([docs/BUILDING.md](../docs/BUILDING.md)),
-  native Catch2/CTest suites, Python tool tests, hosted Windows CI.
+  shared-mesh viewer, Save/Open project and export.
+- **Timed search:** CLI inputs without a resolved resource policy now use the
+  desktop RAM-share policy and bounded work recovery. Manual pitch, explicit
+  memory caps, Stop and deadlines remain enforced; fixed-work behavior is unchanged.
+- **Verification:** Release and Debug native suites, Python tools, contract
+  fixtures, desktop tests/build and independent review passed for this change.
 
 Not yet: Vulkan, STL containers, upright/free-3D rotations, library repair, crash
-recovery, installer. These are mostly **Later** in spec v0.3.
+recovery or installer. These are mostly **Later** in spec v0.3.
 
 ## Scoreboard
 
-`python tools/scoreboard.py` (Release, 8 threads), 2026-10-18 at `e9904ba`.
-All cases freshly revalidated through native result loading:
+`python tools/scoreboard.py --record` (Release, 8 threads), 2026-10-18 at `f8e16fd`.
+All five saved layouts freshly passed native result-loading validation. Budgets
+are unchanged: 10 seconds for the analytic fixtures, 60 seconds for the STL cases.
 
-| Case | Count | Floor | Target | Block layout | Termination |
-| --- | --- | --- | --- | --- | --- |
-| cube64 | 64 | 64 | 64 | 64 | budget_exhausted |
-| lprism2 | 1 | 1 | 2 | 1 | search_stalled |
-| pryanik2 (1/1 mm) | 340 | 340 | 350 | 343 | resource_limit |
-| pryanik2-0 (0/1 mm) | 360 | 360 | 360 | 388 | resource_limit |
-| ulamok | 36 | 36 | 36 | 36 | resource_limit |
+| Case | Count | Floor | Target | Termination |
+| --- | --- | --- | --- | --- |
+| cube64 | 64 | 64 | 64 | budget_exhausted |
+| lprism2 | 1 | 1 | 2 | search_stalled |
+| pryanik2 (1/1 mm) | **343** | 340 | 350 | budget_exhausted |
+| pryanik2-0 (0/1 mm) | 360 | 360 | 360 | budget_exhausted |
+| ulamok | 36 | 36 | 36 | budget_exhausted |
 
-"Block layout" is a simple bounding-box reference computed by the script, not a
-bound. History: [benchmarks/SCOREBOARD.md](../benchmarks/SCOREBOARD.md).
-Pryanik also retains 340/360 at 2 mm pitch with the same 60-second settings.
+Pryanik uses the unchanged 400 x 340 x 285 mm box and 4 mm manual pitch.
+The positive-clearance layout improved from 340 to 343 in 4.4 seconds. Separate
+60-second runs at 2 mm also retain 343/360 and pass fresh native validation.
+Explicit 180/300-second runs at 4 mm and 180 seconds at 2 mm retain 343, evaluate
+more FFT candidates and pass fresh validation. The zero-clearance 388-copy block
+reference remains unvalidated, not a bound.
+History: [benchmarks/SCOREBOARD.md](../benchmarks/SCOREBOARD.md).
 
-## Known problems (priority order)
+## Known problems and current goal
 
-1. **Search still ends early at resource limits.** At 4 mm, Pryanik stops at
-   `FIELD_KERNEL_WORK_LIMIT`; at 2 mm, `SPECTRAL_MEMORY_LIMIT` stops spectral
-   admission. The validated 340/360-copy incumbents survive, but time remains unused.
-2. **Preparation leaves little actual search.** The 4 mm runs reach only four FFT
-   correlations before the resource stop.
-3. **The baseline is weaker than simple block layouts** (315 grid vs 343 blocks for
-   pryanik2). The L-prism pair (`lprism2`) is not found in a 10 s timed run.
-4. `rc/containers/10_kg_np.stl` is 400×350×285 mm; the real Nova Post 10 kg box is
-   400×340×285 mm. Use box dimensions, not that STL.
+1. Find more than 343 valid Pryanik copies. Residual blocks rearrange complete
+   layouts, but the spectral controller still starts with greedy empty-layout
+   insertion, then tries the retained layout. It has no neighborhood
+   removal/reinsertion or equal-count pose exploration.
+2. Failed raster operations can restart with larger work allowances. Completed
+   preparation is cached; partially completed raster work is not resumable.
+3. The L-prism pair remains unfound in the fixed benchmark. Heuristic stalls and
+   budget exhaustion do not establish optimality; results remain `best_found`.
+4. `rc/containers/10_kg_np.stl` is 400 x 350 x 285 mm; the real Nova Post 10 kg box
+   is 400 x 340 x 285 mm. Use box dimensions, not that STL.
 
-## Current goal
-
-Zero-clearance validation is fixed: 1 → 360 copies using existing generated layouts.
-Next, use the remaining 60-second budget to improve the retained 340-copy layout
-at 1 mm pair clearance, preserving manual pitch and physical constraints.
-
-## Open PRs and branches
-
-- [PR #16](https://github.com/nesickc/cpp-max-packer/pull/16) `feature/SOL-05-resource-recovery`:
-  resource recovery (T015-P2), rebased onto main's merged process reset. Retains 340/36;
-  both hosted Windows CI runs passed.
-- `feature/zero-clearance-validation`, stacked on PR #16: exact contact and oblique
-  separation at zero requested clearance; no new packing strategy or saved poses.
-
-## Process
-
-[AGENTS.md](../AGENTS.md) is the whole workflow. Spec v0.3 ([spec](spectrapack-spec.md))
-splits Core v1.0 from Later work; algorithm details are in
-[docs/ALGORITHM.md](../docs/ALGORITHM.md). Tickets `doc/T-*.md`, milestone and
-evidence documents and decision records 0001–0019 are frozen history.
+PRs #16 and #18 are merged. This continuation is based on updated `main`.
+See [docs/ALGORITHM.md](../docs/ALGORITHM.md) for implemented behavior and limits,
+[docs/BUILDING.md](../docs/BUILDING.md) for builds, and [AGENTS.md](../AGENTS.md)
+for the workflow. Historical ticket/evidence documents remain frozen.

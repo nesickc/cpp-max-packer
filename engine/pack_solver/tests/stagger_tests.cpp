@@ -328,3 +328,43 @@ TEST_CASE("SOL-04 stagger resumes the exact exposed incumbent without a duplicat
         CHECK(run.run.termination_reason == sol::TerminationReason::user_stopped);
     }
 }
+
+TEST_CASE("Timed search repacks residual boxes when manual pitch cannot admit a field", "[solver][continued-packing]")
+{
+    const bool clearance = GENERATE(false, true);
+    const bool stop_after_improvement = GENERATE(false, true);
+    std::stop_source stop;
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = clearance ? .1 : 0;
+    constraints.wall_clearance_mm = clearance ? .1 : 0;
+    constraints.orientations.mode = geo::OrientationMode::cube;
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(geo::make_validation_context(
+        geo::test_support::accepted(geo::test_support::cuboid({ 0, 0, 0 }, { 3, 2, 1 }), geo::AssetRole::object),
+        clearance ? geo::BoxDimensions{ 5.5, 5.5, 1.5 } : geo::BoxDimensions{ 5, 5, 1 }, constraints));
+    const auto baseline = sol::run_aabb_baseline(context, {}, {});
+    REQUIRE(baseline.best);
+    REQUIRE(baseline.best->score.count == 2);
+    sol::SpectralLimits limits;
+    limits.resource_mode = sol::ResourceMode::timed;
+    sol::RunControl control;
+    control.stop = stop.get_token();
+    control.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    std::vector<std::uint64_t> counts;
+    const auto result = sol::run_cpu_spectral(
+        context, { {}, .001 }, limits, control,
+        [&](sol::SnapshotHandle snapshot) {
+            counts.push_back(snapshot->score.count);
+            if (stop_after_improvement && snapshot->score.count >= 3) {
+                stop.request_stop();
+            }
+        },
+        baseline.best->solution);
+    REQUIRE(result.run.best);
+    CHECK(result.run.best->score.count >= 3);
+    CHECK(geo::revalidate(result.run.best->solution).validated_solution);
+    CHECK(std::is_sorted(counts.begin(), counts.end()));
+    CHECK(result.run.best->solution->context() == context);
+    if (stop_after_improvement) {
+        CHECK(result.run.termination_reason == sol::TerminationReason::user_stopped);
+    }
+}

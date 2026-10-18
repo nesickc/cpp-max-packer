@@ -220,6 +220,39 @@ class SolveSubprocessTests(unittest.TestCase):
             self.assert_result_contract(result_path)
         return completed, settings_path, result_path, stl_path
 
+    def test_timed_solve_without_resource_policy_repacks_after_field_denial(self):
+        vertices = [(x * .3, y * .2, z * .1) for x, y, z in cube_vertices()]
+        data = bytearray(80) + struct.pack("<I", len(SOURCE_FACES))
+        for face in SOURCE_FACES:
+            data += struct.pack("<3f", 0, 0, 0)
+            for index in face:
+                data += struct.pack("<3f", *vertices[index])
+            data += struct.pack("<H", 0)
+        self.source_path.write_bytes(data)
+        inspected = run_engine("inspect", "--stl", self.source_path, "--units", "mm", "--role", "object",
+                               "--report", self.object_report_path)
+        self.assertEqual(inspected.returncode, 0, inspected.stdout)
+        settings = self.settings((5, 5, 1))
+        settings["orientation"] = {"mode": "cube"}
+        settings["resolved"]["orientation_catalog_sha256"] = "fe7ba7524cabd7dbb20a4c1acc053d1ca518df6c6c5f2949f78f9b3a0ac1b95a"
+        settings["resolution"]["pitch_mm"] = settings["resolved"]["pitch_mm"] = .001
+        settings["search"] = {"preset": "subprocess", "seed": "0", "deterministic": False, "budget_seconds": 5}
+        completed, _, result_path, _ = self.solve(settings)
+        self.assertTrue(result_path.exists(), completed.stdout)
+        result = json.loads(result_path.read_text())
+        self.assertGreaterEqual(result["count"], 3)
+        self.assertEqual(result["validation"]["status"], "valid")
+        self.assertEqual(result["search"]["resolved_settings"]["resolved"]["pitch_mm"], .001)
+
+    def test_timed_solve_without_policy_honors_explicit_memory_cap(self):
+        settings = self.settings()
+        settings["search"] = {"preset": "subprocess", "seed": "0", "deterministic": False, "budget_seconds": 5}
+        settings["compute"]["host_memory_limit_bytes"] = "1"
+        completed, _, result_path, _ = self.solve(settings)
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertEqual(json.loads(completed.stdout)["error"]["code"], "MEMORY_LIMIT")
+        self.assertFalse(result_path.exists())
+
     def contract_check(self, document):
         return subprocess.run(
             [str(CONTRACT_VALIDATOR)], input=document, capture_output=True, timeout=10)
@@ -859,6 +892,8 @@ class SolveSubprocessTests(unittest.TestCase):
 
 
 CASES = {
+    "solve_timed_memory_cap": "test_timed_solve_without_policy_honors_explicit_memory_cap",
+    "solve_timed_repacking": "test_timed_solve_without_resource_policy_repacks_after_field_denial",
     "solve_cube_64": "test_cube_64",
     "solve_empty": "test_empty",
     "solve_unicode_relocation": "test_unicode_relocation",

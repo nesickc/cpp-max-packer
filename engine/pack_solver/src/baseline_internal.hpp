@@ -28,4 +28,9 @@ struct IncumbentResumeAccess {
                                                           const std::vector<geometry::Quaternion>&, StaggerSummary&,
                                                           SnapshotSink, SnapshotHandle initial);
 
+[[nodiscard]] BaselineOutcome run_block_layout_with_seeds(std::shared_ptr<const geometry::ValidationContext>,
+                                                          const BaselineLimits&, const RunControl&,
+                                                          const std::vector<geometry::Quaternion>&, SnapshotSink,
+                                                          SnapshotHandle);
+
 }  // namespace spectrapack::solver::detail

@@ -702,10 +702,20 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
                 { "no_nonempty_incumbent", true }
         });
     }
-    const auto host_cap =
-        settings["resolved"].contains("resource_policy")
-            ? *spectrapack::cli::decimal_bytes(settings["resolved"]["resource_policy"]["host_cap_bytes"])
-            : 512ULL << 20;
+    std::uint64_t host_cap = 512ULL << 20;
+    if (settings["resolved"].contains("resource_policy")) {
+        host_cap = *spectrapack::cli::decimal_bytes(settings["resolved"]["resource_policy"]["host_cap_bytes"]);
+    }
+    else if (!deterministic) {
+        const auto user_cap = settings["compute"].contains("host_memory_limit_bytes")
+                                  ? spectrapack::cli::decimal_bytes(settings["compute"]["host_memory_limit_bytes"])
+                                  : std::nullopt;
+        const auto cap = spectrapack::cli::resolve_host_cap(spectrapack::cli::sample_available_ram(), user_cap);
+        if (!cap) {
+            return fail("MEMORY_SAMPLE_UNAVAILABLE", "Available physical RAM could not be resolved.", 3);
+        }
+        host_cap = *cap;
+    }
     std::uint64_t loading_reserve = run_runtime.retained_reserve_bytes;
     const auto loading_request_bytes = request_resident_bytes(request, run_runtime.adapter_reserve_bytes);
     if (!loading_request_bytes || !add_bytes(loading_reserve, *loading_request_bytes) ||
@@ -840,6 +850,17 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         limits.spectral.max_candidate_evaluations = candidates - limits.baseline.max_candidate_evaluations;
         limits.baseline.max_search_passes = passes / 2 + passes % 2;
         limits.spectral.max_search_passes = passes - limits.baseline.max_search_passes;
+    }
+    // Hand-written timed settings use the same RAM-share policy as desktop Start.
+    // Fixed-work settings retain their recorded limits and ordering.
+    if (!deterministic && !settings["resolved"].contains("resource_policy")) {
+        limits.resource_mode = solver::ResourceMode::timed;
+        limits.available_ram = spectrapack::cli::sample_available_ram;
+        spectrapack::cli::visit_resource_limits(limits, [&](const std::string& name, auto& value) {
+            if (name.ends_with("max_working_bytes")) {
+                value = host_cap;
+            }
+        });
     }
     const auto partition = limits;
     if (settings["resolved"].contains("resource_policy") &&

@@ -1104,7 +1104,8 @@ TEST_CASE("AT-16 T015 Stop and deadline close raster owners without restarting r
         CHECK(outcome.resource_recovery.grants == 0);
         CHECK(outcome.resource_recovery.recoveries == 0);
         REQUIRE(outcome.run.best);
-        CHECK(outcome.run.best->solution->copies().size() == 1);
+        CHECK(outcome.run.best->solution->copies().size() >= 1);
+        CHECK(geo::revalidate(outcome.run.best->solution).validated_solution);
     }
 }
 
