@@ -92,8 +92,8 @@ These are relative translations, not rescaling of geometry or the FFT pitch.
 Pitches come from the box spans, reserving space for both the sideways shift and
 any positive height shift before spacing the layers. Full-span height spacing
 remains an alternative because compression can obstruct interlocking neighbors.
-Stretching unshifted layers to both walls can discard shifted copies in the last layer. Every stack
-is counted within its actual wall limits. Finite layer pairs and rows do
+Stretching unshifted layers to both walls can discard shifted copies in the last
+layer. Every stack is counted within its actual wall limits. Finite layer pairs and rows do
 not need to accommodate imaginary neighbors outside the proposed layout. A tiny
 scale-aware inward proposal margin avoids rounding a zero-wall seed outside the box.
 Reject impossible vertical stacks and column chains before sweeping row spacing

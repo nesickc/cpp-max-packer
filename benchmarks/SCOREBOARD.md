@@ -19,3 +19,5 @@ or two copies.
 | 2026-10-18 | 7f6c4c9 + import-repair worktree | cube64=64 \| lprism2=1 \| pryanik2=435 \| pryanik2-0=447 \| ulamok=36 |
 | 2026-10-19 | 65b71d4 | cube64=64 \| lprism2=1 \| pryanik2=435 \| pryanik2-0=447 \| ulamok=36 |
 | 2026-10-19 | 710c4dc | cube64=64 \| lprism2=1 \| pryanik2=435 \| pryanik2-0=447 \| ulamok=36 |
+| 2026-10-19 | 72f7e9a | cube64=64 \| lprism2=1 \| pryanik2-0=450 \| ulamok=36 |
+| 2026-10-19 | 72f7e9a | pryanik2=435 |
