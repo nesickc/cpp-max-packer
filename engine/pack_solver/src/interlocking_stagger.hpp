@@ -395,7 +395,14 @@ public:
                     trial.orientation_mask = mask;
                     trial.alternate_height = rise * extent[layer_] / 16;
                     trial.alternate_row = lateral * extent[row_];
-                    trial.pitch[layer_] = layers > 1 ? span[layer_] / (layers - 1) : extent[layer_] + gap;
+                    // Reserve the raised state's headroom before spacing the stack.
+                    // Stretching unshifted layers to both walls discarded shifted
+                    // copies at the far wall even when a tighter full stack fits.
+                    const double layer_span = span[layer_] - std::max(0.0, trial.alternate_height);
+                    if (layer_span < 0) {
+                        continue;
+                    }
+                    trial.pitch[layer_] = layers > 1 ? layer_span / (layers - 1) : extent[layer_] + gap;
                     trial.layers = layers;
                     trial.offset = 0;
                     if (nc * nr * layers <= std::max(incumbent, best.count)) {

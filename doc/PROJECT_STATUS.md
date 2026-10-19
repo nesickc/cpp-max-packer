@@ -54,8 +54,8 @@ History: [benchmarks/SCOREBOARD.md](../benchmarks/SCOREBOARD.md).
    Refused or indeterminate enclosure cannot enable packing. No shrinking to fit.
 2. Reconstruction remains approximate and can erase features; its resolution is
    independent of packing pitch. Use the normal envelope action to retain source.
-3. The L-prism pair remains unfound. The bracket reaches 50 copies at 1/1 mm
-   clearance in 400 x 340 x 285 mm. Its known 50-copy physical layout in the
+3. The L-prism pair remains unfound. The bracket reaches 60 copies at 0/0 mm
+   and 50 at 1/1 mm clearance in 400 x 340 x 285 mm. Its known 50-copy physical layout in the
    smaller box remains a target: zero-clearance packing improved from 30 to 36
    in its exterior-size upper-bound box. Actual interior dimensions are unknown.
    Results remain `best_found`.
