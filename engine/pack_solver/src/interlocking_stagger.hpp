@@ -38,23 +38,26 @@ struct InterlockingLayout {
 // Search-only envelopes of the accepted mesh. Filling the column interval of
 // each row/height bin deliberately loses cavities. Neither this approximation
 // nor its floating-point distance checks can authorize a placement.
-class StaggerEnvelope {
+template <std::size_t Rows = 64, std::size_t Layers = 32>
+class BasicStaggerEnvelope {
 public:
-    static constexpr std::size_t kRows = 64, kLayers = 32;
+    static constexpr std::size_t kRows = Rows, kLayers = Layers;
     struct Interval {
         double low { std::numeric_limits<double>::infinity() };
         double high { -std::numeric_limits<double>::infinity() };
     };
 
-    StaggerEnvelope(const RunControl& control, std::uint64_t work_limit, std::uint64_t vertex_limit) :
+    BasicStaggerEnvelope(const RunControl& control, std::uint64_t work_limit, std::uint64_t vertex_limit,
+                         std::uint64_t* shared_work = nullptr) :
         control_(control),
         work_limit_(work_limit),
-        vertex_limit_(vertex_limit)
+        vertex_limit_(vertex_limit),
+        shared_work_(shared_work)
     {
     }
 
     bool build(geometry::MeshView mesh, geometry::Quaternion rotation, const geometry::Bounds& bounds,
-               std::size_t column, std::size_t row, std::size_t layer)
+               std::size_t column, std::size_t row, std::size_t layer, bool interior_only = false)
     {
         column_ = column;
         row_ = row;
@@ -63,7 +66,8 @@ public:
         row_step_ = (bounds.max[row] - bounds.min[row]) / kRows;
         layer_step_ = (bounds.max[layer] - bounds.min[layer]) / kLayers;
         const auto transform = geometry::RigidTransform::make(rotation, {});
-        if (!transform || !(row_step_ > 0) || !(layer_step_ > 0)) {
+        if (!transform || !(row_step_ > 0) || !(layer_step_ > 0) || !std::isfinite(row_step_) ||
+            !std::isfinite(layer_step_)) {
             return false;
         }
         for (const auto& triangle : mesh.triangles) {
@@ -92,7 +96,7 @@ public:
                         return false;
                     }
                     auto& interval = intervals_[z * kRows + r];
-                    const auto clipped = clip(points, r, z);
+                    const auto clipped = clip(points, r, z, interior_only);
                     interval.low = std::min(interval.low, clipped.low);
                     interval.high = std::max(interval.high, clipped.high);
                 }
@@ -300,7 +304,102 @@ public:
     std::uint64_t work() const { return work_; }
     std::uint64_t vertices() const { return vertices_; }
 
-    std::optional<InterlockingLayout> plan_mixed(const StaggerEnvelope& other, const geometry::Bounds& container,
+    // First contact while translating toward the negative column axis. These
+    // clipped interval envelopes only propose motion; native validation remains
+    // authoritative. An uncertain starting overlap cannot authorize a slide.
+    std::optional<double> lower_contact(const BasicStaggerEnvelope& other, const geometry::Vec3& translation,
+                                        const geometry::Vec3& stationary, double lower, double gap,
+                                        double* escape = nullptr, double direction = 1)
+    {
+        const double start = direction * translation[column_];
+        const double fixed_origin = direction * stationary[column_];
+        const double moving_min = direction > 0 ? bounds_.min[column_] : -bounds_.max[column_];
+        const double moving_max = direction > 0 ? bounds_.max[column_] : -bounds_.min[column_];
+        const double fixed_min = direction > 0 ? other.bounds_.min[column_] : -other.bounds_.max[column_];
+        const double fixed_max = direction > 0 ? other.bounds_.max[column_] : -other.bounds_.min[column_];
+        if (!spend(1)) {
+            return {};
+        }
+        if (start + moving_max + gap < fixed_origin + fixed_min ||
+            fixed_origin + fixed_max + gap < lower + moving_min) {
+            return lower;
+        }
+        for (const auto axis : { row_, layer_ }) {
+            if (translation[axis] + bounds_.min[axis] > stationary[axis] + other.bounds_.max[axis] + gap ||
+                stationary[axis] + other.bounds_.min[axis] > translation[axis] + bounds_.max[axis] + gap) {
+                return lower;
+            }
+        }
+        const double dy = translation[row_] + bounds_.min[row_] - stationary[row_] - other.bounds_.min[row_];
+        const double dz = translation[layer_] + bounds_.min[layer_] - stationary[layer_] - other.bounds_.min[layer_];
+        const double margin = 1e-6 * std::max(1.0, bounds_.max[column_] - bounds_.min[column_]);
+        const auto index = [](double value, int lower_bound, int upper_bound) {
+            return int(std::clamp(std::floor(value), double(lower_bound), double(upper_bound)));
+        };
+        if (!std::isfinite(dy) || !std::isfinite(dz) || !std::isfinite(gap)) {
+            return {};
+        }
+        for (std::size_t z = 0; z != kLayers; ++z) {
+            const int first_z = index((z * layer_step_ + dz - gap) / other.layer_step_, 0, int(kLayers));
+            const int last_z = index(((z + 1) * layer_step_ + dz + gap) / other.layer_step_, -1, int(kLayers) - 1);
+            for (int zz = first_z; zz <= last_z; ++zz) {
+                const double sz = std::max({ 0., zz * other.layer_step_ - (z + 1) * layer_step_ - dz,
+                                             z * layer_step_ + dz - (zz + 1) * other.layer_step_ });
+                if (gap == 0 && (zz * other.layer_step_ >= (z + 1) * layer_step_ + dz ||
+                                 z * layer_step_ + dz >= (zz + 1) * other.layer_step_)) {
+                    continue;
+                }
+                for (std::size_t r = 0; r != kRows; ++r) {
+                    if (!spend(1)) {
+                        return {};
+                    }
+                    const auto& moving = intervals_[z * kRows + r];
+                    if (moving.low > moving.high) {
+                        continue;
+                    }
+                    const int first = index((r * row_step_ + dy - gap) / other.row_step_, 0, int(kRows));
+                    const int last = index(((r + 1) * row_step_ + dy + gap) / other.row_step_, -1, int(kRows) - 1);
+                    for (int rr = first; rr <= last; ++rr) {
+                        if (!spend(1)) {
+                            return {};
+                        }
+                        const auto& fixed = other.intervals_[zz * kRows + rr];
+                        if (fixed.low > fixed.high) {
+                            continue;
+                        }
+                        const double sy = std::max({ 0., rr * other.row_step_ - (r + 1) * row_step_ - dy,
+                                                     r * row_step_ + dy - (rr + 1) * other.row_step_ });
+                        if (gap == 0 && (rr * other.row_step_ >= (r + 1) * row_step_ + dy ||
+                                         r * row_step_ + dy >= (rr + 1) * other.row_step_)) {
+                            continue;
+                        }
+                        if (sy * sy + sz * sz > gap * gap) {
+                            continue;
+                        }
+                        const double padding = std::sqrt(std::max(0., gap * gap - sy * sy - sz * sz));
+                        const double low = fixed_origin +
+                                           (direction > 0 ? fixed.low - moving.high : moving.low - fixed.high) -
+                                           padding - margin;
+                        const double high = fixed_origin +
+                                            (direction > 0 ? fixed.high - moving.low : moving.high - fixed.low) +
+                                            padding + margin;
+                        if (start > low && start < high) {
+                            if (escape) {
+                                *escape = std::nextafter(low, -std::numeric_limits<double>::infinity());
+                            }
+                            return {};
+                        }
+                        if (high <= start) {
+                            lower = std::max(lower, high);
+                        }
+                    }
+                }
+            }
+        }
+        return lower;
+    }
+
+    std::optional<InterlockingLayout> plan_mixed(const BasicStaggerEnvelope& other, const geometry::Bounds& container,
                                                  double pair, double wall, std::uint64_t incumbent,
                                                  std::uint64_t max_copies, std::uint64_t max_axis_cells)
     {
@@ -472,7 +571,7 @@ public:
     }
 
 private:
-    Interval clip(const std::array<geometry::Vec3, 3>& triangle, std::size_t row, std::size_t layer)
+    Interval clip(const std::array<geometry::Vec3, 3>& triangle, std::size_t row, std::size_t layer, bool interior_only)
     {
         // Clip the surface triangle to the bin before taking its column range.
         // A whole-triangle AABB would erase sloping sides and thin wings.
@@ -507,6 +606,18 @@ private:
             }
         }
         Interval result;
+        if (interior_only) {
+            // A face confined to a transverse bin boundary must not extrude
+            // into that bin's interior. End faces still bound interior rays.
+            double area = 0;
+            for (std::size_t i = 1; i + 1 < count; ++i) {
+                area += (polygon[i][row_] - polygon[0][row_]) * (polygon[i + 1][layer_] - polygon[0][layer_]) -
+                        (polygon[i][layer_] - polygon[0][layer_]) * (polygon[i + 1][row_] - polygon[0][row_]);
+            }
+            if (area == 0) {
+                return result;
+            }
+        }
         for (std::size_t i = 0; i < count; ++i) {
             result.low = std::min(result.low, polygon[i][column_]);
             result.high = std::max(result.high, polygon[i][column_]);
@@ -527,11 +638,14 @@ private:
     }
     bool spend(std::uint64_t amount)
     {
-        if (amount > work_limit_ - work_ ||
+        if (amount > work_limit_ - work_ || (shared_work_ && amount > *shared_work_) ||
             ((amount > 1 || work_ % 1024 == 0) && control_.poll() != runtime::StopCause::none)) {
             return false;
         }
         work_ += amount;
+        if (shared_work_) {
+            *shared_work_ -= amount;
+        }
         return true;
     }
     bool separated(double dx, double dy, double gap, double height = 0)
@@ -539,8 +653,8 @@ private:
         return separated_pair(*this, *this, dx, dy, gap, height);
     }
 
-    bool separated_pair(const StaggerEnvelope& left, const StaggerEnvelope& right, double dx, double dy, double gap,
-                        double height)
+    bool separated_pair(const BasicStaggerEnvelope& left, const BasicStaggerEnvelope& right, double dx, double dy,
+                        double gap, double height)
     {
         if (dx > left.bounds_.max[column_] - left.bounds_.min[column_] + gap ||
             -dx > right.bounds_.max[column_] - right.bounds_.min[column_] + gap ||
@@ -629,10 +743,14 @@ private:
 
     const RunControl& control_;
     std::uint64_t work_limit_, vertex_limit_, work_ {}, vertices_ {};
+    std::uint64_t* shared_work_ {};
     std::array<Interval, kRows * kLayers> intervals_ {};
     geometry::Bounds bounds_ {};
     std::size_t column_ {}, row_ {}, layer_ {};
     double row_step_ {}, layer_step_ {};
 };
+
+using StaggerEnvelope = BasicStaggerEnvelope<>;
+using CompactionEnvelope = BasicStaggerEnvelope<64, 64>;
 
 }  // namespace spectrapack::solver::detail

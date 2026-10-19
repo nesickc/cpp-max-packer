@@ -10,7 +10,12 @@ struct StaggerSummary;
 
 namespace spectrapack::solver::detail {
 
-// Only the strict-higher-count seed resumes a prior phase's exact snapshot.
+[[nodiscard]] BaselineOutcome run_compaction_with_seeds(std::shared_ptr<const geometry::ValidationContext>,
+                                                        const BaselineLimits&, const RunControl&,
+                                                        const std::vector<geometry::Quaternion>&, SnapshotSink,
+                                                        SnapshotHandle);
+
+// Physical refinement phases resume a prior phase's exact validated snapshot.
 struct IncumbentResumeAccess {
     [[nodiscard]] static bool resume(Incumbent&, const SnapshotHandle&) noexcept;
 };

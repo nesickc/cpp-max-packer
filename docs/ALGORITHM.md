@@ -5,7 +5,7 @@ everything here is **tunable**: change weights, page sizes, catalogs, schedules 
 recovery behaviour freely when `python tools/scoreboard.py` shows an improvement and
 the validity rules in spec §5.3 and §6 still hold. Update this file with the change;
 no decision record is needed. This file began with spec v0.2 §6 and is updated
-through 2026-10-18. Historical rationale lives in
+through 2026-10-19. Historical rationale lives in
 `spec/decisions/` and `doc/T-*.md` (frozen).
 
 ## Baseline and staggered seed
@@ -135,6 +135,34 @@ The positive-clearance benchmark now finds 435 validated Pryanik-2 copies, up
 from 425 with mixed orientations, without changing the box, 1/1 mm clearances, permitted rotations or
 60-second budget. The bounded search can still miss layouts; these counts are
 best found, not optimality claims.
+
+## Whole-arrangement compaction
+
+After physical seeding, timed box searches compact the retained arrangement along
+each world axis, starting with its shortest object extent. Four sweeps alternate
+directions so that space opened along one axis can be reused on a later sweep.
+Existing copies retain their rotations. Search-only triangle interval envelopes
+use 64 x 64 transverse bins relative to each oriented object's size; translations
+stop at proposed mesh contacts, with a small positive numerical cushion.
+
+After each axis, try refilling at retained transverse positions, wall alignments,
+and quarter/half-extent offsets. New copies use permitted catalog orientations
+with the retained AABB extents. Drops can search disconnected free intervals;
+this is final-placement packing, not a collision-free insertion-path simulation.
+No asset names, saved layouts, geometry scaling or model-specific distances enter
+this search.
+
+Every changed arrangement and every insertion passes full native validation.
+Failed trials roll back to the last validated working arrangement. Equal-count
+improvements use the existing enclosing-Z-span, then XY-span-sum ranking, so
+compaction is visible even when another copy does not fit. Shared work, memory,
+deadline and cancellation limits bound the pass. Interval filling remains
+conservative and axis-wise motion can stop in a local minimum; this is not a
+claim that all remaining gaps are removable.
+
+The positive-clearance L-prism scoreboard case improves from one copy to two.
+The exact-contact L-prism case remains separate: its unresolved contact verdicts
+are not bypassed by compaction.
 
 ## Conservative fields and FFT placement
 
