@@ -21,6 +21,10 @@ Updated 2026-10-19. Details belong in PRs and `.local/` logs.
   Save/Open and export their 225,102 and 336,126 source triangles. Evidence remains
   under `.local/envelope/`; this does not establish source printability.
 
+Verified in Release/Debug native tests, desktop/contract/frontend checks and both
+supplied-model journeys; the rebuilt viewer was checked in all three geometry views.
+The replay test shares setup and has a measured Debug watchdog; details are in the PR.
+
 Not yet: Vulkan, desktop STL containers, upright/free-3D search, crash recovery
 or installer. These remain **Later** in spec v0.3.
 
