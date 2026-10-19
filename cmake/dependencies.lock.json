@@ -8,21 +8,847 @@
   },
   "triplet": "x64-windows-static",
   "dependencies": [
-    {"name":"catch2","version":"3.11.0","features":[],"triplet":"x64-windows-static","port_identity":"catch2:x64-windows-static@3.11.0","port_tree_hash":"5f7385233a249ddbcc48f261b4e4c20f42297360","source_sha512":"a95495142f915d6e9c2a23e80fe360343e9097680066a2f9d3037a070ba5f81ee5559a0407cc9e972dc2afae325873f1fc7ea07a64012c0f01aac6e549f03e3f"},
-    {"name":"ccd","version":"2.1#4","features":[],"triplet":"x64-windows-static","port_identity":"ccd:x64-windows-static@2.1#4","port_tree_hash":"a6cd46396151b69680100934c824c290c7057379","source_sha512":"ff037d9c4df50f09600cf9b3514b259b2850ff43f74817853f5665d22812891168f70bd3cc3969b2c9e3c706f6254991a65421476349607fbd04d894b217456d"},
-    {"name":"clipper2","version":"1.5.4","features":[],"triplet":"x64-windows-static","port_identity":"clipper2:x64-windows-static@1.5.4","port_tree_hash":"efcc6cdefc2176e0bdcc990d41d0d43601d20e20","source_sha512":"39153f35630ddc455ad4955a8b9b35f05bf3fad2a33c6e7232300b674a5172794a57c7bd18f96dd0a90d4607a44ecb32c92b0cacc7060d840d568032efaddf19"},
-    {"name":"eigen3","version":"3.4.1#1","features":[],"triplet":"x64-windows-static","port_identity":"eigen3:x64-windows-static@3.4.1#1","port_tree_hash":"ea6ed04401cca325eff95c17cc0d01326a3c6a85","source_sha512":"15b540d2fad25de837d7612456ea65b7fcfa25f886c48dcb3de025e079f5f43f45f1c0bd9a8435430d0e2fb9f0a6129719626dd4fd45dc61fc480f97762b2f56"},
-    {"name":"fcl","version":"0.7.0#4","features":[],"triplet":"x64-windows-static","port_identity":"fcl:x64-windows-static@0.7.0#4","port_tree_hash":"c579ae1dd0494bc4ce7266fb3f4063cf06017fda","source_sha512":"95612476f4706fcd60812204ec7495a956c4e318cc6ace9526ac93dc765605ddf73b2d0d9ff9f4c9c739e43c5f8e24670113c86e02868a2949ab234c3bf82374"},
-    {"name":"json-schema-validator","version":"2.3.0#2","features":[],"triplet":"x64-windows-static","port_identity":"json-schema-validator:x64-windows-static@2.3.0#2","port_tree_hash":"8982b7778711884f44358d66f92ddb1f0ad4b99d","source_sha512":"6d207031acdb94c44f96ff6346dccaf98f2c9d3619d71e419ddabff548ea34d50e8eb103622c99ae28ecb7fddedd687b297e5ad934aa0106c58ac59fc4d65ea9"},
-    {"name":"manifold","version":"3.2.1#1","features":[],"triplet":"x64-windows-static","port_identity":"manifold:x64-windows-static@3.2.1#1","port_tree_hash":"2352b67bd30ff162a551367458f0732e5f35adc3","source_sha512":"22ff2236b97fd15463c231b3ce61baeefc6f651b145804480f80146ba83dc4b15d57e5f73ff788604153ec61eace416a409d2a9e7c1327c05cba89a95e2fc536"},
-    {"name":"meshoptimizer","version":"0.25","features":[],"triplet":"x64-windows-static","port_identity":"meshoptimizer:x64-windows-static@0.25","port_tree_hash":"51139145d67f8e07d8360138f2185e56fb20c04c","source_sha512":"c00f2357c9c8d17804047c3c678f253bf13aa467b1dadc099a7958787e1725c501bd92a7837494d4831dd7c3428bbeb92353b70fd45ec71e88d753036318ab2f"},
-    {"name":"nlohmann-json","version":"3.12.0#1","features":[],"triplet":"x64-windows-static","port_identity":"nlohmann-json:x64-windows-static@3.12.0#1","port_tree_hash":"f89a58e6478ca1e39120e93e7ed535c4aaf8198c","source_sha512":"6cc1e86261f8fac21cc17a33da3b6b3c3cd5c116755651642af3c9e99bb3538fd42c1bd50397a77c8fb6821bc62d90e6b91bcdde77a78f58f2416c62fc53b97d"},
-    {"name":"octomap","version":"1.10.0","features":[],"triplet":"x64-windows-static","port_identity":"octomap:x64-windows-static@1.10.0","port_tree_hash":"ff492e256718daa9fb2245c135959d6a812f938d","source_sha512":"1cbee4f6b3569587986774447ad9ec4190f597310c4d6865ffa7cd8865ece2492e4a42fa369b633d9d7a9da782560d49deaa62a18601ea4f56396bdf1a6a5f52"},
-    {"name":"pocketfft","version":"2023-09-25","features":[],"triplet":"x64-windows-static","port_identity":"pocketfft:x64-windows-static@2023-09-25","port_tree_hash":"46ffdbd8c95362eee33d5cdf0dce36c77f332a7f","source_sha512":"e8c2b65b23feb53f1077b3ae1e0e20d21d8f55601bd1216443af0fbc916638c3649527494ec2f23bed42d562341e0cf1fcde54c37068333161f289d23d8a9009"},
-    {"name":"tbb","version":"2022.2.0","features":[],"triplet":"x64-windows-static","port_identity":"tbb:x64-windows-static@2022.2.0","port_tree_hash":"a3b9fc4c8d2641949c25b590c6225328c3a152d7","source_sha512":"d87c67514ca17c9769910194a8fac912e183952ad5c408dbceb48edc8aef13375df3d4c9120a7366206c8ab72699ed953df65c11c261e19d8e9d273c73d073f3"}
+    {
+      "name": "boost-algorithm",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-algorithm:x64-windows-static@1.89.0",
+      "port_tree_hash": "3ee83dcfbe76d56a445af30c8475f7ceb92deb90",
+      "source_sha512": "62f346ace20ef7e630cc5cfd36ecdd74ce375643c19ac01328b14de4efbcbc31189cac2e9b9f453eaa7e50c50bf5aa53d591758e24b3458d87b79a503fc6d298"
+    },
+    {
+      "name": "boost-align",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-align:x64-windows-static@1.89.0",
+      "port_tree_hash": "cdc40833d65b90a10f622786d747a1ad5c72ebd1",
+      "source_sha512": "728b559a129e5cd5e0ba0193981d769e7f72569143e57b8d9f52f504ecce2c0b12890ea9a8857afeb61f7c2ae0735f84c6c8d9407e9d6e500fab09585400baa1"
+    },
+    {
+      "name": "boost-any",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-any:x64-windows-static@1.89.0",
+      "port_tree_hash": "ba54156d8c3e6d4e2ef7b6097cdda3024cd141be",
+      "source_sha512": "1a0a4c2d939c8baaae3fca114e0a27d0ad541d917c7349d27cdee4dd5fc225bf06b735630e4b12cbcfce97ce6806f8f08b57d038fc42439240511df9f050e5b3"
+    },
+    {
+      "name": "boost-array",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-array:x64-windows-static@1.89.0",
+      "port_tree_hash": "53a38d9df50a94549967fa8b7e47714c4d5761db",
+      "source_sha512": "5b417979dfca7acb34064282d46786054d8e7b4300e88c0ea902a049322f971735fbef35843c00f51fa1eaf8e24de7c870559d54be43d714ee5a02e75de16b20"
+    },
+    {
+      "name": "boost-assert",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-assert:x64-windows-static@1.89.0",
+      "port_tree_hash": "4b40db7ad8e6420b04da87e8266e5eca7c3c059f",
+      "source_sha512": "943b201002a3dbe44137565a7448229194f7dfcd406855fc037c71faea0e295d25b54b6b000d0d893944572de5f9872adab35e442171d08f3abc83ea869f6d92"
+    },
+    {
+      "name": "boost-atomic",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-atomic:x64-windows-static@1.89.0",
+      "port_tree_hash": "58dc025910708f8ce014d3a23b957de3dffa22bb",
+      "source_sha512": "70f79e273c87849645d3faa6decc21f354f731b3e5297278ebc2e9398b82b7a93e33e146eee016f2b6e8e05485c303e5edc5a7e3bbe6ef23806ed86ef5654f63"
+    },
+    {
+      "name": "boost-bimap",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-bimap:x64-windows-static@1.89.0",
+      "port_tree_hash": "bc55bd32d1266f5256e5aac99db3ed906e6f0675",
+      "source_sha512": "6a6ccd29a36162d73d90a082e493e564536f8043285560f095b86cdff6900875d3a2aefe30d2f3fed115f141509b653631fde6a53eaffcf6350d47bb37e1ddab"
+    },
+    {
+      "name": "boost-bind",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-bind:x64-windows-static@1.89.0",
+      "port_tree_hash": "b2fdb396a7064165de3c60c4da30dffd751f82e2",
+      "source_sha512": "dbba71a6a1e13a2ed36fc512d559dd2fe2ab63d9bc801b3cb1b79de7433ce21caa940505a3f83d1ca845933ccf547b34768dedae506de9237f5bfc4db699adcf"
+    },
+    {
+      "name": "boost-chrono",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-chrono:x64-windows-static@1.89.0",
+      "port_tree_hash": "418cebde300c0e64b012b150c6f4a5397a92a944",
+      "source_sha512": "f1f306f2f2c475af21646b8bf00da704002b117f657087025623aec1c1e09c63a0285c8e19c68782622568d0f3dca9c742ac6b9a15a581d60c7f576aca8a0745"
+    },
+    {
+      "name": "boost-cmake",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-cmake:x64-windows-static@1.89.0",
+      "port_tree_hash": "8c7d8286875eac4b6e5995d63337cfd3e16d66ef",
+      "source_sha512": "dd17731fb03d634aa4751e5f36acd124d04eb71341c000df2a0f0b49d5bea0db50e54d1bf820e066a07a22fcaecc97dbe8caaf2883b6a2c1eb2b941938c67d25"
+    },
+    {
+      "name": "boost-concept-check",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-concept-check:x64-windows-static@1.89.0",
+      "port_tree_hash": "4f43e61a82b1e215fbea09fe321fb63b89d70ccf",
+      "source_sha512": "2897f939fc23249c5d3466ad570b60c0d33b750eacf9ad8ddcf0cadd923f3830426a0632a3f18951dbc9006bd2a1d77ca2f3b83458038afd78bb7f345bac54c8"
+    },
+    {
+      "name": "boost-config",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-config:x64-windows-static@1.89.0",
+      "port_tree_hash": "73499959016446ec7272976b0abaab1ed123c3c8",
+      "source_sha512": "456b3d648e4ca2b25a70159d282ee25ee3451b05450d2bb0e16b03e0f96860e4e678e4c8f75200b65cff0d073138083df8f1876cf6c5c227feb62de180ff7f3d"
+    },
+    {
+      "name": "boost-container",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-container:x64-windows-static@1.89.0",
+      "port_tree_hash": "a84f02c4aec8fc8119e2a84a5a7667c14250829a",
+      "source_sha512": "1f7ec9f6e21c107ff07ad0e1b82a815dcad6dca2ac817c34ffa27e42d140209e67f09c7959f307eda31efb6dd9a66bc695004f203c93c65e30927c8062816e10"
+    },
+    {
+      "name": "boost-container-hash",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-container-hash:x64-windows-static@1.89.0",
+      "port_tree_hash": "f808bcb3fafb29847b0e7f07f78525e036eee56b",
+      "source_sha512": "bf2e3280a421665ad6081340024abc2473a3e5cc38eb308a4afb5815cb47d9fb4b622760be4b3f61bf8ff4344f81168b65b21946629370c2883082a4db05e0ef"
+    },
+    {
+      "name": "boost-conversion",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-conversion:x64-windows-static@1.89.0",
+      "port_tree_hash": "72f5608e82127ab4b384bcc268fb92c59d36bbc7",
+      "source_sha512": "1da566c2aa7ea3bfe0654374d4c0de3cfd4858154f8eaf01c281495a825f3990ca2af388c83f9de30b2068baceed6d8da8679d8e9207b4711d60e3b6b95c5b56"
+    },
+    {
+      "name": "boost-core",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-core:x64-windows-static@1.89.0",
+      "port_tree_hash": "9823973b46eb48abfc4d773b8461e98165b6eb6b",
+      "source_sha512": "f45500c9a33978fe6aeb45027e08159d276c9cb472c072e96b64c426ce3583870d24ce0a9d719442521383a4944a3a67b5b0d46e0025743556798e72a603059e"
+    },
+    {
+      "name": "boost-date-time",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-date-time:x64-windows-static@1.89.0",
+      "port_tree_hash": "038586c4564e5118c1b92862902c5b53fcbb24b3",
+      "source_sha512": "c081e408a39b054414bc68f073f8bb5557e5935279376021d7e00666f64832edf32c49ac3623abd0e8313c3049705713fd7003a2618ec641af267f9f17a6171e"
+    },
+    {
+      "name": "boost-describe",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-describe:x64-windows-static@1.89.0",
+      "port_tree_hash": "b6c39726cb8a5ed76d564c222cfd5a59f24d3e02",
+      "source_sha512": "e4aee186d8ed75ccd255f8d43356a040c4199483f4cce23b6332e12b531ecc546de6b1109e0658c146ac7f46687e5f07fed23f23986115aa42901ab8aaa0757b"
+    },
+    {
+      "name": "boost-detail",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-detail:x64-windows-static@1.89.0",
+      "port_tree_hash": "42321194aba4197b21532f5e146ddd36f4ec1a4f",
+      "source_sha512": "5d8fa6a8f83ad64427715f6f74114696abf4de377360aed34e8e36219eac895f0ee703fdc7fdabd1e018f0e87a786e215965d2f04e8ff133c7a1ff30d77bd0d3"
+    },
+    {
+      "name": "boost-dynamic-bitset",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-dynamic-bitset:x64-windows-static@1.89.0",
+      "port_tree_hash": "4e9bb084edae227089add595ccb7c596e76d0575",
+      "source_sha512": "f018fe1de813bd731ed570601191e6c99180024abb7b7befcd759e09cb2da6ce63d60b1a74062b5902751750a5cb94e64357037623273bd72139bef9181dd536"
+    },
+    {
+      "name": "boost-endian",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-endian:x64-windows-static@1.89.0",
+      "port_tree_hash": "f45abc0b300cbadaae57d40a9a5a11dc3eae720d",
+      "source_sha512": "844f8b3b10bfddeb481401cef6fa72b3f0168931e1959615cfcff7565ca67a184ea5b655defcb38818d93022fcfcacded1ab3d42805f8b0f280df6655efa0a7f"
+    },
+    {
+      "name": "boost-exception",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-exception:x64-windows-static@1.89.0",
+      "port_tree_hash": "98b58a80a68f639ca40b433428a69967227d75c9",
+      "source_sha512": "275abb9f7387b0bd18952d970a63422feb84df488f8a433a26df7931bbb72d9005cec62c7f0662a4f75f188c1ab55356d623be648d34d5bc4bdaacf0a3436287"
+    },
+    {
+      "name": "boost-foreach",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-foreach:x64-windows-static@1.89.0",
+      "port_tree_hash": "970a40545dc165073fab67037e1a22616740c9ed",
+      "source_sha512": "1e12b58dc366dacd71f4153d6e069ca9284f9504addd8689f517a28b3207e6d8defbb8aab6aeabe7e5c8610e68afb5e718318ba0b09e6bddb1002ed3afa9ea1d"
+    },
+    {
+      "name": "boost-format",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-format:x64-windows-static@1.89.0",
+      "port_tree_hash": "10fd706c2785b46ade8621f59333faf88556ab20",
+      "source_sha512": "12e71831395566be3f960b066e8e77dcf71c1d5ba3c4923ad69da2312a5deacd011377e020f4794e7118a7928d2e1df0b02039a372138ce4bfafeeaff369a91f"
+    },
+    {
+      "name": "boost-function",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-function:x64-windows-static@1.89.0",
+      "port_tree_hash": "5d75dc069bb0685bfa48febfc0d4bffc0f46f8c9",
+      "source_sha512": "8ba920093734f2111fafd84a7a6fb68819263830979f48026b47a22d5c3d9afc64f95ca4b98fd0beabe581d8304e79eca3983fcec191e059fdd9dbffe86fa074"
+    },
+    {
+      "name": "boost-function-types",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-function-types:x64-windows-static@1.89.0",
+      "port_tree_hash": "21f4acfebeb149a3de71f341be55a5ce59cb32aa",
+      "source_sha512": "c54c976cc4be8a0e7712f634317b014f3fe949cec7ed50f7629a78175651d936a4137e79d015100fe3d48c8c4fd2663cf902b7b3d0241ec20cd619631609fc24"
+    },
+    {
+      "name": "boost-functional",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-functional:x64-windows-static@1.89.0",
+      "port_tree_hash": "ade45ba6b3c1ceec40f8eb3ac8d3a523f80b2038",
+      "source_sha512": "6d780f96aa7056daf4c56e7ebbd677a9c81ea6cb00f6032df44ee5030e425dfd50e6d243e6da8773803c0a9277d78e83ead99dc96fa90e095ca7741b543bcc7e"
+    },
+    {
+      "name": "boost-fusion",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-fusion:x64-windows-static@1.89.0",
+      "port_tree_hash": "c63f6e3ba7e2890a640553e6caaf2a5418c60913",
+      "source_sha512": "b019e2aa6d413c14cbadfca62130b8c115cdd2dc456a6b3943690da19366c8a991d37eafb624152819ad0b479db4e96327429e02e1a1b5bea0071f80370796c3"
+    },
+    {
+      "name": "boost-graph",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-graph:x64-windows-static@1.89.0",
+      "port_tree_hash": "b59aee638c5e8ced010aa5191cafc3e9cc2821a1",
+      "source_sha512": "09516e7bf5166b9af089e1e297e788836d00dd2bb6df0eb441cf727815458684c2dcb0a16715eee65ad116a2164aaf90d3dcab7c3d0f9cfaf63ab4351c8ef7a6"
+    },
+    {
+      "name": "boost-headers",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-headers:x64-windows-static@1.89.0",
+      "port_tree_hash": "95dbcdac30de15e8f72cdba71aedb4fb06638718",
+      "source_sha512": "de3c08b24daaa84d20b1aaed817e0ebc8f6666dcd3db3fe31b6a78bc6be9372fa59bf07bea6930fa9a60e798f7437303795fd3f7cb84df77cfac72e02a081ba7"
+    },
+    {
+      "name": "boost-heap",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-heap:x64-windows-static@1.89.0",
+      "port_tree_hash": "6b70bad7617666347cd37cf9e79ee7810addc9cb",
+      "source_sha512": "8d9e5fe67b42c84002361c972fd5ba117958fb07670c8f023dd2769d3d3130f6747be3fb2cd417fe805f159b45c88e10e881d7c6b6c20434a676b1e18c3cff9d"
+    },
+    {
+      "name": "boost-integer",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-integer:x64-windows-static@1.89.0",
+      "port_tree_hash": "a37945e3e5b2c880c256c6266cc76c40e425b008",
+      "source_sha512": "585ea52bf1311c35989a73459ba477afa3e9f57dd1ffb4e52798764cfff592fe9e1b6f1bef16676e116745d6be859ed22e435be9a448160f7124bd7c43972e04"
+    },
+    {
+      "name": "boost-intrusive",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-intrusive:x64-windows-static@1.89.0",
+      "port_tree_hash": "bb11f3b2df959ba7a4852059eefefc23c08cf3be",
+      "source_sha512": "b6e613af5e38b91941ead3f79283be4f79fce31ecd2a6fbfff6c6241131c6c90c8cc2f3634409361741c612baf60b672bfb117143fc2eb52b7e3ddb6b26de59a"
+    },
+    {
+      "name": "boost-io",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-io:x64-windows-static@1.89.0",
+      "port_tree_hash": "52997d9b6a05b007e2897de28beaeea18968cc0e",
+      "source_sha512": "74e8c95092d432493125fb7970286f1e7602dcebcf7f568ab6f65b99006ade24801cf6e87446e5f6d12e2cacb9c5b828d58dccbc8a9deda01e6bcf1e5dd4fb27"
+    },
+    {
+      "name": "boost-iterator",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-iterator:x64-windows-static@1.89.0",
+      "port_tree_hash": "afb261ecce2d7eb9a01aa41c835608482c129e03",
+      "source_sha512": "a7eba754136ef2c69b9914bf7a955301ec8c03bb5e90d7915474e55478528c398ff9d57dc698f8d10d2a473ddaa60aaa1aa920399955cadadd90a11729fb76e6"
+    },
+    {
+      "name": "boost-lambda",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-lambda:x64-windows-static@1.89.0",
+      "port_tree_hash": "5431500a5bfa41c1a24b882b599fc261eacae9d6",
+      "source_sha512": "c8561b63705be867a6ab91d62f5ff7358dfb67c24d80434d9d222b0443526617af3f441730dca8c47f1ab09390937154b17fb41b150c1dbb2886dc5e22fa4314"
+    },
+    {
+      "name": "boost-lexical-cast",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-lexical-cast:x64-windows-static@1.89.0",
+      "port_tree_hash": "422011af1156f3e9c09bfa3e20a2d8119d7e523c",
+      "source_sha512": "f15a9dc20fb56cdc9ecd278790c40b80385fbc6fe4177979d3277e0eb3be8efc311a395ff29ba3f31f5e10907b01e49982d2267a460de2bd8e0f75a08d308a51"
+    },
+    {
+      "name": "boost-logic",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-logic:x64-windows-static@1.89.0",
+      "port_tree_hash": "743015e76ec67d43d3d8b87c812103ff65a0d138",
+      "source_sha512": "e15a258e91e1179aaeccb4d5ce023380ca051038752b47e1fd94d9905cb3893610dd56ad9707cde9a1c7ff1627b54f8c3f7dc8a124f8f6f4c94080571ad6c078"
+    },
+    {
+      "name": "boost-math",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-math:x64-windows-static@1.89.0",
+      "port_tree_hash": "1cb94d95de055a357bb874e57fdab94802e1f4fb",
+      "source_sha512": "6f21b7aa18f2886dab7ad9c8c47a419a703a735e36a2fa2fbc36351fb9357214a8a1a12f9eca2ab22c92b869d4fa445075febc8630aef26b5176bd0cbc370294"
+    },
+    {
+      "name": "boost-move",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-move:x64-windows-static@1.89.0",
+      "port_tree_hash": "9e2f411e14732036732cece814356699a76cc91e",
+      "source_sha512": "02fe889c164447f4933230145394110dc8f62ac683b72f4f0726454a13e6bd9df2c82fc7ccabc84062a121bfad6cc8f50280c6cb63356c6b6a9683ec54307b80"
+    },
+    {
+      "name": "boost-mp11",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-mp11:x64-windows-static@1.89.0",
+      "port_tree_hash": "b8f038d03ba53847d4b120f55730c0737aab5587",
+      "source_sha512": "59b6b883317cc7473fcb22b8d590678a962ab01f7ed78fd35c513b8ada65e185dbbd4b4d92e8521076d617d6bec1df74b720f4e8a69e272b3d5ead18ef2f3400"
+    },
+    {
+      "name": "boost-mpl",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-mpl:x64-windows-static@1.89.0",
+      "port_tree_hash": "419ecb733b84695280f408232c73470ab30be15d",
+      "source_sha512": "1e358a16a972784400c1705b9712d8451644b0560ae840999d92dfb3b0f92da394111ed2d98266e207911c13ab129f6837aa8a5356bcde0961ec006057d46e04"
+    },
+    {
+      "name": "boost-multi-index",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-multi-index:x64-windows-static@1.89.0",
+      "port_tree_hash": "1f5f78089d3280112a1216d3ad8d0459555b56e4",
+      "source_sha512": "78583554e603b4f9b253b5d4d30b94bf79ff3956bb742b27144aa05f619df5861bf686833ed4533449727594c28c463ea7dc42c743d3bca9998af7ea9f85f8e1"
+    },
+    {
+      "name": "boost-multiprecision",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-multiprecision:x64-windows-static@1.89.0",
+      "port_tree_hash": "727bfc1426b98ea8464378970622d73646442039",
+      "source_sha512": "666a91bd5a74df6c129cf1ff36497eecd7bff2e82deef7a8b8334983b70204af3764a9268d1f85c441c2efb2d834a6e8a683005600a1b4d38e564aaa69a018b5"
+    },
+    {
+      "name": "boost-numeric-conversion",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-numeric-conversion:x64-windows-static@1.89.0",
+      "port_tree_hash": "4a4daafbe60c9ff995541373ec7df4b8b35c4773",
+      "source_sha512": "ad4dfc9533aadb7421265e378b5bdedfbe2b1bfd6de661fa8d2e318d688563f2b47b662171633bd474a0d02ce566106eec36c8fe788661bab33e8c60b0b41ecc"
+    },
+    {
+      "name": "boost-optional",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-optional:x64-windows-static@1.89.0",
+      "port_tree_hash": "a00224cf1d434cc257cae3146aed00651f9700c4",
+      "source_sha512": "6fdd4be76db2d03711767345da7c0c47d9620fc683e1bf85a67279ef0c198dce7fc240f28d389eee059db36f8c4bf82761b85307faa2435dc6034196b5cf73a4"
+    },
+    {
+      "name": "boost-parameter",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-parameter:x64-windows-static@1.89.0",
+      "port_tree_hash": "4e82815c34273690f9c0215490036aaad9b191f5",
+      "source_sha512": "b494872f904d92f1bd08990f337fb6848e5d4eaac36ff4fb71f5c7ba9b8b7ce98a76a6fa00026f71cd626fd16d3a54fb7e5882e9d3f6c4456ef004e243c497bf"
+    },
+    {
+      "name": "boost-phoenix",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-phoenix:x64-windows-static@1.89.0",
+      "port_tree_hash": "b80402a8e32506147c9125b435e7bd1ff76babf1",
+      "source_sha512": "7f40bfaffe6b975535270f4aa7e3e4f6e7c85bb885d3660205a2c0976119a6011f80ef67189bb36b439de0f4ec10ee3defe1390d443c91a0ae3e115602eb425e"
+    },
+    {
+      "name": "boost-pool",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-pool:x64-windows-static@1.89.0",
+      "port_tree_hash": "8afc11f58cef060ee80f2ab8fd1e719f414bbf67",
+      "source_sha512": "7317d71508015f6b780fe4155934449bb260289925f06c0cbd6148980e5ec0419e6bff513bf881beade870e8f24086b40b6dfc06ccb62b6ebd87c35bada29df0"
+    },
+    {
+      "name": "boost-predef",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-predef:x64-windows-static@1.89.0",
+      "port_tree_hash": "44b5803d820eb060f0727227d0ae9171912df6ce",
+      "source_sha512": "868e2234953ec24e63e68c8d12a55abc7759e553538b258f369a30960e1eaf99ec60cc231428b4ff3c20c4b6b01e00dcf4ba0a6d6f245b108af11f7c9de95d04"
+    },
+    {
+      "name": "boost-preprocessor",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-preprocessor:x64-windows-static@1.89.0",
+      "port_tree_hash": "b24666cb6f30bbace4fa4f602072ff22a1926e6d",
+      "source_sha512": "08cd63af1dd23afb17de7ce565c64d6eee1929ed32d06d54c9525fd50b50d6618034fa52507ffa2dd85ad5f91df101d8eae1b417a7dcbf0168466483089f49ce"
+    },
+    {
+      "name": "boost-property-map",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-property-map:x64-windows-static@1.89.0",
+      "port_tree_hash": "ff5dec81cbb863f675c7f8b1f632bd8a6d30322a",
+      "source_sha512": "5c714e84f471afb4f3b42b0643bef464be074769043445c25c95a2961acbed0f5fa66282bf4ce65802020c0626cf6dca7a91cb54a996d3d5173fb17a12533bd1"
+    },
+    {
+      "name": "boost-property-tree",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-property-tree:x64-windows-static@1.89.0",
+      "port_tree_hash": "416f5277108af64bdad00c6780386aeac53ee6b6",
+      "source_sha512": "12383123d98fed71822a17246502928b9806fd00f81f0ef51e59b0ce49f292271978f359e74f399d444264f6cade69254209d89c6675ec6f495a51a9101a41f2"
+    },
+    {
+      "name": "boost-proto",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-proto:x64-windows-static@1.89.0",
+      "port_tree_hash": "9a0ad7230f675a58ec36c6eaaf770172b1f77e33",
+      "source_sha512": "7c6b2819038706a9f2155fd6a14e0096ce21ebf7c26e8770a4a5870524a4f60384f6353d54f8286f91ca991388c96ed03b21f5ab009117635741b53eedd368ba"
+    },
+    {
+      "name": "boost-random",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-random:x64-windows-static@1.89.0",
+      "port_tree_hash": "290754c38706f4a21ef7a9278bfb7a45d25d9062",
+      "source_sha512": "a389231c37be431b587324a14738c1baff30df2c42cfd5741fbc5c2e636b0f4b4bcac124f969d5c4fb745b100b5e253b73612b575cd9db6c80855ace1f32bcb9"
+    },
+    {
+      "name": "boost-range",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-range:x64-windows-static@1.89.0",
+      "port_tree_hash": "ab4c025322e42dec411e33f17d3952fac5d7f00a",
+      "source_sha512": "ec56996272195bf37642faa34864e3c8cc99bf671588cc6f7e0a08e9cba89612528fc0bc43fa8efd0cb4547c9999b7b1c16d2aa11596c200b8bc45e75be12e34"
+    },
+    {
+      "name": "boost-ratio",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-ratio:x64-windows-static@1.89.0",
+      "port_tree_hash": "b7969883e0612c6757988b0f9102224ca136959f",
+      "source_sha512": "2ba6370f4148f6ef98d0961f267425327c80c51f8f02576a8463789023a67eb3ca69efac51c4c38919b598d167f36a70658569e3245c2b6ffca4b538ade0c0f3"
+    },
+    {
+      "name": "boost-regex",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-regex:x64-windows-static@1.89.0",
+      "port_tree_hash": "411f23facef811713ece1498443d376f4fc375da",
+      "source_sha512": "5319e20f93f6618f911366e05132d376b16f11a5c55f7f712d550d7c7eb5151f2c2fc9dde25fd1c8ac39aafc4852ed73292b287a1de847df00ff1a358fcd1983"
+    },
+    {
+      "name": "boost-serialization",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-serialization:x64-windows-static@1.89.0",
+      "port_tree_hash": "2d0849b4f45ac2529a0d8c2cbd04b0ae8984f437",
+      "source_sha512": "0bb874c9cb2dcd8ba4cd8d89f05ad6175a9f22694f65b72c7e3eb1062a864b1338554712a76babf30ab9e8616e021d31e0e6734ca10b20fae9399f1451e19085"
+    },
+    {
+      "name": "boost-smart-ptr",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-smart-ptr:x64-windows-static@1.89.0",
+      "port_tree_hash": "3520f2bdf1ddfd6b9b9e83fa0db82bb9a28fe6a5",
+      "source_sha512": "ca1399f580291224dc3a3631b5446cbdbba69e8ccfc38ce4007247beccb9a90ca366fcc84b1a8c3f502e74cfa2c98987d5f1e6a8372a394051a47f21d952c363"
+    },
+    {
+      "name": "boost-spirit",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-spirit:x64-windows-static@1.89.0",
+      "port_tree_hash": "cfa2cb2b5f1de02bda3a215a0690768c187f4fd0",
+      "source_sha512": "b4b75e9542f2ff2efc66ded8b852977c996efd9ee6a4fd7362a2af88b10c5170af50d3bd0981eadabe8214f2a399569fe92ba06e1acc7f8bb3f3aa7a4e259b75"
+    },
+    {
+      "name": "boost-static-assert",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-static-assert:x64-windows-static@1.89.0",
+      "port_tree_hash": "c297fdc10a4751a0813d174da5b3d6ee8ac4fcd2",
+      "source_sha512": "a57158d4d67168f7afe8cc2e221d2707ef7710528993929de185f1676ad7905ad0b3b0b40b8f55e90255c4302bc8e8e912e64eae097c80f61d3336f6df26733e"
+    },
+    {
+      "name": "boost-system",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-system:x64-windows-static@1.89.0",
+      "port_tree_hash": "930f1da0c62be8d5eb884b12e9f6453786f92339",
+      "source_sha512": "d9a9294da3a8f1e346bbf32baabd04bb4dceecfee12c382279a214f48dee6ae1aeb900bb7e92f6d6e675cbb70d48da343f233bd60e5e958753f01f476cb6ccaf"
+    },
+    {
+      "name": "boost-thread",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-thread:x64-windows-static@1.89.0",
+      "port_tree_hash": "1780abc3416ddde7e3a3d3d7abda4d9b6ac2aa54",
+      "source_sha512": "090a1222c836a7efabd767229278ba2896dd662b793799e711d41918d54cb17d25bdb66c8693103d0aebae862438cb90b4e49f8f5c7b066add5e15445482f39c"
+    },
+    {
+      "name": "boost-throw-exception",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-throw-exception:x64-windows-static@1.89.0",
+      "port_tree_hash": "2595f3f64c49285c68fde05cca87afa79eb4d664",
+      "source_sha512": "99af9a7a29113bf93c54e64c6f2bc748273f3d9d109bd8841bdb1f3e2ea28b01880213d6dbc49c3afe0884da251f60a33f12a40f1ab694b1ceef54c25e3912a9"
+    },
+    {
+      "name": "boost-tokenizer",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-tokenizer:x64-windows-static@1.89.0",
+      "port_tree_hash": "54edc02e70826bee8f52d8d324a5ffb2cee432b7",
+      "source_sha512": "7396351a22de456e6f1892b26441f73e629ab5660bc6d9b849b6f0fa99fde3ebcebee627fcfeb44f7579f381a549f033a2be6263d5239e9c346fe94d8c73f41d"
+    },
+    {
+      "name": "boost-tti",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-tti:x64-windows-static@1.89.0",
+      "port_tree_hash": "4f09da54ebc2bce27461729a60f456f6058b9bbe",
+      "source_sha512": "db2cdbffda72f61a13f3f3f18fb0d98892e80c05fc42de7844bdc07f87b2e61f7800b7e5bb987a545a564d343aa1a6c2a5b8e0f38e1da19484c857ad051e9fc1"
+    },
+    {
+      "name": "boost-tuple",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-tuple:x64-windows-static@1.89.0",
+      "port_tree_hash": "4975ef963fa02d53b2fca5eb8936b32e4de2e9da",
+      "source_sha512": "4a25148fbaa13e1ff926eddb09e201515f0b4bbea502543c0e402aabc7875123e7e543f7935232b84a02884337f87f67d0992ba690db95ba977685238c250cba"
+    },
+    {
+      "name": "boost-type-index",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-type-index:x64-windows-static@1.89.0",
+      "port_tree_hash": "eeb4d55443b956770203825a87a8db3a0b456c99",
+      "source_sha512": "5c701d7fcd6d03ab3e2ec2818c8c5ac36e9d0bbc0d7e8e8c1f6867a91de3533abdcf782325f26fa011cfdb9b6536c77a672f1be70289c4cc801850ff8a2f53eb"
+    },
+    {
+      "name": "boost-type-traits",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-type-traits:x64-windows-static@1.89.0",
+      "port_tree_hash": "8c46d2bab6817bbbb8382efaed7aeb1ae8b15119",
+      "source_sha512": "f1c653f741fc28af8e50ef2993e2997c18c13e2314583c91df5f484c0b08e05f676e180516ccb296cd1d14b8305df9fc2adfff57a9a548a7c727a566074dcf58"
+    },
+    {
+      "name": "boost-typeof",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-typeof:x64-windows-static@1.89.0",
+      "port_tree_hash": "bc97dedd1bd7d66c437b13b38786e182c54fc924",
+      "source_sha512": "520f367227391f0acf6bb42b2c70f4a04d367dda2ecbf36518bb7412d6cb72e38315f207517eba1da6b2d5e582b1dc5f911ce48b93a96a3fb147c051e985f5e2"
+    },
+    {
+      "name": "boost-uninstall",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-uninstall:x64-windows-static@1.89.0",
+      "port_tree_hash": "83ce7d42de32cacf540be39b74cfcb462ab034b8"
+    },
+    {
+      "name": "boost-unordered",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-unordered:x64-windows-static@1.89.0",
+      "port_tree_hash": "248854482d2a457a46060b8f77d80a8242e7c02a",
+      "source_sha512": "786173e1fdee59b6d1c4a9e9429a455c4aca484e5c9aea8e632353a79cdecdece928f8155b313aa2e935a5ee85dfa2d3a2f789eb729875d05d315e9052487448"
+    },
+    {
+      "name": "boost-utility",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-utility:x64-windows-static@1.89.0",
+      "port_tree_hash": "13afb12031051f9b937985deade5bbeb7c5cc256",
+      "source_sha512": "a29ee7bb661bb04ed7a933ac6a68babee0fe8f11a37127b2ed4248d7446ed3f46732aa2f9a4925a6422640fe3c7ff3761cf33ed03833fb65ae87ce38d54a8823"
+    },
+    {
+      "name": "boost-variant",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-variant:x64-windows-static@1.89.0",
+      "port_tree_hash": "449f1126f49d4f9f52e0b950c926a0150ffc5dcf",
+      "source_sha512": "c1919721c98e7b1df61b5fe8e3adf7f4e092cbd33168bc5dceb4b32d37b3712e1e8a6107c8b0ed9975a67ce5cfcf46d911360043621cf2290abc1940b1f9833a"
+    },
+    {
+      "name": "boost-variant2",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-variant2:x64-windows-static@1.89.0",
+      "port_tree_hash": "8433fae25d9ccbaa40dc442c750eec2ed6c0cabe",
+      "source_sha512": "1adbf2e53eeace2b66790afbb099b117355605da8b074554c47e70ae755e273fd343d90002bbc2d5e20f32b0bfb43773cc5e0e31b3a31623846baa051d2eb4a7"
+    },
+    {
+      "name": "boost-winapi",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-winapi:x64-windows-static@1.89.0",
+      "port_tree_hash": "f4552c468e3f22d10354f05d70af19f36f5da585",
+      "source_sha512": "45f0c70b1dfa517c8e4fac34bfadb7c55a6aec1ea5f9bb53ac0ed0f2cb76c088f12d8f053ad942a8c3231de38b5864d673913aedaeba9f9e71415f5f6dde51c3"
+    },
+    {
+      "name": "boost-xpressive",
+      "version": "1.89.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "boost-xpressive:x64-windows-static@1.89.0",
+      "port_tree_hash": "fcdfe63155e0da042b195e3677d595fd3350bfc2",
+      "source_sha512": "17e852f20a3c5031ad218b396689e79aea14324ebb44d419d2e8837e47b332314c456600541865ea390e7d8da48a1762b42a2b8156f27634ba8d1d788f4f32ed"
+    },
+    {
+      "name": "catch2",
+      "version": "3.11.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "catch2:x64-windows-static@3.11.0",
+      "port_tree_hash": "5f7385233a249ddbcc48f261b4e4c20f42297360",
+      "source_sha512": "a95495142f915d6e9c2a23e80fe360343e9097680066a2f9d3037a070ba5f81ee5559a0407cc9e972dc2afae325873f1fc7ea07a64012c0f01aac6e549f03e3f"
+    },
+    {
+      "name": "ccd",
+      "version": "2.1#4",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "ccd:x64-windows-static@2.1#4",
+      "port_tree_hash": "a6cd46396151b69680100934c824c290c7057379",
+      "source_sha512": "ff037d9c4df50f09600cf9b3514b259b2850ff43f74817853f5665d22812891168f70bd3cc3969b2c9e3c706f6254991a65421476349607fbd04d894b217456d"
+    },
+    {
+      "name": "clipper2",
+      "version": "1.5.4",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "clipper2:x64-windows-static@1.5.4",
+      "port_tree_hash": "efcc6cdefc2176e0bdcc990d41d0d43601d20e20",
+      "source_sha512": "39153f35630ddc455ad4955a8b9b35f05bf3fad2a33c6e7232300b674a5172794a57c7bd18f96dd0a90d4607a44ecb32c92b0cacc7060d840d568032efaddf19"
+    },
+    {
+      "name": "eigen3",
+      "version": "3.4.1#1",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "eigen3:x64-windows-static@3.4.1#1",
+      "port_tree_hash": "ea6ed04401cca325eff95c17cc0d01326a3c6a85",
+      "source_sha512": "15b540d2fad25de837d7612456ea65b7fcfa25f886c48dcb3de025e079f5f43f45f1c0bd9a8435430d0e2fb9f0a6129719626dd4fd45dc61fc480f97762b2f56"
+    },
+    {
+      "name": "fcl",
+      "version": "0.7.0#4",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "fcl:x64-windows-static@0.7.0#4",
+      "port_tree_hash": "c579ae1dd0494bc4ce7266fb3f4063cf06017fda",
+      "source_sha512": "95612476f4706fcd60812204ec7495a956c4e318cc6ace9526ac93dc765605ddf73b2d0d9ff9f4c9c739e43c5f8e24670113c86e02868a2949ab234c3bf82374"
+    },
+    {
+      "name": "json-schema-validator",
+      "version": "2.3.0#2",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "json-schema-validator:x64-windows-static@2.3.0#2",
+      "port_tree_hash": "8982b7778711884f44358d66f92ddb1f0ad4b99d",
+      "source_sha512": "6d207031acdb94c44f96ff6346dccaf98f2c9d3619d71e419ddabff548ea34d50e8eb103622c99ae28ecb7fddedd687b297e5ad934aa0106c58ac59fc4d65ea9"
+    },
+    {
+      "name": "manifold",
+      "version": "3.2.1#1",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "manifold:x64-windows-static@3.2.1#1",
+      "port_tree_hash": "2352b67bd30ff162a551367458f0732e5f35adc3",
+      "source_sha512": "22ff2236b97fd15463c231b3ce61baeefc6f651b145804480f80146ba83dc4b15d57e5f73ff788604153ec61eace416a409d2a9e7c1327c05cba89a95e2fc536"
+    },
+    {
+      "name": "meshoptimizer",
+      "version": "0.25",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "meshoptimizer:x64-windows-static@0.25",
+      "port_tree_hash": "51139145d67f8e07d8360138f2185e56fb20c04c",
+      "source_sha512": "c00f2357c9c8d17804047c3c678f253bf13aa467b1dadc099a7958787e1725c501bd92a7837494d4831dd7c3428bbeb92353b70fd45ec71e88d753036318ab2f"
+    },
+    {
+      "name": "nlohmann-json",
+      "version": "3.12.0#1",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "nlohmann-json:x64-windows-static@3.12.0#1",
+      "port_tree_hash": "f89a58e6478ca1e39120e93e7ed535c4aaf8198c",
+      "source_sha512": "6cc1e86261f8fac21cc17a33da3b6b3c3cd5c116755651642af3c9e99bb3538fd42c1bd50397a77c8fb6821bc62d90e6b91bcdde77a78f58f2416c62fc53b97d"
+    },
+    {
+      "name": "octomap",
+      "version": "1.10.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "octomap:x64-windows-static@1.10.0",
+      "port_tree_hash": "ff492e256718daa9fb2245c135959d6a812f938d",
+      "source_sha512": "1cbee4f6b3569587986774447ad9ec4190f597310c4d6865ffa7cd8865ece2492e4a42fa369b633d9d7a9da782560d49deaa62a18601ea4f56396bdf1a6a5f52"
+    },
+    {
+      "name": "pocketfft",
+      "version": "2023-09-25",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "pocketfft:x64-windows-static@2023-09-25",
+      "port_tree_hash": "46ffdbd8c95362eee33d5cdf0dce36c77f332a7f",
+      "source_sha512": "e8c2b65b23feb53f1077b3ae1e0e20d21d8f55601bd1216443af0fbc916638c3649527494ec2f23bed42d562341e0cf1fcde54c37068333161f289d23d8a9009"
+    },
+    {
+      "name": "tbb",
+      "version": "2022.2.0",
+      "triplet": "x64-windows-static",
+      "features": [],
+      "port_identity": "tbb:x64-windows-static@2022.2.0",
+      "port_tree_hash": "a3b9fc4c8d2641949c25b590c6225328c3a152d7",
+      "source_sha512": "d87c67514ca17c9769910194a8fac912e183952ad5c408dbceb48edc8aef13375df3d4c9120a7366206c8ab72699ed953df65c11c261e19d8e9d273c73d073f3"
+    }
   ],
   "host_tools": [
-    {"name":"vcpkg-cmake","version":"2025-08-07","features":[],"triplet":"x64-windows","port_identity":"vcpkg-cmake:x64-windows@2025-08-07"},
-    {"name":"vcpkg-cmake-config","version":"2024-05-23","features":[],"triplet":"x64-windows","port_identity":"vcpkg-cmake-config:x64-windows@2024-05-23"}
+    {
+      "name": "vcpkg-boost",
+      "version": "2025-03-29",
+      "triplet": "x64-windows",
+      "features": [],
+      "port_identity": "vcpkg-boost:x64-windows@2025-03-29"
+    },
+    {
+      "name": "vcpkg-cmake",
+      "version": "2025-08-07",
+      "triplet": "x64-windows",
+      "features": [],
+      "port_identity": "vcpkg-cmake:x64-windows@2025-08-07"
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "version": "2024-05-23",
+      "triplet": "x64-windows",
+      "features": [],
+      "port_identity": "vcpkg-cmake-config:x64-windows@2024-05-23"
+    }
+  ],
+  "source_dependencies": [
+    {
+      "name": "cgal",
+      "version": "6.0.1",
+      "url": "https://github.com/CGAL/cgal/archive/refs/tags/v6.0.1.tar.gz",
+      "source_sha512": "28963cdbf84d516290da69ca2ad5c90ec61dd9ca9cd97643ccf5b553c406e96a82621270214c0c81c32da7f8c388090a304d229925ed6e1548dbce3abcf1a259",
+      "arithmetic": "Boost.Multiprecision",
+      "alpha_wrap_license": "GPL-3.0-or-later OR commercial"
+    }
   ]
 }

@@ -156,11 +156,13 @@ def collect_dependencies(args):
                          if checksum.get("algorithm") == "SHA512"]
         # Host-only CMake helpers carry no fetched source archive.  Product
         # ports must prove both the selected vcpkg port tree and archive.
-        if record["triplet"] != args.host_triplet and (not re.fullmatch(r"[0-9a-f]{40}", port_hash) or not source_hashes):
+        port_only = record["name"] == "boost-uninstall"
+        if record["triplet"] != args.host_triplet and (not re.fullmatch(r"[0-9a-f]{40}", port_hash) or (not source_hashes and not port_only)):
             return fail([f"installed SPDX provenance missing port tree or SHA512 for {record['name']}: {spdx}"])
         if record["triplet"] != args.host_triplet:
             record["port_tree_hash"] = port_hash
-            record["source_sha512"] = source_hashes[0]
+            if source_hashes:
+                record["source_sha512"] = source_hashes[0]
         (host if record["triplet"] == args.host_triplet else target).append(record)
     Path(args.out).write_text(json.dumps({"dependencies": sorted(target, key=lambda x: x["name"]),
                                           "host_tools": sorted(host, key=lambda x: x["name"])}, indent=2) + "\n", encoding="utf-8")

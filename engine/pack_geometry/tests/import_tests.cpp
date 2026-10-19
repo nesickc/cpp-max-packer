@@ -398,3 +398,30 @@ TEST_CASE("AT-03 imports separate closed ASCII components in one source",
   REQUIRE(inspected.report().volume_mm3);
   CHECK(*inspected.report().volume_mm3 == Catch::Approx(2.0));
 }
+
+TEST_CASE("Automatic packing envelope retains source dimensions and explicit acceptance", "[import][envelope]")
+{
+    const auto inspected = geo::inspect_stl(triangle_ascii(), { geo::AssetRole::object, geo::Units::mm });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::AssetDraft>>(inspected));
+    const auto original = std::get<std::shared_ptr<const geo::AssetDraft>>(inspected);
+    geo::RepairOptions options;
+    options.algorithm = geo::RepairAlgorithm::packing_envelope;
+    options.tolerance_mm = 0;
+    options.max_working_bytes = 2ULL << 30;
+    const auto proposed = geo::propose_repair(original, options);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::RepairProposal>>(proposed));
+    const auto proposal = std::get<std::shared_ptr<const geo::RepairProposal>>(proposed);
+    REQUIRE(proposal->candidate()->report().validity == geo::Validity::valid);
+    const auto accepted = geo::accept_repair(proposal);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::AcceptedSolid>>(accepted));
+    const auto solid = std::get<std::shared_ptr<const geo::AcceptedSolid>>(accepted);
+    CHECK(solid->is_packing_envelope());
+    CHECK(solid->frame().dimensions_mm == original->frame().dimensions_mm);
+    CHECK(solid->source_mesh().triangles.size() == 1);
+    CHECK(std::ranges::equal(solid->source_mesh().vertices, original->mesh().vertices));
+    const auto replay = geo::propose_repair(original, options);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::RepairProposal>>(replay));
+    const auto other = std::get<std::shared_ptr<const geo::RepairProposal>>(replay)->candidate()->mesh();
+    CHECK(std::ranges::equal(solid->mesh().vertices, other.vertices));
+    CHECK(std::ranges::equal(solid->mesh().triangles, other.triangles));
+}

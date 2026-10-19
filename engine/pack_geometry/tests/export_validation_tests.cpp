@@ -562,3 +562,55 @@ TEST_CASE("AT-10 private leases release reread accepted and kernel residency")
     }
     CHECK(budget.kernel.bytes_live() == 0);
 }
+
+TEST_CASE("Packing envelope export checks raw source triangles after quantization", "[export][envelope]")
+{
+    const auto envelope = binary_mesh(ts::cuboid({ 4, 4, 4 }, { 6, 6, 6 }));
+    ts::Mesh source;
+    source.vertices = {
+        { 4.5, 4.5, 5 },
+        { 5.5, 4.5, 5 },
+        { 5,   5.5, 5 }
+    };
+    source.triangles = {
+        { 0, 1, 2 }
+    };
+    auto expected = geo::Validity::valid;
+    SECTION("open triangle inside envelope is allowed") {}
+    SECTION("protruding source is rejected")
+    {
+        source.vertices[0][0] = 3.999;
+        expected = geo::Validity::invalid;
+    }
+    SECTION("boundary contact is rejected")
+    {
+        source.vertices[0][0] = 4;
+        expected = geo::Validity::invalid;
+    }
+    const auto checked = geo::validate_quantized_export(solution({
+                                                            { "copy", { 5, 5, 5 }, { 0, 0, 0, 1 } }
+    }),
+                                                        [&](std::size_t) -> geo::ExportCopyRead {
+        return envelope;
+    }, {}, {}, [&](std::size_t) -> geo::ExportCopyRead {
+        return binary_mesh(source);
+    });
+    CHECK(checked.validity == expected);
+}
+
+TEST_CASE("Packing envelope export rejects an excluded cavity hidden inside source material", "[export][envelope]")
+{
+    const auto envelope =
+        binary_mesh(ts::hollow_cuboid({ 4, 4, 4 }, { 6, 6, 6 }, { 4.9, 4.9, 4.9 }, { 5.1, 5.1, 5.1 }));
+    const auto source = binary_mesh(ts::cuboid({ 4.5, 4.5, 4.5 }, { 5.5, 5.5, 5.5 }));
+    const auto checked = geo::validate_quantized_export(solution({
+                                                            { "copy", { 5, 5, 5 }, { 0, 0, 0, 1 } }
+    }),
+                                                        [&](std::size_t) -> geo::ExportCopyRead {
+        return envelope;
+    }, {}, {}, [&](std::size_t) -> geo::ExportCopyRead {
+        return source;
+    });
+    CHECK(checked.validity == geo::Validity::invalid);
+    CHECK(checked.code == "EXPORT_ENVELOPE_CAVITY");
+}

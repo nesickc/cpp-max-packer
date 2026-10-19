@@ -56,7 +56,7 @@ struct ImportOptions {
       : role(selected_role), units(selected_units), custom_scale_mm(custom_scale),
         limits(selected_limits) {}
 };
-enum class RepairAlgorithm { weld, manifold_reconstruct };
+enum class RepairAlgorithm { weld, manifold_reconstruct, packing_envelope };
 struct RepairOptions {
     double tolerance_mm {};
     std::uint64_t max_candidate_pairs { 10'000'000 };
@@ -167,6 +167,8 @@ class RepairProposal {
   [[nodiscard]] std::shared_ptr<const AssetDraft> original() const noexcept;
   [[nodiscard]] std::shared_ptr<const AssetDraft> candidate() const noexcept;
   [[nodiscard]] double tolerance_mm() const noexcept;
+  [[nodiscard]] RepairAlgorithm algorithm() const noexcept;
+  [[nodiscard]] std::optional<std::array<double, 2>> envelope_parameters_mm() const noexcept;
   [[nodiscard]] double max_displacement_mm() const noexcept;
   [[nodiscard]] std::optional<std::uint64_t> resident_buffer_bytes() const noexcept;
 
@@ -184,6 +186,8 @@ class AcceptedSolid {
   AcceptedSolid(AcceptedSolid&&) = delete;
   AcceptedSolid& operator=(AcceptedSolid&&) = delete;
   [[nodiscard]] MeshView mesh() const noexcept;
+  [[nodiscard]] bool is_packing_envelope() const noexcept;
+  [[nodiscard]] MeshView source_mesh() const noexcept;
   [[nodiscard]] const Frame& frame() const noexcept;
   [[nodiscard]] AssetRole role() const noexcept;
   [[nodiscard]] const ImportReport& report() const noexcept;

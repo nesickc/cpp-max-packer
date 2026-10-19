@@ -595,6 +595,17 @@ Json repair_recipe(const std::shared_ptr<const RepairProposal>& proposal, const 
         recipe["options"].erase("weld_tolerance_mm");
         recipe.erase("max_displacement_mm");
     }
+    if (const auto parameters = proposal->envelope_parameters_mm()) {
+        recipe["schema_version"] = 3;
+        recipe["algorithm"] = "cgal-alpha-wrap-envelope-v1";
+        recipe["library_version"] = "6.0.1";
+        recipe["options"].erase("weld_tolerance_mm");
+        recipe["options"]["alpha_mm"] = (*parameters)[0];
+        recipe["options"]["offset_mm"] = (*parameters)[1];
+        recipe["options"]["seed"] = 0;
+        recipe.erase("max_displacement_mm");
+        recipe["purpose"] = "packing_envelope";
+    }
     return recipe;
 }
 
@@ -628,17 +639,23 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
         const auto recipe =
             Json::parse(std::string_view(reinterpret_cast<const char*>(retained.data()), retained.size()));
         const bool reconstruct = recipe.at("schema_version") == 2;
+        const bool envelope = recipe.at("schema_version") == 3;
+        if (envelope && (recipe.value("algorithm", "") != "cgal-alpha-wrap-envelope-v1" ||
+                         recipe.value("library_version", "") != "6.0.1")) {
+            return Error { "SCHEMA_UNSUPPORTED", "Unsupported packing-envelope recipe.", Json::object(), true };
+        }
         if (reconstruct && (recipe.value("algorithm", "") != "manifold-even-odd-level-set-v1" ||
                             recipe.value("library_version", "") != "3.2.1")) {
             return Error { "SCHEMA_UNSUPPORTED", "Unsupported repair algorithm or library version.", Json::object(),
                            true };
         }
-        if (!reconstruct && recipe.at("schema_version") != 1) {
+        if (!reconstruct && !envelope && recipe.at("schema_version") != 1) {
             return Error { "SCHEMA_UNSUPPORTED", "Unsupported repair recipe version.", Json::object(), true };
         }
         const auto tolerance =
-            recipe.at("options").at(reconstruct ? "resolution_mm" : "weld_tolerance_mm").get<double>();
-        if (!std::isfinite(tolerance) || tolerance <= 0 || report.at("repair_record").at("accepted_by_user") != true) {
+            envelope ? 0.0 : recipe.at("options").at(reconstruct ? "resolution_mm" : "weld_tolerance_mm").get<double>();
+        if ((!envelope && (!std::isfinite(tolerance) || tolerance <= 0)) ||
+            report.at("repair_record").at("accepted_by_user") != true) {
             return bad();
         }
         const auto mesh = draft->mesh();
@@ -665,6 +682,9 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
         geometry::RepairOptions options { tolerance, 10'000'000, max_working_bytes - consumed };
         if (reconstruct) {
             options.algorithm = geometry::RepairAlgorithm::manifold_reconstruct;
+        }
+        if (envelope) {
+            options.algorithm = geometry::RepairAlgorithm::packing_envelope;
         }
         const auto admission = geometry::estimate_repair_admission(*draft, options, control);
         if (const auto* failure = std::get_if<geometry::ImportFailure>(&admission)) {
@@ -699,6 +719,23 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
         }
         const auto& before_hash = std::get<std::string>(before_digest);
         const auto& after_hash = std::get<std::string>(after_digest);
+        if (report.contains("packing_envelope") != envelope) {
+            return bad();
+        }
+        if (envelope) {
+            const auto parameters = proposal->envelope_parameters_mm();
+            const auto& metadata = report.at("packing_envelope");
+            const auto& source = metadata.at("source_mesh");
+            if (!parameters || metadata.at("algorithm") != "cgal-alpha-wrap-envelope-v1" ||
+                metadata.at("alpha_mm") != (*parameters)[0] || metadata.at("offset_mm") != (*parameters)[1] ||
+                metadata.at("enclosure_status") != "valid" || source.at("sha256") != before_hash ||
+                source.at("path") != "assets/" + before_hash + ".ply" ||
+                source.at("format") != "binary_little_endian_ply_f64_u32" ||
+                source.at("vertex_count") != mesh.vertices.size() ||
+                source.at("triangle_count") != mesh.triangles.size()) {
+                return bad();
+            }
+        }
         const auto expected = bytes_from_string(repair_recipe(proposal, report.at("source").at("sha256"), source_size,
                                                               report.at("role"), report.at("source").at("units"),
                                                               tolerance, before_hash, after_hash, reconstruct)
@@ -732,11 +769,14 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
 
 std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectRequest& request) {
     try {
-        if (request.weld_tolerance_mm && request.reconstruct_resolution_mm) {
+        if (static_cast<int>(request.weld_tolerance_mm.has_value()) +
+                static_cast<int>(request.reconstruct_resolution_mm.has_value()) + request.packing_envelope >
+            1) {
             return failure("INVALID_REQUEST", "Choose one repair algorithm.");
         }
-        const auto tolerance =
-            request.reconstruct_resolution_mm ? request.reconstruct_resolution_mm : request.weld_tolerance_mm;
+        const auto tolerance = request.packing_envelope            ? std::optional<double>(0.0)
+                               : request.reconstruct_resolution_mm ? request.reconstruct_resolution_mm
+                                                                   : request.weld_tolerance_mm;
         const bool reconstruct = request.reconstruct_resolution_mm.has_value();
         detail::AssetBudget budget(request.max_working_bytes);
         // Path/artifact bookkeeping, hashing, bounded report scalar metadata, and
@@ -770,7 +810,7 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
         if (request.scale_mm && (!std::isfinite(*request.scale_mm) || *request.scale_mm <= 0.0)) {
             return failure("INVALID_REQUEST", "Custom scale must be finite and positive.");
         }
-        if (tolerance && (!std::isfinite(*tolerance) || *tolerance <= 0.0)) {
+        if (!request.packing_envelope && tolerance && (!std::isfinite(*tolerance) || *tolerance <= 0.0)) {
             return failure("INVALID_REQUEST", "Weld tolerance must be finite and positive.");
         }
         if (request.accept_repair && !tolerance) {
@@ -848,6 +888,9 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
             if (reconstruct) {
                 weld_options.algorithm = geometry::RepairAlgorithm::manifold_reconstruct;
             }
+            if (request.packing_envelope) {
+                weld_options.algorithm = geometry::RepairAlgorithm::packing_envelope;
+            }
             const auto weld_admission = geometry::estimate_repair_admission(*draft, weld_options);
             if (const auto* problem = std::get_if<ImportFailure>(&weld_admission)) {
                 return import_failure(*problem);
@@ -903,13 +946,18 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
                 { "max_displacement_mm", proposal->max_displacement_mm()                                            },
                 { "candidate_status",    validity_name(candidate->report().validity)                                }
             };
-            proposal_reference["algorithm"] = reconstruct ? "manifold" : "weld";
+            proposal_reference["algorithm"] = request.packing_envelope ? "envelope" : reconstruct ? "manifold" : "weld";
             proposal_reference["before_diagnostics"] = full_diagnostics_json(draft->report());
             proposal_reference["after_diagnostics"] = full_diagnostics_json(candidate->report());
             proposal_reference["surface_area_before_mm2"] = surface_area(draft->mesh());
             proposal_reference["surface_area_after_mm2"] = surface_area(candidate->mesh());
-            if (reconstruct) {
+            if (reconstruct || request.packing_envelope) {
                 proposal_reference["max_displacement_mm"] = nullptr;
+            }
+            if (const auto parameters = proposal->envelope_parameters_mm()) {
+                proposal_reference["tolerance_mm"] = nullptr;
+                proposal_reference["alpha_mm"] = (*parameters)[0];
+                proposal_reference["offset_mm"] = (*parameters)[1];
             }
 
             if (request.accept_repair && *request.accept_repair != *proposal_token) {
@@ -950,6 +998,15 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
             report = make_report_base(request, source_hash, source_artifact, accepted->frame(), accepted->report(),
                                       "accepted");
             report["accepted_solid"] = solid_reference(accepted_path, accepted_hash, accepted->mesh());
+            if (accepted->is_packing_envelope()) {
+                report["packing_envelope"] = {
+                    { "source_mesh", solid_reference(draft_artifact, draft_hash, draft->mesh()) },
+                    { "algorithm", "cgal-alpha-wrap-envelope-v1" },
+                    { "alpha_mm", proposal_reference["alpha_mm"] },
+                    { "offset_mm", proposal_reference["offset_mm"] },
+                    { "enclosure_status", "valid" }
+                };
+            }
             if (request.accept_repair) {
                 report["repair_record"] = {
                     { "path",             portable_path(std::filesystem::path("assets") / proposal_path->filename()) },

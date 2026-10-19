@@ -168,7 +168,7 @@ int run_engine(int argc, Character** argv) {
                            equals_ascii(flag, "--report") || equals_ascii(flag, "--role") ||
                            equals_ascii(flag, "--scale-mm") || equals_ascii(flag, "--weld-tolerance-mm") ||
                            equals_ascii(flag, "--reconstruct-resolution-mm") || equals_ascii(flag, "--accept-repair") ||
-                           equals_ascii(flag, "--available-host-bytes");
+                           equals_ascii(flag, "--available-host-bytes") || equals_ascii(flag, "--packing-envelope");
         if (!known || index + 1 >= argc) {
           return machine_error("INVALID_REQUEST", "Inspection options are invalid.", 2);
         }
@@ -216,6 +216,14 @@ int run_engine(int argc, Character** argv) {
                   request.reconstruct_resolution_mm = request.weld_tolerance_mm;
                   request.weld_tolerance_mm.reset();
               }
+          }
+          else if (equals_ascii(flag, "--packing-envelope")) {
+              if (seen.weld || *converted != "auto") {
+                  return machine_error("INVALID_REQUEST", "Packing envelopes require auto and no other repair option.",
+                                       2);
+              }
+              seen.weld = true;
+              request.packing_envelope = true;
           }
           else if (equals_ascii(flag, "--available-host-bytes")) {
               if (seen.available) {

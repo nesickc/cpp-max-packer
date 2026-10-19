@@ -94,6 +94,7 @@ pub struct ImportRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RepairRequest {
+    Envelope,
     Propose { algorithm: String, tolerance_mm: f64 },
     Accept { token: String },
     Reject { token: String },

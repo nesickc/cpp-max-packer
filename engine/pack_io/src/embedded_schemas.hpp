@@ -992,6 +992,9 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
       }, "additionalProperties": false
     },
     "repair_proposal": {
+      "allOf": [{"if":{"required":["algorithm"],"properties":{"algorithm":{"const":"envelope"}}},
+        "then":{"required":["alpha_mm","offset_mm"],"properties":{"tolerance_mm":{"type":"null"},"max_displacement_mm":{"type":"null"}}},
+        "else":{"properties":{"tolerance_mm":{"type":"number","exclusiveMinimum":0}}}}],
       "type": "object",
       "required": ["sha256", "path", "before", "after", "tolerance_mm", "max_displacement_mm", "candidate_status"],
       "properties": {
@@ -999,14 +1002,27 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "path": { "$ref": "#/definitions/path" },
         "before": { "$ref": "#/definitions/preview" },
         "after": { "$ref": "#/definitions/preview" },
-        "tolerance_mm": { "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/positive" },
+        "tolerance_mm": { "type": ["number", "null"], "exclusiveMinimum": 0 },
         "max_displacement_mm": { "type": ["number", "null"], "minimum": 0 },
         "candidate_status": { "enum": ["valid", "invalid", "indeterminate"] },
-        "algorithm": { "enum": ["weld", "manifold"] },
+        "algorithm": { "enum": ["weld", "manifold", "envelope"] },
+        "alpha_mm": { "type": "number", "exclusiveMinimum": 0 },
+        "offset_mm": { "type": "number", "exclusiveMinimum": 0 },
         "before_diagnostics": { "$ref": "#/definitions/diagnostics" },
         "after_diagnostics": { "$ref": "#/definitions/diagnostics" },
         "surface_area_before_mm2": { "type": "number", "minimum": 0 },
         "surface_area_after_mm2": { "type": "number", "minimum": 0 }
+      }, "additionalProperties": false
+    },
+    "packing_envelope": {
+      "type": "object",
+      "required": ["source_mesh", "algorithm", "alpha_mm", "offset_mm", "enclosure_status"],
+      "properties": {
+        "source_mesh": { "$ref": "#/definitions/solid" },
+        "algorithm": { "const": "cgal-alpha-wrap-envelope-v1" },
+        "alpha_mm": { "type": "number", "exclusiveMinimum": 0 },
+        "offset_mm": { "type": "number", "exclusiveMinimum": 0 },
+        "enclosure_status": { "const": "valid" }
       }, "additionalProperties": false
     },
     "source": {
@@ -1204,6 +1220,7 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "accepted_solid": {
           "$ref": "#/definitions/solid"
         },
+        "packing_envelope": { "$ref": "#/definitions/packing_envelope" },
         "repair_record": {
           "$ref": "#/definitions/repair"
         },
@@ -1216,6 +1233,7 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
     },
     "inspected": {
       "allOf": [
+        {"not":{"required":["packing_envelope"]}},
         {
           "$ref": "#/definitions/base"
         },
@@ -1246,6 +1264,7 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
     },
     "accepted": {
       "allOf": [
+        {"if":{"required":["packing_envelope"]},"then":{"properties":{"role":{"const":"object"},"repair_record":{"type":"object"}}}},
         { "not": { "required": ["repair_proposal"] } },
         {
           "$ref": "#/definitions/base"
@@ -2770,6 +2789,16 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
               "type": "null"
             }
           ]
+        },
+        "envelope_preview": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Preview"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -3400,11 +3429,15 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "algorithm": {
           "enum": [
             "weld",
-            "manifold"
+            "manifold",
+            "envelope"
           ]
         },
         "tolerance_mm": {
-          "type": "number",
+          "type": [
+            "number",
+            "null"
+          ],
           "exclusiveMinimum": 0
         },
         "report": {
@@ -3474,6 +3507,18 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
             },
             "token": {
               "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/sha256"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action"
+          ],
+          "properties": {
+            "action": {
+              "const": "envelope"
             }
           },
           "additionalProperties": false

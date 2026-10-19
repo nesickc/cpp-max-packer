@@ -20,12 +20,16 @@ struct ExportValidationLimits {
     std::uint64_t max_working_bytes { 512ULL << 20 };
 };
 
-// The reader must return the same immutable staged bytes for each copy index
-// throughout this call. Caller publication must use those exact staged bytes.
+// Readers must return immutable binary STL bytes for each copy throughout this
+// call. Normally reader is the staged publication. With enclosed_source, reader
+// supplies quantized packing envelopes and enclosed_source is the publication;
+// its raw triangles must lie inside the validated cavity-free envelopes.
+// Caller publication must use those exact source bytes and bind them to the poses.
 // Validates the independently quantized, baked-world copy streams. It never
 // produces a replacement ValidatedSolution: it only authorizes STL publication.
 [[nodiscard]] ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSolution>,
                                                          const ExportCopyReader&, const ExportValidationLimits& = {},
-                                                         const runtime::OperationControl& = {});
+                                                         const runtime::OperationControl& = {},
+                                                         const ExportCopyReader& enclosed_source = {});
 
 }  // namespace spectrapack::geometry

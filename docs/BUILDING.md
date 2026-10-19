@@ -226,3 +226,9 @@ The runner independently checks source/frame/mesh artifacts and container volume
 retains per-process diagnostics and reports informational median/p95 inspection
 times. `--discover` retains unqualified observations for review and cannot approve
 its own baseline. See T-003 for outstanding gates.
+
+## Packing envelopes
+
+`Create packing envelope` prepares defective object STLs without numeric repair settings. The CGAL 6.0.1 source archive is hash-pinned in `cmake/CGAL.cmake`; Boost.Multiprecision avoids a system GMP dependency. The first configure fetches that archive. CGAL/Boost notices are included in staged engine packages (see ADR 0021 for licensing).
+
+CLI proposal: `spectrapack-engine inspect --stl model.stl --units mm --packing-envelope auto --available-host-bytes 2147483648 --report model/report.json`. Repeat with the returned `--accept-repair <sha256>` token to accept. The source and envelope survive portable Save/Open. Original, Packing envelope and Overlay views use the same poses. Export retains cleaned source geometry and separately validates enclosure after float32 STL quantization.

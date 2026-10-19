@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <limits>
+#include <map>
 #include <new>
 #include <string_view>
 #include <utility>
@@ -11,6 +13,7 @@
 #include "export_validation_internal.hpp"
 #include "field_kernel.hpp"
 #include "import_profile.hpp"
+#include "solid_analysis.hpp"
 
 namespace spectrapack::geometry {
 namespace detail {
@@ -358,6 +361,82 @@ bool strictly_separated_quantized_bounds(const detail::validation_kernel::Conser
 }
 using LoadOutcome = std::variant<BakedCopy, ClassifiedFailure>;
 
+std::optional<ClassifiedFailure> check_enclosed_copy(std::size_t index, MeshView envelope,
+                                                     const ExportCopyReader& reader,
+                                                     const ExportValidationLimits& limits, ExportBudget& budget)
+{
+    if (!reader) {
+        return {};
+    }
+    ExportCopyRead read;
+    try {
+        read = reader(index);
+    }
+    catch (...) {
+        return ClassifiedFailure { Validity::indeterminate, "EXPORT_COPY_READ", "The staged source reader failed." };
+    }
+    if (const auto* failure = std::get_if<ExportReadFailure>(&read)) {
+        return ClassifiedFailure { Validity::indeterminate, failure->code, failure->message };
+    }
+    const auto& bytes = std::get<std::vector<std::byte>>(read);
+    if (bytes.size() < 84) {
+        return ClassifiedFailure { Validity::invalid, "EXPORT_SOURCE_STL", "Truncated source STL." };
+    }
+    std::uint32_t count;
+    std::memcpy(&count, bytes.data() + 80, 4);
+    if (bytes.size() != 84ULL + 50ULL * count || count > limits.per_copy_import.max_triangles ||
+        count > UINT32_MAX / 3) {
+        return ClassifiedFailure { Validity::indeterminate, "EXPORT_SOURCE_STL", "Source STL exceeds import limits." };
+    }
+    // Raw triangle soup is intentional: no welding, reorientation, deletion or
+    // manifold requirement may change the exported source before enclosure.
+    const auto scratch = bytes.capacity() + 384ULL * count + 512ULL * envelope.triangles.size();
+    auto lease = budget.lease_bytes(scratch);
+    if (!lease) {
+        return ClassifiedFailure { Validity::indeterminate, "EXPORT_MEMORY_LIMIT",
+                                   "Source enclosure exceeds export memory." };
+    }
+    std::vector<Vec3> vertices;
+    vertices.reserve(3ULL * count);
+    std::map<Vec3, std::uint32_t> indices;
+    std::vector<std::array<std::uint32_t, 3>> faces(count);
+    for (std::uint32_t f = 0; f < count; ++f) {
+        if ((f & 1023) == 0 && budget.kernel.control().poll() != runtime::StopCause::none) {
+            return ClassifiedFailure { Validity::indeterminate, "EXPORT_INTERRUPTED",
+                                       "Source enclosure was interrupted." };
+        }
+        for (unsigned v = 0; v < 3; ++v) {
+            float p[3];
+            std::memcpy(p, bytes.data() + 84ULL + 50ULL * f + 12 + 12 * v, 12);
+            if (!std::isfinite(p[0]) || !std::isfinite(p[1]) || !std::isfinite(p[2])) {
+                return ClassifiedFailure { Validity::invalid, "EXPORT_SOURCE_STL", "Nonfinite source coordinate." };
+            }
+            const Vec3 point { p[0], p[1], p[2] };
+            auto [it, inserted] = indices.try_emplace(point, static_cast<std::uint32_t>(vertices.size()));
+            if (inserted) {
+                vertices.push_back(point);
+            }
+            faces[f][v] = it->second;
+        }
+    }
+    auto remaining = limits.per_copy_import;
+    remaining.max_predicate_work -= std::min(remaining.max_predicate_work, budget.import_predicate_used);
+    remaining.max_candidate_pairs -= std::min(remaining.max_candidate_pairs, budget.import_candidate_pairs_used);
+    std::uint64_t work = 0, pairs = 0;
+    const auto status = detail::certify_surface_enclosure(envelope, { vertices, faces }, remaining,
+                                                          budget.kernel.control(), &work, &pairs);
+    if (!budget.consume_import_predicates(work, limits.per_copy_import.max_predicate_work) ||
+        !budget.consume_import_pairs(pairs, limits.per_copy_import.max_candidate_pairs)) {
+        return ClassifiedFailure { Validity::indeterminate, "EXPORT_ENCLOSURE_LIMIT",
+                                   "Source enclosure exhausted its work allowance." };
+    }
+    if (status != Validity::valid) {
+        return ClassifiedFailure { status, "EXPORT_SOURCE_ENCLOSURE",
+                                   "Quantized source is not certified inside its packing envelope." };
+    }
+    return {};
+}
+
 LoadOutcome load_copy(std::size_t index, const ExportCopyReader& reader, const ExportValidationLimits& limits,
                       ExportBudget& budget)
 {
@@ -402,7 +481,8 @@ LoadOutcome load_copy(std::size_t index, const ExportCopyReader& reader, const E
 
 ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSolution> solution,
                                            const ExportCopyReader& reader, const ExportValidationLimits& limits,
-                                           const runtime::OperationControl& control)
+                                           const runtime::OperationControl& control,
+                                           const ExportCopyReader& enclosed_source)
 {
     namespace kernel = detail::validation_kernel;
     control.phase(runtime::Phase::validating);
@@ -505,6 +585,15 @@ ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSoluti
             return report(*failure, budget, fresh_peak);
         }
         auto copy = std::get<BakedCopy>(std::move(loaded));
+        if (enclosed_source && std::ranges::any_of(copy.imported.solid->report().shells, [](const auto& shell) {
+            return !shell.depth || *shell.depth % 2 != 0;
+        })) {
+            return report(Validity::invalid, "EXPORT_ENVELOPE_CAVITY",
+                          "A packing envelope may not exclude an interior cavity.", budget, fresh_peak);
+        }
+        if (auto failure = check_enclosed_copy(current, copy.imported.solid->mesh(), enclosed_source, limits, budget)) {
+            return report(*failure, budget, fresh_peak);
+        }
         const auto containment =
             container
                 ? kernel::classify_stl(*copy.placed.solid, *container->solid, constraints.wall_clearance_mm,

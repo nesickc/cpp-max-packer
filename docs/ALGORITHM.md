@@ -231,3 +231,11 @@ Open boundaries, unmatched scanlines, unresolved topology and indeterminate
 analysis remain blocked. Grid/work/output limits bound reconstruction. Preview
 LOD and packing pitch never modify an accepted repair. Recipe replay, source
 preservation and compatibility are defined in [ADR 0020](../spec/decisions/0020-explicit-desktop-repair.md).
+
+## Conservative object envelopes
+
+CGAL Alpha Wrapping uses source bounds diagonal / 60 for alpha and / 1000 for offset, with seed 0. These are automatic preparation policy, unrelated to search pitch. The visitor polls cancellation and bounds refinement steps, Steiner insertions, triangulation cells and queued gates. Output is capped before normal solid analysis. Admission accounts for retained source, generator scratch and bounded output; allocator overhead and process RSS remain outside portable buffer accounting.
+
+Independent enclosure checks traverse an envelope BVH against every retained source triangle using exact triangle predicates, reject all boundary contacts, then classify one point per connected source component. Vertex-only containment cannot pass a triangle crossing a concavity. Accepted and quantized envelopes must have no excluded cavity shells: otherwise surface enclosure would not imply material enclosure. Disconnected source components are checked separately. Finite source defects may remain inside the envelope; no manifold requirement is imposed on exported source triangles.
+
+Packing uses the full envelope. Export rereads immutable source triangle ranges, checks exact expected float32 transforms, validates quantized envelopes with the existing placement validator, and checks source enclosure again. No display mesh or search field can authorize placement or export.

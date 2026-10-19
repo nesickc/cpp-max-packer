@@ -537,4 +537,126 @@ SolidAnalysis analyze_solid(MeshView mesh, const ImportLimits& limits) {
   return analyze_solid(mesh, limits, predicate_budget);
 }
 
+Validity certify_surface_enclosure(MeshView envelope, MeshView source, const ImportLimits& limits,
+                                   const runtime::OperationControl& control, std::uint64_t* work_used,
+                                   std::uint64_t* pairs_used)
+{
+    if (envelope.triangles.empty() || source.triangles.empty()) {
+        return Validity::invalid;
+    }
+    exact::WorkBudget budget(limits.max_predicate_work, control);
+    std::uint64_t pairs = 0;
+    struct RecordWork {
+        exact::WorkBudget& budget;
+        std::uint64_t& pairs;
+        std::uint64_t* work_out;
+        std::uint64_t* pairs_out;
+        ~RecordWork()
+        {
+            if (work_out) {
+                *work_out = budget.used();
+            }
+            if (pairs_out) {
+                *pairs_out = pairs;
+            }
+        }
+    } record { budget, pairs, work_used, pairs_used };
+    fcl::BVHModel<fcl::AABBd> tree;
+    if (!build_bvh(envelope, tree, control)) {
+        return Validity::indeterminate;
+    }
+    ShellWork shell;
+    Bounds bounds {};
+    bool first = true;
+    for (std::uint32_t face = 0; face < envelope.triangles.size(); ++face) {
+        shell.faces.push_back(face);
+        for (auto id : envelope.triangles[face]) {
+            extend(bounds, envelope.vertices[id], first);
+        }
+    }
+    std::vector<std::uint32_t> parent(source.vertices.size());
+    for (std::uint32_t i = 0; i < parent.size(); ++i) {
+        parent[i] = i;
+    }
+    auto root = [&](std::uint32_t id) {
+        while (parent[id] != id) {
+            parent[id] = parent[parent[id]];
+            id = parent[id];
+        }
+        return id;
+    };
+    std::vector<bool> referenced(source.vertices.size());
+    for (std::uint32_t face = 0; face < source.triangles.size(); ++face) {
+        operation_checkpoint(control);
+        const auto& indices = source.triangles[face];
+        for (auto id : indices) {
+            if (id >= source.vertices.size()) {
+                return Validity::invalid;
+            }
+            referenced[id] = true;
+            for (unsigned axis = 0; axis < 3; ++axis) {
+                const double coordinate = source.vertices[id][axis];
+                if (!std::isfinite(coordinate) || coordinate <= bounds.min[axis] || coordinate >= bounds.max[axis]) {
+                    return Validity::invalid;
+                }
+            }
+        }
+        parent[root(indices[1])] = root(indices[0]);
+        parent[root(indices[2])] = root(indices[0]);
+        const auto points = triangle_points(source, face);
+        Bounds triangle_bounds {};
+        bool first_point = true;
+        for (const auto& p : points) {
+            extend(triangle_bounds, p, first_point);
+        }
+        const fcl::AABBd box(fcl::Vector3d(triangle_bounds.min[0], triangle_bounds.min[1], triangle_bounds.min[2]),
+                             fcl::Vector3d(triangle_bounds.max[0], triangle_bounds.max[1], triangle_bounds.max[2]));
+        std::vector<int> pending { 0 };
+        while (!pending.empty()) {
+            operation_checkpoint(control);
+            const int node = pending.back();
+            pending.pop_back();
+            const auto& bv = tree.getBV(node);
+            if (!box.overlap(bv.bv)) {
+                continue;
+            }
+            if (!bv.isLeaf()) {
+                pending.push_back(bv.leftChild());
+                pending.push_back(bv.rightChild());
+                continue;
+            }
+            if (++pairs > limits.max_candidate_pairs) {
+                return Validity::indeterminate;
+            }
+            const auto relation = exact::triangle_relation(points, triangle_points(envelope, bv.primitiveId()),
+                                                           no_shared(), no_shared(), 0, budget);
+            if (relation == exact::TriangleRelation::uncertain) {
+                return Validity::indeterminate;
+            }
+            if (relation != exact::TriangleRelation::disjoint) {
+                return Validity::invalid;
+            }
+        }
+    }
+    // A connected triangle component cannot leave a closed envelope without
+    // meeting its boundary. Check one point per component after excluding ALL
+    // source-triangle/envelope-triangle contacts, not just vertex excursions.
+    std::vector<bool> checked(source.vertices.size());
+    for (std::uint32_t id = 0; id < source.vertices.size(); ++id) {
+        if (!referenced[id] || checked[root(id)]) {
+            continue;
+        }
+        operation_checkpoint(control);
+        const auto inside = point_inside_shell(source.vertices[id], shell, envelope, bounds, budget);
+        if (!inside) {
+            return Validity::indeterminate;
+        }
+        if (!*inside) {
+            return Validity::invalid;
+        }
+        checked[root(id)] = true;
+    }
+    return Validity::valid;
+}
+
 }  // namespace spectrapack::geometry::detail

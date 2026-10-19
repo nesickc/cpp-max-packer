@@ -9,6 +9,7 @@ import { packingMesh } from './transforms';
 interface Props {
   mode: 'object' | 'result';
   preview: Desktop.ImportedObject['preview'];
+  envelopePreview?: Desktop.ImportedObject['preview'];
   placements: Results.Placement[];
   dimensions: [number, number, number];
   hidden: ReadonlySet<string>;
@@ -22,18 +23,21 @@ interface ViewUpdates {
   appearance: () => void;
   projection: () => void;
   preview: (descriptor: Props['preview']) => () => void;
+  envelope: (descriptor: Props['preview']) => () => void;
 }
 
-export function Viewer({ mode, preview, placements, dimensions, hidden, selected, onSelect }: Props) {
+export function Viewer({ mode, preview, envelopePreview, placements, dimensions, hidden, selected, onSelect }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const fitAction = useRef<() => void>(() => {});
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [envelopeLoading, setEnvelopeLoading] = useState(false);
+  const [geometryView, setGeometryView] = useState<'original'|'envelope'|'overlay'>('overlay');
   const [clip, setClip] = useState(100);
   const [opacity, setOpacity] = useState(12);
   const [orthographic, setOrthographic] = useState(false);
-  const latest = useRef({ placements, dimensions, hidden, selected, onSelect, clip, opacity, orthographic });
-  latest.current = { placements, dimensions, hidden, selected, onSelect, clip, opacity, orthographic };
+  const latest = useRef({ placements, dimensions, hidden, selected, onSelect, clip, opacity, orthographic, geometryView });
+  latest.current = { placements, dimensions, hidden, selected, onSelect, clip, opacity, orthographic, geometryView };
   const updates = useRef<ViewUpdates | null>(null);
 
   // Own the GPU resources for the mounted viewport. Progress snapshots and
@@ -71,6 +75,8 @@ export function Viewer({ mode, preview, placements, dimensions, hidden, selected
     const raycaster = new THREE.Raycaster();
     let mesh: THREE.InstancedMesh | null = null;
     let geometry: THREE.BufferGeometry | null = null;
+    let envelopeGeometry: THREE.BufferGeometry | null = null;
+    let envelopeMesh: THREE.InstancedMesh | null = null;
     let ids: string[] = [];
     let disposed = false;
     let failed = false;
@@ -95,20 +101,36 @@ export function Viewer({ mode, preview, placements, dimensions, hidden, selected
     controls.addEventListener('change', invalidate);
     const clearMesh = () => {
       if (mesh) { scene.remove(mesh); mesh.dispose(); (mesh.material as THREE.Material).dispose(); mesh = null; }
+      if (envelopeMesh) { scene.remove(envelopeMesh); envelopeMesh.dispose(); (envelopeMesh.material as THREE.Material).dispose(); envelopeMesh=null; }
       ids = [];
     };
     const appearance = () => {
       plane.constant = h * latest.current.clip / 100; boxMaterial.opacity = latest.current.opacity / 100;
-      ids.forEach((id, i) => mesh!.setColorAt(i, new THREE.Color(id === latest.current.selected ? '#ffbb6b' : '#52caba')));
+      ids.forEach((id, i) => { mesh?.setColorAt(i, new THREE.Color(id === latest.current.selected ? '#ffbb6b' : '#52caba')); envelopeMesh?.setColorAt(i,new THREE.Color(id===latest.current.selected?'#ffbb6b':'#c08cff')); });
+      if (mesh) mesh.visible = !envelopeMesh || latest.current.geometryView !== 'envelope';
+      if (envelopeMesh) {
+        envelopeMesh.visible = latest.current.geometryView !== 'original';
+        const material=envelopeMesh.material as THREE.MeshStandardMaterial;
+        material.color.set('#ffffff');
+        material.wireframe=latest.current.geometryView==='overlay';
+        material.transparent=material.wireframe; material.opacity=material.wireframe?.4:1;
+        material.depthWrite=!material.wireframe;
+        if (envelopeMesh.instanceColor) envelopeMesh.instanceColor.needsUpdate=true;
+      }
       if (mesh?.instanceColor) mesh.instanceColor.needsUpdate = true;
       invalidate();
     };
     const instances = () => {
       clearMesh();
-      if (!geometry) { invalidate(); return; }
-      const packing = packingMesh(geometry, latest.current.placements, latest.current.hidden); mesh = packing.mesh; ids = packing.ids;
-      const material = mesh.material as THREE.MeshStandardMaterial; material.clippingPlanes = [plane];
-      scene.add(mesh); appearance();
+      if (geometry) {
+        const packing=packingMesh(geometry,latest.current.placements,latest.current.hidden); mesh=packing.mesh; ids=packing.ids;
+        (mesh.material as THREE.MeshStandardMaterial).clippingPlanes=[plane]; scene.add(mesh);
+      }
+      if (envelopeGeometry) {
+        const packing=packingMesh(envelopeGeometry,latest.current.placements,latest.current.hidden); envelopeMesh=packing.mesh; ids=packing.ids;
+        (envelopeMesh.material as THREE.MeshStandardMaterial).clippingPlanes=[plane]; scene.add(envelopeMesh);
+      }
+      appearance();
     };
     const resize = () => {
       const width = Math.max(element.clientWidth, 1), height = Math.max(element.clientHeight, 1);
@@ -134,9 +156,24 @@ export function Viewer({ mode, preview, placements, dimensions, hidden, selected
         next.position.copy(camera.position); next.quaternion.copy(camera.quaternion); next.up.copy(camera.up);
         camera = next; controls.object = next; controls.update(); resize();
       },
+      envelope: descriptor => {
+        let cancelled=false;
+        clearMesh(); envelopeGeometry?.dispose(); envelopeGeometry=null; instances();
+        setEnvelopeLoading(!!descriptor);
+        if (descriptor) bridge.preview({preview_id:descriptor.preview_id}).then(bytes=>{
+          if (disposed || cancelled) return;
+          const data=bytes instanceof ArrayBuffer?bytes:new Uint8Array(bytes).buffer;
+          if (data.byteLength!==descriptor.byte_length) throw new Error('Envelope preview length mismatch.');
+          const parsed=new PLYLoader().parse(data);
+          if (!parsed.index || parsed.index.count/3!==descriptor.triangle_count) {parsed.dispose();throw new Error('Envelope preview metadata mismatch.');}
+          parsed.computeVertexNormals(); envelopeGeometry=parsed; instances();
+        }).catch(e=>{if(!disposed&&!cancelled)setError(`Envelope preview unavailable: ${String(e)}`);})
+          .finally(()=>{if(!disposed&&!cancelled)setEnvelopeLoading(false);});
+        return ()=>{cancelled=true;};
+      },
       preview: descriptor => {
         let cancelled = false;
-        clearMesh(); geometry?.dispose(); geometry = null; invalidate();
+        clearMesh(); geometry?.dispose(); geometry = null; instances();
         if (!failed) setError(null); setLoading(!!descriptor);
         if (descriptor) bridge.preview({ preview_id: descriptor.preview_id }).then(bytes => {
           if (disposed || cancelled) return;
@@ -156,10 +193,12 @@ export function Viewer({ mode, preview, placements, dimensions, hidden, selected
     let down: [number, number] | null = null;
     const pointerDown = (event: PointerEvent) => { down = [event.clientX, event.clientY]; };
     const pointerUp = (event: PointerEvent) => {
-      if (!down || Math.hypot(event.clientX - down[0], event.clientY - down[1]) > 5 || !mesh) return;
+      if (!down || Math.hypot(event.clientX - down[0], event.clientY - down[1]) > 5 || (!mesh && !envelopeMesh)) return;
       const rect = renderer.domElement.getBoundingClientRect();
       raycaster.setFromCamera(new THREE.Vector2((event.clientX - rect.left) / rect.width * 2 - 1, -(event.clientY - rect.top) / rect.height * 2 + 1), camera);
-      const hit = raycaster.intersectObject(mesh).find(hit => hit.instanceId !== undefined && hit.point.z <= h * latest.current.clip / 100);
+      const pickMesh=latest.current.geometryView==='envelope' ? envelopeMesh ?? mesh : mesh ?? envelopeMesh;
+      if (!pickMesh) return;
+      const hit = raycaster.intersectObject(pickMesh).find(hit => hit.instanceId !== undefined && hit.point.z <= h * latest.current.clip / 100);
       latest.current.onSelect(hit?.instanceId === undefined ? null : ids[hit.instanceId]);
     };
     renderer.domElement.addEventListener('pointerdown', pointerDown); renderer.domElement.addEventListener('pointerup', pointerUp);
@@ -168,7 +207,7 @@ export function Viewer({ mode, preview, placements, dimensions, hidden, selected
       updates.current = null; fitAction.current = () => {};
       observer.disconnect(); controls.removeEventListener('change', invalidate); controls.dispose();
       renderer.domElement.removeEventListener('pointerdown', pointerDown); renderer.domElement.removeEventListener('pointerup', pointerUp);
-      clearMesh(); geometry?.dispose();
+      clearMesh(); geometry?.dispose(); envelopeGeometry?.dispose();
       boxGeometry.dispose(); boxMaterial.dispose(); edgesGeometry.dispose(); edgesMaterial.dispose(); grid.geometry.dispose();
       const gridMaterials = Array.isArray(grid.material) ? grid.material : [grid.material]; gridMaterials.forEach(m => m.dispose());
       axes.geometry.dispose(); (Array.isArray(axes.material) ? axes.material : [axes.material]).forEach(m => m.dispose());
@@ -176,18 +215,19 @@ export function Viewer({ mode, preview, placements, dimensions, hidden, selected
     };
   }, []);
   useEffect(() => updates.current?.preview(preview), [preview?.preview_id, preview?.sha256, preview?.byte_length, preview?.triangle_count]);
+  useEffect(() => updates.current?.envelope(envelopePreview ?? null), [envelopePreview?.preview_id, envelopePreview?.sha256, envelopePreview?.byte_length, envelopePreview?.triangle_count]);
   useEffect(() => updates.current?.instances(), [placements, hidden]);
   useEffect(() => updates.current?.dimensions(), [dimensions[0], dimensions[1], dimensions[2]]);
-  useEffect(() => updates.current?.appearance(), [clip, opacity, selected]);
+  useEffect(() => updates.current?.appearance(), [clip, opacity, selected, geometryView]);
   useEffect(() => updates.current?.projection(), [orthographic]);
 
   return <section className="viewer" aria-label="Packing viewer">
     <div className="viewer-heading"><div><span className="eyebrow">WORKSPACE</span><h2>{mode === 'result' ? 'Validated packing' : preview ? 'Object preview' : 'Packing viewer'}</h2></div><span className="frame-tag">mm · Z up</span></div>
     <div className="viewport" ref={host} aria-label="3D packing canvas" />
     {!preview && !error && <div className="empty-view"><span className="empty-symbol">◇</span><h3>Import an STL to begin</h3><p>The box shows the usable interior volume.<br />Completed results retain their original settings.</p></div>}
-    {(loading || error) && <div className="viewer-notice" role={error ? 'alert' : 'status'}>{error ?? 'Loading shared display mesh…'}</div>}
+    {(loading || envelopeLoading || error) && <div className="viewer-notice" role={error ? 'alert' : 'status'}>{error ?? 'Loading shared display mesh…'}</div>}
     <div className="dimension-label">{dimensions.map(v => Number.isFinite(v) ? v : '—').join(' × ')} mm <span>internal volume</span></div>
-    <div className="viewer-toolbar"><button onClick={() => fitAction.current()} title="Fit to container">↗ Fit view</button><button onClick={() => setOrthographic(v => !v)}>{orthographic ? 'Orthographic' : 'Perspective'}</button><label>Box <input aria-label="Container transparency" type="range" min="0" max="40" value={opacity} onChange={e => setOpacity(Number(e.target.value))} /></label><label>Clip Z <input aria-label="Clipping height" type="range" min="0" max="100" value={clip} onChange={e => setClip(Number(e.target.value))} /></label></div>
+    <div className="viewer-toolbar"><label>Geometry <select aria-label="Geometry display" value={envelopePreview ? geometryView : 'original'} disabled={!envelopePreview} onChange={e=>setGeometryView(e.target.value as typeof geometryView)}><option value="original">Original</option><option value="envelope">Packing envelope</option><option value="overlay">Overlay</option></select></label><button onClick={() => fitAction.current()} title="Fit to container">↗ Fit view</button><button onClick={() => setOrthographic(v => !v)}>{orthographic ? 'Orthographic' : 'Perspective'}</button><label>Box <input aria-label="Container transparency" type="range" min="0" max="40" value={opacity} onChange={e => setOpacity(Number(e.target.value))} /></label><label>Clip Z <input aria-label="Clipping height" type="range" min="0" max="100" value={clip} onChange={e => setClip(Number(e.target.value))} /></label></div>
     <div className="viewer-help">Drag to orbit · Right-drag to pan · Scroll to zoom <span><b className="axis-x">X</b> <b className="axis-y">Y</b> <b className="axis-z">Z</b></span></div>
   </section>;
 }

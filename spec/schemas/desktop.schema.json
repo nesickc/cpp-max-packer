@@ -154,6 +154,16 @@
               "type": "null"
             }
           ]
+        },
+        "envelope_preview": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Preview"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
@@ -784,11 +794,15 @@
         "algorithm": {
           "enum": [
             "weld",
-            "manifold"
+            "manifold",
+            "envelope"
           ]
         },
         "tolerance_mm": {
-          "type": "number",
+          "type": [
+            "number",
+            "null"
+          ],
           "exclusiveMinimum": 0
         },
         "report": {
@@ -858,6 +872,18 @@
             },
             "token": {
               "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/sha256"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action"
+          ],
+          "properties": {
+            "action": {
+              "const": "envelope"
             }
           },
           "additionalProperties": false

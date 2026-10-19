@@ -8,7 +8,7 @@ Dependencies point inward: desktop → engine protocol; engine → solver + I/O;
 
 | Owner | Responsibility and owned data |
 | --- | --- |
-| `pack_geometry` | Import/repair diagnostics, immutable accepted solids, frame conversion, BVHs, conservative voxelization, independent validation, display LOD generation. Hide Manifold/FCL/meshoptimizer behind adapters. |
+| `pack_geometry` | Import/repair diagnostics, immutable accepted solids, frame conversion, BVHs, conservative voxelization, independent validation, display LOD generation. Hide Manifold/CGAL/FCL/meshoptimizer behind adapters. |
 | `pack_compute` | Array correlation, FFT plans, reductions, capability/error checks, bounded backend buffers; pocketfft CPU and VkFFT/Vulkan implementations. No placement validity decision. |
 | `pack_solver` | Catalogs, candidate ranking, trial layouts, count controller, RNG/work budgets and caches. Emit snapshots through callbacks; never write project files. |
 | `pack_io` | Schema decoding/encoding, asset hashes, portable projects, atomic checkpoints and streamed export. No search policy. |
@@ -120,3 +120,5 @@ Count dominates all secondary scores; trials may shrink, published best count ma
 4. **M2 preparation:** retain a direct integer correlation oracle independent of FFT adapters; test every translation of asymmetric tiny arrays before production spectral placement (`AT-12`).
 
 User-supplied `rc/` assets use millimeters; container files intend whole closed usable volumes. These facts do not establish valid topology. Pin hashes/provenance and import diagnostics; treat simplified item files as separate assets, not automatic authoritative replacements. Real fixtures supplement analytic oracles.
+
+Packing-envelope assets retain a separate cleaned source mesh and accepted enclosing solid. Geometry owns envelope construction and independent enclosure checks; I/O preserves both hashes and validates source-preserving export; the viewer instances both in the same frame. See [ADR 0021](../spec/decisions/0021-packing-envelopes.md).
