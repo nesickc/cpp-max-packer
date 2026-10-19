@@ -97,7 +97,7 @@ Reject impossible vertical stacks and column chains before sweeping row spacing
 and offsets; these independent screens avoid repeating the expensive mesh checks.
 The two envelopes share the remaining work/vertex allowance, with a 32-million
 work cap each. Neighbor screens cover both orientations and nearby layers. Only
-an improving complete layout that passes the unchanged native validator replaces
+an improving complete layout that passes the independent native validator replaces
 the incumbent. Fixed/catalog rotation permissions and the fixed-work path remain
 unchanged.
 
@@ -119,6 +119,14 @@ prove it misses every boundary triangle, then classify its midpoint with exact
 ray predicates. This resolves separated solids without treating rounded vertices
 as exact or relaxing overlap/clearance rules. Strict segment/triangle AABB rejection
 skips irrelevant ray predicates; all broad-phase and exact work share one budget.
+Boundary and clearance checks cache the second mesh's outward triangle bounds
+per pair and reuse each first-triangle row bound. A downward-rounded gap on any
+axis can prove strict Euclidean clearance; unresolved pairs retain the exact
+distance checks. A budgeted spatial partition groups up to 32 triangles under
+outward union bounds, allowing separated groups to be skipped. Unresolved leaves
+retain the same exact predicates with their original face indices. Checked scratch
+admission, cancellation and allocation failure remain fail-closed. This avoids
+recomputing the same bounds millions of times during fresh result validation.
 
 The positive-clearance benchmark now finds 435 validated Pryanik-2 copies, up
 from 425 with mixed orientations, without changing the box, 1/1 mm clearances, permitted rotations or
