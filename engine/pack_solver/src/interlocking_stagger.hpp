@@ -20,7 +20,7 @@ struct InterlockingLayout {
     double offset {};
     double column_rise {}, phase {}, height_span {};
     unsigned orientation_mask {};
-    double alternate_height {};
+    double alternate_height {}, alternate_row {};
 
     unsigned orientation(std::uint64_t x, std::uint64_t y, std::uint64_t z) const
     {
@@ -306,7 +306,9 @@ public:
     {
         max_axis_cells = std::min<std::uint64_t>({ max_axis_cells, max_copies, 1'000'000 });
         const double gap = pair + (pair > 0 ? std::min(.001, pair / 100) : 0);
-        const double inset = wall + (wall > 0 ? std::min(.001, wall / 100) : 0);
+        const double roundoff_inset = 1e-12 * std::max({ 1.0, std::abs(container.max[0]), std::abs(container.max[1]),
+                                                         std::abs(container.max[2]) });
+        const double inset = wall + std::max(roundoff_inset, wall > 0 ? std::min(.001, wall / 100) : 0);
         geometry::Vec3 extent {}, span {};
         InterlockingLayout best;
         best.column = column_;
@@ -332,6 +334,9 @@ public:
         const auto neighbors_fit = [&](const InterlockingLayout& trial, int first_row, int last_row, int first_column,
                                        int last_column) {
             for (int dy = first_row; dy <= last_row; ++dy) {
+                if (first_row > 0 && dy >= static_cast<int>(trial.rows)) {
+                    continue;
+                }
                 for (int dx = first_column; dx <= last_column; ++dx) {
                     for (int dz = -3; dz <= 3; ++dz) {
                         if (dy == 0 && dx == 0 && dz <= 0) {
@@ -339,6 +344,18 @@ public:
                         }
                         for (unsigned row_parity = 0; row_parity != 2; ++row_parity) {
                             for (unsigned first = 0; first != 2; ++first) {
+                                // A finite stack need not accommodate an imaginary
+                                // neighbor above its last layer (or below its first).
+                                if (trial.orientation_mask == 4) {
+                                    int z = static_cast<int>(first);
+                                    if (z + dz < 0) {
+                                        z += 2 * ((-dz - z + 1) / 2);
+                                    }
+                                    if (z >= static_cast<int>(trial.layers) ||
+                                        z + dz >= static_cast<int>(trial.layers)) {
+                                        continue;
+                                    }
+                                }
                                 if (trial.orientation_mask == 2 && first != row_parity) {
                                     continue;
                                 }
@@ -346,7 +363,8 @@ public:
                                 const double shift = dy % 2 ? (row_parity ? -trial.offset : trial.offset) : 0;
                                 if (!separated_pair(
                                         first ? other : *this, second ? other : *this,
-                                        dx * trial.pitch[column_] + shift, dy * trial.pitch[row_], pair,
+                                        dx * trial.pitch[column_] + shift,
+                                        dy * trial.pitch[row_] + (double(second) - first) * trial.alternate_row, pair,
                                         dz * trial.pitch[layer_] + (double(second) - first) * trial.alternate_height)) {
                                     return false;
                                 }
@@ -359,8 +377,16 @@ public:
         };
         // Reject impossible stacks and column chains before sweeping row
         // pitches. These checks do not depend on the remaining dimensions.
-        for (unsigned mask : { 1u, 4u, 2u, 3u, 5u, 6u, 7u }) {
-            for (unsigned rise = 0; rise <= 8; ++rise) {
+        // First try close opposing pairs: the second layer slides sideways
+        // while moving toward the first. Offsets scale with the oriented part.
+        for (unsigned configuration = 0; configuration != 84; ++configuration) {
+            constexpr unsigned masks[] { 1, 4, 2, 3, 5, 6, 7 };
+            const bool paired = configuration < 21;
+            const unsigned index = paired ? configuration : configuration - 21;
+            const unsigned mask = paired ? 4 : masks[index / 9];
+            const int rise = paired ? -7 + int(index % 7) : int(index % 9);
+            const double lateral = paired ? (2 + index / 7) / 16.0 : 0;
+            {
                 for (std::uint64_t layers = nz; layers >= 1; --layers) {
                     if (!spend(1)) {
                         return best.count > incumbent ? std::optional { best } : std::nullopt;
@@ -368,6 +394,7 @@ public:
                     auto trial = best;
                     trial.orientation_mask = mask;
                     trial.alternate_height = rise * extent[layer_] / 16;
+                    trial.alternate_row = lateral * extent[row_];
                     trial.pitch[layer_] = layers > 1 ? span[layer_] / (layers - 1) : extent[layer_] + gap;
                     trial.layers = layers;
                     trial.offset = 0;
@@ -393,7 +420,11 @@ public:
                                 break;
                             }
                             trial.rows = rows;
-                            trial.pitch[row_] = rows > 1 ? span[row_] / (rows - 1) : extent[row_] + gap;
+                            if (span[row_] < trial.alternate_row) {
+                                continue;
+                            }
+                            trial.pitch[row_] =
+                                rows > 1 ? (span[row_] - trial.alternate_row) / (rows - 1) : extent[row_] + gap;
                             for (double fraction : { .5, 0., .25, .75 }) {
                                 if (!spend(rows * columns)) {
                                     return best.count > incumbent ? std::optional { best } : std::nullopt;
@@ -409,8 +440,11 @@ public:
                                             const double height =
                                                 parity * trial.pitch[layer_] +
                                                 trial.orientation(x, y, parity) * trial.alternate_height;
-                                            total +=
-                                                cells(span[layer_] - height, 2 * trial.pitch[layer_], max_axis_cells);
+                                            if (height >= 0) {
+                                                total += std::min((layers + 1 - parity) / 2,
+                                                                  cells(span[layer_] - height, 2 * trial.pitch[layer_],
+                                                                        max_axis_cells));
+                                            }
                                         }
                                     }
                                 }

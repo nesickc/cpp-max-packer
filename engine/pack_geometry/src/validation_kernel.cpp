@@ -1970,6 +1970,22 @@ Decision local_point_in_material(Vec3 point,const PreparedSolid& target,
       const std::array<Vec3,3> triangle{{mesh.vertices[face[0]],
                                          mesh.vertices[face[1]],
                                          mesh.vertices[face[2]]}};
+      // Strict bounds separation also proves the exact dyadic segment misses
+      // this triangle; avoid an expensive determinant for unrelated faces.
+      if (!exact_budget.consume(18)) {
+          retry = true;
+          break;
+      }
+      bool disjoint = false;
+      for (int axis = 0; axis != 3; ++axis) {
+          const double low = std::min({ triangle[0][axis], triangle[1][axis], triangle[2][axis] });
+          const double high = std::max({ triangle[0][axis], triangle[1][axis], triangle[2][axis] });
+          disjoint =
+              disjoint || std::max(point[axis], endpoint[axis]) < low || std::min(point[axis], endpoint[axis]) > high;
+      }
+      if (disjoint) {
+          continue;
+      }
       const auto relation=exact::segment_triangle_crossing(
           point,endpoint,triangle,exact_budget);
       if (relation==exact::SegmentTriangleCrossing::crossing) ++crossings;
@@ -2963,67 +2979,102 @@ std::optional<KernelFailure> rasterize_boundary(const PlacedSolid& solid, const 
     return std::nullopt;
 }
 
-Decision classify_material_witness(const PlacedSolid& solid,
-                                   Bounds world_interval,Budget& budget) {
-  if (!supported_floating_environment() || !solid.conservative.finite)
-    return Decision::indeterminate;
-  for (int axis=0;axis!=3;++axis)
-    if (!std::isfinite(world_interval.min[axis]) ||
-        !std::isfinite(world_interval.max[axis]) ||
-        world_interval.min[axis]>world_interval.max[axis] ||
-        !std::isfinite(solid.conservative.bounds_mm.min[axis]) ||
-        !std::isfinite(solid.conservative.bounds_mm.max[axis]) ||
-        solid.conservative.bounds_mm.min[axis]>
-            solid.conservative.bounds_mm.max[axis])
-      return Decision::indeterminate;
-  if (!budget.consume_work(64)) return Decision::indeterminate;
+// The whole inverse-transformed witness interval must miss every boundary
+// triangle before classifying its midpoint. This preserves the exact physical
+// point even when adding a translation rounds the displayed world coordinates.
+static Decision local_interval_point_in_material(const PlacedSolid& solid, Bounds world_interval, Budget& budget)
+{
+    if (!budget.consume_work(64)) {
+        return Decision::indeterminate;
+    }
+    for (int axis = 0; axis != 3; ++axis) {
+        if (world_interval.max[axis] < solid.conservative.bounds_mm.min[axis] ||
+            world_interval.min[axis] > solid.conservative.bounds_mm.max[axis]) {
+            return Decision::no;
+        }
+    }
+    std::array<Interval, 3> shifted;
+    for (int axis = 0; axis != 3; ++axis) {
+        shifted[axis] = subtract_interval({ world_interval.min[axis], world_interval.max[axis], true },
+                                          point_interval(solid.translation[axis]));
+    }
+    const auto rotation = rotation_intervals(solid.quaternion);
+    IntervalVec3 local;
+    for (int local_axis = 0; local_axis != 3; ++local_axis) {
+        local[local_axis] = point_interval(0.0);
+        for (int world_axis = 0; world_axis != 3; ++world_axis) {
+            local[local_axis] = add_interval(local[local_axis],
+                                             multiply_interval(rotation[world_axis][local_axis], shifted[world_axis]));
+        }
+        if (!local[local_axis].valid) {
+            return Decision::indeterminate;
+        }
+    }
 
-  // Both boxes are outward enclosures. Strict separation therefore proves the
-  // entire closed witness cell is outside the solid without a mesh-size parity
-  // scan. Equality still falls through because closed contact is not free.
-  for (int axis=0;axis!=3;++axis)
-    if (world_interval.max[axis]<solid.conservative.bounds_mm.min[axis] ||
-        world_interval.min[axis]>solid.conservative.bounds_mm.max[axis])
-      return Decision::no;
+    const auto mesh = solid.prepared->asset->mesh();
+    for (const auto& face : mesh.triangles) {
+        if (!budget.consume_work(180)) {
+            return Decision::indeterminate;
+        }
+        const std::array<IntervalVec3, 3> triangle {
+            { { point_interval(mesh.vertices[face[0]][0]), point_interval(mesh.vertices[face[0]][1]),
+                point_interval(mesh.vertices[face[0]][2]) },
+             { point_interval(mesh.vertices[face[1]][0]), point_interval(mesh.vertices[face[1]][1]),
+                point_interval(mesh.vertices[face[1]][2]) },
+             { point_interval(mesh.vertices[face[2]][0]), point_interval(mesh.vertices[face[2]][1]),
+                point_interval(mesh.vertices[face[2]][2]) } }
+        };
+        if (!triangle_box_disjoint(triangle, local)) {
+            return Decision::indeterminate;
+        }
+    }
+    Vec3 witness {};
+    for (int axis = 0; axis != 3; ++axis) {
+        witness[axis] = std::midpoint(local[axis].low, local[axis].high);
+        if (!std::isfinite(witness[axis])) {
+            return Decision::indeterminate;
+        }
+    }
+    return local_point_in_material(witness, *solid.prepared, budget);
+}
 
-  if (solid.represented_world_exact) {
-    Vec3 represented{};
-    for (int axis=0;axis!=3;++axis)
-      represented[axis]=std::midpoint(world_interval.min[axis],world_interval.max[axis]);
-    return point_in_material(represented,solid,budget);
-  }
+Decision classify_material_witness(const PlacedSolid& solid, Bounds world_interval, Budget& budget)
+{
+    if (!supported_floating_environment() || !solid.conservative.finite) {
+        return Decision::indeterminate;
+    }
+    for (int axis = 0; axis != 3; ++axis) {
+        if (!std::isfinite(world_interval.min[axis]) || !std::isfinite(world_interval.max[axis]) ||
+            world_interval.min[axis] > world_interval.max[axis] ||
+            !std::isfinite(solid.conservative.bounds_mm.min[axis]) ||
+            !std::isfinite(solid.conservative.bounds_mm.max[axis]) ||
+            solid.conservative.bounds_mm.min[axis] > solid.conservative.bounds_mm.max[axis]) {
+            return Decision::indeterminate;
+        }
+    }
+    if (!budget.consume_work(64)) {
+        return Decision::indeterminate;
+    }
 
-  std::array<Interval,3> shifted;
-  for (int axis=0;axis!=3;++axis)
-    shifted[axis]=subtract_interval(
-        {world_interval.min[axis],world_interval.max[axis],true},
-        point_interval(solid.translation[axis]));
-  const auto rotation=rotation_intervals(solid.quaternion);
-  IntervalVec3 local;
-  for (int local_axis=0;local_axis!=3;++local_axis) {
-    local[local_axis]=point_interval(0.0);
-    for (int world_axis=0;world_axis!=3;++world_axis)
-      local[local_axis]=add_interval(
-          local[local_axis],multiply_interval(
-              rotation[world_axis][local_axis],shifted[world_axis]));
-    if (!local[local_axis].valid) return Decision::indeterminate;
-  }
+    // Both boxes are outward enclosures. Strict separation therefore proves the
+    // entire closed witness cell is outside the solid without a mesh-size parity
+    // scan. Equality still falls through because closed contact is not free.
+    for (int axis = 0; axis != 3; ++axis) {
+        if (world_interval.max[axis] < solid.conservative.bounds_mm.min[axis] ||
+            world_interval.min[axis] > solid.conservative.bounds_mm.max[axis]) {
+            return Decision::no;
+        }
+    }
 
-  const auto mesh=solid.prepared->asset->mesh();
-  for (const auto& face:mesh.triangles) {
-    if (!budget.consume_work(180)) return Decision::indeterminate;
-    const std::array<IntervalVec3,3> triangle{{
-        {point_interval(mesh.vertices[face[0]][0]),point_interval(mesh.vertices[face[0]][1]),point_interval(mesh.vertices[face[0]][2])},
-        {point_interval(mesh.vertices[face[1]][0]),point_interval(mesh.vertices[face[1]][1]),point_interval(mesh.vertices[face[1]][2])},
-        {point_interval(mesh.vertices[face[2]][0]),point_interval(mesh.vertices[face[2]][1]),point_interval(mesh.vertices[face[2]][2])}}};
-    if (!triangle_box_disjoint(triangle,local)) return Decision::indeterminate;
-  }
-  Vec3 witness{};
-  for (int axis=0;axis!=3;++axis) {
-    witness[axis]=std::midpoint(local[axis].low,local[axis].high);
-    if (!std::isfinite(witness[axis])) return Decision::indeterminate;
-  }
-  return local_point_in_material(witness,*solid.prepared,budget);
+    if (solid.represented_world_exact) {
+        Vec3 represented {};
+        for (int axis = 0; axis != 3; ++axis) {
+            represented[axis] = std::midpoint(world_interval.min[axis], world_interval.max[axis]);
+        }
+        return point_in_material(represented, solid, budget);
+    }
+
+    return local_interval_point_in_material(solid, world_interval, budget);
 }
 
 bool field_floating_environment_supported() noexcept {
@@ -3110,6 +3161,24 @@ Decision euclidean_offset_reaches(CellIndex delta,double pitch,double clearance,
   return distance_squared_low>clearance_squared_high ? Decision::no : Decision::yes;
 }
 
+static Decision classify_shell_witness(const PlacedSolid& source, std::uint32_t vertex, const PlacedSolid& target,
+                                       Budget& budget, bool* exact_work_exhausted)
+{
+    if (source.represented_world_exact && target.represented_world_exact) {
+        return point_in_material(source.world_vertices[vertex], target, budget, exact_work_exhausted);
+    }
+    Bounds witness;
+    for (int axis = 0; axis != 3; ++axis) {
+        const auto interval = source.vertex_intervals[vertex][axis];
+        if (!interval.valid) {
+            return Decision::indeterminate;
+        }
+        witness.min[axis] = interval.low;
+        witness.max[axis] = interval.high;
+    }
+    return local_interval_point_in_material(target, witness, budget);
+}
+
 PairResult classify_pair(const PlacedSolid& first,const PlacedSolid& second,
                          double clearance,Budget& budget) {
   if (!supported_floating_environment())
@@ -3155,14 +3224,14 @@ PairResult classify_pair(const PlacedSolid& first,const PlacedSolid& second,
   bool witness_work_exhausted=false;
   for (const auto witness:first.prepared->shell_witnesses) {
     bool exhausted=false;
-    const auto inside=point_in_material(first.world_vertices[witness],second,budget,&exhausted);
+    const auto inside = classify_shell_witness(first, witness, second, budget, &exhausted);
     witness_work_exhausted |= exhausted;
     if (inside==Decision::indeterminate) overlap=Decision::indeterminate;
     else if (inside==Decision::yes) { overlap=Decision::yes; break; }
   }
   if (overlap!=Decision::yes) for (const auto witness:second.prepared->shell_witnesses) {
     bool exhausted=false;
-    const auto inside=point_in_material(second.world_vertices[witness],first,budget,&exhausted);
+    const auto inside = classify_shell_witness(second, witness, first, budget, &exhausted);
     witness_work_exhausted |= exhausted;
     if (inside==Decision::indeterminate) overlap=Decision::indeterminate;
     else if (inside==Decision::yes) { overlap=Decision::yes; break; }

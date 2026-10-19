@@ -85,8 +85,14 @@ After retaining those uniform layouts, timed search tries mixed orientations.
 Pairs come from the permitted catalog and differ by a half-turn around a world
 axis. Prioritize the retained layout's orientation, then test two-state patterns
 alternating columns, rows, layers, or their checkerboards. Align each rotated
-AABB minimum independently and sweep the second state's height offset. Pitches
-come from the box spans, and every stack is counted within its actual wall limits.
+AABB minimum independently. First try paired layers with sideways offsets of
+1/8, 3/16 and 1/4 of the oriented row extent and signed height shifts from -7/16
+through -1/16 of the layer extent; then retain the existing single-axis sweeps.
+These are relative translations, not rescaling of geometry or the FFT pitch.
+Pitches come from the box spans, reserving space for the sideways shift, and every
+stack is counted within its actual wall limits. Finite layer pairs and rows do
+not need to accommodate imaginary neighbors outside the proposed layout. A tiny
+scale-aware inward proposal margin avoids rounding a zero-wall seed outside the box.
 Reject impossible vertical stacks and column chains before sweeping row spacing
 and offsets; these independent screens avoid repeating the expensive mesh checks.
 The two envelopes share the remaining work/vertex allowance, with a 32-million
@@ -105,6 +111,14 @@ arithmetic encloses the original doubles; zero clearance still requires a real
 separating gap in this certificate. Unsupported or inconclusive pairs use the
 existing full classifier. Arithmetic/resource/control failures stay indeterminate.
 Tables belong to one validation call and are rebuilt during fresh result loading.
+
+Validator v6 adds interval shell witnesses. When world-coordinate addition is
+inexact, shell witnesses retain their outward
+intervals. Inverse-transform the entire interval into the target's local frame,
+prove it misses every boundary triangle, then classify its midpoint with exact
+ray predicates. This resolves separated solids without treating rounded vertices
+as exact or relaxing overlap/clearance rules. Strict segment/triangle AABB rejection
+skips irrelevant ray predicates; all broad-phase and exact work share one budget.
 
 The positive-clearance benchmark now finds 435 validated Pryanik-2 copies, up
 from 425 with mixed orientations, without changing the box, 1/1 mm clearances, permitted rotations or

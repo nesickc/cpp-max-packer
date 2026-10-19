@@ -11,7 +11,7 @@
 
 namespace spectrapack::geometry::detail::validation_kernel {
 
-inline constexpr std::string_view kRevision = "homogeneous-rational-interval-v5";
+inline constexpr std::string_view kRevision = "homogeneous-rational-interval-v6";
 
 enum class Decision : std::uint8_t { no, yes, indeterminate };
 // `at_least` certifies that a lower bound meets the requested threshold. It
