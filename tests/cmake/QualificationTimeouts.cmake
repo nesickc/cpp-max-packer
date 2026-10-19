@@ -32,3 +32,12 @@ if(qualification_index GREATER -1)
 endif()
 unset(qualification_index)
 unset(qualification_discovered)
+
+# This public-boundary test generates and replays an envelope before checking
+# three tampered reports. Debug took 114 seconds with shared setup; allow host variance.
+list(FIND spectrapack_result_builder_tests_TESTS
+  "Packing envelope replay binds source and parameters" envelope_replay_index)
+if(envelope_replay_index GREATER -1)
+  set_tests_properties("Packing envelope replay binds source and parameters" PROPERTIES TIMEOUT 180)
+endif()
+unset(envelope_replay_index)
