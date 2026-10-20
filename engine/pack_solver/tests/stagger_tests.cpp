@@ -601,3 +601,45 @@ TEST_CASE("Compaction refills concave layouts across scales and respects permitt
         CHECK(*result.run.best->score.enclosing_xy_span_sum_mm < (5.1 + 2 * gap) * scale);
     }
 }
+
+TEST_CASE("Compaction removes diagonal slack between rigid sloping solids", "[solver][compaction]")
+{
+    const double scale = GENERATE(1., 100.);
+    geo::test_support::Mesh mesh;
+    mesh.vertices = {
+        { 0,     0,     0     },
+        { scale, 0,     0     },
+        { 0,     scale, 0     },
+        { 0,     0,     scale }
+    };
+    mesh.triangles = {
+        { 0, 2, 1 },
+        { 0, 1, 3 },
+        { 0, 3, 2 },
+        { 1, 2, 3 }
+    };
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(
+        geo::make_validation_context(geo::test_support::accepted(mesh, geo::AssetRole::object),
+                                     geo::BoxDimensions { 1.61 * scale, 1.01 * scale, 1.42 * scale }, {}));
+    const auto candidate = std::get<std::shared_ptr<const geo::Candidate>>(
+        geo::make_candidate(context, {
+                                         { "first",  { .5 * scale, .5 * scale, .5 * scale },   { 0, 0, 0, 1 } },
+                                         { "second", { 1.1 * scale, .5 * scale, .91 * scale }, { 0, 0, 0, 1 } }
+    }));
+    const auto initial = geo::validate(context, candidate).validated_solution;
+    REQUIRE(initial);
+    sol::SpectralLimits limits;
+    limits.resource_mode = sol::ResourceMode::timed;
+    limits.baseline.max_copies = limits.spectral.max_copies = 2;
+    sol::RunControl control;
+    control.deadline = control.now() + std::chrono::seconds(5);
+    const auto result = sol::run_cpu_spectral(context, { {}, .05 * scale }, limits, control, {}, initial);
+    REQUIRE(result.run.best);
+    CHECK(result.run.best->score.count == 2);
+    REQUIRE(result.run.best->score.enclosing_z_span_mm);
+    CHECK(*result.run.best->score.enclosing_z_span_mm < 1.405 * scale);
+    CHECK(geo::revalidate(result.run.best->solution).validated_solution);
+    for (const auto& copy : result.run.best->solution->copies()) {
+        CHECK(copy.rotation_xyzw == geo::Quaternion { 0, 0, 0, 1 });
+    }
+}

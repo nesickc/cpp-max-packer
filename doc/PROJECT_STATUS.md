@@ -23,12 +23,19 @@ Updated 2026-10-20. Details belong in PRs and `.local/` logs.
   proofs. Spatial triangle bounds accelerate fresh validation; finalization has a
   bounded 30-second allowance to avoid load-dependent five-second save failures.
   Whole-arrangement axis sweeps compact validated layouts and refill freed space;
-  equal-count improvements remain visible through existing compactness ranking.
+  native-validated contraction recovers diagonal slack missed by coarse bins.
+  Equal-count compactness improvements now reach the desktop and saved result.
 - **Bulba:** automatic envelope generation takes about 24 seconds, versus 54 with
   redundant source analysis, with byte-identical geometry. The unchanged search
   now saves **24 validated copies in 400 x 340 x 285 mm**, at 0/0 mm clearance,
   cube rotations, 2 mm pitch and 60 seconds. The expanded 408 x 348 x 293 mm box
-  also returns 24; 32 remains unverified. Evidence: `.local/bulba/`.
+  also returns 24; 32 remains unverified. A later diagonal-gap reproduction
+  reached 30 in 410 x 350 x 290 mm but only 24 in 410 x 350 x 285 mm.
+  General proposal contraction now saves **30 in the 285 mm box** within
+  90 seconds (2 mm pitch, four threads, zero clearance, cube rotations).
+  The desktop result occupies 281.605 mm in Z and survives Save/Open/export.
+  Desktop controls now use cube rotations exclusively; old results keep their
+  recorded orientation permissions. Evidence: `.local/bulba/`, `.local/diagonal/`.
 
 Native and desktop checks cover independent validity, source preservation, recipe
 replay, Stop, portable projects and export. Benchy/matrice qualification remains
@@ -73,7 +80,7 @@ History: [benchmarks/SCOREBOARD.md](../benchmarks/SCOREBOARD.md).
 4. `10_kg_np.stl` is 400 x 350 x 285 mm; the real Nova Post box is
    400 x 340 x 285 mm. Use box dimensions for that comparison.
 
-Automatic envelopes and boundary classification are stacked on open PR #28
+Diagonal compaction is stacked on PR #29 (automatic envelopes), which includes #28
 (compaction), which includes #27, #26, #25 and #24. See
 [ADR 0021](../spec/decisions/0021-packing-envelopes.md), [ALGORITHM.md](../docs/ALGORITHM.md),
 [BUILDING.md](../docs/BUILDING.md) and [AGENTS.md](../AGENTS.md).

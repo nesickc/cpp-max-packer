@@ -98,8 +98,9 @@ not need to accommodate imaginary neighbors outside the proposed layout. A tiny
 scale-aware inward proposal margin avoids rounding a zero-wall seed outside the box.
 Reject impossible vertical stacks and column chains before sweeping row spacing
 and offsets; these independent screens avoid repeating the expensive mesh checks.
-The two envelopes share the remaining work/vertex allowance, with a 32-million
-work cap each. Neighbor screens cover both orientations and nearby layers. Only
+The two envelopes share the remaining work/vertex allowance, with a 64-million
+work cap each for mixed proposals and 32 million for single-orientation proposals.
+Neighbor screens cover both orientations and nearby layers. Only
 an improving complete layout that passes the independent native validator replaces
 the incumbent. Fixed/catalog rotation permissions and the fixed-work path remain
 unchanged.
@@ -146,11 +147,24 @@ best found, not optimality claims.
 ## Whole-arrangement compaction
 
 After physical seeding, timed box searches compact the retained arrangement along
-each world axis, starting with its shortest object extent. Four sweeps alternate
+each world axis, starting with Z to match the occupied-height objective. Four sweeps alternate
 directions so that space opened along one axis can be reused on a later sweep.
 Existing copies retain their rotations. Search-only triangle interval envelopes
 use 64 x 64 transverse bins relative to each oriented object's size; translations
 stop at proposed mesh contacts, with a small positive numerical cushion.
+
+Before each axis slide, bounded whole-layout trials contract the distances
+between copy bounds by up to ten percent. Only translations change; each solid's
+dimensions and catalog rotation stay fixed. Eight bisection trials retain only
+native-valid improvements. This can recover diagonal slack even when the coarse
+column envelopes overlap at the valid starting positions.
+
+Mixed-orientation seeding also tries a relative headroom proposal when ordinary
+screening finds no improvement. It adds one sixteenth of oriented object height
+to the proposal range, then maps copy positions back into the actual box before
+validation. The validation context, physical container, geometry and clearances
+never change. This fallback addresses false rejection by filled transverse bins;
+it is not evidence that a proposal fits until native validation accepts it.
 
 After each axis, try refilling at retained transverse positions, wall alignments,
 and quarter/half-extent offsets. New copies use permitted catalog orientations

@@ -206,7 +206,7 @@ For object solid `S`, container `C`, and poses `T_i`, maximize integer `N` subje
 
 Compare layouts lexicographically: larger validated count first, then smaller occupied Z extent, then a deterministic compactness/tie-break score. Secondary scores guide search; they never compensate for losing a copy in the reported incumbent. Internal trials may temporarily contain fewer copies. Never publish them as the best result.
 
-The desktop shows the first complete valid nonempty packing and then replaces it only with a strictly higher validated count in that run. Save/export use the displayed poses.
+The desktop shows the first complete valid nonempty packing, then replaces it with a higher validated count or a same-count improvement in occupied Z extent, then XY span sum. Native validation and ranking authorize each replacement; revisions and event sequences increase. Save/export use the displayed poses.
 
 Compute utilization as `N * volume(S) / volume(C)` from validated solids, not the occupied cluster's bounding box or voxel count. A hollow object's volume excludes its modeled voids. If volume cannot be established reliably, omit utilization. Do not label a failed insertion as an optimum. An optional volume upper bound is displayable only when conservatively bounded volume calculations support it; otherwise omit the bound.
 
@@ -268,7 +268,7 @@ Use a single main window: configuration panel on the left, 3D viewer in the cent
 | --- | --- |
 | Object | Import/replace STL; units; dimensions; triangle count; diagnostics; repair proposal preview/accept/reject; original/LOD viewer toggle |
 | Container | Box or STL interior volume; internal W/D/H; independent STL units; bounds; diagnostic status; container transparency |
-| Constraints | Pair clearance and wall clearance in mm; orientation mode; fixed/custom quaternion input in advanced controls |
+| Constraints | Pair clearance and wall clearance in mm; desktop search uses the 24 right-angle cube rotations |
 | Search | Fast/Balanced/Thorough; total run budget; Start; Stop and keep best; Continue; seed and maximum additional work in advanced controls |
 | Resources | Auto/CPU/Vulkan; selected device; detected capability; resolved pitch; estimated RAM/VRAM; advanced pitch, thread, and memory limits |
 | Results | Best validated count; elapsed and remaining budget; time since improvement; utilization if available; termination reason; geometry validation status |

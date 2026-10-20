@@ -76,7 +76,7 @@ export function App() {
     current.current = accepted; setState(accepted);
     const op = accepted.operation;
     if (((first && !edited.current) || (op?.kind === 'open' && op.phase === 'finished' && opened.current !== op.id)) && accepted.draft_settings) {
-      storeSettings(structuredClone(accepted.draft_settings)); if (op?.kind === 'open') { opened.current = op.id; edited.current = false; }
+      storeSettings({ ...structuredClone(accepted.draft_settings), orientation: { mode: 'cube' } }); if (op?.kind === 'open') { opened.current = op.id; edited.current = false; }
     }
   }, []);
   useEffect(() => {
@@ -101,7 +101,7 @@ export function App() {
   const newProject = () => run(async () => {
     generation.current++; const fresh = await bridge.newProject();
     current.current = null; opened.current = null; edited.current = false; updateState(fresh);
-    storeSettings(structuredClone(fresh.draft_settings ?? defaultSettings));
+    storeSettings({ ...structuredClone(fresh.draft_settings ?? defaultSettings), orientation: { mode: 'cube' } });
   });
   const busy = activeOperation(state), disabled = !native || commandPending || busy;
   const accepted = state?.object?.report.state === 'accepted' && state.object.report.diagnostics.status === 'valid';
@@ -172,14 +172,14 @@ export function App() {
           </details>}
         </section>
         <section className="config-section"><div className="section-title"><span className="step">02</span><h2>Container</h2><span className="pill">Box interior</span></div><div className="dimension-fields">{['Width', 'Depth', 'Height'].map((label, i) => <NumberField key={label} label={label} value={settings.box_dimensions_mm[i]} min={0.000001} onChange={v => setDimension(i, v)} />)}</div><p className="hint">Internal dimensions · millimeters · Z up</p></section>
-        <section className="config-section"><div className="section-title"><span className="step">03</span><h2>Clearance & orientation</h2></div><div className="two-fields"><NumberField label="Between copies" value={settings.clearance_mm.pair} onChange={v => setSettings(s => ({ ...s, clearance_mm: { ...s.clearance_mm, pair: v } }))} /><NumberField label="To walls" value={settings.clearance_mm.wall} onChange={v => setSettings(s => ({ ...s, clearance_mm: { ...s.clearance_mm, wall: v } }))} /></div><label className="select-label">Allowed rotations<select aria-label="Allowed rotations" value={settings.orientation.mode} onChange={e => setSettings(s => ({ ...s, orientation: e.target.value === 'cube' ? { mode: 'cube' } : { mode: 'fixed', quaternion_xyzw: [0, 0, 0, 1] } }))}><option value="fixed">Fixed orientation</option><option value="cube">Cube rotations (24)</option></select></label></section>
+        <section className="config-section"><div className="section-title"><span className="step">03</span><h2>Clearance & orientation</h2></div><div className="two-fields"><NumberField label="Between copies" value={settings.clearance_mm.pair} onChange={v => setSettings(s => ({ ...s, clearance_mm: { ...s.clearance_mm, pair: v } }))} /><NumberField label="To walls" value={settings.clearance_mm.wall} onChange={v => setSettings(s => ({ ...s, clearance_mm: { ...s.clearance_mm, wall: v } }))} /></div><p className="hint">Allowed rotations: 24 right-angle cube rotations.</p></section>
         <section className="config-section"><div className="section-title"><span className="step">04</span><h2>Search</h2><span className="pill cpu">CPU · {settings.thread_count ?? 1} thread{(settings.thread_count ?? 1) === 1 ? '' : 's'}</span></div><div className="two-fields"><NumberField label="Voxel pitch" value={settings.pitch_mm} min={0.000001} onChange={v => setSettings(s => ({ ...s, pitch_mm: v }))} /><NumberField label="Search budget" suffix="sec" value={settings.budget_seconds} min={0.000001} onChange={v => setSettings(s => ({ ...s, budget_seconds: v }))} /></div><p className="hint">Manual pitch changes search resolution. Object dimensions stay physical. The next Start budget includes preparation, fields, search, and validation. Completed import preparation is separate.</p>
           <details><summary>Advanced settings</summary><label className="select-label">CPU threads<select aria-label="CPU threads" value={settings.thread_count ?? 1} onChange={e => setSettings(s => ({ ...s, thread_count: Number(e.target.value) }))}>{Array.from({ length: supportedThreads }, (_, i) => i + 1).map(count => <option key={count} value={count}>{count}</option>)}</select></label><label className="text-label">Host memory ceiling (bytes, optional)<input aria-label="Host memory ceiling" inputMode="numeric" placeholder="Automatic: half of available RAM" value={settings.host_memory_limit_bytes ?? ''} onChange={e => setSettings(s => {
             const next = {...s};
             if (e.target.value === '') delete next.host_memory_limit_bytes;
             else next.host_memory_limit_bytes = e.target.value;
             return next;
-          })} /></label><p className="hint">A lower ceiling limits the next Start. Automatic admission uses half of available physical RAM.</p><label className="text-label">Seed (uint64)<input aria-label="Seed" value={settings.seed} onChange={e => setSettings(s => ({ ...s, seed: e.target.value }))} inputMode="numeric" /></label>{settings.orientation.mode === 'fixed' && <fieldset><legend>Fixed quaternion · XYZW</legend><div className="quaternion-fields">{settings.orientation.quaternion_xyzw.map((value, i) => <NumberField key={i} label={['Qx','Qy','Qz','Qw'][i]} value={value} min={-1} suffix="" onChange={v => setSettings(s => { if (s.orientation.mode !== 'fixed') return s; const q: [number,number,number,number] = [...s.orientation.quaternion_xyzw]; q[i] = v; return { ...s, orientation: { mode: 'fixed', quaternion_xyzw: q } }; })} />)}</div></fieldset>}</details>
+          })} /></label><p className="hint">A lower ceiling limits the next Start. Automatic admission uses half of available physical RAM.</p><label className="text-label">Seed (uint64)<input aria-label="Seed" value={settings.seed} onChange={e => setSettings(s => ({ ...s, seed: e.target.value }))} inputMode="numeric" /></label></details>
           {validationError && <p className="field-error" role="alert">{validationError}</p>}
           {pending && <p className="pending-note">Pending settings for the next run. The viewer retains the result's original settings.</p>}
 

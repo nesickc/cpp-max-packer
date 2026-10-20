@@ -57,7 +57,7 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
     fireEvent.change(screen.getByLabelText('Between copies'), {target:{value:'2.5'}});
     fireEvent.change(screen.getByLabelText('Voxel pitch'), {target:{value:'3'}});
     fireEvent.change(screen.getByLabelText('Search budget'), {target:{value:'123'}});
-    fireEvent.change(screen.getByLabelText('Allowed rotations'), {target:{value:'cube'}});
+    expect(screen.getByText('Allowed rotations: 24 right-angle cube rotations.')).toBeDefined();
     fireEvent.change(screen.getByLabelText('Host memory ceiling'), {target:{value:'123456789'}});
     fireEvent.change(screen.getByLabelText('Seed'), {target:{value:'987654321'}});
     fireEvent.click(screen.getByRole('button', {name:/Import STL/}));
@@ -71,7 +71,7 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
     native.state.mockResolvedValue(next); finish();
     await waitFor(() => expect(screen.getByRole('button', {name:/Import STL/}).hasAttribute('disabled')).toBe(false));
     for (const [label,value] of Object.entries({'Width':'410','Depth':'','Between copies':'2.5','Voxel pitch':'3',
-      'Search budget':'123','Allowed rotations':'cube','Host memory ceiling':'123456789','Seed':'987654321'}))
+      'Search budget':'123','Host memory ceiling':'123456789','Seed':'987654321'}))
       expect((screen.getByLabelText(label) as HTMLInputElement).value).toBe(value);
   });
   it('New restores defaults and Open deliberately restores saved settings', async () => {
@@ -133,7 +133,7 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
     expect(screen.getByRole('button',{name:'Save project'}).hasAttribute('disabled')).toBe(true);
     expect(screen.getByRole('button',{name:/Export result JSON/}).hasAttribute('disabled')).toBe(true);
   });
-  it('normalizes new Start scope after legacy Open without a false pending-settings notice', async () => {
+  it('uses cube rotations for the next Start while retaining a legacy fixed result', async () => {
     const fixture=fixtures.find(f=>f.kind==='results'&&f.schema_valid&&f.semantic_valid)!;
     const document=structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];
     delete document.search.resolved_settings.search.budget_scope;
@@ -146,15 +146,19 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
     next.revision=2;
     next.result!.id='new-result';
     next.result!.document.search.resolved_settings.search.budget_scope='total_start';
+    next.result!.document.search.resolved_settings.orientation={mode:'cube'};
     native.start.mockImplementation(async()=>{native.state.mockResolvedValue(next);return {operation_id:'new-start'};});
     render(<App/>);
     await waitFor(()=>expect(screen.getByRole('button',{name:'▶ Start packing'}).hasAttribute('disabled')).toBe(false));
-    expect(screen.queryByText(/Pending settings for the next run/)).toBeNull();
+    expect(screen.getByText(/Pending settings for the next run/)).toBeDefined();
+    expect(screen.queryByLabelText('Allowed rotations')).toBeNull();
     fireEvent.click(screen.getByRole('button',{name:'▶ Start packing'}));
     await waitFor(()=>expect(native.start).toHaveBeenCalledOnce());
     await waitFor(()=>expect(screen.getByText('From Start')).toBeDefined());
     await waitFor(()=>expect(screen.queryByText(/Pending settings for the next run/)).toBeNull());
     expect(native.start.mock.calls[0][0].settings.budget_scope).toBe('total_start');
+    expect(native.start.mock.calls[0][0].settings.orientation).toEqual({mode:'cube'});
+    expect(document.search.resolved_settings.orientation.mode).toBe('fixed');
     expect(document.search.resolved_settings.search.budget_scope).toBeUndefined();
   });
   it('shows the retained native cause and a pitch suggestion without changing settings', async () => {
