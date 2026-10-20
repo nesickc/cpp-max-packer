@@ -2,6 +2,7 @@
 #include <bit>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <cmath>
 #include <cstring>
 #include <iomanip>
@@ -401,9 +402,12 @@ TEST_CASE("AT-03 imports separate closed ASCII components in one source",
 
 TEST_CASE("Automatic packing envelope retains source dimensions and explicit acceptance", "[import][envelope]")
 {
-    const auto inspected = geo::inspect_stl(triangle_ascii(), { geo::AssetRole::object, geo::Units::mm });
+    geo::ImportOptions import_options { geo::AssetRole::object, geo::Units::mm };
+    import_options.envelope_source_only = GENERATE(false, true);
+    const auto inspected = geo::inspect_stl(triangle_ascii(), import_options);
     REQUIRE(std::holds_alternative<std::shared_ptr<const geo::AssetDraft>>(inspected));
     const auto original = std::get<std::shared_ptr<const geo::AssetDraft>>(inspected);
+    CHECK(std::holds_alternative<geo::ImportFailure>(geo::accept_asset(original)));
     geo::RepairOptions options;
     options.algorithm = geo::RepairAlgorithm::packing_envelope;
     options.tolerance_mm = 0;
@@ -424,4 +428,17 @@ TEST_CASE("Automatic packing envelope retains source dimensions and explicit acc
     const auto other = std::get<std::shared_ptr<const geo::RepairProposal>>(replay)->candidate()->mesh();
     CHECK(std::ranges::equal(solid->mesh().vertices, other.vertices));
     CHECK(std::ranges::equal(solid->mesh().triangles, other.triangles));
+}
+
+TEST_CASE("Envelope source preparation cannot authorize even a closed cube", "[import][envelope]")
+{
+    geo::ImportOptions options { geo::AssetRole::object, geo::Units::mm };
+    options.envelope_source_only = true;
+    const auto result = geo::inspect_stl(cube_ascii(), options);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::AssetDraft>>(result));
+    const auto source = std::get<std::shared_ptr<const geo::AssetDraft>>(result);
+    CHECK(source->report().validity == geo::Validity::indeterminate);
+    CHECK(std::holds_alternative<geo::ImportFailure>(geo::accept_asset(source)));
+    options.role = geo::AssetRole::container;
+    CHECK(std::holds_alternative<geo::ImportFailure>(geo::inspect_stl(cube_ascii(), options)));
 }

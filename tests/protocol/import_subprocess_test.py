@@ -54,6 +54,21 @@ def response_error(completed):
 
 
 class InspectionCommandTests(unittest.TestCase):
+    def test_import_can_accept_certified_envelope_in_one_step(self):
+        done = self.inspect("--packing-envelope", "auto", "--accept-repair", "auto",
+                            "--available-host-bytes", str(2 << 30), timeout=30)
+        self.assertEqual(done.returncode, 0, (done.stdout, done.stderr))
+        report = json.loads(self.report.read_text())
+        self.assertEqual(report["state"], "accepted")
+        self.assertEqual(report["packing_envelope"]["enclosure_status"], "valid")
+        self.assertEqual(self.source.read_bytes(), self.original)
+        recipe = json.loads((self.report.parent / report["repair_record"]["path"]).read_text())
+        self.assertEqual(recipe["options"]["source_analysis"], "surface_only")
+        self.assertEqual(recipe["before"]["diagnostics"]["status"], "indeterminate")
+        # Automatic acceptance is restricted to certified enclosures.
+        rejected = self.inspect("--weld-tolerance-mm", "0.1", "--accept-repair", "auto")
+        self.assertEqual(response_error(rejected), "ASSET_MISMATCH")
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = pathlib.Path(self.temporary.name)

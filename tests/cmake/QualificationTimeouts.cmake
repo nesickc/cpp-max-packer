@@ -41,3 +41,13 @@ if(envelope_replay_index GREATER -1)
   set_tests_properties("Packing envelope replay binds source and parameters" PROPERTIES TIMEOUT 180)
 endif()
 unset(envelope_replay_index)
+
+# Both source preparation modes generate and replay a certified envelope.
+# Debug geometry exceeds the ordinary 30-second watchdog.
+list(FIND spectrapack_import_tests_TESTS
+  "Automatic packing envelope retains source dimensions and explicit acceptance" envelope_import_index)
+if(envelope_import_index GREATER -1)
+  set_tests_properties("Automatic packing envelope retains source dimensions and explicit acceptance"
+    PROPERTIES TIMEOUT 180)
+endif()
+unset(envelope_import_index)

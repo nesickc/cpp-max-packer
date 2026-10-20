@@ -1140,7 +1140,11 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     result_request.validation_limits.max_working_bytes = build_limit - build_live_bytes;
     auto cleanup_control = control;
     cleanup_control.stop = {};
-    constexpr std::chrono::seconds cleanup_allowance { 5 };
+    // Dense certified envelopes can need more than five seconds for fresh
+    // publication validation under host contention. Search has already stopped;
+    // keep finalization bounded and report its actual overrun.
+    // The desktop transport allows this interval plus one second for the reply.
+    constexpr std::chrono::seconds cleanup_allowance { 30 };
     cleanup_control.deadline = spectrapack::runtime::Clock::now() + cleanup_allowance;
 #ifdef SPECTRAPACK_CLI_TESTING
     if (const auto hook = finalization_hook_for_test.load()) {

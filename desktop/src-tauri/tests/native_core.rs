@@ -178,6 +178,8 @@ fn import(core: &Core, source: &std::path::Path) {
     .unwrap();
     let state = wait(core);
     assert!(state.last_error.is_none(), "{state:?}");
+    assert_eq!(state.object.as_ref().unwrap()["report"]["packing_envelope"]["enclosure_status"], "valid");
+    assert!(state.repair.is_none());
     assert_eq!(
         state.object.as_ref().unwrap()["report"]["state"],
         "accepted"
@@ -362,10 +364,18 @@ fn real_project_move_open_and_checked_stl_export_preserve_native_snapshot() {
 }
 
 #[test]
+#[ignore = "requires an explicitly supplied STL and packing settings"]
+fn supplied_model_automatic_envelope_project_roundtrip() {
+    let path = std::env::var_os("SPECTRAPACK_JOURNEY_REQUEST").unwrap();
+    let request = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    project_roundtrip(request, false, false);
+}
+
+#[test]
 fn retained_resource_failure_survives_save_move_open_and_exports() {
     // T009-A1/A3: real unsupported field work keeps a positive analytic incumbent.
     let mut request = settings(1.0);
-    request["box_dimensions_mm"] = json!([20, 10, 10]);
+    request["box_dimensions_mm"] = json!([21, 11, 11]);
     request["pitch_mm"] = json!(1e-9);
     project_roundtrip(request, true, true);
 }
@@ -501,7 +511,10 @@ fn project_roundtrip(request: Value, expect_failure: bool, checked_stl: bool) ->
         if let Ok(stl) = std::fs::read(bundle.join("packed.stl")) {
             stl_count += 1;
             let triangles = u32::from_le_bytes(stl[80..84].try_into().unwrap());
-            let per_copy = document["assets"]["object"]["accepted_solid"]["triangle_count"]
+            let object = &document["assets"]["object"];
+            let exported_mesh = object.get("packing_envelope")
+                .map(|envelope| &envelope["source_mesh"]).unwrap_or(&object["accepted_solid"]);
+            let per_copy = exported_mesh["triangle_count"]
                 .as_u64()
                 .unwrap();
             assert_eq!(
@@ -668,7 +681,8 @@ fn replacement_keeps_settings_and_invalidates_old_asset_results_only_on_success(
     let (root, core, source) = fixture(); import(&core,&source);
     let mut request=settings(0.5); request["thread_count"]=json!(2);
     request["seed"]=json!("12345678901234567890");
-    request["host_memory_limit_bytes"]=json!("536870912");
+    // Retain a non-default cap that also admits automatic envelope preparation.
+    request["host_memory_limit_bytes"]=json!("2147483648");
     core.start(request.clone()).unwrap(); let prior=wait(&core);
     assert!(prior.last_error.is_none(),"{prior:?}"); assert!(prior.result.is_some());
     let bad=root.path().join("bad.stl");std::fs::write(&bad,b"not an STL").unwrap();
@@ -709,8 +723,8 @@ fn explicit_repair_preview_reject_accept_roundtrip_and_export() {
     let original=std::fs::read(&source).unwrap();
     core.import_path(&source,ImportRequest{units:"mm".into(),scale_mm:None}).unwrap();
     let inspected=wait(&core);assert!(inspected.last_error.is_none(),"{inspected:?}");
-    assert_eq!(inspected.object.as_ref().unwrap()["report"]["diagnostics"]["status"],"invalid");
-    assert!(core.start(settings(1.)).is_err());
+    assert_eq!(inspected.object.as_ref().unwrap()["report"]["packing_envelope"]["enclosure_status"],"valid");
+    assert!(inspected.repair.is_none());
     for reject in [true,false] {
         core.repair(RepairRequest::Propose{algorithm:"weld".into(),tolerance_mm:0.1}).unwrap();
         let proposal=wait(&core);assert!(proposal.last_error.is_none(),"{proposal:?}");

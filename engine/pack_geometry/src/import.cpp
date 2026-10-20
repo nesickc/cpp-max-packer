@@ -679,10 +679,35 @@ ImportOutcome<AssetDraft> detail::ImportAccess::inspect(std::span<const std::byt
     decltype(compact_source) {}.swap(compact_source);
     decltype(local_index) {}.swap(local_index);
 
-    auto analysis = detail::analyze_solid(
-        { storage->vertices, storage->triangles }, options.limits, cleanup_budget,
-        baked_world ? exact::TriangleRelationPolicy::projected_separation_v1 : exact::TriangleRelationPolicy::legacy,
-        baked_world && attempt_stats ? &attempt_stats->projected : nullptr);
+    detail::SolidAnalysis analysis;
+    if (options.envelope_source_only) {
+        if (options.role != AssetRole::object || baked_world) {
+            return settings_failure("INVALID_ROLE", "Surface-only preparation is limited to envelope object sources.");
+        }
+        auto& report = analysis.report;
+        report.vertex_count = storage->vertices.size();
+        report.triangle_count = storage->triangles.size();
+        Bounds bounds;
+        bool first = true;
+        for (const auto& point : storage->vertices) {
+            detail::operation_checkpoint(control);
+            extend(bounds, point, first);
+        }
+        if (!first) {
+            report.mesh_bounds_mm = bounds;
+        }
+        report.issues.push_back({ "ENVELOPE_SOURCE_SURFACE",
+                                  "Source retained as a surface; only the certified envelope authorizes packing.",
+                                  {},
+                                  {},
+                                  {} });
+    }
+    else {
+        analysis = detail::analyze_solid({ storage->vertices, storage->triangles }, options.limits, cleanup_budget,
+                                         baked_world ? exact::TriangleRelationPolicy::projected_separation_v1
+                                                     : exact::TriangleRelationPolicy::legacy,
+                                         baked_world && attempt_stats ? &attempt_stats->projected : nullptr);
+    }
     detail::operation_checkpoint(control);
     storage->report = std::move(analysis.report);
     if (attempt_stats) {

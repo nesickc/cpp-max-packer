@@ -883,6 +883,7 @@ impl Core {
             let copy = root.join("selected.stl"); security::copy(&source, &copy, SOURCE_LIMIT)?;
             let report_path = root.join("object.report.json"); let mut args = arguments(&["inspect", "--units", &request.units]);
             pair(&mut args, "--stl", &copy); pair(&mut args, "--report", &report_path);
+            args.extend(arguments(&["--packing-envelope", "auto", "--accept-repair", "auto"]));
             if let Some(scale) = request.scale_mm { args.extend(["--scale-mm".into(), scale.to_string().into()]); }
             core.run(&args, &root)?;
             let report = security::json(&report_path, REPORT_LIMIT)?; let object_id = id("object");
