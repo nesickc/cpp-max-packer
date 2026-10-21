@@ -8,6 +8,19 @@ no decision record is needed. This file began with spec v0.2 §6 and is updated
 through 2026-10-19. Historical rationale lives in
 `spec/decisions/` and `doc/T-*.md` (frozen).
 
+## Desktop 45-degree orientations
+
+The desktop uses the `cube45` preset: the original 24 ordered cube orientations,
+followed by `R_x45 * R_cube`, `R_y45 * R_cube`, and `R_z45 * R_cube` in that order.
+These 96 unique proper rotations include positive and negative diagonal turns
+around all three world axes. They do not sample every combination of Euler angles.
+The native resolver records normalized, sign-canonical quaternions through the
+existing custom catalog contract. Its version-1 SHA256 is
+`7434d4e2eb8cd12e6a67af3a5d636a7435a4e50da043777586ff0fbff9eae4ef`.
+Cardinal orientations stay first; more orientations share the existing time and
+memory budgets, so a larger catalog does not guarantee a higher count in every
+bounded run. All placements still require full-resolution validation.
+
 ## Baseline and staggered seed
 
 For a box, generate a grid of oriented object AABBs for each allowed baseline orientation. For dimensions `b_x,b_y,b_z`, pair gap `c_p`, and wall gap `c_w`, the candidate count along axis `j` is:

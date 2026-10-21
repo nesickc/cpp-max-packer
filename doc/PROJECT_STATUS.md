@@ -1,6 +1,6 @@
 # Project status
 
-Updated 2026-10-20. Details belong in PRs and `.local/` logs.
+Updated 2026-10-21. Details belong in PRs and `.local/` logs.
 
 ## What works
 
@@ -34,8 +34,9 @@ Updated 2026-10-20. Details belong in PRs and `.local/` logs.
   General proposal contraction now saves **30 in the 285 mm box** within
   90 seconds (2 mm pitch, four threads, zero clearance, cube rotations).
   The desktop result occupies 281.605 mm in Z and survives Save/Open/export.
-  Desktop controls now use cube rotations exclusively; old results keep their
-  recorded orientation permissions. Evidence: `.local/bulba/`, `.local/diagonal/`.
+  Desktop search now includes 45° turns around X/Y/Z (96 orientations); old results
+  keep their recorded orientation permissions. A diagonal-only bar fits and survives
+  restore/export. Evidence: `.local/bulba/`, `.local/diagonal/`, `.local/rotations45/`.
 
 Native and desktop checks cover independent validity, source preservation, recipe
 replay, Stop, portable projects and export. Benchy/matrice qualification remains
@@ -80,7 +81,6 @@ History: [benchmarks/SCOREBOARD.md](../benchmarks/SCOREBOARD.md).
 4. `10_kg_np.stl` is 400 x 350 x 285 mm; the real Nova Post box is
    400 x 340 x 285 mm. Use box dimensions for that comparison.
 
-Diagonal compaction is stacked on PR #29 (automatic envelopes), which includes #28
-(compaction), which includes #27, #26, #25 and #24. See
+Diagonal compaction and automatic envelopes are merged through PR #30. See
 [ADR 0021](../spec/decisions/0021-packing-envelopes.md), [ALGORITHM.md](../docs/ALGORITHM.md),
 [BUILDING.md](../docs/BUILDING.md) and [AGENTS.md](../AGENTS.md).

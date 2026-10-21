@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
 #include <initializer_list>
 #include <string_view>
 #include <variant>
@@ -31,6 +32,10 @@ struct CatalogFailure {
 };
 
 using CatalogOutcome = std::variant<OrientationCatalog, CatalogFailure>;
+
+// Cube orientations first, then 45-degree world-X, world-Y and world-Z turns
+// of each cube orientation. This finite preset resolves to a custom policy.
+[[nodiscard]] std::array<geometry::Quaternion, 96> cube45_orientations() noexcept;
 
 // max_orientations limits the raw policy size (fixed 1, cube 24, or the
 // supplied custom entry count) before catalog allocation or deduplication.

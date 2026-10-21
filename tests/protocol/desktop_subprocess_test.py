@@ -215,6 +215,47 @@ class DesktopTests(unittest.TestCase):
         self.assertFalse(json.loads(completed.stdout)["ok"])
         self.assertEqual(list(output.iterdir()), [])
 
+    def test_cube45_diagonal_fit_restores_and_exports(self):
+        # A 20 x 2 x 2 bar cannot fit cardinally in 16 x 16 x 4 mm.
+        vertices = [(x, y, z) for x, y, z in
+                    [(-10,-1,-1),(10,-1,-1),(10,1,-1),(-10,1,-1),
+                     (-10,-1,1),(10,-1,1),(10,1,1),(-10,1,1)]]
+        payload = bytearray(80) + struct.pack('<I', len(fixtures.SOURCE_FACES))
+        for face in fixtures.SOURCE_FACES:
+            payload.extend(struct.pack('<12fH', 0, 0, 0,
+                                       *(v for index in face for v in vertices[index]), 0))
+        self.source.write_bytes(payload)
+        imported = run('inspect', '--stl', self.source, '--units', 'mm', '--report', self.report)
+        self.assertEqual(imported.returncode, 0, imported.stdout + imported.stderr)
+        self.request.update(box_dimensions_mm=[16,16,4], pitch_mm=1, budget_seconds=2,
+                            clearance_mm={'pair':0.1,'wall':0.1}, orientation={'mode':'cube45'})
+        cardinal = copy.deepcopy(self.request)
+        cardinal['orientation'] = {'mode': 'cube'}
+        prepared, directory = self.prepare(cardinal, 'cardinal')
+        self.assertEqual(prepared.returncode, 0, prepared.stdout + prepared.stderr)
+        cardinal_output = self.root / 'cardinal-solve'
+        cardinal_output.mkdir()
+        cardinal_result = cardinal_output / 'result.json'
+        solved = run('solve', '--object-report', self.report, '--settings', directory / 'settings.json',
+                     '--result', cardinal_result)
+        self.assertEqual(solved.returncode, 0, solved.stdout + solved.stderr)
+        self.assertEqual(json.loads(cardinal_result.read_text())['count'], 0)
+        result_path, result = self.solved()
+        self.assertGreaterEqual(result['count'], 1)
+        self.assertEqual(result['validation']['status'], 'valid')
+        resolved = result['search']['resolved_settings']
+        self.assertEqual(resolved['orientation']['mode'], 'custom')
+        self.assertEqual(len(resolved['orientation']['quaternions_xyzw']), 96)
+        restored, output = self.restore(result_path, stl=True)
+        self.assertEqual(restored.returncode, 0, restored.stdout + restored.stderr)
+        self.assertTrue((output / 'packed.stl').is_file())
+        tampered = copy.deepcopy(result)
+        tampered['search']['resolved_settings']['orientation']['quaternions_xyzw'].pop()
+        broken = self.root / 'tampered.json'
+        broken.write_text(json.dumps(tampered))
+        rejected, _ = self.restore(broken, 'tampered-restore')
+        self.assertNotEqual(rejected.returncode, 0)
+
     def test_t010_parallel_policy_executes_and_restores_without_rewriting_provenance(self):
         self.request["thread_count"] = 2
         self.request["budget_seconds"] = 1.0

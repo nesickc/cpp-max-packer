@@ -268,7 +268,7 @@ Use a single main window: configuration panel on the left, 3D viewer in the cent
 | --- | --- |
 | Object | Import/replace STL; units; dimensions; triangle count; diagnostics; repair proposal preview/accept/reject; original/LOD viewer toggle |
 | Container | Box or STL interior volume; internal W/D/H; independent STL units; bounds; diagnostic status; container transparency |
-| Constraints | Pair clearance and wall clearance in mm; desktop search uses the 24 right-angle cube rotations |
+| Constraints | Pair clearance and wall clearance in mm; desktop search uses 96 orientations, including cube rotations and 45° turns around each world axis |
 | Search | Fast/Balanced/Thorough; total run budget; Start; Stop and keep best; Continue; seed and maximum additional work in advanced controls |
 | Resources | Auto/CPU/Vulkan; selected device; detected capability; resolved pitch; estimated RAM/VRAM; advanced pitch, thread, and memory limits |
 | Results | Best validated count; elapsed and remaining budget; time since improvement; utilization if available; termination reason; geometry validation status |
@@ -337,7 +337,10 @@ these auxiliary CLI operations, as specified in
 `desktop-prepare` and `desktop-restore` commands resolve supported CPU settings
 and independently validate restored results; `solve --stop-file FILE` requests
 safe-boundary stop. The desktop DTO/project manifest is a separate versioned
-schema. This bounded box-container journey does not replace the required stdio
+schema. The desktop `cube45` preset resolves natively to an explicit version-1
+custom quaternion catalog; results retain that catalog and its hash. Existing
+cube and fixed results retain their recorded permissions. This bounded
+box-container journey does not replace the required stdio
 job lifecycle, Continue, or periodic checkpoint acceptance gates below.
 
 Headless `pack` and UI `job.start` use the same settings schema, solver, and output contract. CLI Ctrl+C maps to stop-and-keep. Exit codes: `0` for a valid terminal result, including zero copies, budget exhaustion, or a requested stop; `2` for bad input/settings; `3` for unsupported capabilities/resource preflight; `4` for internal failure; `5` for failed or indeterminate validation in the standalone validator. A fatal error may also preserve a prior valid incumbent; the nonzero exit and error record remain.

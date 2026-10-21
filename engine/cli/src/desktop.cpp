@@ -180,6 +180,11 @@ std::optional<geo::OrientationPolicy> policy(const Json& value)
     else if (value.at("mode") == "cube") {
         out.mode = geo::OrientationMode::cube;
     }
+    else if (value.at("mode") == "cube45") {
+        out.mode = geo::OrientationMode::catalog;
+        const auto entries = solver::cube45_orientations();
+        out.catalog_xyzw.assign(entries.begin(), entries.end());
+    }
     else if (value.at("mode") == "custom") {
         out.mode = geo::OrientationMode::catalog;
         out.catalog_xyzw = value.at("quaternions_xyzw").get<std::vector<geo::Quaternion>>();
@@ -454,7 +459,7 @@ std::variant<spectrapack::io::Json, spectrapack::io::Error> resolve_desktop_sett
     if (!input_policy) {
         return io::Error { "INVALID_SETTINGS", "Desktop orientation is unsupported.", Json::object(), true };
     }
-    auto made = solver::make_orientation_catalog(*input_policy, 24);
+    auto made = solver::make_orientation_catalog(*input_policy, 96);
     if (const auto* error = std::get_if<solver::CatalogFailure>(&made)) {
         return io::Error { std::string(error->code), std::string(error->message), Json::object(), true };
     }
@@ -464,6 +469,10 @@ std::variant<spectrapack::io::Json, spectrapack::io::Error> resolve_desktop_sett
     if (resolved_policy.mode == geo::OrientationMode::fixed) {
         resolved_policy.catalog_xyzw = catalog.quaternions;
         orientation["quaternion_xyzw"] = catalog.quaternions.front();
+    }
+    else if (resolved_policy.mode == geo::OrientationMode::catalog) {
+        resolved_policy.catalog_xyzw = catalog.quaternions;
+        orientation = { { "mode", "custom" }, { "quaternions_xyzw", catalog.quaternions } };
     }
     const io::ResultCatalog bound { 1, catalog.quaternions, io::ResultCatalogBinding::resolved_policy };
     const auto hashed = io::result_catalog_sha256(bound, resolved_policy);

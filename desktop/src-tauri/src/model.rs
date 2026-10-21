@@ -167,6 +167,8 @@ pub fn validate_settings(value: &Value) -> Outcome<()> {
         Fixed { quaternion_xyzw: [f64; 4] },
         #[serde(rename = "cube")]
         Cube,
+        #[serde(rename = "cube45")]
+        Cube45,
     }
     let settings: Settings = serde_json::from_value(value.clone())
         .map_err(|e| error("INVALID_SETTINGS", e.to_string()))?;

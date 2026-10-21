@@ -76,7 +76,7 @@ export function App() {
     current.current = accepted; setState(accepted);
     const op = accepted.operation;
     if (((first && !edited.current) || (op?.kind === 'open' && op.phase === 'finished' && opened.current !== op.id)) && accepted.draft_settings) {
-      storeSettings({ ...structuredClone(accepted.draft_settings), orientation: { mode: 'cube' } }); if (op?.kind === 'open') { opened.current = op.id; edited.current = false; }
+      storeSettings({ ...structuredClone(accepted.draft_settings), orientation: { mode: 'cube45' } }); if (op?.kind === 'open') { opened.current = op.id; edited.current = false; }
     }
   }, []);
   useEffect(() => {
@@ -101,7 +101,7 @@ export function App() {
   const newProject = () => run(async () => {
     generation.current++; const fresh = await bridge.newProject();
     current.current = null; opened.current = null; edited.current = false; updateState(fresh);
-    storeSettings({ ...structuredClone(fresh.draft_settings ?? defaultSettings), orientation: { mode: 'cube' } });
+    storeSettings({ ...structuredClone(fresh.draft_settings ?? defaultSettings), orientation: { mode: 'cube45' } });
   });
   const busy = activeOperation(state), disabled = !native || commandPending || busy;
   const accepted = state?.object?.report.state === 'accepted' && state.object.report.diagnostics.status === 'valid';
@@ -172,7 +172,7 @@ export function App() {
           </details>}
         </section>
         <section className="config-section"><div className="section-title"><span className="step">02</span><h2>Container</h2><span className="pill">Box interior</span></div><div className="dimension-fields">{['Width', 'Depth', 'Height'].map((label, i) => <NumberField key={label} label={label} value={settings.box_dimensions_mm[i]} min={0.000001} onChange={v => setDimension(i, v)} />)}</div><p className="hint">Internal dimensions · millimeters · Z up</p></section>
-        <section className="config-section"><div className="section-title"><span className="step">03</span><h2>Clearance & orientation</h2></div><div className="two-fields"><NumberField label="Between copies" value={settings.clearance_mm.pair} onChange={v => setSettings(s => ({ ...s, clearance_mm: { ...s.clearance_mm, pair: v } }))} /><NumberField label="To walls" value={settings.clearance_mm.wall} onChange={v => setSettings(s => ({ ...s, clearance_mm: { ...s.clearance_mm, wall: v } }))} /></div><p className="hint">Allowed rotations: 24 right-angle cube rotations.</p></section>
+        <section className="config-section"><div className="section-title"><span className="step">03</span><h2>Clearance & orientation</h2></div><div className="two-fields"><NumberField label="Between copies" value={settings.clearance_mm.pair} onChange={v => setSettings(s => ({ ...s, clearance_mm: { ...s.clearance_mm, pair: v } }))} /><NumberField label="To walls" value={settings.clearance_mm.wall} onChange={v => setSettings(s => ({ ...s, clearance_mm: { ...s.clearance_mm, wall: v } }))} /></div><p className="hint">Allowed rotations: 96 orientations, including 45° turns around X, Y and Z.</p></section>
         <section className="config-section"><div className="section-title"><span className="step">04</span><h2>Search</h2><span className="pill cpu">CPU · {settings.thread_count ?? 1} thread{(settings.thread_count ?? 1) === 1 ? '' : 's'}</span></div><div className="two-fields"><NumberField label="Voxel pitch" value={settings.pitch_mm} min={0.000001} onChange={v => setSettings(s => ({ ...s, pitch_mm: v }))} /><NumberField label="Search budget" suffix="sec" value={settings.budget_seconds} min={0.000001} onChange={v => setSettings(s => ({ ...s, budget_seconds: v }))} /></div><p className="hint">Manual pitch changes search resolution. Object dimensions stay physical. The next Start budget includes preparation, fields, search, and validation. Completed import preparation is separate.</p>
           <details><summary>Advanced settings</summary><label className="select-label">CPU threads<select aria-label="CPU threads" value={settings.thread_count ?? 1} onChange={e => setSettings(s => ({ ...s, thread_count: Number(e.target.value) }))}>{Array.from({ length: supportedThreads }, (_, i) => i + 1).map(count => <option key={count} value={count}>{count}</option>)}</select></label><label className="text-label">Host memory ceiling (bytes, optional)<input aria-label="Host memory ceiling" inputMode="numeric" placeholder="Automatic: half of available RAM" value={settings.host_memory_limit_bytes ?? ''} onChange={e => setSettings(s => {
             const next = {...s};
