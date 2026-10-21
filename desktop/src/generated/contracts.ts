@@ -324,6 +324,22 @@ export type Repair = null | {
   sha256: Hash;
   accepted_by_user: true;
 };
+export type RepairProposal = {
+  sha256: Hash;
+  path: Path;
+  before: Preview;
+  after: Preview;
+  tolerance_mm: number | null;
+  max_displacement_mm: number | null;
+  candidate_status: "valid" | "invalid" | "indeterminate";
+  algorithm?: "weld" | "manifold" | "envelope";
+  alpha_mm?: number;
+  offset_mm?: number;
+  before_diagnostics?: Diagnostics;
+  after_diagnostics?: Diagnostics;
+  surface_area_before_mm2?: number;
+  surface_area_after_mm2?: number;
+};
 export type Accepted = Base & {
   state?: "accepted";
   diagnostics?: Diagnostics & {
@@ -342,6 +358,7 @@ export interface Base {
   dimensions_mm: Vec3;
   diagnostics: Diagnostics;
   accepted_solid?: Solid;
+  packing_envelope?: PackingEnvelope;
   repair_record?: Repair;
   preview?: Preview;
   repair_proposal?: RepairProposal;
@@ -422,23 +439,16 @@ export interface Solid {
   vertex_count: Counter;
   triangle_count: Counter;
 }
+export interface PackingEnvelope {
+  source_mesh: Solid;
+  algorithm: "cgal-alpha-wrap-envelope-v1";
+  alpha_mm: number;
+  offset_mm: number;
+  enclosure_status: "valid";
+}
 export interface Preview {
   path: Path;
   sha256: Hash;
-}
-export interface RepairProposal {
-  sha256: Hash;
-  path: Path;
-  before: Preview;
-  after: Preview;
-  tolerance_mm: number;
-  max_displacement_mm: number | null;
-  candidate_status: "valid" | "invalid" | "indeterminate";
-  algorithm?: "weld" | "manifold";
-  before_diagnostics?: Diagnostics;
-  after_diagnostics?: Diagnostics;
-  surface_area_before_mm2?: number;
-  surface_area_after_mm2?: number;
 }
 
 }
@@ -472,6 +482,22 @@ export type M = [
   [number, number, number, number],
   [number, number, number, number]
 ];
+export type RepairProposal = {
+  sha256: Hash;
+  path: string;
+  before: Preview;
+  after: Preview;
+  tolerance_mm: number | null;
+  max_displacement_mm: number | null;
+  candidate_status: "valid" | "invalid" | "indeterminate";
+  algorithm?: "weld" | "manifold" | "envelope";
+  alpha_mm?: number;
+  offset_mm?: number;
+  before_diagnostics?: Diagnostics;
+  after_diagnostics?: Diagnostics;
+  surface_area_before_mm2?: number;
+  surface_area_after_mm2?: number;
+};
 /**
  * @minItems 4
  * @maxItems 4
@@ -602,6 +628,7 @@ export interface Base {
   dimensions_mm: Vec3;
   diagnostics: Diagnostics;
   accepted_solid?: Solid;
+  packing_envelope?: PackingEnvelope;
   repair_record?: null | {
     path: string;
     sha256: Hash;
@@ -686,23 +713,16 @@ export interface Solid {
   vertex_count: C;
   triangle_count: C;
 }
+export interface PackingEnvelope {
+  source_mesh: Solid;
+  algorithm: "cgal-alpha-wrap-envelope-v1";
+  alpha_mm: number;
+  offset_mm: number;
+  enclosure_status: "valid";
+}
 export interface Preview {
   path: string;
   sha256: Hash;
-}
-export interface RepairProposal {
-  sha256: Hash;
-  path: string;
-  before: Preview;
-  after: Preview;
-  tolerance_mm: number;
-  max_displacement_mm: number | null;
-  candidate_status: "valid" | "invalid" | "indeterminate";
-  algorithm?: "weld" | "manifold";
-  before_diagnostics?: Diagnostics;
-  after_diagnostics?: Diagnostics;
-  surface_area_before_mm2?: number;
-  surface_area_after_mm2?: number;
 }
 export interface ContentRef {
   source_sha256: Hash;
@@ -3172,6 +3192,26 @@ export type M = [
   [number, number, number, number],
   [number, number, number, number]
 ];
+export type RepairProposal = {
+  /**
+   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+   * via the `definition` "hash".
+   */
+  sha256: string;
+  path: string;
+  before: Preview;
+  after: Preview;
+  tolerance_mm: number | null;
+  max_displacement_mm: number | null;
+  candidate_status: "valid" | "invalid" | "indeterminate";
+  algorithm?: "weld" | "manifold" | "envelope";
+  alpha_mm?: number;
+  offset_mm?: number;
+  before_diagnostics?: Diagnostics;
+  after_diagnostics?: Diagnostics;
+  surface_area_before_mm2?: number;
+  surface_area_after_mm2?: number;
+};
 export type ImportRequest = {
   units: "mm" | "inch" | "custom";
   scale_mm?: number;
@@ -3189,6 +3229,9 @@ export type RepairRequest =
        * via the `definition` "hash".
        */
       token: string;
+    }
+  | {
+      action: "envelope";
     };
 
 export interface Settings {
@@ -3253,6 +3296,7 @@ export interface ImportedObject {
   display_name: string;
   report: HttpsSpectrapackInvalidSchemasV1AssetsSchemaJson;
   preview: Preview1 | null;
+  envelope_preview?: Preview1 | null;
 }
 export interface Base {
   schema_version: 1;
@@ -3263,6 +3307,7 @@ export interface Base {
   dimensions_mm: Vec3;
   diagnostics: Diagnostics;
   accepted_solid?: Solid;
+  packing_envelope?: PackingEnvelope;
   repair_record?: null | {
     path: string;
     /**
@@ -3459,6 +3504,13 @@ export interface Solid {
    */
   triangle_count: number;
 }
+export interface PackingEnvelope {
+  source_mesh: Solid;
+  algorithm: "cgal-alpha-wrap-envelope-v1";
+  alpha_mm: number;
+  offset_mm: number;
+  enclosure_status: "valid";
+}
 export interface Preview {
   path: string;
   /**
@@ -3466,24 +3518,6 @@ export interface Preview {
    * via the `definition` "hash".
    */
   sha256: string;
-}
-export interface RepairProposal {
-  /**
-   * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
-   * via the `definition` "hash".
-   */
-  sha256: string;
-  path: string;
-  before: Preview;
-  after: Preview;
-  tolerance_mm: number;
-  max_displacement_mm: number | null;
-  candidate_status: "valid" | "invalid" | "indeterminate";
-  algorithm?: "weld" | "manifold";
-  before_diagnostics?: Diagnostics;
-  after_diagnostics?: Diagnostics;
-  surface_area_before_mm2?: number;
-  surface_area_after_mm2?: number;
 }
 export interface Preview1 {
   preview_id: string;
@@ -5849,8 +5883,8 @@ export interface RepairPreview {
    * via the `definition` "hash".
    */
   token: string;
-  algorithm: "weld" | "manifold";
-  tolerance_mm: number;
+  algorithm: "weld" | "manifold" | "envelope";
+  tolerance_mm: number | null;
   report: HttpsSpectrapackInvalidSchemasV1AssetsSchemaJson;
   before: Preview1 | null;
   after: Preview1 | null;

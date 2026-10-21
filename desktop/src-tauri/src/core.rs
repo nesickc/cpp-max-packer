@@ -48,6 +48,7 @@ struct ObjectFiles {
     id: String,
     report: PathBuf,
     preview: Option<Value>,
+    envelope_preview: Option<Value>,
     native_token: Option<String>,
     native_epoch: Option<String>,
     cpu_runtime: Option<Value>,
@@ -56,7 +57,7 @@ struct PreparedRollback {
     core: Core,
     token: Option<String>,
     epoch: Option<String>,
-    preview_id: Option<String>,
+    preview_ids: Vec<String>,
     committed: bool,
 }
 impl Drop for PreparedRollback {
@@ -65,7 +66,7 @@ impl Drop for PreparedRollback {
             let _ = self
                 .core
                 .release_native(self.token.take(), self.epoch.as_deref());
-            if let Some(preview) = self.preview_id.take() {
+            for preview in self.preview_ids.drain(..) {
                 self.core.inner.lock().unwrap().previews.remove(&preview);
             }
         }
@@ -202,7 +203,7 @@ fn public_artifact_matches(live: &Value, document: &Value, settings: &Value, obj
             "Terminal artifact differs from the displayed public packing or captured settings.",
         ));
     }
-    for key in ["source", "accepted_solid", "frame", "dimensions_mm", "repair_record"] {
+    for key in ["source", "accepted_solid", "frame", "dimensions_mm", "repair_record", "packing_envelope"] {
         if document["assets"]["object"][key] != object_report[key] {
             return Err(error(
                 "PUBLICATION_MISMATCH",
@@ -821,7 +822,7 @@ impl Core {
             core: self.clone(),
             token: object.native_token.clone(),
             epoch: object.native_epoch.clone(),
-            preview_id: None,
+            preview_ids: Vec::new(),
             committed: false,
         };
         let maximum = response["supported_thread_count_max"]
@@ -834,7 +835,18 @@ impl Core {
             json!({"version":1,"supported_min":1,"supported_max":maximum,
             "default_thread_count":maximum.min(4),"working_set_estimate_bytes":response["working_set_estimate_bytes"]}),
         );
-        let preview = self.register_preview(&output, &response)?;
+        let preview;
+        let report = security::json(&object.report, REPORT_LIMIT)?;
+        let report_root = object.report.parent().unwrap();
+        object.envelope_preview = self.import_preview(report_root, &report["accepted_solid"],
+            report["accepted_solid"]["triangle_count"].as_u64().unwrap_or(0))?;
+        if let Some(id)=object.envelope_preview.as_ref().and_then(|p|p["preview_id"].as_str()) {rollback.preview_ids.push(id.into());}
+        if !report["packing_envelope"].is_null() {
+            let source = &report["packing_envelope"]["source_mesh"];
+            preview = self.import_preview(report_root, source, source["triangle_count"].as_u64().unwrap_or(0))?;
+        }
+        else { preview = self.register_preview(&output, &response)?; }
+        if let Some(id)=preview.as_ref().and_then(|p|p["preview_id"].as_str()) {rollback.preview_ids.push(id.into());}
         rollback.committed = true;
         Ok((output, preview))
     }
@@ -874,13 +886,13 @@ impl Core {
             if let Some(scale) = request.scale_mm { args.extend(["--scale-mm".into(), scale.to_string().into()]); }
             core.run(&args, &root)?;
             let report = security::json(&report_path, REPORT_LIMIT)?; let object_id = id("object");
-            let mut object = ObjectFiles { id: object_id.clone(), report: report_path, preview: None, native_token: None, native_epoch: None, cpu_runtime: None };
+            let mut object = ObjectFiles { id: object_id.clone(), report: report_path, preview: None, envelope_preview: None, native_token: None, native_epoch: None, cpu_runtime: None };
             if report["state"] == "accepted" && report["diagnostics"]["status"] == "valid" {
                 let (_, preview) = core.prepare(&mut object, &root)?; object.preview = preview;
             } else {
                 object.preview = core.import_preview(&root, &report["preview"], report["diagnostics"]["import"]["triangle_count"].as_u64().unwrap_or(0))?;
             }
-            let mut prepared_guard=PreparedRollback {core:core.clone(),token:object.native_token.clone(),epoch:object.native_epoch.clone(),preview_id:object.preview.as_ref().and_then(|value|value["preview_id"].as_str().map(str::to_owned)),committed:false};
+            let mut prepared_guard=PreparedRollback {core:core.clone(),token:object.native_token.clone(),epoch:object.native_epoch.clone(),preview_ids:[object.preview.as_ref(),object.envelope_preview.as_ref()].into_iter().flatten().filter_map(|p|p["preview_id"].as_str().map(str::to_owned)).collect(),committed:false};
             let old_object=core.inner.lock().unwrap().object.clone();
             if let Some(old)=old_object {core.release_native(old.native_token,old.native_epoch.as_deref())?;}
             let mut inner = core.inner.lock().unwrap(); inner.state.cpu_runtime=object.cpu_runtime.clone(); inner.object = Some(object.clone());
@@ -889,7 +901,7 @@ impl Core {
             inner.state.live_result=None;
             inner.repair=None; inner.state.repair=None;
             inner.result=None; inner.state.result=None;
-            inner.state.object = Some(json!({"id":object_id,"display_name":name,"report":report,"preview":object.preview}));
+            inner.state.object = Some(json!({"id":object_id,"display_name":name,"report":report,"preview":object.preview,"envelope_preview":object.envelope_preview}));
             // Imports own geometry only. The editor owns unsaved settings; the
             // backend retains its last submitted snapshot until Start, Save or Open.
             inner.state.revision += 1; drop(inner);
@@ -931,6 +943,7 @@ impl Core {
             }
             let (algorithm, tolerance, token) = match request {
                 RepairRequest::Propose {algorithm,tolerance_mm} => (algorithm,tolerance_mm,None),
+                RepairRequest::Envelope => ("envelope".to_owned(),0.0,None),
                 RepairRequest::Accept {token} => {
                     let pending = pending.unwrap();
                     // Retained proposal bytes must still match the displayed token.
@@ -948,7 +961,8 @@ impl Core {
             if source_report["source"]["units"]=="custom" {
                 args.extend(["--scale-mm".into(),source_report["source"]["unit_scale_mm"].to_string().into()]);
             }
-            args.extend([if algorithm=="weld" {"--weld-tolerance-mm"} else {"--reconstruct-resolution-mm"}.into(),tolerance.to_string().into()]);
+            if algorithm=="envelope" { args.extend(["--packing-envelope".into(),"auto".into()]); } else {
+            args.extend([if algorithm=="weld" {"--weld-tolerance-mm"} else {"--reconstruct-resolution-mm"}.into(),tolerance.to_string().into()]); }
             if let Some(token)=&token {args.extend(["--accept-repair".into(),token.into()]);}
             core.run(&args,&root).map_err(|mut failure| {
                 if failure.code == "MEMORY_LIMIT" {
@@ -972,18 +986,18 @@ impl Core {
                 };
                 let mut inner=core.inner.lock().unwrap();
                 inner.repair=Some(RepairFiles{object_id:old.id.clone(),report:report_path,algorithm:algorithm.clone(),tolerance,token:token.clone()});
-                inner.state.repair=Some(json!({"object_id":old.id,"token":token,"algorithm":algorithm,"tolerance_mm":tolerance,
+                inner.state.repair=Some(json!({"object_id":old.id,"token":token,"algorithm":algorithm,"tolerance_mm":if algorithm=="envelope" {Value::Null} else {json!(tolerance)},
                     "report":report,"before":before,"after":after}));
                 inner.state.revision+=1;drop(inner);core.prune_previews();return Ok(());
             }
-            let mut object=ObjectFiles{id:id("object"),report:report_path,preview:None,native_token:None,native_epoch:None,cpu_runtime:None};
+            let mut object=ObjectFiles{id:id("object"),report:report_path,preview:None,envelope_preview:None,native_token:None,native_epoch:None,cpu_runtime:None};
             let (_,preview)=core.prepare(&mut object,&root)?;object.preview=preview;
             let mut guard=PreparedRollback{core:core.clone(),token:object.native_token.clone(),epoch:object.native_epoch.clone(),
-                preview_id:object.preview.as_ref().and_then(|p|p["preview_id"].as_str().map(str::to_owned)),committed:false};
+                preview_ids:[object.preview.as_ref(),object.envelope_preview.as_ref()].into_iter().flatten().filter_map(|p|p["preview_id"].as_str().map(str::to_owned)).collect(),committed:false};
             core.release_native(old.native_token,old.native_epoch.as_deref())?;
             let mut inner=core.inner.lock().unwrap();
             inner.state.cpu_runtime=object.cpu_runtime.clone();
-            inner.state.object=Some(json!({"id":object.id,"display_name":record["display_name"],"report":report,"preview":object.preview}));
+            inner.state.object=Some(json!({"id":object.id,"display_name":record["display_name"],"report":report,"preview":object.preview,"envelope_preview":object.envelope_preview}));
             inner.object=Some(object);inner.result=None;inner.state.result=None;inner.state.live_result=None;
             inner.repair=None;inner.state.repair=None;inner.state.revision+=1;guard.committed=true;
             drop(inner);core.prune_previews();core.phase(&op,"validating");Ok(())
@@ -1083,6 +1097,7 @@ impl Core {
                     id: object.id.clone(),
                     report: output.join("object.report.json"),
                     preview: preview.clone(),
+                    envelope_preview: object.envelope_preview.clone(),
                     native_token: object.native_token.clone(),
                     native_epoch: object.native_epoch.clone(),
                     cpu_runtime: object.cpu_runtime.clone(),
@@ -1214,6 +1229,7 @@ impl Core {
     fn prune_previews(&self) {
         let mut inner = self.inner.lock().unwrap();
         let ids = [
+            inner.object.as_ref().and_then(|o|o.envelope_preview.as_ref()).and_then(|p|p["preview_id"].as_str()).map(str::to_owned),
             inner.state.repair.as_ref().and_then(|r|r["before"]["preview_id"].as_str()).map(str::to_owned),
             inner.state.repair.as_ref().and_then(|r|r["after"]["preview_id"].as_str()).map(str::to_owned),
             inner.state.live_result.as_ref().and_then(|live|live["preview"]["preview_id"].as_str()).map(str::to_owned),
@@ -1373,7 +1389,7 @@ impl Core {
             if let Some(result) = &result {
                 let original = security::json(&result.object.report, REPORT_LIMIT)?;
                 let current = &inner.state.object.as_ref().unwrap()["report"];
-                for key in ["source", "accepted_solid", "frame", "dimensions_mm", "repair_record"] {
+                for key in ["source", "accepted_solid", "frame", "dimensions_mm", "repair_record", "packing_envelope"] {
                     if original[key] != current[key] {
                         return Err(error("ASSET_MISMATCH", "Displayed result belongs to a different object; use New before saving the replacement."));
                     }
@@ -1430,9 +1446,9 @@ impl Core {
             let draft = manifest["draft_settings"].clone(); validate_settings(&draft)?;
             let report_path = extracted.join("object.report.json"); let report = security::json(&report_path, REPORT_LIMIT)?;
             let object_id = id("object");
-            let mut object = ObjectFiles { id: object_id.clone(), report: report_path, preview: None, native_token: None, native_epoch: None, cpu_runtime: None };
+            let mut object = ObjectFiles { id: object_id.clone(), report: report_path, preview: None, envelope_preview: None, native_token: None, native_epoch: None, cpu_runtime: None };
             let (_, preview) = core.prepare(&mut object, &root)?; object.preview = preview.clone();
-            let mut prepared_guard=PreparedRollback {core:core.clone(),token:object.native_token.clone(),epoch:object.native_epoch.clone(),preview_id:object.preview.as_ref().and_then(|value|value["preview_id"].as_str().map(str::to_owned)),committed:false};
+            let mut prepared_guard=PreparedRollback {core:core.clone(),token:object.native_token.clone(),epoch:object.native_epoch.clone(),preview_ids:[object.preview.as_ref(),object.envelope_preview.as_ref()].into_iter().flatten().filter_map(|p|p["preview_id"].as_str().map(str::to_owned)).collect(),committed:false};
             let mut result_files = None; let mut result_snapshot = None;
             if !manifest["best_result"].is_null() {
                 core.phase(&op, "validating");
@@ -1459,7 +1475,7 @@ impl Core {
             prepared_guard.committed=true;
             inner.state.live_result=None;
             inner.repair=None; inner.state.repair=None;
-            inner.state.object = Some(json!({"id":object_id,"display_name":name,"report":report,"preview":object.preview}));
+            inner.state.object = Some(json!({"id":object_id,"display_name":name,"report":report,"preview":object.preview,"envelope_preview":object.envelope_preview}));
             inner.state.result = result_snapshot; inner.state.draft_settings = Some(draft);
             let result_id = inner.result.as_ref().map(|r| r.id.clone());
             inner.state.operation.as_mut().unwrap().result_id = result_id; inner.state.revision += 1;
@@ -1618,6 +1634,7 @@ mod tests {
                 id: "object".into(),
                 report: PathBuf::new(),
                 preview: None,
+                envelope_preview: None,
                 native_token: Some("asset".into()),
                 native_epoch: Some("native".into()),
                 cpu_runtime: None,
@@ -1892,7 +1909,11 @@ mod tests {
                 .native_epoch,
             old_epoch
         );
-        assert_eq!(core.inner.lock().unwrap().previews.len(), 1);
+        let state=core.state();
+        for key in ["preview","envelope_preview"] {
+            let id=state.object.as_ref().unwrap()[key]["preview_id"].as_str().unwrap();
+            assert!(!core.read_preview(id).unwrap().is_empty());
+        }
     }
     #[test]
     fn failed_stop_marker_does_not_publish_accepted_cancellation() {
@@ -1917,6 +1938,7 @@ mod tests {
                 id: "old-object".into(),
                 report: root.path().join("report.json"),
                 preview: None,
+                envelope_preview: None,
                 native_token: None,
                 native_epoch: None,
                 cpu_runtime: None,

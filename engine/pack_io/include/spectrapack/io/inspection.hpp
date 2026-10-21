@@ -16,6 +16,7 @@ struct InspectRequest {
   std::optional<double> scale_mm;
   std::optional<double> weld_tolerance_mm;
   std::optional<double> reconstruct_resolution_mm;
+  bool packing_envelope {};
   std::optional<std::string> accept_repair;
   std::uint64_t max_working_bytes { 512ULL << 20 };
   ContractDiagnosticLimits diagnostic_limits {};

@@ -3583,3 +3583,34 @@ TEST_CASE("AT-14 writer independently rereads all 64 copy STL ranges and vertice
     retained_source.close();
     REQUIRE(std::filesystem::remove_all(root) > 0);
 }
+
+TEST_CASE_METHOD(ResultBuilderFixture, "Packing envelope replay binds source and parameters", "[loader][envelope]")
+{
+    io::InspectRequest inspection { source, report, "mm" };
+    inspection.packing_envelope = true;
+    inspection.max_working_bytes = 2ULL << 30;
+    const auto proposed = io::inspect_stl_file(inspection);
+    REQUIRE(std::holds_alternative<io::InspectSuccess>(proposed));
+    inspection.accept_repair = std::get<io::InspectSuccess>(proposed).proposal_sha256;
+    REQUIRE(inspection.accept_repair);
+    REQUIRE(std::holds_alternative<io::InspectSuccess>(io::inspect_stl_file(inspection)));
+    const auto loaded = io::load_accepted_asset(report, {}, { 2ULL << 30 });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const io::VerifiedAsset>>(loaded));
+    const auto original_record = std::get<std::shared_ptr<const io::VerifiedAsset>>(loaded)->record();
+    // Share the expensive proposal/acceptance setup across independent tampering cases.
+    for (const auto scenario : { "source hash tampering", "parameter tampering", "unbacked envelope metadata" }) {
+        CAPTURE(scenario);
+        auto record = original_record;
+        if (std::string_view(scenario) == "source hash tampering") {
+            record["packing_envelope"]["source_mesh"]["sha256"] = std::string(64, '0');
+        }
+        else if (std::string_view(scenario) == "parameter tampering") {
+            record["packing_envelope"]["offset_mm"] = 1.;
+        }
+        else {
+            record["repair_record"] = nullptr;
+        }
+        std::ofstream(report, std::ios::trunc) << record.dump();
+        CHECK(std::holds_alternative<io::Error>(io::load_accepted_asset(report, {}, { 2ULL << 30 })));
+    }
+}

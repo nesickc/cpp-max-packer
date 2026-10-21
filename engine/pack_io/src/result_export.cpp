@@ -1561,6 +1561,9 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path, c
         geometry::ImportOutcome<geometry::AcceptedSolid> accepted;
         std::vector<RetainedRepairArtifact> repair_artifacts;
         if (record.at("repair_record").is_null()) {
+            if (record.contains("packing_envelope")) {
+                return failure("ASSET_MISMATCH", "Packing-envelope metadata requires its verified recipe.");
+            }
             accepted = geometry::accept_asset(draft);
         }
         else {
@@ -1862,7 +1865,7 @@ ExportOutcome ResultPublisher::publish(const ExportRequest& request, const runti
             writer_live_bytes > request.max_working_bytes) {
             return failure("MEMORY_LIMIT", "Checked export native residency exceeds the working-memory limit.");
         }
-        const auto mesh = request.object_asset->solid()->mesh();
+        const auto mesh = request.object_asset->solid()->source_mesh();
         std::error_code error;
         const auto parent = request.result_path.parent_path();
         if (parent.empty() || !std::filesystem::is_directory(parent, error) || error) {
@@ -2265,11 +2268,40 @@ ExportOutcome ResultPublisher::publish(const ExportRequest& request, const runti
         remaining_validation_limits.max_aabb_pair_tests -= fresh_report->aabb_pair_tests;
         remaining_validation_limits.max_working_bytes = std::min(remaining_validation_limits.max_working_bytes,
                                                                  request.max_working_bytes - stl_validation_live_bytes);
+        geometry::ExportCopyReader packing_reader = reader;
+        geometry::ExportCopyReader source_reader;
+        if (request.object_asset->solid()->is_packing_envelope()) {
+            source_reader = reader;
+            packing_reader = [&](std::size_t index) -> geometry::ExportCopyRead {
+                const auto envelope = request.object_asset->solid()->mesh();
+                if (index >= request.solution->copies().size() || envelope.triangles.size() > UINT32_MAX) {
+                    return geometry::ExportReadFailure { "EXPORT_RANGE", "Envelope copy is absent." };
+                }
+                const auto& pose = request.solution->copies()[index];
+                const auto transform = geometry::RigidTransform::make(pose.rotation_xyzw, pose.translation_mm);
+                if (!transform) {
+                    return geometry::ExportReadFailure { "EXPORT_POSE", "Invalid envelope pose." };
+                }
+                std::vector<std::byte> bytes(84 + 50 * envelope.triangles.size());
+                const auto count = static_cast<std::uint32_t>(envelope.triangles.size());
+                std::memcpy(bytes.data() + 80, &count, 4);
+                for (std::size_t f = 0; f < envelope.triangles.size(); ++f) {
+                    detail::poll_operation();
+                    for (unsigned v = 0; v < 3; ++v) {
+                        const auto p = transform->apply(envelope.vertices[envelope.triangles[f][v]]);
+                        const float q[3] = { static_cast<float>(p[0]), static_cast<float>(p[1]),
+                                             static_cast<float>(p[2]) };
+                        std::memcpy(bytes.data() + 84 + 50 * f + 12 + 12 * v, q, 12);
+                    }
+                }
+                return bytes;
+            };
+        }
         const auto quantized =
-            geometry::validate_quantized_export(request.solution, reader,
+            geometry::validate_quantized_export(request.solution, packing_reader,
                                                 { remaining_validation_limits, request.per_copy_import_limits,
                                                   request.max_working_bytes - stl_validation_live_bytes },
-                                                control);
+                                                control, source_reader);
         detail::poll_operation();
         if (quantized.validity != geometry::Validity::valid) {
             return post_primary_error(validation_failure(quantized, true, fresh_report));

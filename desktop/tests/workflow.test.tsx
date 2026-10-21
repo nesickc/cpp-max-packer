@@ -186,3 +186,16 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
     expect(document.container.dimensions_mm).toEqual([10,20,30]);
   });
 });
+
+it('creates a packing envelope without user-supplied geometry parameters',async()=>{
+  const fixture=fixtures.find(f=>f.kind==='results'&&f.schema_valid&&f.semantic_valid)!;
+  const document=structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];
+  native.state.mockResolvedValue({desktop_version:1,session_id:'envelope-ui',revision:1,
+    object:{id:'object',display_name:'Model.stl',report:document.assets.object,preview:null},
+    draft_settings:structuredClone(defaultSettings),result:null,operation:null,last_error:null} satisfies Desktop.State);
+  native.repair.mockResolvedValue({operation_id:'envelope'});
+  render(<App/>);
+  const button=await screen.findByRole('button',{name:'Create packing envelope',hidden:true});
+  fireEvent.click(button);
+  await waitFor(()=>expect(native.repair).toHaveBeenCalledWith({action:'envelope'}));
+});

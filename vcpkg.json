@@ -3,12 +3,57 @@
   "version-string": "0.0.0",
   "builtin-baseline": "271a5b8850aa50f9a40269cbf3cf414b36e333d6",
   "dependencies": [
-    { "name": "catch2", "version>=": "3.11.0" },
-    { "name": "manifold", "version>=": "3.2.1" },
-    { "name": "fcl", "version>=": "0.7.0" },
-    { "name": "meshoptimizer", "version>=": "0.25" },
-    { "name": "pocketfft", "version>=": "2023-09-25" },
-    { "name": "nlohmann-json", "version>=": "3.12.0" },
-    { "name": "json-schema-validator", "version>=": "2.3.0#2" }
+    {
+      "name": "catch2",
+      "version>=": "3.11.0"
+    },
+    {
+      "name": "manifold",
+      "version>=": "3.2.1"
+    },
+    {
+      "name": "fcl",
+      "version>=": "0.7.0"
+    },
+    {
+      "name": "meshoptimizer",
+      "version>=": "0.25"
+    },
+    {
+      "name": "pocketfft",
+      "version>=": "2023-09-25"
+    },
+    {
+      "name": "nlohmann-json",
+      "version>=": "3.12.0"
+    },
+    {
+      "name": "json-schema-validator",
+      "version>=": "2.3.0#2"
+    },
+    {
+      "name": "boost-graph",
+      "version>=": "1.89.0"
+    },
+    {
+      "name": "boost-multiprecision",
+      "version>=": "1.89.0"
+    },
+    {
+      "name": "boost-heap",
+      "version>=": "1.89.0"
+    },
+    {
+      "name": "boost-unordered",
+      "version>=": "1.89.0"
+    },
+    {
+      "name": "boost-format",
+      "version>=": "1.89.0"
+    },
+    {
+      "name": "boost-logic",
+      "version>=": "1.89.0"
+    }
   ]
 }

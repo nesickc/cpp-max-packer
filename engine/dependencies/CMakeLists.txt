@@ -1,4 +1,6 @@
 find_package(manifold CONFIG REQUIRED)
+find_package(Eigen3 CONFIG REQUIRED)
+include("${CMAKE_SOURCE_DIR}/cmake/CGAL.cmake")
 find_package(fcl CONFIG REQUIRED)
 find_package(meshoptimizer CONFIG REQUIRED)
 find_package(nlohmann_json 3.12.0 CONFIG REQUIRED)
@@ -18,7 +20,7 @@ target_link_libraries(spectrapack_dependency_geometry INTERFACE
 # Retain FCL's directory-scoped imported targets without adding the diagnostic
 # aggregate's Manifold/meshoptimizer libraries to the import engine.
 add_library(spectrapack_dependency_import_geometry INTERFACE)
-target_link_libraries(spectrapack_dependency_import_geometry INTERFACE fcl manifold::manifold)
+target_link_libraries(spectrapack_dependency_import_geometry INTERFACE fcl manifold::manifold CGAL::CGAL)
 
 add_library(spectrapack_dependency_display_geometry INTERFACE)
 target_link_libraries(spectrapack_dependency_display_geometry INTERFACE
@@ -48,6 +50,15 @@ set(SPECTRAPACK_DISTRIBUTION_LICENSE_PORTS
   pocketfft
   tbb
 )
+file(READ "${CMAKE_SOURCE_DIR}/cmake/dependencies.lock.json" dependency_lock)
+string(JSON dependency_count LENGTH "${dependency_lock}" dependencies)
+math(EXPR dependency_last "${dependency_count}-1")
+foreach(index RANGE ${dependency_last})
+  string(JSON port GET "${dependency_lock}" dependencies ${index} name)
+  if(port MATCHES "^boost-" AND NOT port STREQUAL "boost-uninstall")
+    list(APPEND SPECTRAPACK_DISTRIBUTION_LICENSE_PORTS "${port}")
+  endif()
+endforeach()
 
 if(NOT DEFINED VCPKG_INSTALLED_DIR OR NOT DEFINED VCPKG_TARGET_TRIPLET)
   message(FATAL_ERROR "The CPU diagnostic install requires the vcpkg installed directory and target triplet.")
@@ -72,7 +83,7 @@ install(FILES
 
 # The standalone engine component carries the notices for its actual linked
 # runtime libraries, even when the optional CPU diagnostic is not staged.
-foreach(port IN ITEMS nlohmann-json json-schema-validator fcl ccd eigen3 octomap meshoptimizer pocketfft)
+foreach(port IN LISTS SPECTRAPACK_DISTRIBUTION_LICENSE_PORTS)
   install(FILES "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/${port}/copyright"
     DESTINATION "share/licenses/${port}" COMPONENT engine)
 endforeach()

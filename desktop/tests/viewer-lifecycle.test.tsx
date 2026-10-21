@@ -191,3 +191,18 @@ describe('UI-02/UI-03 / AT-15 persistent viewer (device adapter, real PLY and co
     expect(device.render).toHaveBeenCalledTimes(settled); expect(settled).toBeGreaterThan(idle + 2);
   });
 });
+
+it('switches original, envelope and overlay with identical packed-copy transforms', async () => {
+  render(<Viewer mode="result" preview={preview} envelopePreview={{...preview,preview_id:'envelope'}} placements={[pose]} dimensions={[20,20,20]} hidden={new Set()} selected={null} onSelect={()=>{}}/>);
+  await settle(); frame();
+  const scene=device.render.mock.lastCall![0] as Scene;
+  const meshes=scene.children.filter(child=>child instanceof InstancedMesh) as InstancedMesh[];
+  expect(meshes).toHaveLength(2);
+  expect(meshes.every(mesh=>mesh.visible)).toBe(true);
+  const a=new Matrix4(),b=new Matrix4();meshes[0].getMatrixAt(0,a);meshes[1].getMatrixAt(0,b);
+  expect(a.elements).toEqual(b.elements);
+  fireEvent.change(screen.getByLabelText('Geometry display'),{target:{value:'envelope'}});frame();
+  expect(meshes[0].visible).toBe(false);expect(meshes[1].visible).toBe(true);
+  fireEvent.change(screen.getByLabelText('Geometry display'),{target:{value:'original'}});frame();
+  expect(meshes[0].visible).toBe(true);expect(meshes[1].visible).toBe(false);
+});

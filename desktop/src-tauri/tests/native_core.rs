@@ -751,10 +751,15 @@ fn supplied_model_repair_native_journey() {
     core.import_path(&source,ImportRequest{units:"mm".into(),scale_mm:None}).unwrap();
     let inspected=wait(&core);assert!(inspected.last_error.is_none(),"{inspected:?}");
     std::fs::write(output.join("original.json"),serde_json::to_vec_pretty(&inspected).unwrap()).unwrap();
-    let resolution=std::env::var("SPECTRAPACK_REPAIR_RESOLUTION").unwrap().parse().unwrap();
-    core.repair(RepairRequest::Propose{algorithm:"manifold".into(),tolerance_mm:resolution}).unwrap();
+    let envelope=std::env::var("SPECTRAPACK_PACKING_ENVELOPE").is_ok();
+    let action=if envelope {RepairRequest::Envelope} else {
+        let resolution=std::env::var("SPECTRAPACK_REPAIR_RESOLUTION").unwrap().parse().unwrap();
+        RepairRequest::Propose{algorithm:"manifold".into(),tolerance_mm:resolution}
+    };
+    core.repair(action).unwrap();
     let proposed=wait(&core);assert!(proposed.last_error.is_none(),"{proposed:?}");
     std::fs::write(output.join("proposal.json"),serde_json::to_vec_pretty(&proposed).unwrap()).unwrap();
+    if envelope {assert_eq!(proposed.repair.as_ref().unwrap()["report"]["repair_proposal"]["candidate_status"],"valid");}
     let repair=proposed.repair.unwrap();let token=repair["token"].as_str().unwrap().to_owned();
     if repair["report"]["repair_proposal"]["candidate_status"]!="valid" {
         assert!(core.start(settings(1.)).is_err());
@@ -767,6 +772,11 @@ fn supplied_model_repair_native_journey() {
         core.repair(RepairRequest::Accept{token}).unwrap();let accepted=wait(&core);
         assert!(accepted.last_error.is_none(),"{accepted:?}");
         std::fs::write(output.join("accepted.json"),serde_json::to_vec_pretty(&accepted).unwrap()).unwrap();
+        if envelope {
+            let object=accepted.object.as_ref().unwrap();
+            assert_eq!(object["report"]["packing_envelope"]["enclosure_status"],"valid");
+            assert_ne!(object["preview"]["sha256"],object["envelope_preview"]["sha256"]);
+        }
         let mut request=settings(30.);request["box_dimensions_mm"]=Value::Array(accepted.object.as_ref().unwrap()["report"]["dimensions_mm"].as_array().unwrap().iter().map(|v|json!(v.as_f64().unwrap()+4.)).collect());
         request["pitch_mm"]=json!(4);request["clearance_mm"]=json!({"pair":1,"wall":1});request["thread_count"]=json!(8);
         core.start(request.clone()).unwrap();let packed=wait(&core);
@@ -779,6 +789,12 @@ fn supplied_model_repair_native_journey() {
         std::fs::write(output.join("opened.json"),serde_json::to_vec_pretty(&opened).unwrap()).unwrap();
         let export=output.join("export");std::fs::create_dir_all(&export).unwrap();core.export_to(&export,"stl").unwrap();let exported=wait(&core);
         std::fs::write(output.join("exported.json"),serde_json::to_vec_pretty(&exported).unwrap()).unwrap();assert!(exported.last_error.is_none(),"{exported:?}");
+        if envelope {
+            let exported_dir=PathBuf::from(exported.operation.as_ref().unwrap().detail.as_ref().unwrap().strip_prefix("Output: ").unwrap());
+            let stl=std::fs::read(exported_dir.join("packed.stl")).unwrap();
+            let count=u32::from_le_bytes(stl[80..84].try_into().unwrap());
+            assert_eq!(u64::from(count),accepted.object.as_ref().unwrap()["report"]["packing_envelope"]["source_mesh"]["triangle_count"].as_u64().unwrap());
+        }
     }
     assert_eq!(std::fs::read(&source).unwrap(),original);
 }

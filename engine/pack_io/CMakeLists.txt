@@ -51,4 +51,6 @@ if(BUILD_TESTING)
   include(Catch)
   catch_discover_tests(spectrapack_contract_tests)
   catch_discover_tests(spectrapack_result_builder_tests)
+  set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+    "${PROJECT_SOURCE_DIR}/tests/cmake/QualificationTimeouts.cmake")
 endif()

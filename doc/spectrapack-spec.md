@@ -143,13 +143,15 @@ Automatic cleanup may merge exactly equal vertices, remove exact duplicate faces
 
 Reconstruction creates a proposed new authoritative solid; it is not permission to pack an invalid source using an approximate search field. Repair resolution is independent of packing pitch. Preserve original bytes and retain the repair algorithm/library version, parameters, source and repaired hashes, source-frame mapping and explicit acceptance. Revalidate the reconstructed solid before accepting it and use that same accepted geometry for validation, search and export. Preview changes in dimensions, surface, components and cavities; report volume only where meaningful, and distinguish sampled deviation from a certified bound. Changing packing pitch or display LOD cannot rerun or alter an accepted repair. T-012 must demonstrate the repaired practical fixture through Save/Open, packing and export; a welding UI or an external-repair instruction alone does not complete that case. [ADR 0011](../spec/decisions/0011-cpu-first-follow-up.md) records the scope extension; library selection and project/report compatibility require the implementation decision before edits.
 
+For defective object inputs, offer an automatic **packing envelope** as the normal preparation route. Explicit acceptance authorizes packing a conservative enclosure while retaining the original cleaned source mesh for display and export. Validate the envelope as a solid, reject excluded cavity shells, and independently certify every retained source triangle (including its interior) lies strictly inside it. Closed recesses may reduce nesting; show that tradeoff and an original/envelope overlay before acceptance. Containers retain exact interior-volume semantics. Already valid inputs keep their exact path. [ADR 0021](../spec/decisions/0021-packing-envelopes.md) defines the dependency and persisted distinction.
+
 Require closed, consistently oriented, non-self-intersecting shell geometry with an unambiguous inside. Nested boundaries represent cavities through a recorded shell containment tree and alternating orientation; disjoint components remain one rigid asset. Intersecting or touching shells with ambiguous volume semantics require repair or rejection. Do not treat “watertight” as sufficient evidence of validity.
 
 Keep three representations:
 
 | Representation | Purpose | Authority |
 | --- | --- | --- |
-| Source file and accepted full-resolution solid | Validation and export | Authoritative; repaired geometry is authoritative only after explicit acceptance |
+| Source file and accepted full-resolution packing solid | Validation; source or accepted repair for export | Exact solid or explicitly accepted enclosing envelope; original source stays distinct |
 | Display LOD | Responsive viewer | Visual approximation only |
 | Conservative voxel fields | Candidate generation and fast rejection | Search approximation; cannot authorize a packing |
 
@@ -176,7 +178,7 @@ Canonical quaternion sign: make `w` positive; if `w` is exactly zero, make the f
 `validate(solution, authoritative_assets, constraints)` is independent of the search algorithm and returns `valid`, `invalid`, or `indeterminate`, with affected copy IDs and diagnostics. Only `valid` may become an incumbent or be labeled a validated export.
 
 1. Check finite rigid transforms, asset hashes, units, allowed orientations, and the unchanged container/clearance constraints.
-2. Use enlarged world AABBs to eliminate distant copy pairs. Perform original-solid checks on remaining pairs. Combine surface intersection/distance queries with solid boolean or containment classification so fully enclosed objects and coincident solids are detected.
+2. Use enlarged world AABBs to eliminate distant copy pairs. Perform accepted packing-solid checks on remaining pairs. Combine surface intersection/distance queries with solid boolean or containment classification so fully enclosed objects and coincident solids are detected.
 3. For boxes, check all transformed authoritative vertices against the six inward-offset planes. Convexity makes these vertex tests sufficient for containment of triangular solids in a box.
 4. For STL containers, require the object solid's difference from the permitted container volume to be empty, then check the required distance to its boundary. Vertex inclusion alone cannot detect a triangle crossing a concavity, or an object enclosing an excluded cavity.
 5. Reject any positive interior overlap. For positive clearances, also reject an insufficient surface gap. Do not accept a small overlap merely because its volume is below a chosen threshold.
@@ -291,6 +293,8 @@ The job budget covers job-specific preparation, FFT planning, search, and valida
 ### 7.3 Viewer
 
 Provide orbit, pan, zoom, fit-to-container, reset view, orthographic/perspective toggle, axis indicator, and scale/grid. Draw the container as transparent surfaces plus edges. Provide a movable clipping plane to inspect interior copies. Allow copy selection, isolation/hiding for inspection, stable copy IDs, and translation/quaternion display. Hiding or clipping affects only the view and never the solution count.
+
+Offer Original, Envelope and Overlay views using the same per-copy transforms, selection, hiding and clipping. For exact assets the full accepted mesh is the packing boundary; for envelope assets show the retained source and the full envelope separately. These controls never change acceptance or search.
 
 Render a shared object mesh with instance transforms. Use display LODs during interaction; offer full-resolution inspection of a selected copy. Do not load `N` full meshes into GPU memory. The visible best packing must correspond to one complete validated solution revision. A separately enabled candidate/debug preview is clearly identified as unvalidated and cannot be exported as the best result.
 
@@ -416,7 +420,7 @@ Opening verifies schema versions and asset checksums and revalidates restored pl
 
 ### 8.5 Export
 
-JSON placements plus the referenced authoritative asset are the primary output. Export the full-resolution accepted object transformed once per copy into a binary STL assembly in millimeters. Do not export voxel cubes or a display LOD as the normal packed STL. Preserve per-copy identity in JSON because STL does not encode it or units reliably.
+JSON placements plus the referenced authoritative asset are the primary output. Export the full-resolution accepted object transformed once per copy into a binary STL assembly in millimeters. For packing-envelope assets, export the retained cleaned source mesh instead: validate a separately quantized envelope at each pose and independently certify the actual staged source triangles remain inside it. The envelope must remain cavity-free. Source defects are retained; enclosure establishes packing safety, not printability or a repaired source volume. Do not export voxel cubes or a display LOD as the normal packed STL. Preserve per-copy identity in JSON because STL does not encode it or units reliably.
 
 At export, verify the latest accepted geometry and constraints, stream triangles to avoid an `N × mesh_size` memory spike, and estimate output size before writing. Re-read the STL's actual quantized coordinates and check them under the same geometry contract. Binary STL stores finite-precision coordinates: if quantization violates clearance, fail the STL export while retaining the valid JSON/project, with advice to increase clearance. Do not silently nudge placements or relax constraints. The application may additionally emit one STL per copy using the same checks.
 

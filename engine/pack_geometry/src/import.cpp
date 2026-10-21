@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <utility>
 
+#include "envelope.hpp"
 #include "exact_predicates.hpp"
 #include "export_validation_internal.hpp"
 #include "import_admission.hpp"
@@ -296,6 +297,7 @@ struct RepairProposal::Storage {
   std::shared_ptr<const AssetDraft> candidate;
   double tolerance_mm{};
   double max_displacement_mm{};
+  RepairAlgorithm algorithm { RepairAlgorithm::weld };
 };
 
 struct AcceptedSolid::Storage {
@@ -339,6 +341,18 @@ std::shared_ptr<const AssetDraft> RepairProposal::candidate() const noexcept {
 double RepairProposal::tolerance_mm() const noexcept {
   return storage_->tolerance_mm;
 }
+RepairAlgorithm RepairProposal::algorithm() const noexcept { return storage_->algorithm; }
+std::optional<std::array<double, 2>> RepairProposal::envelope_parameters_mm() const noexcept
+{
+    if (algorithm() != RepairAlgorithm::packing_envelope) {
+        return {};
+    }
+    const auto parameters = detail::envelope_parameters(*original()->report().mesh_bounds_mm);
+    if (!parameters) {
+        return {};
+    }
+    return std::array<double, 2> { parameters->alpha_mm, parameters->offset_mm };
+}
 
 double RepairProposal::max_displacement_mm() const noexcept {
   return storage_->max_displacement_mm;
@@ -356,6 +370,14 @@ std::optional<std::uint64_t> RepairProposal::resident_buffer_bytes() const noexc
 
 MeshView AcceptedSolid::mesh() const noexcept {
   return storage_->accepted->mesh();
+}
+bool AcceptedSolid::is_packing_envelope() const noexcept
+{
+    return storage_->repair && storage_->repair->algorithm() == RepairAlgorithm::packing_envelope;
+}
+MeshView AcceptedSolid::source_mesh() const noexcept
+{
+    return is_packing_envelope() ? storage_->repair->original()->mesh() : mesh();
 }
 
 const Frame& AcceptedSolid::frame() const noexcept {
@@ -774,6 +796,22 @@ ImportAdmissionOutcome estimate_repair_admission(const AssetDraft& original, con
         if (!bound || !retained || *retained > std::numeric_limits<std::uint64_t>::max() - *bound) {
             return resource_failure("WELD_WORKING_BYTES", "Native repair admission accounting overflowed.");
         }
+        if (options.algorithm == RepairAlgorithm::packing_envelope) {
+            if (original.role() != AssetRole::object || !original.report().mesh_bounds_mm ||
+                !detail::envelope_parameters(*original.report().mesh_bounds_mm)) {
+                return settings_failure("ENVELOPE_BOUNDS", "Only finite object geometry supports packing envelopes.");
+            }
+            const auto output =
+                detail::import_payload_bound(500'000, 0, original.storage_->limits.max_diagnostic_examples);
+            if (!output || mesh.triangles.size() > UINT64_MAX / 1024) {
+                return resource_failure("ENVELOPE_MEMORY", "Envelope memory estimate overflowed.");
+            }
+            const auto scratch = std::max(*output, (512ULL << 20) + mesh.triangles.size() * 1024);
+            if (*retained > UINT64_MAX - scratch) {
+                return resource_failure("ENVELOPE_MEMORY", "Envelope memory estimate overflowed.");
+            }
+            return ImportAdmission { *retained + scratch, 500'000 };
+        }
         if (options.algorithm == RepairAlgorithm::manifold_reconstruct) {
             if (!original.report().mesh_bounds_mm) {
                 return settings_failure("REPAIR_BOUNDS", "Repair requires finite mesh bounds.");
@@ -818,7 +856,8 @@ ImportOutcome<RepairProposal> propose_repair(std::shared_ptr<const AssetDraft> o
         if (!original) {
             return settings_failure("NULL_DRAFT", "A repair proposal requires an inspected draft.");
         }
-        if (!std::isfinite(options.tolerance_mm) || options.tolerance_mm <= 0.0) {
+        if (options.algorithm != RepairAlgorithm::packing_envelope &&
+            (!std::isfinite(options.tolerance_mm) || options.tolerance_mm <= 0.0)) {
             return settings_failure("INVALID_WELD_TOLERANCE", "Weld tolerance must be finite and positive.");
         }
         if (original->storage_->repair_candidate) {
@@ -847,7 +886,16 @@ ImportOutcome<RepairProposal> propose_repair(std::shared_ptr<const AssetDraft> o
         std::uint64_t duplicate_faces = original->report().duplicate_faces;
         exact::WorkBudget predicate_budget(original->storage_->limits.max_predicate_work, control);
         double max_displacement = 0.0;
-        if (options.algorithm == RepairAlgorithm::manifold_reconstruct) {
+        if (options.algorithm == RepairAlgorithm::packing_envelope) {
+            auto enclosed = detail::build_packing_envelope(mesh, *original->report().mesh_bounds_mm, control);
+            if (const auto* failure = std::get_if<ImportFailure>(&enclosed)) {
+                return *failure;
+            }
+            auto output = std::get<detail::ReconstructedMesh>(std::move(enclosed));
+            candidate_storage->vertices = std::move(output.vertices);
+            candidate_storage->triangles = std::move(output.triangles);
+        }
+        else if (options.algorithm == RepairAlgorithm::manifold_reconstruct) {
             if (original->report().boundary_edges != 0) {
                 return ImportFailure { "INVALID_SOLID",
                                        "REPAIR_OPEN_SURFACE",
@@ -1006,12 +1054,32 @@ ImportOutcome<RepairProposal> propose_repair(std::shared_ptr<const AssetDraft> o
             }
         }
         candidate_storage->repair_candidate = true;
+        if (options.algorithm == RepairAlgorithm::packing_envelope &&
+            candidate_storage->report.validity == Validity::valid) {
+            const bool cavity = std::ranges::any_of(candidate_storage->report.shells, [](const auto& shell) {
+                return !shell.depth || *shell.depth % 2 != 0;
+            });
+            const auto enclosing = cavity ? Validity::invalid
+                                          : detail::certify_surface_enclosure(
+                                                { candidate_storage->vertices, candidate_storage->triangles }, mesh,
+                                                candidate_storage->limits, control);
+            if (enclosing != Validity::valid) {
+                candidate_storage->report.validity = enclosing;
+                candidate_storage->report.issues.push_back(
+                    { "ENVELOPE_ENCLOSURE",
+                      "Independent enclosure validation did not certify every source triangle.",
+                      {},
+                      {},
+                      {} });
+            }
+        }
 
         auto candidate = std::shared_ptr<const AssetDraft>(new AssetDraft(std::move(candidate_storage)));
         auto proposal_storage = std::make_shared<RepairProposal::Storage>();
         proposal_storage->original = std::move(original);
         proposal_storage->candidate = std::move(candidate);
         proposal_storage->tolerance_mm = options.tolerance_mm;
+        proposal_storage->algorithm = options.algorithm;
         proposal_storage->max_displacement_mm = max_displacement;
         detail::operation_checkpoint(control);
         return std::shared_ptr<const RepairProposal>(new RepairProposal(std::move(proposal_storage)));

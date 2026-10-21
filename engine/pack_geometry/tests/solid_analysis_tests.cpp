@@ -249,3 +249,44 @@ TEST_CASE("AT-04 work caps cannot produce a valid solid", "[geometry][AT-04]") {
   CHECK(predicate_capped.report.intersection_check == geo::CheckState::indeterminate);
   CHECK(has_reason(predicate_capped.report, "PREDICATE_WORK"));
 }
+
+TEST_CASE("Packing envelope certifies open and intersecting source triangles", "[geometry][envelope]")
+{
+    Mesh envelope;
+    append_cube(envelope, { -5, -5, -5 }, { 5, 5, 5 });
+    REQUIRE(analyze(envelope).report.validity == geo::Validity::valid);
+    Mesh source {
+        { { -2, -2, 0 }, { 2, -2, 0 }, { 0, 2, 0 }, { 0, 0, -2 }, { 0, 0, 2 }, { 0, 2, 1 } },
+        { { 0, 1, 2 }, { 3, 4, 5 } }
+    };
+    CHECK(geo::detail::certify_surface_enclosure({ envelope.vertices, envelope.triangles },
+                                                 { source.vertices, source.triangles }, {}) == geo::Validity::valid);
+    SECTION("outside disconnected component is rejected")
+    {
+        source.vertices[3] = { 0, 0, 6 };
+        CHECK(geo::detail::certify_surface_enclosure({ envelope.vertices, envelope.triangles },
+                                                     { source.vertices, source.triangles },
+                                                     {}) == geo::Validity::invalid);
+    }
+    SECTION("boundary contact is rejected")
+    {
+        source.vertices[0] = { -5, -2, 0 };
+        CHECK(geo::detail::certify_surface_enclosure({ envelope.vertices, envelope.triangles },
+                                                     { source.vertices, source.triangles },
+                                                     {}) == geo::Validity::invalid);
+    }
+}
+
+TEST_CASE("Packing envelope rejects a triangle crossing a cavity with all vertices in material", "[geometry][envelope]")
+{
+    Mesh envelope;
+    append_cube(envelope, { -5, -5, -5 }, { 5, 5, 5 });
+    append_cube(envelope, { -1, -1, -1 }, { 1, 1, 1 }, true);
+    REQUIRE(analyze(envelope).report.validity == geo::Validity::valid);
+    Mesh source {
+        { { -2, -2, 0 }, { 2, -2, 0 }, { 0, 2, 0 } },
+        { { 0, 1, 2 } }
+    };
+    CHECK(geo::detail::certify_surface_enclosure({ envelope.vertices, envelope.triangles },
+                                                 { source.vertices, source.triangles }, {}) == geo::Validity::invalid);
+}
