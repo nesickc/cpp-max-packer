@@ -536,3 +536,68 @@ TEST_CASE("Relative paired layers nest sheared prisms at different physical scal
     CHECK(result.run.best->score.count == 2);
     CHECK(geo::revalidate(result.run.best->solution).validated_solution);
 }
+
+TEST_CASE("Compaction refills concave layouts across scales and respects permitted rotations", "[solver][compaction]")
+{
+    const double scale = GENERATE(1., 100.);
+    const double gap = GENERATE(0., .125);
+    const bool flipped_allowed = GENERATE(false, true);
+    const bool resumed = GENERATE(false, true);
+    geo::test_support::Mesh mesh;
+    for (double z : { 0., 1. }) {
+        for (const auto xy : std::array<std::array<double, 2>, 6> {
+                 { { 0, 0 }, { 2, 0 }, { 2, 1 }, { 1, 1 }, { 1, 2 }, { 0, 2 } }
+        }) {
+            mesh.vertices.push_back({ xy[0] * scale, xy[1] * scale, z * scale });
+        }
+    }
+    for (const auto face : std::array<std::array<std::uint32_t, 3>, 4> {
+             { { 0, 1, 3 }, { 1, 2, 3 }, { 0, 3, 5 }, { 3, 4, 5 } }
+    }) {
+        mesh.triangles.push_back({ face[2], face[1], face[0] });
+        mesh.triangles.push_back({ face[0] + 6, face[1] + 6, face[2] + 6 });
+    }
+    for (std::uint32_t i = 0; i != 6; ++i) {
+        const auto j = (i + 1) % 6;
+        mesh.triangles.push_back({ i, j, j + 6 });
+        mesh.triangles.push_back({ i, j + 6, i + 6 });
+    }
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = gap * scale;
+    constraints.orientations.mode = geo::OrientationMode::catalog;
+    constraints.orientations.catalog_xyzw = {
+        { 0, 0, 0, 1 }
+    };
+    if (flipped_allowed) {
+        constraints.orientations.catalog_xyzw.push_back({ 0, 0, 1, 0 });
+    }
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(geo::make_validation_context(
+        geo::test_support::accepted(mesh, geo::AssetRole::object),
+        geo::BoxDimensions { (3.1 + 3 * gap) * scale, (2.1 + 3 * gap) * scale, (1.1 + 2 * gap) * scale }, constraints));
+    std::shared_ptr<const geo::ValidatedSolution> initial;
+    if (resumed && flipped_allowed) {
+        const auto made = geo::make_candidate(
+            context,
+            {
+                { "compact-2", { (1.025 + gap) * scale, (1.025 + gap) * scale, (.525 + gap) * scale }, { 0, 0, 0, 1 } },
+                { "compact-3",
+                 { (2.075 + 2 * gap) * scale, (1.075 + 2 * gap) * scale, (.525 + gap) * scale },
+                 { 0, 0, 1, 0 }                                                                                     }
+        });
+        initial = geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(made)).validated_solution;
+        REQUIRE(initial);
+    }
+    sol::SpectralLimits limits;
+    limits.resource_mode = sol::ResourceMode::timed;
+    limits.spectral.max_copies = 2;
+    sol::RunControl control;
+    control.deadline = control.now() + std::chrono::seconds(5);
+    const auto result = sol::run_cpu_spectral(context, { {}, .001 * scale }, limits, control, {}, initial);
+    REQUIRE(result.run.best);
+    CHECK(result.run.best->score.count == (flipped_allowed ? 2 : 1));
+    CHECK(geo::revalidate(result.run.best->solution).validated_solution);
+    if (initial) {
+        REQUIRE(result.run.best->score.enclosing_xy_span_sum_mm);
+        CHECK(*result.run.best->score.enclosing_xy_span_sum_mm < (5.1 + 2 * gap) * scale);
+    }
+}

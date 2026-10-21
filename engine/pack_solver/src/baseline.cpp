@@ -19,6 +19,7 @@
 #include "allocation_fault.hpp"
 #include "baseline_internal.hpp"
 #include "block_layout.hpp"
+#include "compaction.hpp"
 #include "interlocking_stagger.hpp"
 #include "orientation_cube.hpp"
 #include "pipeline_profile.hpp"
@@ -498,9 +499,11 @@ BaselineOutcome run_aabb_baseline_impl(
     const BaselineLimits& limits, const RunControl& control, SnapshotSink sink,
     std::shared_ptr<const geometry::ValidatedSolution> initial,
     const std::vector<geometry::Quaternion>* exact_seeds, StaggerSummary* stagger = nullptr,
-    SnapshotHandle entry = {}, bool blocks = false, bool interlocking = false, bool mixed = false) {
+    SnapshotHandle entry = {}, bool blocks = false, bool interlocking = false, bool mixed = false,
+    bool compaction = false) {
   BaselineOutcome out;
-  if ((stagger || blocks || interlocking) && entry && entry->solution && entry->solution->context() == context &&
+  if ((stagger || blocks || interlocking || compaction) && entry && entry->solution &&
+      entry->solution->context() == context &&
       entry->score.count == entry->solution->copies().size()) {
     out.best = entry;
   }
@@ -546,7 +549,8 @@ BaselineOutcome run_aabb_baseline_impl(
     std::uint64_t incumbent_bytes = detail::kIncumbentFixedOwnerBytes;
     std::shared_ptr<const geometry::ValidatedSolution> admitted_solution;
     if (entry) {
-      if ((!stagger && !blocks && !interlocking) || !detail::IncumbentResumeAccess::resume(incumbent, entry)) {
+      if ((!stagger && !blocks && !interlocking && !compaction) ||
+          !detail::IncumbentResumeAccess::resume(incumbent, entry)) {
         out.diagnostic_code = "STAGGER_ENTRY_INVALID";
         return out;
       }
@@ -737,6 +741,156 @@ BaselineOutcome run_aabb_baseline_impl(
       out.termination_reason = TerminationReason::budget_exhausted;
       out.diagnostic_code = "PHYSICAL_ORIENTATION_LIMIT";
       return out;
+    }
+
+    if (compaction) {
+        const auto finish = [&](std::string_view code, TerminationReason reason) {
+            retain_best();
+            out.diagnostic_code = code;
+            out.termination_reason = reason;
+            if (const auto stop = boundary(control); stop != Boundary::none) {
+                apply_boundary(out, stop);
+            }
+            return out;
+        };
+        if (!entry || entry->solution->copies().empty() ||
+            !std::holds_alternative<geometry::BoxDimensions>(context->container())) {
+            return finish("COMPACTION_UNAVAILABLE", TerminationReason::search_stalled);
+        }
+        const auto capacity = std::min<std::uint64_t>(limits.max_copies, 4096);
+        if (entry->score.count > capacity) {
+            return finish("COMPACTION_COPY_LIMIT", TerminationReason::search_stalled);
+        }
+        auto live = *base;
+        for (unsigned owner = 0; owner != 5; ++owner) {
+            if (!add_optional(live, pose_bytes(entry->solution->copies(), true))) {
+                return finish("COMPACTION_MEMORY_LIMIT", TerminationReason::resource_limit);
+            }
+        }
+        if (!checked_add(live, seeds.capacity() * sizeof(geometry::Quaternion)) ||
+            !add_optional(live, solution_bytes(entry->solution)) || !checked_add(live, incumbent_bytes) ||
+            !checked_add(live, 24 * (sizeof(detail::CompactionEnvelope) + sizeof(geometry::Bounds) +
+                                     sizeof(geometry::Quaternion)) +
+                                   4096) ||
+            !checked_add(live, capacity * (5 * (sizeof(geometry::CopyPose) + 128) + sizeof(std::size_t))) ||
+            !update_peak(out.stats, live, limits)) {
+            return finish("COMPACTION_MEMORY_LIMIT", TerminationReason::resource_limit);
+        }
+        std::vector<geometry::Quaternion> rotations;
+        std::vector<geometry::Bounds> shapes;
+        rotations.reserve(24);
+        shapes.reserve(24);
+        for (const auto& copy : entry->solution->copies()) {
+            if (std::find(rotations.begin(), rotations.end(), copy.rotation_xyzw) != rotations.end()) {
+                continue;
+            }
+            if (rotations.size() == 24) {
+                return finish("COMPACTION_ORIENTATION_LIMIT", TerminationReason::search_stalled);
+            }
+            const auto queried = geometry::oriented_bounds(context->object(), copy.rotation_xyzw,
+                                                           query_limits(limits, out.stats, live));
+            const auto* shape = std::get_if<geometry::OrientedBounds>(&queried);
+            if (!shape || !record_geometry(out.stats, shape->stats, live, limits)) {
+                return finish("COMPACTION_BOUNDS_LIMIT", TerminationReason::resource_limit);
+            }
+            rotations.push_back(copy.rotation_xyzw);
+            shapes.push_back(shape->bounds_mm);
+        }
+        for (const auto& rotation : seeds) {
+            if (rotations.size() == 24 ||
+                std::find(rotations.begin(), rotations.end(), rotation) != rotations.end()) {
+                continue;
+            }
+            const auto queried =
+                geometry::oriented_bounds(context->object(), rotation, query_limits(limits, out.stats, live));
+            const auto* shape = std::get_if<geometry::OrientedBounds>(&queried);
+            if (!shape || !record_geometry(out.stats, shape->stats, live, limits)) {
+                return finish("COMPACTION_BOUNDS_LIMIT", TerminationReason::resource_limit);
+            }
+            bool compatible = false;
+            for (const auto& retained_shape : shapes) {
+                bool same = true;
+                for (std::size_t axis = 0; axis != 3; ++axis) {
+                    const double extent = retained_shape.max[axis] - retained_shape.min[axis];
+                    same = same && std::abs(shape->bounds_mm.max[axis] - shape->bounds_mm.min[axis] - extent) <=
+                                       1e-9 * std::max(1., extent);
+                }
+                compatible = compatible || same;
+            }
+            if (!compatible) {
+                continue;
+            }
+            rotations.push_back(rotation);
+            shapes.push_back(shape->bounds_mm);
+        }
+        auto copies = entry->solution->copies();
+        copies.reserve(capacity);
+        std::array<std::size_t, 3> axes { 0, 1, 2 };
+        std::sort(axes.begin(), axes.end(), [&](auto a, auto b) {
+            return shapes.front().max[a] - shapes.front().min[a] < shapes.front().max[b] - shapes.front().min[b];
+        });
+        auto accepted = entry->solution;
+        for (unsigned sweep = 0; sweep != 4; ++sweep) {
+            for (std::size_t axis : axes) {
+                if (boundary(control) != Boundary::none || out.stats.search_passes >= limits.max_search_passes ||
+                    out.stats.candidate_evaluations >= limits.max_candidate_evaluations) {
+                    return finish("COMPACTION_INTERRUPTED", TerminationReason::budget_exhausted);
+                }
+                ++out.stats.search_passes;
+                const auto query = query_limits(limits, out.stats, live);
+                bool stopped = false;
+                const auto accept = [&](const std::vector<geometry::CopyPose>& proposal) {
+                    if (boundary(control) != Boundary::none ||
+                        out.stats.candidate_evaluations >= limits.max_candidate_evaluations ||
+                        out.stats.validation_kernel_work >= limits.max_validation_kernel_work) {
+                        stopped = true;
+                        return detail::CompactionVerdict::stop;
+                    }
+                    const auto made = geometry::make_candidate(context, proposal);
+                    const auto* candidate = std::get_if<std::shared_ptr<const geometry::Candidate>>(&made);
+                    if (!candidate) {
+                        return detail::CompactionVerdict::rejected;
+                    }
+                    ++out.stats.candidate_evaluations;
+                    control.phase(runtime::Phase::validating);
+                    const auto checked = geometry::validate(context, *candidate,
+                                                            validation_limits(limits, out.stats, live), control);
+                    if (!record_validation(out.stats, checked.report, live, limits) ||
+                        boundary(control) != Boundary::none ||
+                        checked.report.code.find("LIMIT") != std::string::npos) {
+                        stopped = true;
+                        return detail::CompactionVerdict::stop;
+                    }
+                    if (checked.validated_solution) {
+                        accepted = checked.validated_solution;
+                        return detail::CompactionVerdict::accepted;
+                    }
+                    if (checked.report.validity == geometry::Validity::invalid) {
+                        ++out.stats.invalid_candidates;
+                    }
+                    else {
+                        ++out.stats.indeterminate_candidates;
+                    }
+                    return detail::CompactionVerdict::rejected;
+                };
+                const auto work = detail::compact_axis(
+                    context->object()->mesh(), *bounds, context->constraints().pair_clearance_mm,
+                    context->constraints().wall_clearance_mm, axis, rotations, shapes, copies, capacity,
+                    query.max_kernel_work, query.max_vertex_visits, control,
+                    sweep % 2 == 0 ? 1 : -1, accept);
+                if (!record_geometry(out.stats, work, live, limits)) {
+                    return finish("COMPACTION_WORK_LIMIT", TerminationReason::resource_limit);
+                }
+                copies = accepted->copies();
+                if (accepted != incumbent.best()->solution && !offer(accepted, live)) {
+                    return out;
+                }
+                if (stopped) {
+                    return finish("COMPACTION_VALIDATION_LIMIT", TerminationReason::resource_limit);
+                }
+            }
+        }
+        return finish("COMPACTION_EXHAUSTED", TerminationReason::search_stalled);
     }
 
     if (interlocking) {
@@ -1756,6 +1910,16 @@ BaselineOutcome run_aabb_baseline(
 }
 
 namespace detail {
+BaselineOutcome run_compaction_with_seeds(std::shared_ptr<const geometry::ValidationContext> context,
+                                          const BaselineLimits& limits, const RunControl& control,
+                                          const std::vector<geometry::Quaternion>& seeds, SnapshotSink sink,
+                                          SnapshotHandle initial)
+{
+    const auto solution = initial ? initial->solution : nullptr;
+    return run_aabb_baseline_impl(std::move(context), limits, control, std::move(sink), solution, &seeds, nullptr,
+                                  std::move(initial), false, false, false, true);
+}
+
 BaselineOutcome run_interlocking_stagger_with_seeds(std::shared_ptr<const geometry::ValidationContext> context,
                                                     const BaselineLimits& limits, const RunControl& control,
                                                     const std::vector<geometry::Quaternion>& seeds, SnapshotSink sink,

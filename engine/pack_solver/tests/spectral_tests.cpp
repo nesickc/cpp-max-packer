@@ -1301,7 +1301,8 @@ TEST_CASE("AT-16 T015 cumulative validation denial grants work and reconsiders t
         CHECK(interrupt.validations > 0);
         CHECK(stopped.resource_recovery.native_validations == interrupt.validations);
         REQUIRE(stopped.run.best);
-        CHECK(stopped.run.best->solution->copies().size() == 1);
+        CHECK(stopped.run.best->solution->copies().size() >= 1);
+        CHECK(geo::revalidate(stopped.run.best->solution).validated_solution);
     }
 }
 
@@ -1557,7 +1558,9 @@ TEST_CASE("AT-16 T015 unaffordable FFT allocation stops after finite changed con
     REQUIRE(outcome.run.failure_details);
     CHECK(outcome.run.failure_details->cause_code() == "CORRELATION_ALLOCATION");
     REQUIRE(outcome.run.best);
-    CHECK(outcome.run.best->solution->copies().size() == 1);
+    // Physical compaction may improve the seed before FFT allocation fails.
+    CHECK(outcome.run.best->solution->copies().size() >= 1);
+    CHECK(geo::revalidate(outcome.run.best->solution).validated_solution);
 }
 
 TEST_CASE("AT-16 T015 review startup memory admission selects an affordable thread team", "[solver][T015-P2][review]")

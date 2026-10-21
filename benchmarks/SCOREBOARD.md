@@ -21,3 +21,10 @@ or two copies.
 | 2026-10-19 | 710c4dc | cube64=64 \| lprism2=1 \| pryanik2=435 \| pryanik2-0=447 \| ulamok=36 |
 | 2026-10-19 | 72f7e9a | cube64=64 \| lprism2=1 \| pryanik2-0=450 \| ulamok=36 |
 | 2026-10-19 | 72f7e9a | pryanik2=435 |
+| 2026-10-19 | e4643eb + compaction | cube64=64 \| lprism2=1 \| lprism-gap=2 \| pryanik2=435 \| pryanik2-0=450 \| ulamok=36 |
+| 2026-10-19 | e4643eb + compaction, low RAM | cube64=64 \| lprism2=1 \| lprism-gap=2 \| pryanik2=-! \| pryanik2-0=-! \| ulamok=36 |
+
+The low-RAM repeat had about 1.1 GiB available physical memory. Both Pryanik runs
+were refused before search (`IMPORT_WORKING_BYTES`); the previous engine also
+refused the bracket import under the same pressure. The earlier compaction run
+completed all six cases. Logs: `.local/compaction/`.

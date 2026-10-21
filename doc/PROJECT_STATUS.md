@@ -20,6 +20,8 @@ Updated 2026-10-19. Details belong in PRs and `.local/` logs.
   finite layouts screen only existing row/layer neighbors. Validator v6 resolves
   inexact shell witnesses without loosening containment or clearance. Spatial
   triangle bounds keep dense results within the fresh-validation save deadline.
+  Whole-arrangement axis sweeps compact validated layouts and refill freed space;
+  equal-count improvements remain visible through existing compactness ranking.
 - **Actual models:** Benchy and matrice both produce valid envelopes in about six
   seconds (11,030 and 7,486 triangles), pack one copy in a fitted test box, survive
   Save/Open and export their 225,102 and 336,126 source triangles. Evidence remains
@@ -35,11 +37,13 @@ or installer. These remain **Later** in spec v0.3.
 ## Scoreboard
 
 Release, eight threads; unchanged 10-second analytic and 60-second STL budgets.
+Full compaction pass below; a later low-RAM repeat refused both Pryanik imports.
 
 | Case | Count | Floor | Target |
 | --- | --- | --- | --- |
 | cube64 | 64 | 64 | 64 |
 | lprism2 | 1 | 1 | 2 |
+| lprism-gap (0.125/0.125 mm) | **2** | 2 | 2 |
 | pryanik2 (1/1 mm) | **435** | 425 | 426 |
 | pryanik2-0 (0/1 mm) | **450** | 416 | 416 |
 | ulamok | 36 | 36 | 36 |
@@ -54,15 +58,18 @@ History: [benchmarks/SCOREBOARD.md](../benchmarks/SCOREBOARD.md).
    Refused or indeterminate enclosure cannot enable packing. No shrinking to fit.
 2. Reconstruction remains approximate and can erase features; its resolution is
    independent of packing pitch. Use the normal envelope action to retain source.
-3. The L-prism pair remains unfound. The bracket reaches 60 copies at 0/0 mm
+3. The exact-contact L-prism pair remains unfound; the positive-clearance case
+   now reaches two. The spacing revision verified 60 bracket copies at 0/0 mm
    and 56 at 1/1 mm clearance in 400 x 340 x 285 mm. Its known 50-copy physical
    layout in the smaller box remains a target: zero-clearance packing improved from 36 to 42
-   in its exterior-size upper-bound box. Actual interior dimensions are unknown.
+   in its exterior-size upper-bound box. Compaction reduces occupied width from
+   210 to about 186.5 mm while retaining 42. Actual interior dimensions are unknown.
+   Final larger-box compaction rechecks were interrupted/refused under low RAM.
    Results remain `best_found`.
 4. `10_kg_np.stl` is 400 x 350 x 285 mm; the real Nova Post box is
    400 x 340 x 285 mm. Use box dimensions for that comparison.
 
-Spacing refinement is stacked on open PR #26, which includes #25 (envelopes)
-and #24 (import repair). See
+Compaction is stacked on open PR #27 (spacing), which includes #26, #25
+(envelopes) and #24 (import repair). See
 [ADR 0021](../spec/decisions/0021-packing-envelopes.md), [ALGORITHM.md](../docs/ALGORITHM.md),
 [BUILDING.md](../docs/BUILDING.md) and [AGENTS.md](../AGENTS.md).
