@@ -1,4 +1,6 @@
 #pragma once
+#include <cmath>
+
 #include "solve.hpp"
 
 namespace spectrapack::cli {
@@ -29,9 +31,29 @@ public:
                 return false;
             }
             const auto& solution = native->solution;
-            if (latest_ && (solution->context() != latest_->native->solution->context() ||
-                            solution->copies().size() <= latest_->native->solution->copies().size())) {
-                return false;
+            bool same_count = false;
+            if (latest_) {
+                const auto count = solution->copies().size();
+                const auto previous_count = latest_->native->solution->copies().size();
+                if (solution->context() != latest_->native->solution->context() || count < previous_count) {
+                    return false;
+                }
+                same_count = count == previous_count;
+                if (same_count) {
+                    const auto& next = native->score;
+                    const auto& prior = latest_->native->score;
+                    const auto scored = [count](const auto& score) {
+                        return score.count == count && score.enclosing_z_span_mm && score.enclosing_xy_span_sum_mm &&
+                               std::isfinite(*score.enclosing_z_span_mm) &&
+                               std::isfinite(*score.enclosing_xy_span_sum_mm);
+                    };
+                    if (!scored(next) || !scored(prior) ||
+                        !(*next.enclosing_z_span_mm < *prior.enclosing_z_span_mm ||
+                          (*next.enclosing_z_span_mm == *prior.enclosing_z_span_mm &&
+                           *next.enclosing_xy_span_sum_mm < *prior.enclosing_xy_span_sum_mm))) {
+                        return false;
+                    }
+                }
             }
             const auto bytes = solution->resident_buffer_bytes();
             if (!bytes || *bytes > publication_slot_bytes) {
@@ -44,8 +66,8 @@ public:
                     return false;
                 }
             }
-            latest_ = std::make_shared<const PublishedSnapshot>(
-                PublishedSnapshot { revision_ + 1, seconds, std::move(native) });
+            latest_ = std::make_shared<const PublishedSnapshot>(PublishedSnapshot {
+                revision_ + 1, same_count ? latest_->time_to_count_seconds : seconds, std::move(native) });
             ++revision_;
             return true;
         }

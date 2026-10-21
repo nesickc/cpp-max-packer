@@ -762,7 +762,7 @@ BaselineOutcome run_aabb_baseline_impl(
             return finish("COMPACTION_COPY_LIMIT", TerminationReason::search_stalled);
         }
         auto live = *base;
-        for (unsigned owner = 0; owner != 5; ++owner) {
+        for (unsigned owner = 0; owner != 6; ++owner) {
             if (!add_optional(live, pose_bytes(entry->solution->copies(), true))) {
                 return finish("COMPACTION_MEMORY_LIMIT", TerminationReason::resource_limit);
             }
@@ -772,7 +772,7 @@ BaselineOutcome run_aabb_baseline_impl(
             !checked_add(live, 24 * (sizeof(detail::CompactionEnvelope) + sizeof(geometry::Bounds) +
                                      sizeof(geometry::Quaternion)) +
                                    4096) ||
-            !checked_add(live, capacity * (5 * (sizeof(geometry::CopyPose) + 128) + sizeof(std::size_t))) ||
+            !checked_add(live, capacity * (6 * (sizeof(geometry::CopyPose) + 128) + sizeof(std::size_t))) ||
             !update_peak(out.stats, live, limits)) {
             return finish("COMPACTION_MEMORY_LIMIT", TerminationReason::resource_limit);
         }
@@ -827,7 +827,8 @@ BaselineOutcome run_aabb_baseline_impl(
         copies.reserve(capacity);
         std::array<std::size_t, 3> axes { 0, 1, 2 };
         std::sort(axes.begin(), axes.end(), [&](auto a, auto b) {
-            return shapes.front().max[a] - shapes.front().min[a] < shapes.front().max[b] - shapes.front().min[b];
+            return std::tuple { a != 2, shapes.front().max[a] - shapes.front().min[a] } <
+                   std::tuple { b != 2, shapes.front().max[b] - shapes.front().min[b] };
         });
         auto accepted = entry->solution;
         for (unsigned sweep = 0; sweep != 4; ++sweep) {
@@ -873,6 +874,13 @@ BaselineOutcome run_aabb_baseline_impl(
                     }
                     return detail::CompactionVerdict::rejected;
                 };
+                detail::contract_axis(axis, rotations, shapes, copies, accept);
+                if (stopped) {
+                    if (accepted != incumbent.best()->solution && !offer(accepted, live)) {
+                        return out;
+                    }
+                    return finish("COMPACTION_VALIDATION_LIMIT", TerminationReason::resource_limit);
+                }
                 const auto work = detail::compact_axis(
                     context->object()->mesh(), *bounds, context->constraints().pair_clearance_mm,
                     context->constraints().wall_clearance_mm, axis, rotations, shapes, copies, capacity,
@@ -1001,12 +1009,15 @@ BaselineOutcome run_aabb_baseline_impl(
             }
             const auto query = query_limits(limits, out.stats, live);
             detail::StaggerEnvelope envelope(
-                control, std::min<std::uint64_t>(32'000'000, query.max_kernel_work / (mixed ? 2 : 1)),
+                control,
+                std::min<std::uint64_t>(mixed ? 64'000'000 : 32'000'000, query.max_kernel_work / (mixed ? 2 : 1)),
                 query.max_vertex_visits / (mixed ? 2 : 1));
             detail::StaggerEnvelope alternate(
-                control, std::min<std::uint64_t>(32'000'000, query.max_kernel_work / (mixed ? 2 : 1)),
+                control,
+                std::min<std::uint64_t>(mixed ? 64'000'000 : 32'000'000, query.max_kernel_work / (mixed ? 2 : 1)),
                 query.max_vertex_visits / (mixed ? 2 : 1));
             std::optional<detail::InterlockingLayout> plan;
+            auto proposal_bounds = *bounds;
             if (envelope.build(context->object()->mesh(), seeds[seed], oriented.bounds_mm, axes[2], axes[1], axes[0])) {
                 if (mixed) {
                     if (alternate.build(context->object()->mesh(), seeds[partner], alternate_bounds, axes[2], axes[1],
@@ -1015,6 +1026,19 @@ BaselineOutcome run_aabb_baseline_impl(
                             envelope.plan_mixed(alternate, *bounds, context->constraints().pair_clearance_mm,
                                                 context->constraints().wall_clearance_mm, incumbent.best()->score.count,
                                                 limits.max_copies, limits.max_axis_cells);
+                        // Filled transverse bins can reject a tight diagonal
+                        // layout before the mesh validator ever sees it. Seed
+                        // with a little relative headroom, then contract only
+                        // copy translations into the actual box below.
+                        if (!plan &&
+                            bounds->max[2] - bounds->min[2] > oriented.bounds_mm.max[2] - oriented.bounds_mm.min[2] +
+                                                                  2 * context->constraints().wall_clearance_mm) {
+                            proposal_bounds.max[2] += (oriented.bounds_mm.max[2] - oriented.bounds_mm.min[2]) / 16;
+                            plan = envelope.plan_mixed(
+                                alternate, proposal_bounds, context->constraints().pair_clearance_mm,
+                                context->constraints().wall_clearance_mm, incumbent.best()->score.count,
+                                limits.max_copies, limits.max_axis_cells);
+                        }
                     }
                 }
                 else {
@@ -1068,6 +1092,19 @@ BaselineOutcome run_aabb_baseline_impl(
                         if (state) {
                             for (std::size_t axis = 0; axis != 3; ++axis) {
                                 translation[axis] += oriented.bounds_mm.min[axis] - alternate_bounds.min[axis];
+                            }
+                        }
+                        if (proposal_bounds.max[2] != bounds->max[2]) {
+                            const auto& shape = state ? alternate_bounds : oriented.bounds_mm;
+                            const double extent = shape.max[2] - shape.min[2];
+                            const double wall = context->constraints().wall_clearance_mm;
+                            const double span = bounds->max[2] - bounds->min[2] - 2 * wall - extent;
+                            const double proposal_span = proposal_bounds.max[2] - bounds->min[2] - 2 * wall - extent;
+                            const double low = translation[2] + shape.min[2] - bounds->min[2] - wall;
+                            const double cushion = 1e-8 * std::max(1., bounds->max[2] - bounds->min[2]);
+                            if (span > 2 * cushion) {
+                                translation[2] = bounds->min[2] + wall + cushion - shape.min[2] +
+                                                 low * (span - 2 * cushion) / proposal_span;
                             }
                         }
                         copies.push_back(

@@ -43,7 +43,7 @@ TEST_CASE("SOL-01 T015 baseline publishes valid prefixes before interruption", "
     CHECK(outcome.run.termination_reason == solver::TerminationReason::user_stopped);
 }
 
-TEST_CASE("SOL-01 UI-02 T015 freezes public24 while internal equal-count exploration continues", "[publication][T015]")
+TEST_CASE("SOL-01 UI-02 keeps public layouts through unscored equal-count exploration", "[publication][T015]")
 {
     auto ctx = context();
     const auto checked = [&](unsigned count, double y, bool overlap = false) {
@@ -85,6 +85,32 @@ TEST_CASE("SOL-01 UI-02 T015 freezes public24 while internal equal-count explora
     spectrapack::cli::CountPublication fresh;
     CHECK(fresh.offer(snapshot(d25.validated_solution, 1), 1));
     CHECK(fresh.latest()->revision == 1);
+}
+
+TEST_CASE("Validated compaction updates public poses without changing time to count", "[publication]")
+{
+    auto ctx = context();
+    solver::Incumbent incumbent(ctx);
+    spectrapack::cli::CountPublication gate;
+    const auto offer = [&](double spacing, double seconds) {
+        const auto candidate = std::get<std::shared_ptr<const geo::Candidate>>(geo::make_candidate(
+            ctx, {
+                     { "a", { 1, 1, 1 },           { 0, 0, 0, 1 } },
+                     { "b", { 1 + spacing, 1, 1 }, { 0, 0, 0, 1 } }
+        }));
+        const auto solution = geo::validate(ctx, candidate).validated_solution;
+        REQUIRE(solution);
+        REQUIRE(incumbent.offer(solution, {}).status == solver::OfferStatus::accepted);
+        REQUIRE(gate.offer(incumbent.best(), seconds));
+    };
+    offer(3, 1);
+    const auto original = gate.latest()->native;
+    offer(2, 2);
+    CHECK(gate.latest()->revision == 2);
+    CHECK(gate.latest()->time_to_count_seconds == 1);
+    CHECK(gate.latest()->native->solution->copies()[1].translation_mm[0] == 3);
+    CHECK_FALSE(gate.offer(original, 3));
+    CHECK_FALSE(gate.offer(incumbent.best(), 4));
 }
 
 TEST_CASE("AT-14 T015 charges actual pinned payload capacity and retains prior on refusal", "[publication][T015]")

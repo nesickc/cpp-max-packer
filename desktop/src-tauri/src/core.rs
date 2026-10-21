@@ -133,7 +133,7 @@ fn accept_live(
     {
         if old["settings_id"] != binding.settings_id
             || old["native_epoch"] != binding.native_epoch
-            || live["count"].as_u64() <= old["count"].as_u64()
+            || live["count"].as_u64() < old["count"].as_u64()
             || live["sequence"].as_u64() <= old["sequence"].as_u64()
             || live["solution_revision"].as_u64() <= old["solution_revision"].as_u64()
         {
@@ -1656,7 +1656,7 @@ mod tests {
         let token = json!("asset");
         assert!(accept_live(&mut inner, &binding, "operation", &token, value(24, 1, 1)));
         let a24 = inner.state.live_result.clone();
-        assert!(!accept_live(&mut inner, &binding, "operation", &token, value(24, 2, 2)));
+        assert!(!accept_live(&mut inner, &binding, "operation", &token, value(24, 1, 2)));
         assert_eq!(inner.state.live_result, a24);
         for field in ["session", "native", "settings"] {
             let mut foreign = binding.clone();
@@ -1687,6 +1687,8 @@ mod tests {
         assert!(!accept_live(&mut inner, &binding, "operation", &token, value(26, 3, 2)));
         assert_eq!(inner.state.live_result, d25);
         assert!(accept_live(&mut inner, &binding, "operation", &token, value(26, 3, 3)));
+        assert!(accept_live(&mut inner, &binding, "operation", &token, value(26, 4, 4)));
+        assert!(!accept_live(&mut inner, &binding, "operation", &token, value(25, 5, 5)));
         inner.state.operation.as_mut().unwrap().id = "fresh".into();
         assert!(accept_live(
             &mut inner,

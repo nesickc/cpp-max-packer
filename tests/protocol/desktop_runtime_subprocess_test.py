@@ -163,7 +163,7 @@ class RuntimeTests(unittest.TestCase):
                         self.assertEqual(packing['validation_status'], 'valid')
                         self.assertEqual(packing['count'], len(packing['placements']))
                         if packings:
-                            self.assertGreater(packing['count'], packings[-1]['count'])
+                            self.assertGreaterEqual(packing['count'], packings[-1]['count'])
                             self.assertGreater(packing['solution_revision'], packings[-1]['solution_revision'])
                             self.assertGreaterEqual(time.monotonic()-times[-1], 0.23)
                         packings.append(packing);times.append(time.monotonic())

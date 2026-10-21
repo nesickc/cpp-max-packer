@@ -25,6 +25,7 @@ or two copies.
 | 2026-10-19 | e4643eb + compaction, low RAM | cube64=64 \| lprism2=1 \| lprism-gap=2 \| pryanik2=-! \| pryanik2-0=-! \| ulamok=36 |
 | 2026-10-20 | befd9a1 + automatic envelopes / validator v7, concurrent Python tests | cube64=64 \| lprism2=1 \| lprism-gap=2 \| pryanik2=435 \| pryanik2-0=447 \| ulamok=36 |
 | 2026-10-20 | befd9a1 + automatic envelopes / validator v7, isolated repeat | pryanik2-0=450 |
+| 2026-10-20 | 7361287 + diagonal compaction | cube64=64 \| lprism2=1 \| lprism-gap=2 \| pryanik2=435 \| pryanik2-0=450 \| ulamok=36 |
 
 The low-RAM repeat had about 1.1 GiB available physical memory. Both Pryanik runs
 were refused before search (`IMPORT_WORKING_BYTES`); the previous engine also
@@ -37,3 +38,11 @@ The v7 zero-clearance repeat followed an isolated old-engine run; both reached
 2 mm pitch and a 60-second search budget. Its 408 x 348 x 293 mm run retained 24;
 32 is unverified. No model-specific search changes were retained. Logs and saved
 results: `.local/bulba/`.
+
+Diagonal refinement preserves all six counts. Bulba improves from 24 after 360 seconds
+to 30 after 90 seconds in 410 x 350 x 285 mm, with four threads, 2 mm pitch, cube
+rotations and 0/0 mm clearance. Both results pass native validation. Source meshes
+and physical constraints are unchanged. The final desktop result occupies
+281.605 mm in Z and retains identical displayed/saved/restored/exported poses.
+Logs and results: `.local/diagonal/`;
+scoreboard artifacts: `.local/scoreboard/20261020-182445/`.

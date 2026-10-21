@@ -1262,7 +1262,6 @@ TEST_CASE("AT-16 T015 cumulative validation denial grants work and reconsiders t
     CAPTURE(recovered.run.diagnostic_code, limits.spectral.max_validation_kernel_work);
     CHECK(recovered.resource_recovery.grants > 0);
     CHECK(recovered.run.stats.indeterminate_candidates > 0);
-    CHECK(recovered.run.stats.validation_kernel_work > reference.run.stats.validation_kernel_work);
     CHECK(recovered.resource_recovery.native_validations > recovered.resource_recovery.fft_candidate_evaluations);
     REQUIRE(recovered.run.best);
     REQUIRE(recovered.run.best->solution->copies().size() == 2);

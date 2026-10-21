@@ -447,7 +447,7 @@ impl NativeSession {
                     packing.validate()?;
                     if next <= packing_sequence
                         || packing.solution_revision <= packing_revision
-                        || packing.count <= packing_count
+                        || packing.count < packing_count
                     {
                         continue;
                     }
@@ -596,6 +596,35 @@ mod tests {
             .request("shutdown", None, serde_json::json!({}), |_, _, _| {})
             .unwrap();
         assert_eq!(session.epoch, epoch);
+    }
+    #[test]
+    fn transport_delivers_newer_same_count_compaction_poses() {
+        let script = r#"
+$request = [Console]::ReadLine() | ConvertFrom-Json
+foreach ($revision in @(1, 2, 1)) {
+    $x = 3 - $revision
+    $pose = @{copy_id='one';translation_mm=@($x,1,1);quaternion_xyzw=@(0,0,0,1);
+        local_to_world=@(@(1,0,0,$x),@(0,1,0,1),@(0,0,1,1),@(0,0,0,1))}
+    @{runtime_version=1;request_id=$request.request_id;operation_id=$request.operation_id;
+      kind='packing';sequence=$revision;native_elapsed_seconds=$revision;
+      publication=$request.params.publication;
+      packing=@{solution_revision=$revision;count=1;validation_status='valid';placements=@($pose)}} |
+        ConvertTo-Json -Depth 12 -Compress
+}
+@{runtime_version=1;request_id=$request.request_id;operation_id=$request.operation_id;
+  kind='response';ok=$true;result=@{}} | ConvertTo-Json -Compress
+"#;
+        let mut command = Command::new("powershell.exe");
+        command.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+        let mut session = NativeSession::from_command(command).unwrap();
+        let binding = serde_json::json!({"version":1,"session_id":"test","native_epoch":session.epoch,
+            "settings_id":"settings"});
+        let mut translations = Vec::new();
+        session.request_with_packing("shutdown", Some("compaction"), serde_json::json!({"publication":binding}),
+            |_,_,_,_|{}, Some(&mut |_,packing:&Packing,_| {
+                translations.push(packing.placements[0].translation_mm);
+            })).unwrap();
+        assert_eq!(translations, vec![[2.0,1.0,1.0],[1.0,1.0,1.0]]);
     }
     #[test]
     fn prepared_token_survives_local_budget_rejection_and_runs_again() {

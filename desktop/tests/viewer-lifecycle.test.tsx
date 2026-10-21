@@ -109,7 +109,9 @@ describe('UI-02/UI-03 / AT-15 persistent viewer (device adapter, real PLY and co
     const equal=structuredClone(initial);equal.revision=2;equal.live_result!.sequence=2;
     equal.live_result!.solution_revision=2;equal.live_result!.placements[0].translation_mm=[99,99,99];
     native.state.mockResolvedValue(equal);await act(async()=>{await vi.advanceTimersByTimeAsync(250);});drain();
-    expect(visibleMesh()).toBe(mesh);
+    const compacted=visibleMesh()!;expect(compacted).not.toBe(mesh);expect(compacted.geometry).toBe(geometry);
+    const changedPose=new Matrix4();compacted.getMatrixAt(0,changedPose);
+    expect(changedPose.elements.slice(12,15)).toEqual([99,99,99]);
     expect((screen.getByLabelText('Select copy') as HTMLSelectElement).value).toBe('copy-0');
     const higher=structuredClone(initial);higher.revision=3;higher.live_result!.solution_revision=3;
     higher.live_result!.sequence=3;higher.live_result!.count=25;

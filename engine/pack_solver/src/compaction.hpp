@@ -9,6 +9,56 @@ namespace spectrapack::solver::detail {
 
 enum class CompactionVerdict { accepted, rejected, stop };
 
+// Contract distances between copy origins, never the copies themselves. Coarse
+// column envelopes can overlap even at a valid starting pose, blocking a slide.
+// Whole-layout validation lets this bounded refinement recover that lost space.
+template <class Accept>
+void contract_axis(std::size_t axis, const std::vector<geometry::Quaternion>& rotations,
+                   const std::vector<geometry::Bounds>& shapes, std::vector<geometry::CopyPose>& copies,
+                   Accept&& accept)
+{
+    if (copies.size() < 2) {
+        return;
+    }
+    auto first = std::numeric_limits<double>::infinity();
+    auto last = -first;
+    for (const auto& copy : copies) {
+        const auto i =
+            std::size_t(std::find(rotations.begin(), rotations.end(), copy.rotation_xyzw) - rotations.begin());
+        const double lower = copy.translation_mm[axis] + shapes[i].min[axis];
+        first = std::min(first, lower);
+        last = std::max(last, lower);
+    }
+    if (!(last > first)) {
+        return;
+    }
+    const auto original = copies;
+    double accepted_fraction = 0, rejected_fraction = .1;
+    for (unsigned iteration = 0; iteration != 8; ++iteration) {
+        const double fraction = iteration == 0 ? rejected_fraction : (accepted_fraction + rejected_fraction) / 2;
+        auto trial = original;
+        for (auto& copy : trial) {
+            const auto i =
+                std::size_t(std::find(rotations.begin(), rotations.end(), copy.rotation_xyzw) - rotations.begin());
+            copy.translation_mm[axis] -= fraction * (copy.translation_mm[axis] + shapes[i].min[axis] - first);
+        }
+        const auto verdict = accept(trial);
+        if (verdict == CompactionVerdict::stop) {
+            return;
+        }
+        if (verdict == CompactionVerdict::accepted) {
+            copies = std::move(trial);
+            accepted_fraction = fraction;
+            if (iteration == 0) {
+                return;
+            }
+        }
+        else {
+            rejected_fraction = fraction;
+        }
+    }
+}
+
 // Compact a complete arrangement without assuming rows, a lattice or a model
 // identity. Refill from the opposite face at the retained copies' transverse
 // positions. Existing copies retain their rotations and rigid dimensions.

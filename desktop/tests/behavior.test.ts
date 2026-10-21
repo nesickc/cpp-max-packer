@@ -58,11 +58,12 @@ describe('UI-02 T015 count publication identity', () => {
     placements:Array.from({length:count},(_,i)=>({...pose,copy_id:`copy-${i}`})) as Desktop.LiveResult['placements']});
   const withLive=(packing:Desktop.LiveResult,revision:number):Desktop.State=>({...state('s',revision),live_result:packing,
     operation:{id:packing.operation_id,kind:'solve',phase:'placing',started_at:'2026-10-11T00:00:00Z',finished_at:null,result_id:null,detail:null}});
-  it('keeps exact24 poses across equal/stale duplicates, then installs25 and26 and resets the new run',()=>{
+  it('installs compacted equal-count revisions, rejects stale events, and resets the new run',()=>{
     const first=withLive(live(24,1),1);
-    const equal=withLive(live(24,2),2);equal.live_result!.placements[0].translation_mm=[999,0,0];
+    const equal=withLive(live(24,2),2);equal.live_result!.placements[0].translation_mm=[1,1,1];
     const retained=acceptState(first,equal);
-    expect(retained.live_result).toBe(first.live_result);
+    expect(retained.live_result).toBe(equal.live_result);
+    expect(acceptState(retained,withLive(live(24,1),3)).live_result).toBe(equal.live_result);
     const next=acceptState(retained,withLive(live(25,3),3));expect(next.live_result!.count).toBe(25);
     expect(acceptState(next,withLive(live(24,1),4)).live_result).toBe(next.live_result);
     const foreign=withLive({...live(26,4),native_epoch:'old'},5);
