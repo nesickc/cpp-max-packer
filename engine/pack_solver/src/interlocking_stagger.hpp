@@ -386,7 +386,7 @@ public:
             const unsigned mask = paired ? 4 : masks[index / 9];
             const int rise = paired ? -7 + int(index % 7) : int(index % 9);
             const double lateral = paired ? (2 + index / 7) / 16.0 : 0;
-            {
+            for (unsigned spacing = 0; spacing != (rise > 0 ? 2U : 1U); ++spacing) {
                 for (std::uint64_t layers = nz; layers >= 1; --layers) {
                     if (!spend(1)) {
                         return best.count > incumbent ? std::optional { best } : std::nullopt;
@@ -395,7 +395,16 @@ public:
                     trial.orientation_mask = mask;
                     trial.alternate_height = rise * extent[layer_] / 16;
                     trial.alternate_row = lateral * extent[row_];
-                    trial.pitch[layer_] = layers > 1 ? span[layer_] / (layers - 1) : extent[layer_] + gap;
+                    // Reserve the raised state's headroom before spacing the stack.
+                    // Stretching unshifted layers to both walls discarded shifted
+                    // copies at the far wall even when a tighter full stack fits.
+                    // Also retain full-span spacing: compression can obstruct
+                    // interlocking neighbors even when it helps containment.
+                    const double layer_span = span[layer_] - (spacing == 0 ? std::max(0.0, trial.alternate_height) : 0);
+                    if (layer_span < 0) {
+                        continue;
+                    }
+                    trial.pitch[layer_] = layers > 1 ? layer_span / (layers - 1) : extent[layer_] + gap;
                     trial.layers = layers;
                     trial.offset = 0;
                     if (nc * nr * layers <= std::max(incumbent, best.count)) {
