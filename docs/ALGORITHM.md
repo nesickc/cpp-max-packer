@@ -209,3 +209,25 @@ At 2 mm, an explicit 180-second run also retained 343, reaching 12 correlations
 and six FFT candidates before budget exhaustion. Its peak host memory was about
 462 MiB, versus 341 MiB for 60 seconds at 2 mm and about 90-91 MiB for the 4 mm
 runs. Its saved layout also passed fresh native validation.
+
+
+## Explicit import repair
+
+Import settings stay in the editor until Start/Save. Inspection does not derive or
+reset solver settings. Repair uses immutable source drafts, separate proposed
+geometry, and a token checked by explicit acceptance before native preparation.
+
+Welding scans spatial buckets, visits candidate representatives in original order,
+and preserves the version-1 representative rule without an all-vertex pair scan.
+Closed-surface reconstruction samples half-open triangle scanline parity into a
+bounded grid; nested boundaries toggle material and separate regions share one
+rigid asset. The locked Manifold LevelSet library reconstructs the interpolated
+field at recorded resolution/isovalue, then the full-resolution native analyzer
+checks the resulting mesh. This is an approximate new solid requiring acceptance,
+not proof of the intended source shape. Thin features, cavities and components
+below resolution may disappear. No sampled or certified surface bound is claimed.
+
+Open boundaries, unmatched scanlines, unresolved topology and indeterminate
+analysis remain blocked. Grid/work/output limits bound reconstruction. Preview
+LOD and packing pitch never modify an accepted repair. Recipe replay, source
+preservation and compatibility are defined in [ADR 0020](../spec/decisions/0020-explicit-desktop-repair.md).

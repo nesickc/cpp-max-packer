@@ -7,6 +7,10 @@ use tauri::{Manager, State as Managed};
 fn desktop_state(core: Managed<'_, Core>) -> State {
     core.state()
 }
+#[tauri::command]
+fn desktop_repair(core: Managed<'_, Core>, request: RepairRequest) -> Outcome<Receipt> {
+    core.repair(request)
+}
 
 #[tauri::command]
 async fn desktop_import_object(
@@ -143,6 +147,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             desktop_state,
             desktop_import_object,
+            desktop_repair,
             desktop_start,
             desktop_stop,
             desktop_save_project,

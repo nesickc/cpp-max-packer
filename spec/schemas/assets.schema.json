@@ -86,8 +86,13 @@
         "before": { "$ref": "#/definitions/preview" },
         "after": { "$ref": "#/definitions/preview" },
         "tolerance_mm": { "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/positive" },
-        "max_displacement_mm": { "type": "number", "minimum": 0 },
-        "candidate_status": { "enum": ["valid", "invalid", "indeterminate"] }
+        "max_displacement_mm": { "type": ["number", "null"], "minimum": 0 },
+        "candidate_status": { "enum": ["valid", "invalid", "indeterminate"] },
+        "algorithm": { "enum": ["weld", "manifold"] },
+        "before_diagnostics": { "$ref": "#/definitions/diagnostics" },
+        "after_diagnostics": { "$ref": "#/definitions/diagnostics" },
+        "surface_area_before_mm2": { "type": "number", "minimum": 0 },
+        "surface_area_after_mm2": { "type": "number", "minimum": 0 }
       }, "additionalProperties": false
     },
     "source": {

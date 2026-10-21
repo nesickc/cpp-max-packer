@@ -84,7 +84,16 @@ struct PreviewFile {
     hash: String,
     bytes: u64,
 }
+#[derive(Clone)]
+struct RepairFiles {
+    object_id: String,
+    report: PathBuf,
+    algorithm: String,
+    tolerance: f64,
+    token: String,
+}
 struct Inner {
+    repair: Option<RepairFiles>,
     state: State,
     object: Option<ObjectFiles>,
     result: Option<ResultFiles>,
@@ -296,6 +305,7 @@ impl Core {
             session_id: id("session"),
             revision: 0,
             object: None,
+            repair: None,
             draft_settings: None,
             result: None,
             live_result: None,
@@ -313,6 +323,7 @@ impl Core {
             after_spawn: Arc::new(Mutex::new(None)),
             inner: Arc::new(Mutex::new(Inner {
                 state,
+                repair: None,
                 object: None,
                 result: None,
                 previews: HashMap::new(),
@@ -634,7 +645,20 @@ impl Core {
         Ok(Some(value))
     }
     fn auxiliary_host_allowance(&self) -> Outcome<u64> {
-        const LEGACY_CAP: u64 = 512 << 20;
+        // Before a retained session exists, use the same half-available-RAM
+        // policy as native preparation, rather than an unrelated 512 MiB cap.
+        #[cfg(windows)]
+        let initial_cap = unsafe {
+            use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
+            let mut memory: MEMORYSTATUSEX = std::mem::zeroed();
+            memory.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
+            if GlobalMemoryStatusEx(&mut memory) == 0 {
+                return Err(error("MEMORY_LIMIT", "Available physical RAM could not be queried."));
+            }
+            memory.ullAvailPhys / 2
+        };
+        #[cfg(not(windows))]
+        let initial_cap = 512 << 20;
         const ADAPTER: u64 = 16 << 20;
         let (retained, session_live, cap) = {
             let mut native = self.native.lock().unwrap();
@@ -646,10 +670,10 @@ impl Core {
                         .ok_or_else(||error("MEMORY_LIMIT","Retained native residency is unavailable; helper admission cannot proceed."))?,true,cap)
                 } else {
                     native.take();
-                    (0, false, LEGACY_CAP)
+                    (0, false, initial_cap)
                 }
             } else {
-                (0, false, LEGACY_CAP)
+                (0, false, initial_cap)
             }
         };
         let inner = self.inner.lock().unwrap();
@@ -762,10 +786,8 @@ impl Core {
     fn prepare(
         &self,
         object: &mut ObjectFiles,
-        settings: &Value,
         root: &Path,
     ) -> Outcome<(PathBuf, Option<Value>)> {
-        validate_settings(settings)?;
         let output = root.join("prepared");
         fs::create_dir(&output).map_err(|e| error("FILE_ACCESS", e.to_string()))?;
         let operation = self
@@ -853,14 +875,10 @@ impl Core {
             core.run(&args, &root)?;
             let report = security::json(&report_path, REPORT_LIMIT)?; let object_id = id("object");
             let mut object = ObjectFiles { id: object_id.clone(), report: report_path, preview: None, native_token: None, native_epoch: None, cpu_runtime: None };
-            let longest = report["dimensions_mm"].as_array()
-                .map(|v| v.iter().filter_map(Value::as_f64).fold(1.0_f64, f64::max)).unwrap_or(10.0);
-            let mut settings = json!({"desktop_version":1,"box_dimensions_mm":[100.0,100.0,100.0],
-                "clearance_mm":{"pair":1.0,"wall":1.0},"orientation":{"mode":"fixed","quaternion_xyzw":[0,0,0,1]},
-                "pitch_mm":longest/64.0,"budget_seconds":60.0,"seed":"42","budget_scope":"total_start","thread_count":1});
             if report["state"] == "accepted" && report["diagnostics"]["status"] == "valid" {
-                let (_, preview) = core.prepare(&mut object, &settings, &root)?; object.preview = preview;
-                if let Some(runtime)=&object.cpu_runtime {settings["thread_count"]=runtime["default_thread_count"].clone();}
+                let (_, preview) = core.prepare(&mut object, &root)?; object.preview = preview;
+            } else {
+                object.preview = core.import_preview(&root, &report["preview"], report["diagnostics"]["import"]["triangle_count"].as_u64().unwrap_or(0))?;
             }
             let mut prepared_guard=PreparedRollback {core:core.clone(),token:object.native_token.clone(),epoch:object.native_epoch.clone(),preview_id:object.preview.as_ref().and_then(|value|value["preview_id"].as_str().map(str::to_owned)),committed:false};
             let old_object=core.inner.lock().unwrap().object.clone();
@@ -869,10 +887,106 @@ impl Core {
             prepared_guard.committed=true;
             inner.protected_sources.push(source.clone());
             inner.state.live_result=None;
+            inner.repair=None; inner.state.repair=None;
+            inner.result=None; inner.state.result=None;
             inner.state.object = Some(json!({"id":object_id,"display_name":name,"report":report,"preview":object.preview}));
-            inner.state.draft_settings = Some(settings); inner.state.revision += 1; drop(inner);
+            // Imports own geometry only. The editor owns unsaved settings; the
+            // backend retains its last submitted snapshot until Start, Save or Open.
+            inner.state.revision += 1; drop(inner);
             core.prune_previews();
             core.phase(&op, "validating"); Ok(())
+        });
+        Ok(receipt)
+    }
+
+    fn import_preview(&self, root: &Path, reference: &Value, triangles: u64) -> Outcome<Option<Value>> {
+        let relative = reference["path"].as_str().ok_or_else(||error("ASSET_MISMATCH", "Import preview missing."))?;
+        let path = security::scoped(root, &root.join(relative))?;
+        let bytes = security::read(&path, PREVIEW_LIMIT)?;
+        self.register_preview(root, &json!({"preview_path":path,"preview":{
+            "format":"ply","sha256":reference["sha256"],"byte_length":bytes.len(),
+            "triangle_count":triangles,"coordinate_frame":"object_local_mm"}}))
+    }
+
+    pub fn repair(&self, request: RepairRequest) -> Outcome<Receipt> {
+        if let RepairRequest::Propose {algorithm, tolerance_mm} = &request {
+            if !["weld", "manifold"].contains(&algorithm.as_str()) || !tolerance_mm.is_finite() || *tolerance_mm <= 0.0 {
+                return Err(error("INVALID_REQUEST", "Choose a supported repair and positive millimetre tolerance."));
+            }
+        }
+        let (receipt, root, (old, record, pending)) = self.begin_with("repair", None, |inner| {
+            let old = inner.object.clone().ok_or_else(||error("ASSET_REQUIRED", "Import an object first."))?;
+            let record = inner.state.object.clone().unwrap();
+            if let RepairRequest::Accept {token} | RepairRequest::Reject {token} = &request {
+                if !inner.repair.as_ref().is_some_and(|p|p.token == *token && p.object_id == old.id) {
+                    return Err(error("ASSET_MISMATCH", "Repair proposal is no longer current."));
+                }
+            }
+            Ok((old, record, inner.repair.clone()))
+        })?;
+        self.spawn(&receipt, move |core, op| {
+            if matches!(&request, RepairRequest::Reject {..}) {
+                let mut inner = core.inner.lock().unwrap(); inner.repair=None; inner.state.repair=None;
+                inner.state.revision+=1; drop(inner); core.prune_previews(); return Ok(());
+            }
+            let (algorithm, tolerance, token) = match request {
+                RepairRequest::Propose {algorithm,tolerance_mm} => (algorithm,tolerance_mm,None),
+                RepairRequest::Accept {token} => {
+                    let pending = pending.unwrap();
+                    // Retained proposal bytes must still match the displayed token.
+                    let report = security::json(&pending.report, REPORT_LIMIT)?;
+                    if report["repair_proposal"]["sha256"] != token {return Err(error("ASSET_MISMATCH","Proposal changed."));}
+                    (pending.algorithm,pending.tolerance,Some(token))
+                },
+                _ => unreachable!(),
+            };
+            let source_report=security::json(&old.report, REPORT_LIMIT)?;
+            let source=security::scoped(old.report.parent().unwrap(), &old.report.parent().unwrap().join(source_report["source"]["path"].as_str().unwrap()))?;
+            let report_path=root.join("object.report.json");
+            let mut args=arguments(&["inspect","--units",source_report["source"]["units"].as_str().unwrap()]);
+            pair(&mut args,"--stl",&source); pair(&mut args,"--report",&report_path);
+            if source_report["source"]["units"]=="custom" {
+                args.extend(["--scale-mm".into(),source_report["source"]["unit_scale_mm"].to_string().into()]);
+            }
+            args.extend([if algorithm=="weld" {"--weld-tolerance-mm"} else {"--reconstruct-resolution-mm"}.into(),tolerance.to_string().into()]);
+            if let Some(token)=&token {args.extend(["--accept-repair".into(),token.into()]);}
+            core.run(&args,&root).map_err(|mut failure| {
+                if failure.code == "MEMORY_LIMIT" {
+                    failure.message.push_str(" Free some RAM and retry; a larger reconstruction resolution may also fit, but can lose small features.");
+                }
+                failure
+            })?;
+            let report=security::json(&report_path,REPORT_LIMIT)?;
+            if token.is_none() {
+                let proposal=&report["repair_proposal"];
+                let token=proposal["sha256"].as_str().ok_or_else(||error("ENGINE_TRANSPORT","Proposal token missing."))?.to_owned();
+                let before=core.import_preview(&root,&proposal["before"],report["diagnostics"]["import"]["triangle_count"].as_u64().unwrap_or(0))?;
+                let after=match core.import_preview(&root,&proposal["after"],proposal["after_diagnostics"]["import"]["triangle_count"].as_u64().unwrap_or(0)) {
+                    Ok(preview)=>preview,
+                    Err(failure)=>{
+                        if let Some(id)=before.as_ref().and_then(|p|p["preview_id"].as_str()) {
+                            core.inner.lock().unwrap().previews.remove(id);
+                        }
+                        return Err(failure);
+                    }
+                };
+                let mut inner=core.inner.lock().unwrap();
+                inner.repair=Some(RepairFiles{object_id:old.id.clone(),report:report_path,algorithm:algorithm.clone(),tolerance,token:token.clone()});
+                inner.state.repair=Some(json!({"object_id":old.id,"token":token,"algorithm":algorithm,"tolerance_mm":tolerance,
+                    "report":report,"before":before,"after":after}));
+                inner.state.revision+=1;drop(inner);core.prune_previews();return Ok(());
+            }
+            let mut object=ObjectFiles{id:id("object"),report:report_path,preview:None,native_token:None,native_epoch:None,cpu_runtime:None};
+            let (_,preview)=core.prepare(&mut object,&root)?;object.preview=preview;
+            let mut guard=PreparedRollback{core:core.clone(),token:object.native_token.clone(),epoch:object.native_epoch.clone(),
+                preview_id:object.preview.as_ref().and_then(|p|p["preview_id"].as_str().map(str::to_owned)),committed:false};
+            core.release_native(old.native_token,old.native_epoch.as_deref())?;
+            let mut inner=core.inner.lock().unwrap();
+            inner.state.cpu_runtime=object.cpu_runtime.clone();
+            inner.state.object=Some(json!({"id":object.id,"display_name":record["display_name"],"report":report,"preview":object.preview}));
+            inner.object=Some(object);inner.result=None;inner.state.result=None;inner.state.live_result=None;
+            inner.repair=None;inner.state.repair=None;inner.state.revision+=1;guard.committed=true;
+            drop(inner);core.prune_previews();core.phase(&op,"validating");Ok(())
         });
         Ok(receipt)
     }
@@ -882,6 +996,9 @@ impl Core {
         validate_settings(&settings)?;
         let (receipt, root, (object,clock)) =
             self.begin_with("solve", Some(settings.clone()), |inner| {
+                if inner.repair.is_some() {
+                    return Err(error("REPAIR_PENDING", "Accept or reject the repair preview before packing."));
+                }
                 let record =
                     inner.state.object.as_ref().ok_or_else(|| {
                         error("ASSET_REQUIRED", "Import an accepted object first.")
@@ -1079,6 +1196,7 @@ impl Core {
         inner.transitioning = false;
         outcome?;
         inner.object = None;
+        inner.repair = None; inner.state.repair = None;
         inner.result = None;
         inner.previews.clear();
         inner.stop_file = None;
@@ -1096,6 +1214,8 @@ impl Core {
     fn prune_previews(&self) {
         let mut inner = self.inner.lock().unwrap();
         let ids = [
+            inner.state.repair.as_ref().and_then(|r|r["before"]["preview_id"].as_str()).map(str::to_owned),
+            inner.state.repair.as_ref().and_then(|r|r["after"]["preview_id"].as_str()).map(str::to_owned),
             inner.state.live_result.as_ref().and_then(|live|live["preview"]["preview_id"].as_str()).map(str::to_owned),
             inner
                 .object
@@ -1311,7 +1431,7 @@ impl Core {
             let report_path = extracted.join("object.report.json"); let report = security::json(&report_path, REPORT_LIMIT)?;
             let object_id = id("object");
             let mut object = ObjectFiles { id: object_id.clone(), report: report_path, preview: None, native_token: None, native_epoch: None, cpu_runtime: None };
-            let (_, preview) = core.prepare(&mut object, &draft, &root)?; object.preview = preview.clone();
+            let (_, preview) = core.prepare(&mut object, &root)?; object.preview = preview.clone();
             let mut prepared_guard=PreparedRollback {core:core.clone(),token:object.native_token.clone(),epoch:object.native_epoch.clone(),preview_id:object.preview.as_ref().and_then(|value|value["preview_id"].as_str().map(str::to_owned)),committed:false};
             let mut result_files = None; let mut result_snapshot = None;
             if !manifest["best_result"].is_null() {
@@ -1338,6 +1458,7 @@ impl Core {
             let mut inner = core.inner.lock().unwrap(); inner.state.cpu_runtime=object.cpu_runtime.clone(); inner.object = Some(object.clone()); inner.result = result_files;
             prepared_guard.committed=true;
             inner.state.live_result=None;
+            inner.repair=None; inner.state.repair=None;
             inner.state.object = Some(json!({"id":object_id,"display_name":name,"report":report,"preview":object.preview}));
             inner.state.result = result_snapshot; inner.state.draft_settings = Some(draft);
             let result_id = inner.result.as_ref().map(|r| r.id.clone());
@@ -1471,6 +1592,7 @@ mod tests {
             session_id: "session".into(),
             revision: 0,
             object: None,
+            repair: None,
             draft_settings: None,
             result: None,
             live_result: None,
@@ -1490,6 +1612,7 @@ mod tests {
             }),
         };
         let mut inner = Inner {
+            repair: None,
             state,
             object: Some(ObjectFiles {
                 id: "object".into(),

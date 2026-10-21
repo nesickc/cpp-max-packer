@@ -567,9 +567,9 @@ Json solid_reference(
 
 Json repair_recipe(const std::shared_ptr<const RepairProposal>& proposal, const std::string& source_hash,
                    std::uint64_t source_size, const std::string& role, const std::string& units, double tolerance,
-                   const std::string& before_hash, const std::string& after_hash)
+                   const std::string& before_hash, const std::string& after_hash, bool reconstruct = false)
 {
-    return {
+    Json recipe = {
         { "schema_version",      1                                                           },
         { "source",              { { "sha256", source_hash }, { "byte_size", source_size } } },
         { "options",
@@ -585,6 +585,30 @@ Json repair_recipe(const std::shared_ptr<const RepairProposal>& proposal, const 
             { "diagnostics", full_diagnostics_json(proposal->candidate()->report()) } }      },
         { "max_displacement_mm", proposal->max_displacement_mm()                             }
     };
+    if (reconstruct) {
+        recipe["schema_version"] = 2;
+        recipe["algorithm"] = "manifold-even-odd-level-set-v1";
+        recipe["library_version"] = "3.2.1";
+        recipe["options"]["resolution_mm"] = tolerance;
+        recipe["options"]["isovalue"] = 0.01;
+        recipe["options"]["simplify_mm"] = tolerance * 1e-6;
+        recipe["options"].erase("weld_tolerance_mm");
+        recipe.erase("max_displacement_mm");
+    }
+    return recipe;
+}
+
+double surface_area(MeshView mesh)
+{
+    double area = 0;
+    for (const auto& face : mesh.triangles) {
+        const auto& a = mesh.vertices[face[0]];
+        const auto& b = mesh.vertices[face[1]];
+        const auto& c = mesh.vertices[face[2]];
+        const Vec3 u { b[0] - a[0], b[1] - a[1], b[2] - a[2] }, v { c[0] - a[0], c[1] - a[1], c[2] - a[2] };
+        area += 0.5 * std::hypot(u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]);
+    }
+    return area;
 }
 }  // namespace
 
@@ -603,7 +627,17 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
         }
         const auto recipe =
             Json::parse(std::string_view(reinterpret_cast<const char*>(retained.data()), retained.size()));
-        const auto tolerance = recipe.at("options").at("weld_tolerance_mm").get<double>();
+        const bool reconstruct = recipe.at("schema_version") == 2;
+        if (reconstruct && (recipe.value("algorithm", "") != "manifold-even-odd-level-set-v1" ||
+                            recipe.value("library_version", "") != "3.2.1")) {
+            return Error { "SCHEMA_UNSUPPORTED", "Unsupported repair algorithm or library version.", Json::object(),
+                           true };
+        }
+        if (!reconstruct && recipe.at("schema_version") != 1) {
+            return Error { "SCHEMA_UNSUPPORTED", "Unsupported repair recipe version.", Json::object(), true };
+        }
+        const auto tolerance =
+            recipe.at("options").at(reconstruct ? "resolution_mm" : "weld_tolerance_mm").get<double>();
         if (!std::isfinite(tolerance) || tolerance <= 0 || report.at("repair_record").at("accepted_by_user") != true) {
             return bad();
         }
@@ -628,16 +662,19 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
         if (consumed > max_working_bytes) {
             return Error { "MEMORY_LIMIT", "Repair scratch exceeds the remaining allowance.", Json::object(), true };
         }
-        geometry::WeldOptions options { tolerance, 10'000'000, max_working_bytes - consumed };
-        const auto admission = geometry::estimate_weld_admission(*draft, options, control);
+        geometry::RepairOptions options { tolerance, 10'000'000, max_working_bytes - consumed };
+        if (reconstruct) {
+            options.algorithm = geometry::RepairAlgorithm::manifold_reconstruct;
+        }
+        const auto admission = geometry::estimate_repair_admission(*draft, options, control);
         if (const auto* failure = std::get_if<geometry::ImportFailure>(&admission)) {
             return Error { failure->code, failure->message, { { "reason", failure->reason } }, true };
         }
-        const auto native_bound = std::get<geometry::ImportAdmission>(admission).working_bytes_upper_bound;
+        auto native_bound = std::get<geometry::ImportAdmission>(admission).working_bytes_upper_bound;
         if (detail::asset_budget) {
             detail::asset_budget->charge(native_bound);
         }
-        auto proposed = geometry::propose_weld(draft, options, control);
+        auto proposed = geometry::propose_repair(draft, options, control);
         if (const auto* failure = std::get_if<geometry::ImportFailure>(&proposed);
             failure && failure->code == "MEMORY_LIMIT") {
             return Error { failure->code, failure->message, { { "reason", failure->reason } }, true };
@@ -646,6 +683,15 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
             return bad();
         }
         const auto proposal = std::get<std::shared_ptr<const RepairProposal>>(proposed);
+        if (detail::asset_budget) {
+            const auto retained_bound = proposal->resident_buffer_bytes();
+            if (!retained_bound) {
+                throw detail::AssetMemoryLimit {};
+            }
+            detail::asset_budget->release(native_bound);
+            detail::asset_budget->charge(*retained_bound);
+            native_bound = *retained_bound;
+        }
         Bytes before = serialize_ply(draft->mesh()), after = serialize_ply(proposal->candidate()->mesh());
         const auto before_digest = sha256(before), after_digest = sha256(after);
         if (!std::holds_alternative<std::string>(before_digest) || !std::holds_alternative<std::string>(after_digest)) {
@@ -653,10 +699,10 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
         }
         const auto& before_hash = std::get<std::string>(before_digest);
         const auto& after_hash = std::get<std::string>(after_digest);
-        const auto expected =
-            bytes_from_string(repair_recipe(proposal, report.at("source").at("sha256"), source_size, report.at("role"),
-                                            report.at("source").at("units"), tolerance, before_hash, after_hash)
-                                  .dump());
+        const auto expected = bytes_from_string(repair_recipe(proposal, report.at("source").at("sha256"), source_size,
+                                                              report.at("role"), report.at("source").at("units"),
+                                                              tolerance, before_hash, after_hash, reconstruct)
+                                                    .dump());
         if (retained.size() != expected.size() || !std::equal(retained.begin(), retained.end(), expected.begin())) {
             return bad();
         }
@@ -686,6 +732,12 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
 
 std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectRequest& request) {
     try {
+        if (request.weld_tolerance_mm && request.reconstruct_resolution_mm) {
+            return failure("INVALID_REQUEST", "Choose one repair algorithm.");
+        }
+        const auto tolerance =
+            request.reconstruct_resolution_mm ? request.reconstruct_resolution_mm : request.weld_tolerance_mm;
+        const bool reconstruct = request.reconstruct_resolution_mm.has_value();
         detail::AssetBudget budget(request.max_working_bytes);
         // Path/artifact bookkeeping, hashing, bounded report scalar metadata, and
         // the public CLI envelope remain live throughout native inspection.
@@ -718,12 +770,11 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
         if (request.scale_mm && (!std::isfinite(*request.scale_mm) || *request.scale_mm <= 0.0)) {
             return failure("INVALID_REQUEST", "Custom scale must be finite and positive.");
         }
-        if (request.weld_tolerance_mm &&
-            (!std::isfinite(*request.weld_tolerance_mm) || *request.weld_tolerance_mm <= 0.0)) {
+        if (tolerance && (!std::isfinite(*tolerance) || *tolerance <= 0.0)) {
             return failure("INVALID_REQUEST", "Weld tolerance must be finite and positive.");
         }
-        if (request.accept_repair && !request.weld_tolerance_mm) {
-            return failure("INVALID_REQUEST", "Repair acceptance requires the original weld tolerance.");
+        if (request.accept_repair && !tolerance) {
+            return failure("INVALID_REQUEST", "Repair acceptance requires the original repair tolerance.");
         }
 
         AssetRole role;
@@ -789,17 +840,20 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
         std::shared_ptr<const RepairProposal> proposal;
         std::shared_ptr<const AcceptedSolid> accepted;
 
-        if (request.weld_tolerance_mm) {
+        if (tolerance) {
             // Weld's conservative bound includes the retained original draft once.
             // Replace the inspection phase bound before admitting repair scratch.
             budget.release(native_bound);
-            geometry::WeldOptions weld_options { *request.weld_tolerance_mm, 10'000'000, budget.remaining() };
-            const auto weld_admission = geometry::estimate_weld_admission(*draft, weld_options);
+            geometry::RepairOptions weld_options { *tolerance, 10'000'000, budget.remaining() };
+            if (reconstruct) {
+                weld_options.algorithm = geometry::RepairAlgorithm::manifold_reconstruct;
+            }
+            const auto weld_admission = geometry::estimate_repair_admission(*draft, weld_options);
             if (const auto* problem = std::get_if<ImportFailure>(&weld_admission)) {
                 return import_failure(*problem);
             }
             budget.charge(std::get<geometry::ImportAdmission>(weld_admission).working_bytes_upper_bound);
-            auto proposal_result = geometry::propose_weld(draft, weld_options);
+            auto proposal_result = geometry::propose_repair(draft, weld_options);
             if (std::holds_alternative<ImportFailure>(proposal_result)) {
                 return import_failure(std::get<ImportFailure>(proposal_result));
             }
@@ -808,6 +862,14 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
             if (!candidate) {
                 return failure("INTERNAL_ERROR", "The repair proposal has no candidate draft.", 4);
             }
+            // Library/analyzer scratch is gone. Publication retains only the
+            // two immutable drafts, plus separately charged report/artifact bytes.
+            const auto retained_bound = proposal->resident_buffer_bytes();
+            if (!retained_bound) {
+                throw detail::AssetMemoryLimit {};
+            }
+            budget.release(std::get<geometry::ImportAdmission>(weld_admission).working_bytes_upper_bound);
+            budget.charge(*retained_bound);
 
             Bytes candidate_bytes = serialize_ply(candidate->mesh());
             auto candidate_hash_result = sha256(candidate_bytes);
@@ -818,8 +880,8 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
             const auto candidate_path = assets_directory / (candidate_hash + ".ply");
 
             const Json proposal_record =
-                repair_recipe(proposal, source_hash, source_bytes.size(), request.role, request.units,
-                              *request.weld_tolerance_mm, draft_hash, candidate_hash);
+                repair_recipe(proposal, source_hash, source_bytes.size(), request.role, request.units, *tolerance,
+                              draft_hash, candidate_hash, reconstruct);
             Bytes proposal_bytes = bytes_from_string(proposal_record.dump());
             auto token_result = sha256(proposal_bytes);
             if (std::holds_alternative<InspectFailure>(token_result)) {
@@ -837,10 +899,18 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
                 { "after",
                  { { "path", portable_path(std::filesystem::path("assets") / candidate_path.filename()) },
                     { "sha256", candidate_hash } }                                                                  },
-                { "tolerance_mm",        *request.weld_tolerance_mm                                                 },
+                { "tolerance_mm",        *tolerance                                                                 },
                 { "max_displacement_mm", proposal->max_displacement_mm()                                            },
                 { "candidate_status",    validity_name(candidate->report().validity)                                }
             };
+            proposal_reference["algorithm"] = reconstruct ? "manifold" : "weld";
+            proposal_reference["before_diagnostics"] = full_diagnostics_json(draft->report());
+            proposal_reference["after_diagnostics"] = full_diagnostics_json(candidate->report());
+            proposal_reference["surface_area_before_mm2"] = surface_area(draft->mesh());
+            proposal_reference["surface_area_after_mm2"] = surface_area(candidate->mesh());
+            if (reconstruct) {
+                proposal_reference["max_displacement_mm"] = nullptr;
+            }
 
             if (request.accept_repair && *request.accept_repair != *proposal_token) {
                 return failure("ASSET_MISMATCH", "Repair acceptance token does not match this source and options.");

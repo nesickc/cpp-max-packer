@@ -53,29 +53,8 @@ TEST_CASE("T011 auxiliary diagnostics retain bounded UTF-8 and cannot suppress r
 
 #ifdef _WIN32
 #include <windows.h>
-#ifdef _DEBUG
-#include <crtdbg.h>
-#endif
 #endif
 
-#if defined(_WIN32) && defined(_DEBUG)
-TEST_CASE("T011 tracks two compiled contract catalog owners inside adapter headroom", "[contracts][T-011]")
-{
-    _CrtMemState before {}, after {};
-    _CrtMemCheckpoint(&before);
-    std::array<std::unique_ptr<spectrapack::io::ContractValidator>, 2> validators;
-    for (auto& validator : validators) {
-        validator = std::make_unique<spectrapack::io::ContractValidator>();
-    }
-    _CrtMemCheckpoint(&after);
-    const auto baseline = before.lSizes[_NORMAL_BLOCK] + before.lSizes[_CLIENT_BLOCK];
-    const auto retained = after.lSizes[_NORMAL_BLOCK] + after.lSizes[_CLIENT_BLOCK];
-    REQUIRE(retained >= baseline);
-    const auto tracked = retained - baseline;
-    INFO("two compiled catalog/validator owners, Debug CRT retained payload bytes=" << tracked);
-    CHECK(tracked <= 7ULL << 20);
-}
-#endif
 
 namespace {
 

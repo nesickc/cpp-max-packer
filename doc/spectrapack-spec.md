@@ -1,8 +1,8 @@
 # SpectraPack — application specification
 
-**Version:** 0.3 • **Date:** 17 October 2026 • **Status:** development baseline; implementation status is tracked separately
+**Version:** 0.3 • **Date:** 18 October 2026 • **Status:** development baseline; implementation status is tracked separately
 
-This document specifies a local Windows application that packs as many rigid copies of one STL model as it can find into a fixed container, displays the packing, and exports the count and placements. The algorithm is based on spectral packing and the psacking reference implementation. Version 1.0 (**Core**) is a C++ CPU engine, analytic box containers, mesh diagnostics, a desktop UI and a fixed quality scoreboard. AMD-compatible GPU acceleration, STL containers, library repair and crash recovery are **Later** (v1.x).
+This document specifies a local Windows application that packs as many rigid copies of one STL model as it can find into a fixed container, displays the packing, and exports the count and placements. The algorithm is based on spectral packing and the psacking reference implementation. Version 1.0 (**Core**) is a C++ CPU engine, analytic box containers, mesh diagnostics, a desktop UI and a fixed quality scoreboard. AMD-compatible GPU acceleration, STL containers and crash recovery are **Later** (v1.x).
 
 This is a development specification, not an implementation or a claim of measured performance. It fixes what the product must do and the validity contract. It does not fix how the search works: algorithm parameters and strategies live in [docs/ALGORITHM.md](../docs/ALGORITHM.md) and may change whenever the scoreboard improves. “MUST” is a requirement for the tier it belongs to; “SHOULD” permits a documented exception.
 
@@ -51,7 +51,7 @@ The solution is **geometric packing**. v1 does not certify gravity stability, su
 
 **Core (v1.0)** is every requirement marked Core in §3: a usable Windows desktop application and CLI that imports an STL, packs it into a box on the CPU with independently validated placements, shows the result, and saves/exports it. Packing quality is measured on the §9 scoreboard.
 
-**Later (v1.x)** covers requirements marked Later: Vulkan/AMD acceleration and its qualification, STL containers, upright/free-3D rotation search, library-backed repair, checkpoint recovery after a crash, fault-injection suites, deterministic fixed-work replay and Windows 10 qualification. Their text stays in this spec as the design target; they do not block v1.0.
+**Later (v1.x)** covers requirements marked Later: Vulkan/AMD acceleration and its qualification, STL containers, upright/free-3D rotation search, checkpoint recovery after a crash, fault-injection suites, deterministic fixed-work replay and Windows 10 qualification. Their text stays in this spec as the design target; they do not block v1.0.
 
 Beyond v1.x: multiple distinct object types, quantities or values per type, physical assembly constraints, distributed search, Linux/macOS installers, interactive manual placement editing and 3MF export.
 
@@ -67,7 +67,7 @@ Each requirement is a MUST for its tier. Acceptance case identifiers refer to se
 | SYS-04 | Core | Perform import, solving, viewing, project persistence, and export locally without network access. | AT-01, AT-15 |
 | GEO-01 | Core | Import ASCII and binary STL, including files with multiple solid components; detect content without relying on the extension or the word `solid` alone. | AT-03 |
 | GEO-02 | Core | Require an explicit unit selection, preserve source coordinates through recorded transforms, and never resize to fit automatically. | AT-03, AT-14 |
-| GEO-03 | Core / Later | Core: diagnose mesh validity, apply safe cleanup, and preserve the original file. Later: bounded tolerance welding and library-backed reconstruction as explicitly accepted repairs. | AT-04 |
+| GEO-03 | Core | Diagnose mesh validity, apply safe cleanup, preserve the original file, and offer bounded tolerance welding and library-backed reconstruction as explicitly accepted repairs. Unsupported or ambiguous geometry remains rejected. | AT-04 |
 | GEO-04 | Core | Maintain distinct authoritative geometry, display LODs, and search representations. Simplification must not weaken final acceptance. | AT-05, AT-06 |
 | GEO-05 | Core / Later | Core: analytic boxes. Later: closed STL interior volumes, including concave containers and excluded cavities. | AT-07, AT-08 |
 | GEO-06 | Core | Validate original-solid overlap, containment, and both clearances, including zero-clearance contact, within the job budget; use a documented numerical tolerance independent of voxel pitch. | AT-06, AT-07, AT-09 |
@@ -342,6 +342,8 @@ Use UTF-8 newline-delimited JSON over the sidecar's stdin/stdout. stdout contain
 
 Required methods: `capabilities.get`, `asset.import`, `asset.accept_repair`, `job.preflight`, `job.start`, `job.stop`, `job.continue`, `job.status`, `project.open`, `project.save`, `result.validate`, and `result.export`. Long operations acknowledge a task/job ID promptly and subsequently emit events. Only one solver job runs per engine process in v1. Duplicate request IDs must not start duplicate jobs.
 
+The desktop repair command proposes a method and millimetre parameter, or accepts/rejects the exact current proposal token. A pending proposal carries separate before/after preview handles; it cannot be packed. Import and repair preserve editor-owned settings, including unsaved and in-flight edits. Successful asset replacement clears old results; failure/cancellation retains the previous state. New deliberately restores defaults and Open restores saved settings. Reconstruction recipes are versioned separately from weld recipes; [ADR 0020](../spec/decisions/0020-explicit-desktop-repair.md) defines deterministic replay and compatibility.
+
 Version-1 schema, framing, replay, null-ID transport errors, asset-handle grammar and compatibility rules are fixed in [ADR 0004](../spec/decisions/0004-versioned-contracts.md). A record limit counts bytes before LF, including an optional CR. Malformed complete records are recoverable; oversized records and nonempty EOF fragments close with exit 2. Requests with trusted envelopes retain correlation IDs; errors before a trustworthy envelope exists use `request_id: null`. The bounded per-session replay cache never evicts IDs; exhaustion closes with a nonrecoverable resource error. Unimplemented required methods return `METHOD_UNSUPPORTED` and must not fabricate successful work. The authoritative schemas and generated types implement these initial contracts; contract consistency cannot establish physical validity.
 
 An asset import task completes with its asset ID, source/accepted hashes, frame and dimension metadata, diagnostic report, and a scoped shared preview-mesh reference. The shell grants access only to user-selected/project-owned files and launches the fixed bundled sidecar; protocol arguments are data, never shell command fragments.
@@ -448,7 +450,7 @@ Timed runs on one machine vary; compare repeated runs before claiming an improve
 
 These are required implementation tests, not results obtained while writing this document. Test names and fixtures become permanent regression identifiers. Each test must check an observable contract, not merely repeat an internal function's implementation.
 
-Tiers: AT-02 and the GPU parts of AT-12 and AT-16 are Later, as are AT-13's kill-during-checkpoint recovery, AT-15's AMD-host frame-time measurement and STL-container journey, AT-04's library repair, AT-01's Windows 10 run and AT-17's Benchy suite. For Core, AT-17 is satisfied by the §9 scoreboard with every result validated.
+Tiers: AT-02 and the GPU parts of AT-12 and AT-16 are Later, as are AT-13's kill-during-checkpoint recovery, AT-15's AMD-host frame-time measurement and STL-container journey, AT-01's Windows 10 run and AT-17's Benchy suite. For Core, AT-17 is satisfied by the §9 scoreboard with every result validated.
 
 | ID | Scenario and passing condition |
 | --- | --- |
@@ -529,4 +531,4 @@ Write a decision record only for choices that are hard to reverse: the validity 
 
 **Core v1.0:** a user on Windows 11 can install the application, import a valid STL, enter a box, run a bounded CPU search, inspect the best packing, stop/continue it, save the project and export a revalidated count and arrangement. Every placement respects the original accepted geometry, selected rotations, fixed physical container and clearances. Results are labeled best found, and the scoreboard is published with the release.
 
-**v1.x:** adds the Later tier, including Vulkan acceleration qualified on an actual Windows AMD desktop, STL containers and library-backed repair.
+**v1.x:** adds the Later tier, including Vulkan acceleration qualified on an actual Windows AMD desktop, STL containers and crash recovery.

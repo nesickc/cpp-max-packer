@@ -423,7 +423,8 @@ TEST_CASE("T011 controlled geometry cannot authorize expired preparation", "[sol
     const auto inspected = geo::inspect_stl(bytes, { geo::AssetRole::object, geo::Units::mm }, control);
     REQUIRE(std::holds_alternative<geo::ImportFailure>(inspected));
     CHECK(std::get<geo::ImportFailure>(inspected).code == "DEADLINE_EXCEEDED");
-    const auto repaired = geo::propose_weld(std::get<std::shared_ptr<const geo::AssetDraft>>(draft), { .01 }, control);
+    const auto repaired =
+        geo::propose_repair(std::get<std::shared_ptr<const geo::AssetDraft>>(draft), { .01 }, control);
     REQUIRE(std::holds_alternative<geo::ImportFailure>(repaired));
     CHECK(std::get<geo::ImportFailure>(repaired).code == "DEADLINE_EXCEEDED");
     const auto lod = geo::make_display_lod(native_context->object(), {}, {}, control);

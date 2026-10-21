@@ -1000,8 +1000,13 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "before": { "$ref": "#/definitions/preview" },
         "after": { "$ref": "#/definitions/preview" },
         "tolerance_mm": { "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/positive" },
-        "max_displacement_mm": { "type": "number", "minimum": 0 },
-        "candidate_status": { "enum": ["valid", "invalid", "indeterminate"] }
+        "max_displacement_mm": { "type": ["number", "null"], "minimum": 0 },
+        "candidate_status": { "enum": ["valid", "invalid", "indeterminate"] },
+        "algorithm": { "enum": ["weld", "manifold"] },
+        "before_diagnostics": { "$ref": "#/definitions/diagnostics" },
+        "after_diagnostics": { "$ref": "#/definitions/diagnostics" },
+        "surface_area_before_mm2": { "type": "number", "minimum": 0 },
+        "surface_area_after_mm2": { "type": "number", "minimum": 0 }
       }, "additionalProperties": false
     },
     "source": {
@@ -2830,7 +2835,8 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
             "solve",
             "open",
             "save",
-            "export"
+            "export",
+            "repair"
           ]
         },
         "phase": {
@@ -3023,6 +3029,16 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
           "anyOf": [
             {
               "$ref": "#/definitions/LiveResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "repair": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/RepairPreview"
             },
             {
               "type": "null"
@@ -3362,6 +3378,107 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "last_cause",
         "last_action"
       ]
+    },
+    "RepairPreview": {
+      "type": "object",
+      "required": [
+        "object_id",
+        "token",
+        "algorithm",
+        "tolerance_mm",
+        "report",
+        "before",
+        "after"
+      ],
+      "properties": {
+        "object_id": {
+          "type": "string"
+        },
+        "token": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/sha256"
+        },
+        "algorithm": {
+          "enum": [
+            "weld",
+            "manifold"
+          ]
+        },
+        "tolerance_mm": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "report": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/assets.schema.json"
+        },
+        "before": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Preview"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "after": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/Preview"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "RepairRequest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "algorithm",
+            "tolerance_mm"
+          ],
+          "properties": {
+            "action": {
+              "const": "propose"
+            },
+            "algorithm": {
+              "enum": [
+                "weld",
+                "manifold"
+              ]
+            },
+            "tolerance_mm": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "action",
+            "token"
+          ],
+          "properties": {
+            "action": {
+              "enum": [
+                "accept",
+                "reject"
+              ]
+            },
+            "token": {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/sha256"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
     }
   },
   "oneOf": [
@@ -3400,6 +3517,12 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
     },
     {
       "$ref": "#/definitions/ProjectManifest"
+    },
+    {
+      "$ref": "#/definitions/RepairRequest"
+    },
+    {
+      "$ref": "#/definitions/RepairPreview"
     }
   ]
 }
