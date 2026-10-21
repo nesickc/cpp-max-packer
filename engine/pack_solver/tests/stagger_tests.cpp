@@ -464,12 +464,18 @@ TEST_CASE("Timed mixed interlocking alternates permitted upside-down copies",
           "[solver][interlocking][mixed-interlocking]")
 {
     const bool flipped_allowed = GENERATE(false, true);
+    const double scale = GENERATE(1., 100.);
     auto mesh = geo::test_support::cuboid({ -.5, -1.25, -.5 }, { .5, 1.25, .5 });
     geo::test_support::append_cuboid(mesh, { .6, -.2, -.9 }, { 1.5, .2, -.8 });
     geo::test_support::append_cuboid(mesh, { -1.5, -.2, -.9 }, { -.6, .2, -.8 });
     geo::test_support::append_cuboid(mesh, { -.1, -.1, .8 }, { .1, .1, .9 });
+    for (auto& vertex : mesh.vertices) {
+        for (auto& coordinate : vertex) {
+            coordinate *= scale;
+        }
+    }
     geo::Constraints constraints;
-    constraints.pair_clearance_mm = constraints.wall_clearance_mm = .1;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = .1 * scale;
     constraints.orientations.mode = geo::OrientationMode::catalog;
     constraints.orientations.catalog_xyzw = {
         { 0, 0, 0, 1 }
@@ -477,8 +483,9 @@ TEST_CASE("Timed mixed interlocking alternates permitted upside-down copies",
     if (flipped_allowed) {
         constraints.orientations.catalog_xyzw.push_back({ 1, 0, 0, 0 });
     }
-    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(geo::make_validation_context(
-        geo::test_support::accepted(mesh, geo::AssetRole::object), geo::BoxDimensions { 5.3, 3, 2.2 }, constraints));
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(
+        geo::make_validation_context(geo::test_support::accepted(mesh, geo::AssetRole::object),
+                                     geo::BoxDimensions { 5.3 * scale, 3 * scale, 2.2 * scale }, constraints));
     const auto baseline = sol::run_aabb_baseline(context, {}, {});
     REQUIRE(baseline.best);
     REQUIRE(baseline.best->score.count == 1);
@@ -494,4 +501,38 @@ TEST_CASE("Timed mixed interlocking alternates permitted upside-down copies",
         const auto& copies = result.run.best->solution->copies();
         CHECK(copies[0].rotation_xyzw != copies[1].rotation_xyzw);
     }
+}
+
+TEST_CASE("Relative paired layers nest sheared prisms at different physical scales",
+          "[solver][interlocking][paired-layers]")
+{
+    const double scale = GENERATE(1., 100.);
+    auto mesh = geo::test_support::cuboid({ -2, -.75, -.5 }, { 2, .75, .5 });
+    for (auto& vertex : mesh.vertices) {
+        vertex[1] -= 2 * vertex[2];
+        for (auto& coordinate : vertex) {
+            coordinate *= scale;
+        }
+    }
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = .05 * scale;
+    constraints.orientations.mode = geo::OrientationMode::catalog;
+    constraints.orientations.catalog_xyzw = {
+        { 0, 0, 0, 1 },
+        { 1, 0, 0, 0 }
+    };
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(
+        geo::make_validation_context(geo::test_support::accepted(mesh, geo::AssetRole::object),
+                                     geo::BoxDimensions { 4.2 * scale, 4.2 * scale, 1.9 * scale }, constraints));
+    const auto baseline = sol::run_aabb_baseline(context, {}, {});
+    REQUIRE(baseline.best);
+    REQUIRE(baseline.best->score.count == 1);
+    sol::SpectralLimits limits;
+    limits.resource_mode = sol::ResourceMode::timed;
+    sol::RunControl control;
+    control.deadline = control.now() + std::chrono::seconds(5);
+    const auto result = sol::run_cpu_spectral(context, { {}, .001 }, limits, control, {}, baseline.best->solution);
+    REQUIRE(result.run.best);
+    CHECK(result.run.best->score.count == 2);
+    CHECK(geo::revalidate(result.run.best->solution).validated_solution);
 }

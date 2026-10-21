@@ -16,6 +16,10 @@ Updated 2026-10-19. Details belong in PRs and `.local/` logs.
   poses, clipping and selection. Original bytes and cleaned source geometry remain
   separate from packing geometry through Save/Open. STL export retains the source
   and verifies enclosure after float32 quantization.
+- **Packing refinement:** paired layers use relative sideways and height offsets;
+  finite layouts screen only existing row/layer neighbors. Validator v6 resolves
+  inexact shell witnesses without loosening containment or clearance. Spatial
+  triangle bounds keep dense results within the fresh-validation save deadline.
 - **Actual models:** Benchy and matrice both produce valid envelopes in about six
   seconds (11,030 and 7,486 triangles), pack one copy in a fitted test box, survive
   Save/Open and export their 225,102 and 336,126 source triangles. Evidence remains
@@ -50,10 +54,15 @@ History: [benchmarks/SCOREBOARD.md](../benchmarks/SCOREBOARD.md).
    Refused or indeterminate enclosure cannot enable packing. No shrinking to fit.
 2. Reconstruction remains approximate and can erase features; its resolution is
    independent of packing pitch. Use the normal envelope action to retain source.
-3. The L-prism pair remains unfound. Results remain `best_found`.
+3. The L-prism pair remains unfound. The bracket reaches 50 copies at 1/1 mm
+   clearance in 400 x 340 x 285 mm. Its known 50-copy physical layout in the
+   smaller box remains a target: zero-clearance packing improved from 30 to 36
+   in its exterior-size upper-bound box. Actual interior dimensions are unknown.
+   Results remain `best_found`.
 4. `10_kg_np.stl` is 400 x 350 x 285 mm; the real Nova Post box is
    400 x 340 x 285 mm. Use box dimensions for that comparison.
 
-Envelope work is stacked on open PR #24 (`feature/import-repair`). See
+Packing refinement is stacked on open PR #25 (envelopes), itself based on #24
+(`feature/import-repair`). See
 [ADR 0021](../spec/decisions/0021-packing-envelopes.md), [ALGORITHM.md](../docs/ALGORITHM.md),
 [BUILDING.md](../docs/BUILDING.md) and [AGENTS.md](../AGENTS.md).

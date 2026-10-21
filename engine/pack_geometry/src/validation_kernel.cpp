@@ -1627,16 +1627,59 @@ std::array<std::array<AxisCoordinate,3>,3> exact_triangle_points(
   return {solid.exact_vertices[face[0]],solid.exact_vertices[face[1]],solid.exact_vertices[face[2]]};
 }
 
-bool triangle_bounds_disjoint(const PlacedSolid& first,const Triangle& a,
-                              const PlacedSolid& second,const Triangle& b) noexcept {
-  for (int axis=0;axis!=3;++axis) {
-    double alo=std::numeric_limits<double>::infinity(),ahi=-alo;
-    double blo=alo,bhi=-alo;
-    for (const auto v:a) { alo=std::min(alo,first.vertex_intervals[v][axis].low); ahi=std::max(ahi,first.vertex_intervals[v][axis].high); }
-    for (const auto v:b) { blo=std::min(blo,second.vertex_intervals[v][axis].low); bhi=std::max(bhi,second.vertex_intervals[v][axis].high); }
-    if (ahi<blo || bhi<alo) return true;
-  }
-  return false;
+constexpr std::size_t kTriangleBoundsBlock = 32;
+struct TriangleBounds {
+    Bounds bounds;
+    std::size_t face {};
+};
+struct BoundsBuildInterrupted {};
+
+void partition_triangle_bounds(std::span<TriangleBounds> triangles, Budget& budget)
+{
+    if (triangles.size() <= kTriangleBoundsBlock) {
+        return;
+    }
+    if (!budget.consume_work(6 * triangles.size())) {
+        throw BoundsBuildInterrupted {};
+    }
+    Bounds bounds = triangles.front().bounds;
+    for (const auto& triangle : triangles) {
+        for (int axis = 0; axis != 3; ++axis) {
+            bounds.min[axis] = std::min(bounds.min[axis], triangle.bounds.min[axis]);
+            bounds.max[axis] = std::max(bounds.max[axis], triangle.bounds.max[axis]);
+        }
+    }
+    int axis = 0;
+    for (int candidate = 1; candidate != 3; ++candidate) {
+        if (bounds.max[candidate] - bounds.min[candidate] > bounds.max[axis] - bounds.min[axis]) {
+            axis = candidate;
+        }
+    }
+    // Align splits to full blocks; the last block alone may be partial.
+    const auto middle =
+        std::max(kTriangleBoundsBlock, (triangles.size() / 2 / kTriangleBoundsBlock) * kTriangleBoundsBlock);
+    std::nth_element(triangles.begin(), triangles.begin() + middle, triangles.end(),
+                     [&](const TriangleBounds& first, const TriangleBounds& second) {
+        if (!budget.consume_work(1)) {
+            throw BoundsBuildInterrupted {};
+        }
+        if (first.bounds.min[axis] != second.bounds.min[axis]) {
+            return first.bounds.min[axis] < second.bounds.min[axis];
+        }
+        return first.face < second.face;
+    });
+    partition_triangle_bounds(triangles.first(middle), budget);
+    partition_triangle_bounds(triangles.subspan(middle), budget);
+}
+
+bool bounds_disjoint(const Bounds& first, const Bounds& second) noexcept
+{
+    for (int axis = 0; axis != 3; ++axis) {
+        if (first.max[axis] < second.min[axis] || second.max[axis] < first.min[axis]) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool triangle_row_bounds(const PlacedSolid& first, const Triangle& face, const PlacedSolid& second,
@@ -1666,46 +1709,70 @@ bool triangle_row_bounds(const PlacedSolid& first, const Triangle& face, const P
     return true;
 }
 
-bool triangle_solid_bounds_disjoint(const PlacedSolid& first, const Triangle& face,
-                                    const PlacedSolid& second) noexcept
+bool cache_triangle_bounds(const PlacedSolid& first, const PlacedSolid& second, std::vector<TriangleBounds>& cache,
+                           Budget& budget)
 {
-    Bounds row;
-    if (!triangle_row_bounds(first, face, second, row)) {
+    const auto mesh = second.prepared->asset->mesh();
+    const auto count = mesh.triangles.size();
+    const auto blocks = count / kTriangleBoundsBlock + (count % kTriangleBoundsBlock != 0);
+    if (count + blocks > cache.max_size()) {
         return false;
     }
-    for (int axis = 0; axis != 3; ++axis) {
-        if (row.max[axis] < second.conservative.bounds_mm.min[axis] ||
-            second.conservative.bounds_mm.max[axis] < row.min[axis]) {
-            return true;
+    try {
+        cache.resize(count + blocks);
+        for (std::size_t index = 0; index != count; ++index) {
+            if (!budget.consume_work(36) ||
+                !triangle_row_bounds(second, mesh.triangles[index], first, cache[index].bounds)) {
+                return false;
+            }
+            cache[index].face = index;
         }
+        partition_triangle_bounds(std::span<TriangleBounds>(cache).first(count), budget);
+        for (std::size_t index = 0; index != count; ++index) {
+            if (!budget.consume_work(6)) {
+                return false;
+            }
+            auto& block = cache[count + index / kTriangleBoundsBlock].bounds;
+            if (index % kTriangleBoundsBlock == 0) {
+                block = cache[index].bounds;
+            }
+            else {
+                for (int axis = 0; axis != 3; ++axis) {
+                    block.min[axis] = std::min(block.min[axis], cache[index].bounds.min[axis]);
+                    block.max[axis] = std::max(block.max[axis], cache[index].bounds.max[axis]);
+                }
+            }
+        }
+        return true;
     }
-    return false;
+    catch (const std::bad_alloc&) {
+        return false;
+    }
+    catch (const BoundsBuildInterrupted&) {
+        return false;
+    }
 }
 
-bool triangle_solid_farther_than(const PlacedSolid& first, const Triangle& face, const PlacedSolid& second,
-                                 double clearance) noexcept
+bool bounds_farther_than(const Bounds& first, const Bounds& second, double clearance, double requested_upper) noexcept
 {
-    Bounds row;
-    if (!(clearance >= 0.0) || !std::isfinite(clearance) || !triangle_row_bounds(first, face, second, row)) {
-        return false;
-    }
     constexpr auto infinity = std::numeric_limits<double>::infinity();
-    const double requested_upper = std::nextafter(clearance * clearance, infinity);
-    if (!std::isfinite(requested_upper)) {
-        return false;
-    }
     double squared_lower = 0.0;
     for (int axis = 0; axis != 3; ++axis) {
         double gap = 0.0;
-        if (row.max[axis] < second.conservative.bounds_mm.min[axis]) {
-            gap = second.conservative.bounds_mm.min[axis] - row.max[axis];
-        } else if (second.conservative.bounds_mm.max[axis] < row.min[axis]) {
-            gap = row.min[axis] - second.conservative.bounds_mm.max[axis];
+        if (first.max[axis] < second.min[axis]) {
+            gap = second.min[axis] - first.max[axis];
+        }
+        else if (second.max[axis] < first.min[axis]) {
+            gap = first.min[axis] - second.max[axis];
         }
         if (!std::isfinite(gap)) {
             return false;
         }
         const double gap_lower = std::max(0.0, std::nextafter(gap, -infinity));
+        // One certified axis gap already lower-bounds the Euclidean distance.
+        if (gap_lower > clearance) {
+            return true;
+        }
         const double square = gap_lower * gap_lower;
         if (!std::isfinite(square)) {
             return false;
@@ -1724,46 +1791,91 @@ BoundaryCheck check_boundaries(const PlacedSolid& first,const PlacedSolid& secon
                                Budget& budget) {
   const auto a_mesh=first.prepared->asset->mesh();
   const auto b_mesh=second.prepared->asset->mesh();
+  // Cache outward triangle bounds once per pair. Recomputing both triangles'
+  // bounds for every combination made dense layouts expensive to revalidate.
+  // Spatial groups reject distant triangles; unresolved leaves retain exact predicates.
+  const auto triangle_count = b_mesh.triangles.size();
+  const auto block_count = triangle_count / kTriangleBoundsBlock + (triangle_count % kTriangleBoundsBlock != 0);
+  constexpr auto maximum_bounds =
+      (std::numeric_limits<std::uint64_t>::max() - sizeof(std::vector<TriangleBounds>)) / sizeof(TriangleBounds);
+  if (triangle_count > maximum_bounds || block_count > maximum_bounds - triangle_count) {
+      return { BoundaryRelation::indeterminate, true };
+  }
+  ScratchCharge scratch(budget,
+                        sizeof(std::vector<TriangleBounds>) + (triangle_count + block_count) * sizeof(TriangleBounds));
+  if (!scratch.held()) {
+      return { BoundaryRelation::indeterminate, true };
+  }
+  std::vector<TriangleBounds> triangle_bounds;
+  if (!cache_triangle_bounds(first, second, triangle_bounds, budget)) {
+      return { BoundaryRelation::indeterminate, true };
+  }
   bool contact=false;
   for (const auto& a:a_mesh.triangles) {
     // Twelve logical units per axis cover checked row bounds and strict separation.
-    if (!budget.consume_work(36)) return {BoundaryRelation::indeterminate,true};
-    if (triangle_solid_bounds_disjoint(first,a,second)) continue;
-    for (const auto& b:b_mesh.triangles) {
-    if (!budget.consume_work(1)) return {BoundaryRelation::indeterminate,true};
-    if (triangle_bounds_disjoint(first,a,second,b)) continue;
-    if (!first.represented_world_exact || !second.represented_world_exact)
-      return {BoundaryRelation::indeterminate,true};
-    const auto at=triangle_points(first,a), bt=triangle_points(second,b);
-    exact::WorkBudget exact_budget{std::min<std::uint64_t>(100'000'000,budget.work_remaining())};
-    bool ambiguous=false;
-    for (int edge=0;edge!=3;++edge) {
-      const auto ab=exact::segment_triangle_crossing(at[edge],at[(edge+1)%3],bt,exact_budget);
-      const auto ba=exact::segment_triangle_crossing(bt[edge],bt[(edge+1)%3],at,exact_budget);
-      if (ab==exact::SegmentTriangleCrossing::crossing || ba==exact::SegmentTriangleCrossing::crossing) {
-        (void)budget.consume_work(exact_budget.used());
-        return {BoundaryRelation::transverse_crossing,false};
-      }
-      if (ab==exact::SegmentTriangleCrossing::uncertain || ba==exact::SegmentTriangleCrossing::uncertain) {
-        (void)budget.consume_work(exact_budget.used());
-        return {BoundaryRelation::indeterminate,true,exact_budget.exhausted()};
-      }
-      contact |= ab==exact::SegmentTriangleCrossing::boundary ||
-                 ba==exact::SegmentTriangleCrossing::boundary;
-      ambiguous |= ab==exact::SegmentTriangleCrossing::degenerate ||
-                   ba==exact::SegmentTriangleCrossing::degenerate;
+    Bounds row;
+    if (!budget.consume_work(36) || !triangle_row_bounds(first, a, second, row)) {
+        return { BoundaryRelation::indeterminate, true };
     }
-    if (ambiguous) {
-      constexpr std::array<int,3> none{{-1,-1,-1}};
-      const auto relation=exact::triangle_relation(at,bt,none,none,0,exact_budget);
-      if (relation==exact::TriangleRelation::uncertain) {
-        (void)budget.consume_work(exact_budget.used());
-        return {BoundaryRelation::indeterminate,true,exact_budget.exhausted()};
-      }
-      if (relation==exact::TriangleRelation::forbidden ||
-          relation==exact::TriangleRelation::shared_feature_only) contact=true;
+    if (bounds_disjoint(row, second.conservative.bounds_mm)) {
+        continue;
     }
-    if (!budget.consume_work(exact_budget.used())) return {BoundaryRelation::indeterminate,true};
+    for (std::size_t index = 0; index != b_mesh.triangles.size(); ++index) {
+        if (index % kTriangleBoundsBlock == 0) {
+            if (!budget.consume_work(1)) {
+                return { BoundaryRelation::indeterminate, true };
+            }
+            const auto& block = triangle_bounds[triangle_count + index / kTriangleBoundsBlock].bounds;
+            if (bounds_disjoint(row, block)) {
+                index = std::min(triangle_count, index + kTriangleBoundsBlock) - 1;
+                continue;
+            }
+        }
+        const auto& b = b_mesh.triangles[triangle_bounds[index].face];
+        if (!budget.consume_work(1)) {
+            return { BoundaryRelation::indeterminate, true };
+        }
+        if (bounds_disjoint(row, triangle_bounds[index].bounds)) {
+            continue;
+        }
+        if (!first.represented_world_exact || !second.represented_world_exact) {
+            return { BoundaryRelation::indeterminate, true };
+        }
+        const auto at = triangle_points(first, a), bt = triangle_points(second, b);
+        exact::WorkBudget exact_budget { std::min<std::uint64_t>(100'000'000, budget.work_remaining()) };
+        bool ambiguous = false;
+        for (int edge = 0; edge != 3; ++edge) {
+            const auto ab = exact::segment_triangle_crossing(at[edge], at[(edge + 1) % 3], bt, exact_budget);
+            const auto ba = exact::segment_triangle_crossing(bt[edge], bt[(edge + 1) % 3], at, exact_budget);
+            if (ab == exact::SegmentTriangleCrossing::crossing || ba == exact::SegmentTriangleCrossing::crossing) {
+                (void)budget.consume_work(exact_budget.used());
+                return { BoundaryRelation::transverse_crossing, false };
+            }
+            if (ab == exact::SegmentTriangleCrossing::uncertain || ba == exact::SegmentTriangleCrossing::uncertain) {
+                (void)budget.consume_work(exact_budget.used());
+                return { BoundaryRelation::indeterminate, true, exact_budget.exhausted() };
+            }
+            contact |= ab == exact::SegmentTriangleCrossing::boundary || ba == exact::SegmentTriangleCrossing::boundary;
+            ambiguous |=
+                ab == exact::SegmentTriangleCrossing::degenerate || ba == exact::SegmentTriangleCrossing::degenerate;
+        }
+        if (ambiguous) {
+            constexpr std::array<int, 3> none {
+                { -1, -1, -1 }
+            };
+            const auto relation = exact::triangle_relation(at, bt, none, none, 0, exact_budget);
+            if (relation == exact::TriangleRelation::uncertain) {
+                (void)budget.consume_work(exact_budget.used());
+                return { BoundaryRelation::indeterminate, true, exact_budget.exhausted() };
+            }
+            if (relation == exact::TriangleRelation::forbidden ||
+                relation == exact::TriangleRelation::shared_feature_only) {
+                contact = true;
+            }
+        }
+        if (!budget.consume_work(exact_budget.used())) {
+            return { BoundaryRelation::indeterminate, true };
+        }
     }
   }
   return {contact?BoundaryRelation::contact:BoundaryRelation::disjoint,false};
@@ -1970,6 +2082,22 @@ Decision local_point_in_material(Vec3 point,const PreparedSolid& target,
       const std::array<Vec3,3> triangle{{mesh.vertices[face[0]],
                                          mesh.vertices[face[1]],
                                          mesh.vertices[face[2]]}};
+      // Strict bounds separation also proves the exact dyadic segment misses
+      // this triangle; avoid an expensive determinant for unrelated faces.
+      if (!exact_budget.consume(18)) {
+          retry = true;
+          break;
+      }
+      bool disjoint = false;
+      for (int axis = 0; axis != 3; ++axis) {
+          const double low = std::min({ triangle[0][axis], triangle[1][axis], triangle[2][axis] });
+          const double high = std::max({ triangle[0][axis], triangle[1][axis], triangle[2][axis] });
+          disjoint =
+              disjoint || std::max(point[axis], endpoint[axis]) < low || std::min(point[axis], endpoint[axis]) > high;
+      }
+      if (disjoint) {
+          continue;
+      }
       const auto relation=exact::segment_triangle_crossing(
           point,endpoint,triangle,exact_budget);
       if (relation==exact::SegmentTriangleCrossing::crossing) ++crossings;
@@ -2198,24 +2326,6 @@ ExactOrder exact_triangle_distance(const std::array<ExactInputPoint,3>& first,
   return result;
 }
 
-bool triangle_farther_than(const PlacedSolid& first,const Triangle& a,
-                           const PlacedSolid& second,const Triangle& b,double clearance) noexcept {
-  double squared_lower{};
-  for (int axis=0;axis!=3;++axis) {
-    double alo=std::numeric_limits<double>::infinity(),ahi=-alo,blo=alo,bhi=-alo;
-    for (const auto v:a) { alo=std::min(alo,first.vertex_intervals[v][axis].low); ahi=std::max(ahi,first.vertex_intervals[v][axis].high); }
-    for (const auto v:b) { blo=std::min(blo,second.vertex_intervals[v][axis].low); bhi=std::max(bhi,second.vertex_intervals[v][axis].high); }
-    double gap{};
-    if (ahi<blo) gap=std::nextafter(blo-ahi,-std::numeric_limits<double>::infinity());
-    else if (bhi<alo) gap=std::nextafter(alo-bhi,-std::numeric_limits<double>::infinity());
-    gap=std::max(0.0,gap);
-    const double square=std::nextafter(gap*gap,-std::numeric_limits<double>::infinity());
-    squared_lower=std::nextafter(squared_lower+std::max(0.0,square),-std::numeric_limits<double>::infinity());
-  }
-  const double requested=std::nextafter(clearance*clearance,std::numeric_limits<double>::infinity());
-  return std::isfinite(squared_lower)&&std::isfinite(requested)&&squared_lower>requested;
-}
-
 Threshold conservative_surface_gap(const PlacedSolid& first,const PlacedSolid& second,
                                     double clearance,Budget& budget) noexcept;
 
@@ -2225,21 +2335,62 @@ Threshold exact_surface_gap(const PlacedSolid& first,const PlacedSolid& second,
   if (!first.is_cardinal || !second.is_cardinal || first.exact_vertices.empty() ||
       second.exact_vertices.empty())
     return conservative_surface_gap(first,second,clearance,budget);
+  if (!(clearance >= 0.0) || !std::isfinite(clearance)) {
+      return Threshold::indeterminate;
+  }
+  const double requested_upper = std::nextafter(clearance * clearance, std::numeric_limits<double>::infinity());
   bool equal=false,uncertain=false;
   const auto first_mesh=first.prepared->asset->mesh(),second_mesh=second.prepared->asset->mesh();
+  const auto triangle_count = second_mesh.triangles.size();
+  const auto block_count = triangle_count / kTriangleBoundsBlock + (triangle_count % kTriangleBoundsBlock != 0);
+  constexpr auto maximum_bounds =
+      (std::numeric_limits<std::uint64_t>::max() - sizeof(std::vector<TriangleBounds>)) / sizeof(TriangleBounds);
+  if (triangle_count > maximum_bounds || block_count > maximum_bounds - triangle_count) {
+      return Threshold::indeterminate;
+  }
+  ScratchCharge scratch(budget,
+                        sizeof(std::vector<TriangleBounds>) + (triangle_count + block_count) * sizeof(TriangleBounds));
+  if (!scratch.held()) {
+      return Threshold::indeterminate;
+  }
+  std::vector<TriangleBounds> triangle_bounds;
+  if (!cache_triangle_bounds(first, second, triangle_bounds, budget)) {
+      return Threshold::indeterminate;
+  }
   for (const auto& a:first_mesh.triangles) {
-    // Bounds plus downward-rounded gap, square and sum arithmetic for three axes.
-    if (!budget.consume_work(60)) return Threshold::indeterminate;
-    if (triangle_solid_farther_than(first,a,second,clearance)) continue;
-    for (const auto& b:second_mesh.triangles) {
-    if (!budget.consume_work(1)) return Threshold::indeterminate;
-    if (triangle_farther_than(first,a,second,b,clearance)) continue;
-    const auto relation=exact_triangle_distance(exact_triangle_points(first,a),
-                                                exact_triangle_points(second,b),clearance,budget);
-    if (relation==ExactOrder::less) return Threshold::below;
-    equal |= relation==ExactOrder::equal;
-    uncertain |= relation==ExactOrder::indeterminate;
-    }
+      Bounds row;
+      if (!budget.consume_work(60) || !triangle_row_bounds(first, a, second, row)) {
+          return Threshold::indeterminate;
+      }
+      if (bounds_farther_than(row, second.conservative.bounds_mm, clearance, requested_upper)) {
+          continue;
+      }
+      for (std::size_t index = 0; index != second_mesh.triangles.size(); ++index) {
+          if (index % kTriangleBoundsBlock == 0) {
+              if (!budget.consume_work(1)) {
+                  return Threshold::indeterminate;
+              }
+              const auto& block = triangle_bounds[triangle_count + index / kTriangleBoundsBlock].bounds;
+              if (bounds_farther_than(row, block, clearance, requested_upper)) {
+                  index = std::min(triangle_count, index + kTriangleBoundsBlock) - 1;
+                  continue;
+              }
+          }
+          if (!budget.consume_work(1)) {
+              return Threshold::indeterminate;
+          }
+          if (bounds_farther_than(row, triangle_bounds[index].bounds, clearance, requested_upper)) {
+              continue;
+          }
+          const auto& b = second_mesh.triangles[triangle_bounds[index].face];
+          const auto relation = exact_triangle_distance(exact_triangle_points(first, a),
+                                                        exact_triangle_points(second, b), clearance, budget);
+          if (relation == ExactOrder::less) {
+              return Threshold::below;
+          }
+          equal |= relation == ExactOrder::equal;
+          uncertain |= relation == ExactOrder::indeterminate;
+      }
   }
   if (uncertain) return Threshold::indeterminate;
   return equal?Threshold::equal:Threshold::above;
@@ -2963,67 +3114,102 @@ std::optional<KernelFailure> rasterize_boundary(const PlacedSolid& solid, const 
     return std::nullopt;
 }
 
-Decision classify_material_witness(const PlacedSolid& solid,
-                                   Bounds world_interval,Budget& budget) {
-  if (!supported_floating_environment() || !solid.conservative.finite)
-    return Decision::indeterminate;
-  for (int axis=0;axis!=3;++axis)
-    if (!std::isfinite(world_interval.min[axis]) ||
-        !std::isfinite(world_interval.max[axis]) ||
-        world_interval.min[axis]>world_interval.max[axis] ||
-        !std::isfinite(solid.conservative.bounds_mm.min[axis]) ||
-        !std::isfinite(solid.conservative.bounds_mm.max[axis]) ||
-        solid.conservative.bounds_mm.min[axis]>
-            solid.conservative.bounds_mm.max[axis])
-      return Decision::indeterminate;
-  if (!budget.consume_work(64)) return Decision::indeterminate;
+// The whole inverse-transformed witness interval must miss every boundary
+// triangle before classifying its midpoint. This preserves the exact physical
+// point even when adding a translation rounds the displayed world coordinates.
+static Decision local_interval_point_in_material(const PlacedSolid& solid, Bounds world_interval, Budget& budget)
+{
+    if (!budget.consume_work(64)) {
+        return Decision::indeterminate;
+    }
+    for (int axis = 0; axis != 3; ++axis) {
+        if (world_interval.max[axis] < solid.conservative.bounds_mm.min[axis] ||
+            world_interval.min[axis] > solid.conservative.bounds_mm.max[axis]) {
+            return Decision::no;
+        }
+    }
+    std::array<Interval, 3> shifted;
+    for (int axis = 0; axis != 3; ++axis) {
+        shifted[axis] = subtract_interval({ world_interval.min[axis], world_interval.max[axis], true },
+                                          point_interval(solid.translation[axis]));
+    }
+    const auto rotation = rotation_intervals(solid.quaternion);
+    IntervalVec3 local;
+    for (int local_axis = 0; local_axis != 3; ++local_axis) {
+        local[local_axis] = point_interval(0.0);
+        for (int world_axis = 0; world_axis != 3; ++world_axis) {
+            local[local_axis] = add_interval(local[local_axis],
+                                             multiply_interval(rotation[world_axis][local_axis], shifted[world_axis]));
+        }
+        if (!local[local_axis].valid) {
+            return Decision::indeterminate;
+        }
+    }
 
-  // Both boxes are outward enclosures. Strict separation therefore proves the
-  // entire closed witness cell is outside the solid without a mesh-size parity
-  // scan. Equality still falls through because closed contact is not free.
-  for (int axis=0;axis!=3;++axis)
-    if (world_interval.max[axis]<solid.conservative.bounds_mm.min[axis] ||
-        world_interval.min[axis]>solid.conservative.bounds_mm.max[axis])
-      return Decision::no;
+    const auto mesh = solid.prepared->asset->mesh();
+    for (const auto& face : mesh.triangles) {
+        if (!budget.consume_work(180)) {
+            return Decision::indeterminate;
+        }
+        const std::array<IntervalVec3, 3> triangle {
+            { { point_interval(mesh.vertices[face[0]][0]), point_interval(mesh.vertices[face[0]][1]),
+                point_interval(mesh.vertices[face[0]][2]) },
+             { point_interval(mesh.vertices[face[1]][0]), point_interval(mesh.vertices[face[1]][1]),
+                point_interval(mesh.vertices[face[1]][2]) },
+             { point_interval(mesh.vertices[face[2]][0]), point_interval(mesh.vertices[face[2]][1]),
+                point_interval(mesh.vertices[face[2]][2]) } }
+        };
+        if (!triangle_box_disjoint(triangle, local)) {
+            return Decision::indeterminate;
+        }
+    }
+    Vec3 witness {};
+    for (int axis = 0; axis != 3; ++axis) {
+        witness[axis] = std::midpoint(local[axis].low, local[axis].high);
+        if (!std::isfinite(witness[axis])) {
+            return Decision::indeterminate;
+        }
+    }
+    return local_point_in_material(witness, *solid.prepared, budget);
+}
 
-  if (solid.represented_world_exact) {
-    Vec3 represented{};
-    for (int axis=0;axis!=3;++axis)
-      represented[axis]=std::midpoint(world_interval.min[axis],world_interval.max[axis]);
-    return point_in_material(represented,solid,budget);
-  }
+Decision classify_material_witness(const PlacedSolid& solid, Bounds world_interval, Budget& budget)
+{
+    if (!supported_floating_environment() || !solid.conservative.finite) {
+        return Decision::indeterminate;
+    }
+    for (int axis = 0; axis != 3; ++axis) {
+        if (!std::isfinite(world_interval.min[axis]) || !std::isfinite(world_interval.max[axis]) ||
+            world_interval.min[axis] > world_interval.max[axis] ||
+            !std::isfinite(solid.conservative.bounds_mm.min[axis]) ||
+            !std::isfinite(solid.conservative.bounds_mm.max[axis]) ||
+            solid.conservative.bounds_mm.min[axis] > solid.conservative.bounds_mm.max[axis]) {
+            return Decision::indeterminate;
+        }
+    }
+    if (!budget.consume_work(64)) {
+        return Decision::indeterminate;
+    }
 
-  std::array<Interval,3> shifted;
-  for (int axis=0;axis!=3;++axis)
-    shifted[axis]=subtract_interval(
-        {world_interval.min[axis],world_interval.max[axis],true},
-        point_interval(solid.translation[axis]));
-  const auto rotation=rotation_intervals(solid.quaternion);
-  IntervalVec3 local;
-  for (int local_axis=0;local_axis!=3;++local_axis) {
-    local[local_axis]=point_interval(0.0);
-    for (int world_axis=0;world_axis!=3;++world_axis)
-      local[local_axis]=add_interval(
-          local[local_axis],multiply_interval(
-              rotation[world_axis][local_axis],shifted[world_axis]));
-    if (!local[local_axis].valid) return Decision::indeterminate;
-  }
+    // Both boxes are outward enclosures. Strict separation therefore proves the
+    // entire closed witness cell is outside the solid without a mesh-size parity
+    // scan. Equality still falls through because closed contact is not free.
+    for (int axis = 0; axis != 3; ++axis) {
+        if (world_interval.max[axis] < solid.conservative.bounds_mm.min[axis] ||
+            world_interval.min[axis] > solid.conservative.bounds_mm.max[axis]) {
+            return Decision::no;
+        }
+    }
 
-  const auto mesh=solid.prepared->asset->mesh();
-  for (const auto& face:mesh.triangles) {
-    if (!budget.consume_work(180)) return Decision::indeterminate;
-    const std::array<IntervalVec3,3> triangle{{
-        {point_interval(mesh.vertices[face[0]][0]),point_interval(mesh.vertices[face[0]][1]),point_interval(mesh.vertices[face[0]][2])},
-        {point_interval(mesh.vertices[face[1]][0]),point_interval(mesh.vertices[face[1]][1]),point_interval(mesh.vertices[face[1]][2])},
-        {point_interval(mesh.vertices[face[2]][0]),point_interval(mesh.vertices[face[2]][1]),point_interval(mesh.vertices[face[2]][2])}}};
-    if (!triangle_box_disjoint(triangle,local)) return Decision::indeterminate;
-  }
-  Vec3 witness{};
-  for (int axis=0;axis!=3;++axis) {
-    witness[axis]=std::midpoint(local[axis].low,local[axis].high);
-    if (!std::isfinite(witness[axis])) return Decision::indeterminate;
-  }
-  return local_point_in_material(witness,*solid.prepared,budget);
+    if (solid.represented_world_exact) {
+        Vec3 represented {};
+        for (int axis = 0; axis != 3; ++axis) {
+            represented[axis] = std::midpoint(world_interval.min[axis], world_interval.max[axis]);
+        }
+        return point_in_material(represented, solid, budget);
+    }
+
+    return local_interval_point_in_material(solid, world_interval, budget);
 }
 
 bool field_floating_environment_supported() noexcept {
@@ -3110,6 +3296,24 @@ Decision euclidean_offset_reaches(CellIndex delta,double pitch,double clearance,
   return distance_squared_low>clearance_squared_high ? Decision::no : Decision::yes;
 }
 
+static Decision classify_shell_witness(const PlacedSolid& source, std::uint32_t vertex, const PlacedSolid& target,
+                                       Budget& budget, bool* exact_work_exhausted)
+{
+    if (source.represented_world_exact && target.represented_world_exact) {
+        return point_in_material(source.world_vertices[vertex], target, budget, exact_work_exhausted);
+    }
+    Bounds witness;
+    for (int axis = 0; axis != 3; ++axis) {
+        const auto interval = source.vertex_intervals[vertex][axis];
+        if (!interval.valid) {
+            return Decision::indeterminate;
+        }
+        witness.min[axis] = interval.low;
+        witness.max[axis] = interval.high;
+    }
+    return local_interval_point_in_material(target, witness, budget);
+}
+
 PairResult classify_pair(const PlacedSolid& first,const PlacedSolid& second,
                          double clearance,Budget& budget) {
   if (!supported_floating_environment())
@@ -3155,14 +3359,14 @@ PairResult classify_pair(const PlacedSolid& first,const PlacedSolid& second,
   bool witness_work_exhausted=false;
   for (const auto witness:first.prepared->shell_witnesses) {
     bool exhausted=false;
-    const auto inside=point_in_material(first.world_vertices[witness],second,budget,&exhausted);
+    const auto inside = classify_shell_witness(first, witness, second, budget, &exhausted);
     witness_work_exhausted |= exhausted;
     if (inside==Decision::indeterminate) overlap=Decision::indeterminate;
     else if (inside==Decision::yes) { overlap=Decision::yes; break; }
   }
   if (overlap!=Decision::yes) for (const auto witness:second.prepared->shell_witnesses) {
     bool exhausted=false;
-    const auto inside=point_in_material(second.world_vertices[witness],first,budget,&exhausted);
+    const auto inside = classify_shell_witness(second, witness, first, budget, &exhausted);
     witness_work_exhausted |= exhausted;
     if (inside==Decision::indeterminate) overlap=Decision::indeterminate;
     else if (inside==Decision::yes) { overlap=Decision::yes; break; }

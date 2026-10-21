@@ -908,7 +908,7 @@ BaselineOutcome run_aabb_baseline_impl(
                             continue;
                         }
                         translation[plan->column] += x * plan->pitch[plan->column] + plan->offsets[y];
-                        translation[plan->row] += y * plan->pitch[plan->row];
+                        translation[plan->row] += y * plan->pitch[plan->row] + state * plan->alternate_row;
                         translation[plan->layer] += height + z * plan->pitch[plan->layer];
                         const auto id = copy_id_buffer(seed, copies.size(), "interlock-");
                         if (state) {

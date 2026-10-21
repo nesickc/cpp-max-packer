@@ -50,6 +50,71 @@ geo::Quaternion x_rotation(double angle, double scale = 1.0) {
 }
 }  // namespace
 
+TEST_CASE("Separated sparse solids validate after inexact world-coordinate addition", "[witness-interval]")
+{
+    auto mesh = geo::test_support::cuboid({ -3, -1, -1 }, { -2, 1, 1 });
+    geo::test_support::append_cuboid(mesh, { 2, -1, -1 }, { 3, 1, 1 });
+    const auto object = geo::test_support::accepted(mesh, geo::AssetRole::object);
+    const auto made_context = geo::make_validation_context(object, geo::BoxDimensions { 12, 4, 4 }, {});
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made_context));
+    const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(made_context);
+    const auto made = geo::make_candidate(
+        value, {
+                   { "a", { 3.1, 1.1, 1.1 }, { 0, 0, 0, 1 } },
+                   { "b", { 6.1, 1.1, 1.1 }, { 0, 0, 0, 1 } }
+    });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(made));
+    const auto checked = geo::validate(value, std::get<std::shared_ptr<const geo::Candidate>>(made));
+    INFO(checked.report.code);
+    REQUIRE(checked.validated_solution);
+    CHECK(geo::revalidate(checked.validated_solution).validated_solution);
+}
+
+TEST_CASE("Inexact shell witnesses preserve enclosure rejection", "[witness-interval]")
+{
+    auto mesh = geo::test_support::cuboid({ -3, -2, -2 }, { 1, 2, 2 });
+    geo::test_support::append_cuboid(mesh, { 3, -.5, -.5 }, { 4, .5, .5 });
+    const auto object = geo::test_support::accepted(mesh, geo::AssetRole::object);
+    const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(
+        geo::make_validation_context(object, geo::BoxDimensions { 30, 30, 30 }, {}));
+    // The small component of a lies wholly inside the large component of b.
+    const auto checked = validate_copies(
+        value, {
+                   { "a", { 5.1, 5.1, 5.1 },  { 0, 0, 0, 1 } },
+                   { "b", { 10.1, 5.1, 5.1 }, { 0, 0, 0, 1 } }
+    });
+    INFO(checked.report.code);
+    CHECK(checked.report.validity == geo::Validity::invalid);
+    CHECK_FALSE(checked.validated_solution);
+}
+
+TEST_CASE("Inexact witnesses handle shared non-cardinal rotation and near contact", "[witness-interval]")
+{
+    auto mesh = geo::test_support::cuboid({ -3, -1, -1 }, { -2, 1, 1 });
+    geo::test_support::append_cuboid(mesh, { 2, -1, -1 }, { 3, 1, 1 });
+    const auto object = geo::test_support::accepted(mesh, geo::AssetRole::object);
+    geo::Constraints constraints;
+    constraints.orientations.mode = geo::OrientationMode::free;
+    const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(
+        geo::make_validation_context(object, geo::BoxDimensions { 30, 30, 30 }, constraints));
+    const auto rotation = x_rotation(.37);
+    for (double separation : { 3., 4.000000000000001, 5. }) {
+        const auto checked = validate_copies(
+            value, {
+                       { "a", { 5.1, 5.1, 5.1 },              rotation },
+                       { "b", { 5.1 + separation, 5.1, 5.1 }, rotation }
+        });
+        INFO("separation=" << separation << " code=" << checked.report.code);
+        if (separation == 3.) {
+            REQUIRE(checked.validated_solution);
+            CHECK(geo::revalidate(checked.validated_solution).validated_solution);
+        }
+        else {
+            CHECK_FALSE(checked.validated_solution);
+        }
+    }
+}
+
 TEST_CASE("Authoritative validation resolves deeply interlocked elevated bodies", "[layer-support]")
 {
     auto mesh = geo::test_support::cuboid({ -1, -1, .5 }, { 1, 1, 1 });
