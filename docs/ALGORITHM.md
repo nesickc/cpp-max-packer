@@ -131,6 +131,13 @@ retain the same exact predicates with their original face indices. Checked scrat
 admission, cancellation and allocation failure remain fail-closed. This avoids
 recomputing the same bounds millions of times during fresh result validation.
 
+For inexactly represented transformed vertices, overlapping triangle bounds alone
+cannot establish contact. Validator v7 tries face normals and edge-derived axes,
+then projects outward vertex intervals onto each finite axis. A strict projection
+gap certifies disjoint boundaries; unresolved leaves remain indeterminate. Shell
+witness and requested-clearance checks still follow. Rounded vertices suggest
+axes only and never supply the proof.
+
 The positive-clearance benchmark now finds 435 validated Pryanik-2 copies, up
 from 425 with mixed orientations, without changing the box, 1/1 mm clearances, permitted rotations or
 60-second budget. The bounded search can still miss layouts; these counts are
@@ -231,6 +238,11 @@ Spec §6.6 governs: estimate the dominant live buffers, fit available memory, ke
 the incumbent and exhaust affordable work before reporting a resource limit.
 Manual pitch is never changed by this implementation.
 
+Finalization has a separate bounded 30-second allowance for fresh native validation
+and saving the retained result; it does not extend search. The desktop response
+watchdog includes that allowance plus one second. Actual elapsed time and budget
+overrun remain reported. A failed final validation still refuses publication.
+
 The early 340/360-copy benchmark stops had two separate causes. Hand-written CLI
 settings without `resolved.resource_policy` silently selected legacy execution,
 even for a timed job: cumulative raster work stopped 4 mm runs after four
@@ -286,6 +298,15 @@ LOD and packing pitch never modify an accepted repair. Recipe replay, source
 preservation and compatibility are defined in [ADR 0020](../spec/decisions/0020-explicit-desktop-repair.md).
 
 ## Conservative object envelopes
+
+Desktop Import prepares and accepts an envelope in one native inspection call.
+It retains exact source cleanup and frame mapping but skips source solid analysis;
+the source draft remains indeterminate and cannot be accepted as a packing solid.
+The versioned recipe records this surface-only policy, so reload reproduces the
+same source bytes and mesh. Older recipes still replay their original full source
+inspection. Full envelope analysis and source enclosure certification remain
+mandatory. CLI `--packing-envelope auto --accept-repair auto` selects this policy;
+automatic acceptance is rejected for welding and reconstruction.
 
 CGAL Alpha Wrapping uses source bounds diagonal / 60 for alpha and / 1000 for offset, with seed 0. These are automatic preparation policy, unrelated to search pitch. The visitor polls cancellation and bounds refinement steps, Steiner insertions, triangulation cells and queued gates. Output is capped before normal solid analysis. Admission accounts for retained source, generator scratch and bounded output; allocator overhead and process RSS remain outside portable buffer accounting.
 

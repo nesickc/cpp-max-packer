@@ -1,6 +1,6 @@
 # Project status
 
-Updated 2026-10-19. Details belong in PRs and `.local/` logs.
+Updated 2026-10-20. Details belong in PRs and `.local/` logs.
 
 ## What works
 
@@ -8,28 +8,31 @@ Updated 2026-10-19. Details belong in PRs and `.local/` logs.
   clearance validation, mixed-orientation packing, CPU FFT search, checked export.
 - **Desktop:** settings survive STL replacement, including edits made while import
   runs. Start/Stop, live packing, portable Save/Open and export retain provenance.
-- **Automatic packing envelopes:** one action prepares defective object inputs,
-  with explicit preview/acceptance. CGAL builds a cavity-free enclosing solid;
+- **Automatic packing envelopes:** every desktop import creates and accepts an
+  envelope, including valid inputs. CGAL builds a cavity-free enclosing solid;
   native validation independently checks the solid and source enclosure. Exact-valid
-  models keep their original path. Welding/reconstruction remain advanced tools.
+  source solids remain available through CLI. Source-only preparation avoids a
+  redundant topology analysis. Welding/reconstruction remain advanced tools.
 - **Inspection:** Original, Packing envelope and Overlay views share the same
   poses, clipping and selection. Original bytes and cleaned source geometry remain
   separate from packing geometry through Save/Open. STL export retains the source
   and verifies enclosure after float32 quantization.
 - **Packing refinement:** paired layers use relative sideways and height offsets;
-  finite layouts screen only existing row/layer neighbors. Validator v6 resolves
-  inexact shell witnesses without loosening containment or clearance. Spatial
-  triangle bounds keep dense results within the fresh-validation save deadline.
+  finite layouts screen only existing row/layer neighbors. Validator v7 resolves
+  separated sloping boundaries after rounded rigid transforms using outward interval
+  proofs. Spatial triangle bounds accelerate fresh validation; finalization has a
+  bounded 30-second allowance to avoid load-dependent five-second save failures.
   Whole-arrangement axis sweeps compact validated layouts and refill freed space;
   equal-count improvements remain visible through existing compactness ranking.
-- **Actual models:** Benchy and matrice both produce valid envelopes in about six
-  seconds (11,030 and 7,486 triangles), pack one copy in a fitted test box, survive
-  Save/Open and export their 225,102 and 336,126 source triangles. Evidence remains
-  under `.local/envelope/`; this does not establish source printability.
+- **Bulba:** automatic envelope generation takes about 24 seconds, versus 54 with
+  redundant source analysis, with byte-identical geometry. The unchanged search
+  now saves **24 validated copies in 400 x 340 x 285 mm**, at 0/0 mm clearance,
+  cube rotations, 2 mm pitch and 60 seconds. The expanded 408 x 348 x 293 mm box
+  also returns 24; 32 remains unverified. Evidence: `.local/bulba/`.
 
-Verified in Release/Debug native tests, desktop/contract/frontend checks and both
-supplied-model journeys; the rebuilt viewer was checked in all three geometry views.
-The replay test shares setup and has a measured Debug watchdog; details are in the PR.
+Native and desktop checks cover independent validity, source preservation, recipe
+replay, Stop, portable projects and export. Benchy/matrice qualification remains
+under `.local/envelope/`; packing validity does not establish source printability.
 
 Not yet: Vulkan, desktop STL containers, upright/free-3D search, crash recovery
 or installer. These remain **Later** in spec v0.3.
@@ -37,7 +40,8 @@ or installer. These remain **Later** in spec v0.3.
 ## Scoreboard
 
 Release, eight threads; unchanged 10-second analytic and 60-second STL budgets.
-Full compaction pass below; a later low-RAM repeat refused both Pryanik imports.
+Validator v7 retains these counts; zero-clearance Pryanik reached 450 in an
+isolated repeat after returning 447 alongside other test jobs.
 
 | Case | Count | Floor | Target |
 | --- | --- | --- | --- |
@@ -69,7 +73,7 @@ History: [benchmarks/SCOREBOARD.md](../benchmarks/SCOREBOARD.md).
 4. `10_kg_np.stl` is 400 x 350 x 285 mm; the real Nova Post box is
    400 x 340 x 285 mm. Use box dimensions for that comparison.
 
-Compaction is stacked on open PR #27 (spacing), which includes #26, #25
-(envelopes) and #24 (import repair). See
+Automatic envelopes and boundary classification are stacked on open PR #28
+(compaction), which includes #27, #26, #25 and #24. See
 [ADR 0021](../spec/decisions/0021-packing-envelopes.md), [ALGORITHM.md](../docs/ALGORITHM.md),
 [BUILDING.md](../docs/BUILDING.md) and [AGENTS.md](../AGENTS.md).

@@ -1787,6 +1787,9 @@ bool bounds_farther_than(const Bounds& first, const Bounds& second, double clear
     return squared_lower > requested_upper;
 }
 
+bool triangles_separated_by_projection(const PlacedSolid& first, const Triangle& a, const PlacedSolid& second,
+                                       const Triangle& b, Budget& budget);
+
 BoundaryCheck check_boundaries(const PlacedSolid& first,const PlacedSolid& second,
                                Budget& budget) {
   const auto a_mesh=first.prepared->asset->mesh();
@@ -1839,6 +1842,9 @@ BoundaryCheck check_boundaries(const PlacedSolid& first,const PlacedSolid& secon
             continue;
         }
         if (!first.represented_world_exact || !second.represented_world_exact) {
+            if (triangles_separated_by_projection(first, a, second, b, budget)) {
+                continue;
+            }
             return { BoundaryRelation::indeterminate, true };
         }
         const auto at = triangle_points(first, a), bt = triangle_points(second, b);
@@ -1952,6 +1958,76 @@ Interval interval_dot(const IntervalVec3& first,
   for (int axis=0;axis!=3;++axis)
     result=add_interval(result,multiply_interval(first[axis],second[axis]));
   return result;
+}
+
+bool triangles_separated_by_projection(const PlacedSolid& first, const Triangle& a, const PlacedSolid& second,
+                                       const Triangle& b, Budget& budget)
+{
+    // Rounded vertices only suggest axes. Any finite axis is admissible: the
+    // proof projects outward intervals enclosing the actual rigid transforms,
+    // and requires a strict gap. Failure proves nothing about intersection.
+    const auto cross = [](const Vec3& u, const Vec3& v) -> Vec3 {
+        return { u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0] };
+    };
+    const auto edges = [](const PlacedSolid& solid, const Triangle& face) {
+        std::array<Vec3, 3> result;
+        for (int edge = 0; edge != 3; ++edge) {
+            for (int axis = 0; axis != 3; ++axis) {
+                result[edge][axis] =
+                    solid.world_vertices[face[(edge + 1) % 3]][axis] - solid.world_vertices[face[edge]][axis];
+            }
+        }
+        return result;
+    };
+    if (!budget.consume_work(64)) {
+        return false;
+    }
+    const auto a_edges = edges(first, a), b_edges = edges(second, b);
+    const auto separates = [&](const Vec3& axis) {
+        if (!budget.consume_work(256)) {
+            return false;
+        }
+        IntervalVec3 direction;
+        for (int coordinate = 0; coordinate != 3; ++coordinate) {
+            if (!std::isfinite(axis[coordinate])) {
+                return false;
+            }
+            direction[coordinate] = point_interval(axis[coordinate]);
+        }
+        const auto projection = [&](const PlacedSolid& solid, const Triangle& face) {
+            Interval range = interval_dot(solid.vertex_intervals[face[0]], direction);
+            for (int vertex = 1; vertex != 3 && range.valid; ++vertex) {
+                const auto value = interval_dot(solid.vertex_intervals[face[vertex]], direction);
+                range.valid = value.valid;
+                range.low = std::min(range.low, value.low);
+                range.high = std::max(range.high, value.high);
+            }
+            return range;
+        };
+        const auto left = projection(first, a), right = projection(second, b);
+        return left.valid && right.valid && (left.high < right.low || right.high < left.low);
+    };
+    const auto a_normal = cross(a_edges[0], a_edges[1]), b_normal = cross(b_edges[0], b_edges[1]);
+    if (separates(a_normal) || separates(b_normal)) {
+        return true;
+    }
+    for (const auto& edge_a : a_edges) {
+        for (const auto& edge_b : b_edges) {
+            if (separates(cross(edge_a, edge_b))) {
+                return true;
+            }
+        }
+        // In-plane axes also resolve disjoint coplanar triangles.
+        if (separates(cross(a_normal, edge_a))) {
+            return true;
+        }
+    }
+    for (const auto& edge_b : b_edges) {
+        if (separates(cross(b_normal, edge_b))) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool projection_separates(const std::array<IntervalVec3,3>& triangle,

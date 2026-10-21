@@ -605,6 +605,9 @@ Json repair_recipe(const std::shared_ptr<const RepairProposal>& proposal, const 
         recipe["options"]["seed"] = 0;
         recipe.erase("max_displacement_mm");
         recipe["purpose"] = "packing_envelope";
+        if (proposal->original()->report().topology_check == geometry::CheckState::not_run) {
+            recipe["options"]["source_analysis"] = "surface_only";
+        }
     }
     return recipe;
 }
@@ -848,8 +851,9 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
         const auto native_bound = std::get<geometry::ImportAdmission>(admission).working_bytes_upper_bound;
         budget.charge(native_bound);
 
-        auto draft_result = geometry::inspect_stl(
-            source_bytes, geometry::ImportOptions(role, units, request.scale_mm.value_or(1.0), limits));
+        geometry::ImportOptions import_options(role, units, request.scale_mm.value_or(1.0), limits);
+        import_options.envelope_source_only = request.packing_envelope;
+        auto draft_result = geometry::inspect_stl(source_bytes, import_options);
         if (std::holds_alternative<ImportFailure>(draft_result)) {
             return import_failure(std::get<ImportFailure>(draft_result));
         }
@@ -960,7 +964,8 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
                 proposal_reference["offset_mm"] = (*parameters)[1];
             }
 
-            if (request.accept_repair && *request.accept_repair != *proposal_token) {
+            const bool automatic_envelope = request.packing_envelope && request.accept_repair == "auto";
+            if (request.accept_repair && !automatic_envelope && *request.accept_repair != *proposal_token) {
                 return failure("ASSET_MISMATCH", "Repair acceptance token does not match this source and options.");
             }
             if (request.accept_repair) {

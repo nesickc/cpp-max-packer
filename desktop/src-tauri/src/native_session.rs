@@ -320,7 +320,8 @@ impl NativeSession {
                         }
                     }
                 }
-                timeout_seconds = remaining.max(0.0) + 6.0;
+                // Native solve reserves at most 30 seconds for final validation/publication.
+                timeout_seconds = remaining.max(0.0) + 31.0;
                 if search["budget_scope"] != "total_start" {
                     timeout_seconds += 60.0;
                 }

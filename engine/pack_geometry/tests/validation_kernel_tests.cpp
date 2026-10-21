@@ -411,6 +411,43 @@ TEST_CASE("T011 inexact represented vertices require separation before bypassing
     CHECK(uncertain_gap.surface_gap == kernel::Threshold::indeterminate);
 }
 
+TEST_CASE("Separated sloping faces remain decidable after inexact rigid translation",
+          "[geometry][AT-09][interval-boundary]")
+{
+    for (const double scale : { .01, 1., 100. }) {
+        auto mesh = tetrahedron();
+        for (auto& vertex : mesh.vertices) {
+            for (auto& coordinate : vertex) {
+                coordinate *= scale;
+            }
+        }
+        kernel::Budget setup { 200'000'000, 64 * 1024 * 1024 };
+        const auto first =
+            make_solid(mesh, geo::AssetRole::object, { .1 * scale, .1 * scale, .1 * scale }, identity, setup);
+        for (const double shift : { .5, .2 }) {
+            const auto second =
+                make_solid(mesh, geo::AssetRole::object,
+                           { (.1 + shift) * scale, (.1 + shift) * scale, (.1 + shift) * scale }, identity, setup);
+            for (const bool reverse : { false, true }) {
+                kernel::Budget budget { 200'000'000, 64 * 1024 * 1024 };
+                const auto result = reverse ? kernel::classify_pair(*second.placed, *first.placed, 0, budget)
+                                            : kernel::classify_pair(*first.placed, *second.placed, 0, budget);
+                CAPTURE(scale, shift, reverse, result.code);
+                if (shift == .5) {
+                    // Overlapping AABBs, separated by x+y+z; 1.5 > 1.
+                    CHECK(result.material_overlap == kernel::Decision::no);
+                    CHECK(result.boundaries == kernel::BoundaryRelation::disjoint);
+                    CHECK(result.surface_gap == kernel::Threshold::above);
+                }
+                else {
+                    // Positive material overlap must never receive a separation certificate.
+                    CHECK(result.material_overlap != kernel::Decision::no);
+                }
+            }
+        }
+    }
+}
+
 TEST_CASE("T011 bounds and clearance row work preserve tiny caps and operation controls",
           "[geometry][T011][AT-16]")
 {

@@ -1547,7 +1547,45 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path, c
             return Error { problem->code, problem->message, { { "reason", problem->reason } }, true };
         }
         auto native_bound = std::get<geometry::ImportAdmission>(admission).working_bytes_upper_bound;
-        auto inspected = geometry::inspect_stl(source_bytes, { role, units, scale, import_limits }, control);
+        geometry::ImportOptions import_options { role, units, scale, import_limits };
+        Bytes retained_recipe;
+        std::string repair_token;
+        if (!record.at("repair_record").is_null()) {
+            const auto& reference = record.at("repair_record");
+            auto recipe_path = artifact_path(root, reference.at("path").get<std::string>());
+            if (const auto* problem = std::get_if<Error>(&recipe_path)) {
+                return *problem;
+            }
+            auto recipe_bytes = read_bytes(std::get<std::filesystem::path>(recipe_path), kMaxReportBytes);
+            if (const auto* problem = std::get_if<Error>(&recipe_bytes)) {
+                return *problem;
+            }
+            retained_recipe = std::get<Bytes>(std::move(recipe_bytes));
+            auto& bytes = retained_recipe;
+            auto digest = sha256(bytes);
+            if (const auto* problem = std::get_if<Error>(&digest)) {
+                return *problem;
+            }
+            repair_token = reference.at("sha256").get<std::string>();
+            const auto& token = repair_token;
+            if (std::get<std::string>(digest) != token || reference.at("path") != "assets/" + token + ".repair.json") {
+                return failure("ASSET_MISMATCH", "Retained repair token or content-addressed path does not match.");
+            }
+            const auto text = std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+            const auto before_peek = budget.remaining();
+            {
+                if (!detail::admit_asset_json(text, budget)) {
+                    return failure("MEMORY_LIMIT", "Repair recipe exceeds its parsing allowance.");
+                }
+                const auto recipe = Json::parse(text);
+                import_options.envelope_source_only =
+                    record.contains("packing_envelope") && recipe.at("schema_version") == 3 &&
+                    recipe.at("options").value("source_analysis", "") == "surface_only";
+            }
+            budget.release(before_peek - budget.remaining());
+        }
+        import_options.limits.max_working_bytes = budget.remaining();
+        auto inspected = geometry::inspect_stl(source_bytes, import_options, control);
         detail::poll_operation();
         if (const auto* problem = std::get_if<geometry::ImportFailure>(&inspected);
             problem && problem->code == "MEMORY_LIMIT") {
@@ -1567,24 +1605,8 @@ AssetLoadOutcome load_accepted_asset(const std::filesystem::path& report_path, c
             accepted = geometry::accept_asset(draft);
         }
         else {
-            const auto& reference = record.at("repair_record");
-            auto recipe_path = artifact_path(root, reference.at("path").get<std::string>());
-            if (const auto* problem = std::get_if<Error>(&recipe_path)) {
-                return *problem;
-            }
-            auto recipe_bytes = read_bytes(std::get<std::filesystem::path>(recipe_path), kMaxReportBytes);
-            if (const auto* problem = std::get_if<Error>(&recipe_bytes)) {
-                return *problem;
-            }
-            auto& bytes = std::get<Bytes>(recipe_bytes);
-            auto digest = sha256(bytes);
-            if (const auto* problem = std::get_if<Error>(&digest)) {
-                return *problem;
-            }
-            const auto token = reference.at("sha256").get<std::string>();
-            if (std::get<std::string>(digest) != token || reference.at("path") != "assets/" + token + ".repair.json") {
-                return failure("ASSET_MISMATCH", "Retained repair token or content-addressed path does not match.");
-            }
+            auto& bytes = retained_recipe;
+            const auto& token = repair_token;
             // Weld admission includes the original draft, so replace its import
             // phase allowance instead of charging the same native owner twice.
             budget.release(native_bound);

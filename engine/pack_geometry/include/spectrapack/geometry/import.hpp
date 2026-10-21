@@ -51,6 +51,8 @@ struct ImportOptions {
   Units units;
   double custom_scale_mm;
   ImportLimits limits;
+  // Retain cleaned source surfaces for certified enclosure; never an accepted solid.
+  bool envelope_source_only {};
   ImportOptions(AssetRole selected_role, Units selected_units,
                 double custom_scale = 1.0, ImportLimits selected_limits = {})
       : role(selected_role), units(selected_units), custom_scale_mm(custom_scale),

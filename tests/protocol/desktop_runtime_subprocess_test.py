@@ -252,7 +252,7 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(details['runtime']['budget_scope'], 'total_start', error)
                 self.assertEqual(details['runtime']['deadline_overrun_seconds'], 0, error)
                 self.assertEqual(details['deadline_scope'], 'result_cleanup', error)
-                self.assertEqual(details['cleanup_allowance_seconds'], 5, error)
+                self.assertEqual(details['cleanup_allowance_seconds'], 30, error)
                 self.assertEqual(details['search_termination_reason'], 'resource_limit', error)
                 self.assertEqual(details['search_budget_seconds'], 60, error)
                 self.assertEqual(details['retained_count'], retained['count'], error)
