@@ -3,7 +3,7 @@ import type { Desktop } from './generated/contracts';
 // Native version-1 cube45 catalog; also checked at the Rust publication boundary.
 export const cube45CatalogHash = '7434d4e2eb8cd12e6a67af3a5d636a7435a4e50da043777586ff0fbff9eae4ef';
 
-export const defaultSettings: Desktop.Settings = { desktop_version: 1, box_dimensions_mm: [100, 100, 100], clearance_mm: { pair: 1, wall: 1 }, orientation: { mode: 'cube45' }, pitch_mm: 2, budget_seconds: 60, seed: '0', thread_count: 1, budget_scope: 'total_start' };
+export const defaultSettings: Desktop.Settings = { desktop_version: 1, box_dimensions_mm: [100, 100, 100], clearance_mm: { pair: 1, wall: 1 }, orientation: { mode: 'cube' }, pitch_mm: 2, budget_seconds: 60, seed: '0', thread_count: 1, budget_scope: 'total_start' };
 export function acceptState(current: Desktop.State | null, incoming: Desktop.State): Desktop.State {
   if (current && (current.session_id !== incoming.session_id || incoming.revision <= current.revision)) return current;
   const old = current?.live_result, next = incoming.live_result;

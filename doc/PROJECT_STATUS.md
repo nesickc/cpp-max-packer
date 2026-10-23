@@ -1,6 +1,6 @@
 # Project status
 
-Updated 2026-10-21. Details belong in PRs and `.local/` logs.
+Updated 2026-10-23. Details belong in PRs and `.local/` logs.
 
 ## What works
 
@@ -34,7 +34,8 @@ Updated 2026-10-21. Details belong in PRs and `.local/` logs.
   General proposal contraction now saves **30 in the 285 mm box** within
   90 seconds (2 mm pitch, four threads, zero clearance, cube rotations).
   The desktop result occupies 281.605 mm in Z and survives Save/Open/export.
-  Desktop search now includes 45° turns around X/Y/Z (96 orientations); old results
+  Desktop search offers optional 45° turns around X/Y/Z (96 orientations); the default
+  remains 24 because broader search can lower counts at fixed budgets. Old results
   keep their recorded orientation permissions. A diagonal-only bar fits and survives
   restore/export. Evidence: `.local/bulba/`, `.local/diagonal/`, `.local/rotations45/`.
 

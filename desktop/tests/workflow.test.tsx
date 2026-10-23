@@ -57,7 +57,8 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
     fireEvent.change(screen.getByLabelText('Between copies'), {target:{value:'2.5'}});
     fireEvent.change(screen.getByLabelText('Voxel pitch'), {target:{value:'3'}});
     fireEvent.change(screen.getByLabelText('Search budget'), {target:{value:'123'}});
-    expect(screen.getByText('Allowed rotations: 96 orientations, including 45° turns around X, Y and Z.')).toBeDefined();
+    fireEvent.click(screen.getByRole('checkbox', {name:'Include 45° turns'}));
+    expect(screen.getByText(/Allowed rotations: 96 orientations/)).toBeDefined();
     fireEvent.change(screen.getByLabelText('Host memory ceiling'), {target:{value:'123456789'}});
     fireEvent.change(screen.getByLabelText('Seed'), {target:{value:'987654321'}});
     fireEvent.click(screen.getByRole('button', {name:/Import STL/}));
@@ -152,7 +153,8 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
     render(<App/>);
     await waitFor(()=>expect(screen.getByRole('button',{name:'▶ Start packing'}).hasAttribute('disabled')).toBe(false));
     expect(screen.getByText(/Pending settings for the next run/)).toBeDefined();
-    expect(screen.queryByLabelText('Allowed rotations')).toBeNull();
+    expect((screen.getByRole('checkbox', {name:'Include 45° turns'}) as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(screen.getByRole('checkbox', {name:'Include 45° turns'}));
     fireEvent.click(screen.getByRole('button',{name:'▶ Start packing'}));
     await waitFor(()=>expect(native.start).toHaveBeenCalledOnce());
     await waitFor(()=>expect(screen.getByText('From Start')).toBeDefined());

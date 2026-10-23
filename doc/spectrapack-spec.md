@@ -268,7 +268,7 @@ Use a single main window: configuration panel on the left, 3D viewer in the cent
 | --- | --- |
 | Object | Import/replace STL; units; dimensions; triangle count; diagnostics; repair proposal preview/accept/reject; original/LOD viewer toggle |
 | Container | Box or STL interior volume; internal W/D/H; independent STL units; bounds; diagnostic status; container transparency |
-| Constraints | Pair clearance and wall clearance in mm; desktop search uses 96 orientations, including cube rotations and 45° turns around each world axis |
+| Constraints | Pair clearance and wall clearance in mm; 24 cube rotations by default; optional 45° turns around each world axis expand search to 96 orientations |
 | Search | Fast/Balanced/Thorough; total run budget; Start; Stop and keep best; Continue; seed and maximum additional work in advanced controls |
 | Resources | Auto/CPU/Vulkan; selected device; detected capability; resolved pitch; estimated RAM/VRAM; advanced pitch, thread, and memory limits |
 | Results | Best validated count; elapsed and remaining budget; time since improvement; utilization if available; termination reason; geometry validation status |
