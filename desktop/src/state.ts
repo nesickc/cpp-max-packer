@@ -1,5 +1,8 @@
 import type { Desktop } from './generated/contracts';
 
+// Native version-1 cube45 catalog; also checked at the Rust publication boundary.
+export const cube45CatalogHash = '7434d4e2eb8cd12e6a67af3a5d636a7435a4e50da043777586ff0fbff9eae4ef';
+
 export const defaultSettings: Desktop.Settings = { desktop_version: 1, box_dimensions_mm: [100, 100, 100], clearance_mm: { pair: 1, wall: 1 }, orientation: { mode: 'cube' }, pitch_mm: 2, budget_seconds: 60, seed: '0', thread_count: 1, budget_scope: 'total_start' };
 export function acceptState(current: Desktop.State | null, incoming: Desktop.State): Desktop.State {
   if (current && (current.session_id !== incoming.session_id || incoming.revision <= current.revision)) return current;
@@ -28,5 +31,5 @@ export function settingsError(settings: Desktop.Settings): string | null {
 export function activeOperation(state: Desktop.State | null): boolean { return !!state?.operation && !state.operation.finished_at; }
 export function snapshotSettings(result: Desktop.ResultSnapshot): Desktop.Settings {
   const s = result.document.search.resolved_settings;
-  return { desktop_version: 1, box_dimensions_mm: result.document.container.kind === 'box' ? result.document.container.dimensions_mm : [100,100,100], clearance_mm: { ...s.clearance_mm }, orientation: s.orientation.mode === 'cube' ? { mode: 'cube' } : { mode: 'fixed', quaternion_xyzw: s.orientation.mode === 'fixed' ? [...s.orientation.quaternion_xyzw] : [0,0,0,1] }, pitch_mm: s.resolved.pitch_mm, budget_seconds: s.search.budget_seconds ?? 60, seed: s.search.seed, thread_count: s.resolved.thread_count, budget_scope: s.search.budget_scope ?? 'search_only', ...(s.compute.host_memory_limit_bytes ? {host_memory_limit_bytes:s.compute.host_memory_limit_bytes} : {}) };
+  return { desktop_version: 1, box_dimensions_mm: result.document.container.kind === 'box' ? result.document.container.dimensions_mm : [100,100,100], clearance_mm: { ...s.clearance_mm }, orientation: s.orientation.mode === 'custom' && s.resolved.orientation_catalog_sha256 === cube45CatalogHash ? { mode: 'cube45' } : s.orientation.mode === 'cube' ? { mode: 'cube' } : { mode: 'fixed', quaternion_xyzw: s.orientation.mode === 'fixed' ? [...s.orientation.quaternion_xyzw] : [0,0,0,1] }, pitch_mm: s.resolved.pitch_mm, budget_seconds: s.search.budget_seconds ?? 60, seed: s.search.seed, thread_count: s.resolved.thread_count, budget_scope: s.search.budget_scope ?? 'search_only', ...(s.compute.host_memory_limit_bytes ? {host_memory_limit_bytes:s.compute.host_memory_limit_bytes} : {}) };
 }

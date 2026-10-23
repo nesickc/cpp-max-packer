@@ -118,6 +118,48 @@ TEST_CASE("SOL-03 cube orientation catalog matches all ordered proper rotations"
     CHECK(std::is_sorted(matrices.begin(), matrices.end()));
 }
 
+TEST_CASE("45-degree preset retains cube rotations and adds unique rigid axis turns")
+{
+    const auto values = solver::cube45_orientations();
+    for (std::size_t i = 0; i != kCubeGolden.size(); ++i) {
+        CHECK(values[i] == kCubeGolden[i].quaternion);
+    }
+    for (std::size_t i = 0; i != values.size(); ++i) {
+        const auto& q = values[i];
+        CHECK(std::hypot(std::hypot(q[0], q[1]), std::hypot(q[2], q[3])) == Catch::Approx(1).margin(1e-15));
+        const auto matrix = rotation_matrix(q);
+        for (std::size_t row = 0; row != 3; ++row) {
+            for (std::size_t other = 0; other != 3; ++other) {
+                double dot = 0;
+                for (std::size_t col = 0; col != 3; ++col) {
+                    dot += matrix[3 * row + col] * matrix[3 * other + col];
+                }
+                CHECK(dot == Catch::Approx(row == other ? 1 : 0).margin(2e-15));
+            }
+        }
+        for (std::size_t j = 0; j != i; ++j) {
+            double dot = 0;
+            for (std::size_t c = 0; c != 4; ++c) {
+                dot += q[c] * values[j][c];
+            }
+            CHECK(std::abs(dot) < 1 - 1e-12);
+        }
+    }
+    for (std::size_t axis = 0; axis != 3; ++axis) {
+        for (const double sign : { -1.0, 1.0 }) {
+            geometry::Quaternion turn { 0, 0, 0, std::cos(std::acos(-1.0) / 8) };
+            turn[axis] = sign * std::sin(std::acos(-1.0) / 8);
+            CHECK(std::any_of(values.begin(), values.end(), [&](const auto& q) {
+                double dot = 0;
+                for (std::size_t c = 0; c != 4; ++c) {
+                    dot += q[c] * turn[c];
+                }
+                return std::abs(dot) > 1 - 1e-14;
+            }));
+        }
+    }
+}
+
 TEST_CASE("SOL-03 catalog rejects unsupported modes and capacity")
 {
     geometry::OrientationPolicy policy;

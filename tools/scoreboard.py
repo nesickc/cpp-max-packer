@@ -8,6 +8,7 @@ Usage (from the repository root, after a Release build):
     python tools/scoreboard.py                 # all cases
     python tools/scoreboard.py --cases cube64 pryanik2
     python tools/scoreboard.py --record        # also append a row to benchmarks/SCOREBOARD.md
+    python tools/scoreboard.py --orientation cube45  # compare the expanded desktop catalog
 
 Per-run artifacts (settings, reports, results, engine output) go to .local/scoreboard/.
 """
@@ -165,14 +166,31 @@ def settings_for(report, box, pair, wall, pitch, budget, threads):
     }
 
 
-def run_case(name, out, threads):
+def run_case(name, out, threads, orientation='cube'):
     source, box, pair, wall, pitch, budget, floor, target = CASES[name]
     case_dir = out / name
     case_dir.mkdir(parents=True, exist_ok=True)
     stl = generated_stl(source[4:], out.parent / 'inputs') if source.startswith('gen:') else REPO / source
     report_path, report = inspect(stl, out.parent / 'inputs')
     settings = case_dir / 'settings.json'
-    settings.write_text(json.dumps(settings_for(report, box, pair, wall, pitch, budget, threads), indent=1))
+    resolved = settings_for(report, box, pair, wall, pitch, budget, threads)
+    if orientation == 'cube45':
+        # Resolve the actual desktop preset natively, while keeping every other
+        # scoreboard setting and budget identical to the cube comparison.
+        request = case_dir / 'desktop-request.json'
+        request.write_text(json.dumps({'desktop_version': 1, 'box_dimensions_mm': list(box),
+            'clearance_mm': {'pair': pair, 'wall': wall}, 'orientation': {'mode': orientation},
+            'pitch_mm': pitch, 'budget_seconds': budget, 'seed': '42', 'thread_count': threads}))
+        prepared = case_dir / 'prepared'
+        prepared.mkdir()
+        reply = run([ENGINE, 'desktop-prepare', '--request', request, '--object-report', report_path,
+                     '--output', prepared], timeout=30)
+        if reply.returncode != 0:
+            raise RuntimeError(f'orientation preparation failed: {reply.stdout} {reply.stderr}')
+        native = json.loads((prepared / 'settings.json').read_text())
+        resolved['orientation'] = native['orientation']
+        resolved['resolved']['orientation_catalog_sha256'] = native['resolved']['orientation_catalog_sha256']
+    settings.write_text(json.dumps(resolved, indent=1))
     result_path = case_dir / 'result.json'
     began = time.perf_counter()
     done = run([ENGINE, 'solve', '--settings', settings, '--object-report', report_path, '--result', result_path],
@@ -203,6 +221,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--cases', nargs='+', choices=list(CASES), default=list(CASES))
     parser.add_argument('--threads', type=int, default=8)
+    parser.add_argument('--orientation', choices=['cube', 'cube45'], default='cube')
     parser.add_argument('--record', action='store_true', help='append the results to benchmarks/SCOREBOARD.md')
     args = parser.parse_args()
     if not ENGINE.exists():
@@ -217,19 +236,20 @@ def main():
     rows = []
     print(f'{"case":<11} {"count":>5} {"floor":>5} {"target":>6} {"blocks":>6} {"best@s":>7} {"total s":>7}  status / termination')
     for name in args.cases:
-        row = run_case(name, out, args.threads)
+        row = run_case(name, out, args.threads, args.orientation)
         rows.append(row)
         best_at = '-' if row['time_to_best'] is None else f'{row["time_to_best"]:.1f}'
         print(f'{row["case"]:<11} {row["count"] if row["count"] is not None else "-":>5} {row["floor"]:>5} {row["target"]:>6} '
               f'{row["reference"]:>6} {best_at:>7} {row["seconds"]:>7}  '
               f'{"OK " if row["ok"] else "FAIL "}{row["status"]} / {row["termination"]}', flush=True)
-    (out / 'scoreboard.json').write_text(json.dumps({'commit': commit, 'threads': args.threads, 'rows': rows}, indent=1))
+    (out / 'scoreboard.json').write_text(json.dumps({'commit': commit, 'threads': args.threads,
+        'orientation': args.orientation, 'rows': rows}, indent=1))
     print(f'\nArtifacts: {out}')
     print('"blocks" = best simple bounding-box block layout for reference; it is not an upper bound.')
 
     if args.record:
         history = REPO / 'benchmarks/SCOREBOARD.md'
-        line = (f'| {datetime.date.today()} | {commit} | ' +
+        line = (f'| {datetime.date.today()} | {commit} ({args.orientation}) | ' +
                 ' \\| '.join(f'{r["case"]}={r["count"] if r["count"] is not None else "-"}'
                            f'{"" if r["ok"] else "!"}' for r in rows) + ' |\n')
         with open(history, 'a', encoding='utf-8') as f:
