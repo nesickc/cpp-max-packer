@@ -854,8 +854,10 @@ BaselineOutcome run_aabb_baseline_impl(
                     }
                     ++out.stats.candidate_evaluations;
                     control.phase(runtime::Phase::validating);
-                    const auto checked = geometry::validate(context, *candidate,
-                                                            validation_limits(limits, out.stats, live), control);
+                    // Slides and refills keep copy order, so unmoved copies reuse
+                    // the last accepted arrangement's proofs.
+                    const auto checked = geometry::validate_incremental(
+                        accepted, *candidate, validation_limits(limits, out.stats, live), control);
                     if (!record_validation(out.stats, checked.report, live, limits) ||
                         boundary(control) != Boundary::none ||
                         checked.report.code.find("LIMIT") != std::string::npos) {
@@ -1560,8 +1562,13 @@ BaselineOutcome run_aabb_baseline_impl(
       }
       ++out.stats.orientations_started;
 
-      std::vector<geometry::CopyPose> working;
-      auto pending_preflight = live_bytes(*base, seeds, working, admitted_solution, incumbent_bytes);
+      // The last validated grid prefix; later batches validate incrementally against it.
+      std::shared_ptr<const geometry::ValidatedSolution> working_solution;
+      const std::vector<geometry::CopyPose> no_copies;
+      const auto working = [&]() -> const std::vector<geometry::CopyPose>& {
+          return working_solution ? working_solution->copies() : no_copies;
+      };
+      auto pending_preflight = live_bytes(*base, seeds, working(), admitted_solution, incumbent_bytes);
       if (!pending_preflight || !checked_add(*pending_preflight, kPendingPoseMetadataBytes) ||
           !update_peak(out.stats, *pending_preflight, limits)) {
           retain_best();
@@ -1576,7 +1583,7 @@ BaselineOutcome run_aabb_baseline_impl(
       }
       // MSVC Debug's default constructor is noexcept despite allocating a proxy.
       std::vector<geometry::CopyPose> pending(std::size_t {});
-      auto live = live_bytes(*base, seeds, working, admitted_solution, incumbent_bytes, &pending);
+      auto live = live_bytes(*base, seeds, working(), admitted_solution, incumbent_bytes, &pending);
       if (!live || !update_peak(out.stats, *live, limits)) {
           retain_best();
           out.termination_reason = TerminationReason::resource_limit;
@@ -1694,13 +1701,13 @@ BaselineOutcome run_aabb_baseline_impl(
               return Submission::terminal;
           }
           if (additions.size() > remaining(limits.max_candidate_evaluations, out.stats.candidate_evaluations) ||
-              additions.size() > remaining(limits.max_copies, working.size())) {
+              additions.size() > remaining(limits.max_copies, working().size())) {
               out.termination_reason = TerminationReason::budget_exhausted;
               out.diagnostic_code = "PHYSICAL_CANDIDATE_LIMIT";
               return Submission::terminal;
           }
-          const auto submission_live = live_bytes(*base, seeds, working, admitted_solution, incumbent_bytes, &pending);
-          const auto trial_storage = proposed_pose_bytes(working, additions);
+          const auto submission_live = live_bytes(*base, seeds, working(), admitted_solution, incumbent_bytes, &pending);
+          const auto trial_storage = proposed_pose_bytes(working(), additions);
           // The factory's private copy coexists with its by-value input.
           std::uint64_t candidate_live = submission_live.value_or(UINT64_MAX);
           if (!submission_live || !add_optional(candidate_live, trial_storage) ||
@@ -1713,8 +1720,8 @@ BaselineOutcome run_aabb_baseline_impl(
           }
           detail::allocation_point();
           std::vector<geometry::CopyPose> trial;
-          trial.reserve(working.size() + additions.size());
-          trial.insert(trial.end(), working.begin(), working.end());
+          trial.reserve(working().size() + additions.size());
+          trial.insert(trial.end(), working().begin(), working().end());
           trial.insert(trial.end(), additions.begin(), additions.end());
           detail::allocation_point();
           auto made = geometry::make_candidate(context, std::move(trial));
@@ -1732,8 +1739,8 @@ BaselineOutcome run_aabb_baseline_impl(
           auto checked = [&] {
               detail::BaselineProfileTimer profile(detail::BaselineProfilePhase::validation, profile_seed,
                                                    out.stats.candidate_evaluations);
-              auto value =
-                  geometry::validate(context, candidate, validation_limits(limits, out.stats, candidate_live), control);
+              auto value = geometry::validate_incremental(working_solution, candidate,
+                                                          validation_limits(limits, out.stats, candidate_live), control);
               profile.result(candidate->copies().size(), static_cast<bool>(value.validated_solution));
               return value;
           }();
@@ -1768,16 +1775,9 @@ BaselineOutcome run_aabb_baseline_impl(
               }
               return Submission::rejected;
           }
-          auto replacement_live = candidate_live;
-          if (!add_optional(replacement_live, pose_bytes(checked.validated_solution->copies(), false)) ||
-              !update_peak(out.stats, replacement_live, limits)) {
-              out.termination_reason = TerminationReason::resource_limit;
-              out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
-              return Submission::terminal;
-          }
-          detail::allocation_point();
-          working = checked.validated_solution->copies();
-          auto offer_live = live_bytes(*base, seeds, working, admitted_solution, incumbent_bytes, &pending);
+          working_solution = checked.validated_solution;
+          // The working poses live in this solution; count them once, below.
+          auto offer_live = live_bytes(*base, seeds, no_copies, admitted_solution, incumbent_bytes, &pending);
           if (!offer_live || !add_optional(*offer_live, solution_bytes(checked.validated_solution)) ||
               !add_optional(*offer_live, retained_report_bytes(checked.report)) ||
               !update_peak(out.stats, *offer_live, limits)) {
@@ -1834,14 +1834,14 @@ BaselineOutcome run_aabb_baseline_impl(
             }
             if (out.stats.candidate_evaluations >=
                     limits.max_candidate_evaluations ||
-                working.size() >= limits.max_copies) {
+                working().size() >= limits.max_copies) {
               out.termination_reason = TerminationReason::budget_exhausted;
               out.diagnostic_code = "PHYSICAL_CANDIDATE_LIMIT";
               interrupted = true;
               break;
             }
 
-            live = live_bytes(*base, seeds, working, admitted_solution, incumbent_bytes, &pending);
+            live = live_bytes(*base, seeds, working(), admitted_solution, incumbent_bytes, &pending);
             if (!live || !update_peak(out.stats, *live, limits)) {
               out.termination_reason = TerminationReason::resource_limit;
               out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
@@ -1879,7 +1879,7 @@ BaselineOutcome run_aabb_baseline_impl(
             const auto id = copy_id_buffer(seed, generated_id++);
             // Reserve the complete bounded ID before construction, including
             // the implementation's inline-string capacity.
-            auto pending_live = live_bytes(*base, seeds, working, admitted_solution, incumbent_bytes, &pending);
+            auto pending_live = live_bytes(*base, seeds, working(), admitted_solution, incumbent_bytes, &pending);
             if (!pending_live || !checked_add(*pending_live, id.text.size() + 1) ||
                 !update_peak(out.stats, *pending_live, limits)) {
                 out.termination_reason = TerminationReason::resource_limit;
@@ -1889,10 +1889,10 @@ BaselineOutcome run_aabb_baseline_impl(
             }
             detail::allocation_point();
             pending.push_back({ std::string(id.text.data(), id.size), point, seeds[seed] });
-            const auto target = working.empty() ? 1 : batch_size;
+            const auto target = working().empty() ? 1 : batch_size;
             if ((pending.size() >= target ||
                  pending.size() >= remaining(limits.max_candidate_evaluations, out.stats.candidate_evaluations) ||
-                 pending.size() >= remaining(limits.max_copies, working.size())) &&
+                 pending.size() >= remaining(limits.max_copies, working().size())) &&
                 !flush()) {
                 interrupted = true;
                 break;
@@ -1909,7 +1909,7 @@ BaselineOutcome run_aabb_baseline_impl(
         return out;
       }
       ++out.stats.search_passes;
-      orientation_profile.result(working.size(), true);
+      orientation_profile.result(working().size(), true);
 
       const auto after_grid = boundary(control);
       if (after_grid != Boundary::none) {

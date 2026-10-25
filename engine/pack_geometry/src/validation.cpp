@@ -182,9 +182,13 @@ ValidationInputOutcome<Candidate> make_candidate(
   return std::shared_ptr<const Candidate>(new Candidate(std::move(storage)));
 }
 
-ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_context,
-                           std::shared_ptr<const Candidate> candidate, const ValidationLimits& limits,
-                           const runtime::OperationControl& control)
+namespace {
+// Runs every requested check except those a previous validation already proved:
+// containment of a proven pose and pairs whose poses are both proven. The caller
+// owns ValidatedSolution construction for a valid report.
+ValidationOutcome validate_report(const std::shared_ptr<const ValidationContext>& expected_context,
+                                  const std::shared_ptr<const Candidate>& candidate, const ValidationLimits& limits,
+                                  const runtime::OperationControl& control, const std::vector<char>* proven)
 {
     namespace kernel = detail::validation_kernel;
     control.phase(runtime::Phase::validating);
@@ -270,12 +274,20 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
         return reject(Validity::indeterminate, "VALIDATION_MEMORY_LIMIT",
                       "Placement storage exceeds the validation working-memory limit.", ValidationCheck::input);
     }
+    if (proven && !budget.reserve_bytes(proven->size())) {
+        return reject(Validity::indeterminate, "VALIDATION_MEMORY_LIMIT", "Proof reuse flags exceed the memory limit.",
+                      ValidationCheck::input);
+    }
     for (std::size_t index = 0; index != candidate->copies().size(); ++index) {
         const auto& pose = candidate->copies()[index];
         if (pose.copy_id.empty())
             return reject(Validity::invalid, "VALIDATION_COPY_ID", "Copy IDs must be nonempty and unique.",
                           ValidationCheck::input);
         for (std::size_t prior = 0; prior != index; ++prior) {
+            // Two proven copies carry distinct IDs from distinct base positions.
+            if (proven && (*proven)[index] && (*proven)[prior]) {
+                continue;
+            }
             const auto& prior_id = candidate->copies()[prior].copy_id;
             const auto compared_bytes = std::min(pose.copy_id.size(), prior_id.size());
             if (compared_bytes == std::numeric_limits<std::size_t>::max()) {
@@ -393,6 +405,9 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
     std::shared_ptr<const kernel::LayerSupportTable> layer_support_table;
     for (std::size_t first = 0; first != placed.size(); ++first)
         for (std::size_t second = 0; second != first; ++second) {
+            if (proven && (*proven)[first] && (*proven)[second]) {
+                continue;
+            }
             if (outcome.report.aabb_pair_tests >= limits.max_aabb_pair_tests)
                 return reject(Validity::indeterminate, "VALIDATION_AABB_PAIR_LIMIT",
                               "AABB pair-test limit was exhausted.", ValidationCheck::broad_phase);
@@ -449,6 +464,9 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
     outcome.report.checks[2].state = CheckState::complete;
     outcome.report.checks[3].state = CheckState::complete;
     for (std::size_t index = 0; index != placed.size(); ++index) {
+        if (proven && (*proven)[index]) {
+            continue;
+        }
         std::optional<kernel::ContainmentResult> containment_certificate;
         if (!container) {
             containment_certificate = kernel::bounds_box_certificate(
@@ -492,11 +510,58 @@ ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_con
     outcome.report.message = "All requested physical checks completed.";
     outcome.report.kernel_work = budget.work_used();
     outcome.report.working_bytes_peak = budget.bytes_peak();
-    if (control.poll() == runtime::StopCause::none) {
-        outcome.validated_solution = std::shared_ptr<const ValidatedSolution>(
-            new ValidatedSolution(expected_context, candidate, outcome.report));
-    }
     return finish(std::move(outcome));
+}
+}  // namespace
+
+ValidationOutcome validate(std::shared_ptr<const ValidationContext> expected_context,
+                           std::shared_ptr<const Candidate> candidate, const ValidationLimits& limits,
+                           const runtime::OperationControl& control)
+{
+    auto outcome = validate_report(expected_context, candidate, limits, control, nullptr);
+    if (outcome.report.validity == Validity::valid) {
+        outcome.validated_solution = std::shared_ptr<const ValidatedSolution>(
+            new ValidatedSolution(std::move(expected_context), std::move(candidate), outcome.report));
+    }
+    return outcome;
+}
+
+ValidationOutcome validate_incremental(std::shared_ptr<const ValidatedSolution> base,
+                                       std::shared_ptr<const Candidate> candidate, const ValidationLimits& limits,
+                                       const runtime::OperationControl& control)
+{
+    if (!base) {
+        auto context = candidate ? candidate->context() : nullptr;
+        return validate(std::move(context), std::move(candidate), limits, control);
+    }
+    // A pose equal in ID, translation and rotation to the base pose at the same
+    // index was proven there against the same immutable context, together with
+    // every other such pose. Equal poses place the same solid, so those results
+    // still hold; everything else is classified again. Reordered layouts simply
+    // reuse nothing.
+    std::vector<char> proven;
+    if (candidate && candidate->context() == base->context()) {
+        try {
+            proven.assign(candidate->copies().size(), 0);
+        }
+        catch (const std::bad_alloc&) {
+            return validate(base->context(), std::move(candidate), limits, control);
+        }
+        const auto& prior = base->copies();
+        for (std::size_t index = 0; index != std::min(prior.size(), proven.size()); ++index) {
+            const auto& pose = candidate->copies()[index];
+            proven[index] = prior[index].copy_id == pose.copy_id &&
+                            prior[index].translation_mm == pose.translation_mm &&
+                            prior[index].rotation_xyzw == pose.rotation_xyzw;
+        }
+    }
+    auto context = base->context();
+    auto outcome = validate_report(context, candidate, limits, control, proven.empty() ? nullptr : &proven);
+    if (outcome.report.validity == Validity::valid) {
+        outcome.validated_solution = std::shared_ptr<const ValidatedSolution>(
+            new ValidatedSolution(std::move(context), std::move(candidate), outcome.report));
+    }
+    return outcome;
 }
 
 ValidatedSolution::ValidatedSolution(std::shared_ptr<const ValidationContext> context,

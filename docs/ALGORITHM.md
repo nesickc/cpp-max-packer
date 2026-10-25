@@ -173,7 +173,12 @@ this is final-placement packing, not a collision-free insertion-path simulation.
 No asset names, saved layouts, geometry scaling or model-specific distances enter
 this search.
 
-Every changed arrangement and every insertion passes full native validation.
+Every changed arrangement and every insertion passes native validation.
+Compaction, refill and the growing AABB grid validate incrementally against the
+last accepted solution: a copy whose ID and pose match the base copy at the same
+index keeps that solution's containment and mutual pair results, and every other
+copy is checked against the container and all copies. Input and orientation checks
+still cover every copy, and saved results are always freshly validated in full.
 Failed trials roll back to the last validated working arrangement. Equal-count
 improvements use the existing enclosing-Z-span, then XY-span-sum ranking, so
 compaction is visible even when another copy does not fit. Shared work, memory,

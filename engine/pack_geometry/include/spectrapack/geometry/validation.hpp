@@ -149,6 +149,9 @@ class ValidatedSolution {
                                     const ValidationLimits&, const runtime::OperationControl&);
   friend ValidationOutcome revalidate(std::shared_ptr<const ValidatedSolution>, const ValidationLimits&,
                                       const runtime::OperationControl&);
+  friend ValidationOutcome validate_incremental(std::shared_ptr<const ValidatedSolution>,
+                                                std::shared_ptr<const Candidate>, const ValidationLimits&,
+                                                const runtime::OperationControl&);
 };
 struct ValidationOutcome {
   ValidationReport report;
@@ -169,5 +172,14 @@ struct ValidationOutcome {
 [[nodiscard]] ValidationOutcome revalidate(std::shared_ptr<const ValidatedSolution> solution,
                                            const ValidationLimits& limits = {},
                                            const runtime::OperationControl& control = {});
+// Validates a candidate that extends or edits an already validated solution of
+// the same context. Copies whose ID and pose match the base copy at the same index
+// keep the base's containment and mutual pair results; every other copy is checked
+// against the container and all copies. Input and orientation checks always cover
+// every copy. A missing base validates in full against the candidate's context.
+[[nodiscard]] ValidationOutcome validate_incremental(std::shared_ptr<const ValidatedSolution> base,
+                                                     std::shared_ptr<const Candidate> candidate,
+                                                     const ValidationLimits& limits = {},
+                                                     const runtime::OperationControl& control = {});
 
 }  // namespace spectrapack::geometry
