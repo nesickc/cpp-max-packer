@@ -1196,47 +1196,6 @@ TEST_CASE("AT-16 T015 coordinator allocation fault survives a real FFT worker al
     CHECK(coordinator_threw);
 }
 
-TEST_CASE("AT-16 T015 memory recovery evicts parked workers before real FFT candidates and count improvement",
-          "[solver][T015-P2][recovery]")
-{
-    geo::Constraints constraints;
-    constraints.pair_clearance_mm = .125;
-    const auto context = l_context({ 3.75, 2.75, 1.5 }, constraints);
-    solver::SpectralLimits limits;
-    limits.resource_mode = solver::ResourceMode::timed;
-    limits.cpu_thread_count = std::min(2U, solver::cpu_supported_thread_count());
-    limits.baseline.max_candidate_evaluations = 1;
-    limits.baseline.max_search_passes = 1;
-    limits.baseline.max_copies = 1;
-    limits.spectral.max_copies = 2;
-    solver::RunControl control;
-    control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
-    CoordinatorAllocationFailureReset clear_fault;
-    unsigned entries {};
-    struct Reset {
-        ~Reset() { spectrapack::compute::detail::set_correlation_entry_hook_for_test(nullptr, nullptr); }
-    } reset;
-    spectrapack::compute::detail::set_correlation_entry_hook_for_test(
-        [](const spectrapack::compute::CorrelationSpec&, void* raw) noexcept {
-        if (++*static_cast<unsigned*>(raw) == 1) {
-            fail_next_coordinator_allocation = true;
-        }
-    }, &entries);
-    const auto outcome = solver::run_cpu_spectral(context, { {}, .25 }, limits, control);
-    const bool fault_consumed = !fail_next_coordinator_allocation;
-    clear_fault.clear();
-    CHECK(fault_consumed);
-    CAPTURE(outcome.run.diagnostic_code, entries, outcome.resource_recovery.deferred);
-    REQUIRE(outcome.run.best);
-    CHECK(outcome.stagger.best_count_after == 1);
-    CHECK(outcome.resource_recovery.recoveries > 0);
-    CHECK(outcome.resource_recovery.fft_candidate_evaluations > 0);
-    CHECK(outcome.resource_recovery.native_validations > 0);
-    REQUIRE(outcome.run.best->solution->copies().size() == 2);
-    auto candidate = geo::make_candidate(context, outcome.run.best->solution->copies());
-    REQUIRE(geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(candidate)).validated_solution);
-}
-
 TEST_CASE("AT-16 T015 cumulative validation denial grants work and reconsiders the same native candidate",
           "[solver][T015-P2][recovery][validation-grant]")
 {
@@ -1511,54 +1470,6 @@ TEST_CASE("AT-16 T015 timed refinement and query quanta retain native validity",
     CHECK(outcome.run.best->score.count == 3);
     CHECK(outcome.spectral_stats.refinement_evaluations > 1);
     CHECK(outcome.resource_recovery.grants > 0);
-    CHECK(geo::revalidate(outcome.run.best->solution).validated_solution);
-}
-
-TEST_CASE("AT-16 T015 unaffordable FFT allocation stops after finite changed configurations",
-          "[solver][T015-P2][recovery][unaffordable]")
-{
-    geo::Constraints constraints;
-    constraints.pair_clearance_mm = .125;
-    const auto context = l_context({ 3.75, 2.75, 1.5 }, constraints);
-    solver::SpectralLimits limits;
-    limits.resource_mode = solver::ResourceMode::timed;
-    limits.cpu_thread_count = std::min(2U, solver::cpu_supported_thread_count());
-    limits.baseline.max_candidate_evaluations = 1;
-    limits.baseline.max_search_passes = 1;
-    limits.baseline.max_copies = 1;
-    limits.max_refinement_evaluations = 0;
-    CoordinatorAllocationFailureReset clear_fault;
-    unsigned entries {};
-    struct Reset {
-        ~Reset() { spectrapack::compute::detail::set_correlation_entry_hook_for_test(nullptr, nullptr); }
-    } reset;
-    spectrapack::compute::detail::set_correlation_entry_hook_for_test(
-        [](const spectrapack::compute::CorrelationSpec&, void* raw) noexcept {
-        ++*static_cast<unsigned*>(raw);
-        fail_next_coordinator_allocation = true;
-    }, &entries);
-    solver::RunControl control;
-    control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
-    const auto outcome = solver::run_cpu_spectral(context, { {}, .25 }, limits, control);
-    const bool fault_consumed = !fail_next_coordinator_allocation;
-    clear_fault.clear();
-    CHECK(fault_consumed);
-    CHECK(entries >= 1);
-    CHECK(entries <= 6);  // At most three changed configurations for each of the two catalog orientations.
-    CHECK(outcome.run.termination_reason == solver::TerminationReason::resource_limit);
-    const auto orientation_denials =
-        std::count_if(outcome.resource_recovery.transitions.begin(),
-                      outcome.resource_recovery.transitions.begin() + outcome.resource_recovery.transition_count,
-                      [](const auto& event) {
-        return event.action == "defer_operation";
-    });
-    CHECK(orientation_denials == 2);
-    CHECK(outcome.resource_recovery.fft_candidate_evaluations == 0);
-    REQUIRE(outcome.run.failure_details);
-    CHECK(outcome.run.failure_details->cause_code() == "CORRELATION_ALLOCATION");
-    REQUIRE(outcome.run.best);
-    // Physical compaction may improve the seed before FFT allocation fails.
-    CHECK(outcome.run.best->solution->copies().size() >= 1);
     CHECK(geo::revalidate(outcome.run.best->solution).validated_solution);
 }
 

@@ -4,6 +4,7 @@ add_library(pack_solver STATIC
   src/orientations.cpp
   src/spectral.cpp
   src/spectral_pipeline.cpp
+  src/gap_fill.cpp
 )
 target_include_directories(pack_solver PUBLIC include)
 target_link_libraries(pack_solver PUBLIC pack_geometry pack_compute)

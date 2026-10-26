@@ -679,6 +679,8 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             break;
         }
         auto block_limits = seed_limits;
+        block_limits.gap_fill_pitch_mm = lattice.pitch_mm;
+        block_limits.gap_fill_threads = limits.cpu_thread_count;
         block_limits.max_search_passes = remaining(limits.spectral.max_search_passes, preparation_stats.search_passes);
         block_limits.max_candidate_evaluations =
             remaining(limits.spectral.max_candidate_evaluations, preparation_stats.candidate_evaluations);

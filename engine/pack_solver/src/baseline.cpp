@@ -20,6 +20,7 @@
 #include "baseline_internal.hpp"
 #include "block_layout.hpp"
 #include "compaction.hpp"
+#include "gap_fill.hpp"
 #include "interlocking_stagger.hpp"
 #include "orientation_cube.hpp"
 #include "pipeline_profile.hpp"
@@ -831,7 +832,100 @@ BaselineOutcome run_aabb_baseline_impl(
                    std::tuple { b != 2, shapes.front().max[b] - shapes.front().min[b] };
         });
         auto accepted = entry->solution;
-        for (unsigned sweep = 0; sweep != 4; ++sweep) {
+        bool stopped = false;
+        const auto accept = [&](const std::vector<geometry::CopyPose>& proposal) {
+            if (boundary(control) != Boundary::none ||
+                out.stats.candidate_evaluations >= limits.max_candidate_evaluations ||
+                out.stats.validation_kernel_work >= limits.max_validation_kernel_work) {
+                stopped = true;
+                return detail::CompactionVerdict::stop;
+            }
+            const auto made = geometry::make_candidate(context, proposal);
+            const auto* candidate = std::get_if<std::shared_ptr<const geometry::Candidate>>(&made);
+            if (!candidate) {
+                return detail::CompactionVerdict::rejected;
+            }
+            ++out.stats.candidate_evaluations;
+            control.phase(runtime::Phase::validating);
+            // Slides and refills keep copy order, so unmoved copies reuse
+            // the last accepted arrangement's proofs.
+            const auto checked = geometry::validate_incremental(
+                accepted, *candidate, validation_limits(limits, out.stats, live), control);
+            if (!record_validation(out.stats, checked.report, live, limits) ||
+                boundary(control) != Boundary::none ||
+                checked.report.code.find("LIMIT") != std::string::npos) {
+                stopped = true;
+                return detail::CompactionVerdict::stop;
+            }
+            if (checked.validated_solution) {
+                accepted = checked.validated_solution;
+                return detail::CompactionVerdict::accepted;
+            }
+            if (checked.report.validity == geometry::Validity::invalid) {
+                ++out.stats.invalid_candidates;
+            }
+            else {
+                ++out.stats.indeterminate_candidates;
+            }
+            return detail::CompactionVerdict::rejected;
+        };
+        // Gap filling inserts one copy per check, so each check is bounded on its
+        // own rather than by the phase allowance that whole-layout trials consume.
+        bool fill_failed = false;
+        detail::GapFillCache fields;
+        const auto fill = [&](std::shared_ptr<const geometry::ValidatedSolution> base) {
+            if (!(limits.gap_fill_pitch_mm > 0) || boundary(control) != Boundary::none) {
+                return base;
+            }
+            detail::GapFillRequest request;
+            request.pitch_mm = limits.gap_fill_pitch_mm;
+            request.threads = limits.gap_fill_threads;
+            request.max_working_bytes = remaining(limits.max_working_bytes, live);
+            request.capacity = capacity;
+            // `base` advances with each insertion; keep the layout the filler reads alive.
+            const auto start = base;
+            const auto filled = detail::fill_gaps(
+                *context, start->copies(), seeds, request, control, [&](const geometry::CopyPose& pose) {
+                if (boundary(control) != Boundary::none ||
+                    out.stats.candidate_evaluations >= limits.max_candidate_evaluations) {
+                    return detail::GapVerdict::stop;
+                }
+                auto proposal = base->copies();
+                proposal.push_back(pose);
+                const auto made = geometry::make_candidate(context, std::move(proposal));
+                const auto* candidate = std::get_if<std::shared_ptr<const geometry::Candidate>>(&made);
+                if (!candidate) {
+                    return detail::GapVerdict::rejected;
+                }
+                ++out.stats.candidate_evaluations;
+                control.phase(runtime::Phase::validating);
+                auto check = limits.per_validation;
+                check.max_copy_count = std::min(check.max_copy_count, limits.max_copies);
+                check.max_working_bytes =
+                    std::min(check.max_working_bytes, remaining(limits.max_working_bytes, live));
+                const auto checked = geometry::validate_incremental(base, *candidate, check, control);
+                if (!record_validation(out.stats, checked.report, live, limits) ||
+                    boundary(control) != Boundary::none) {
+                    return detail::GapVerdict::stop;
+                }
+                if (checked.validated_solution) {
+                    base = checked.validated_solution;
+                    return detail::GapVerdict::accepted;
+                }
+                if (checked.report.validity == geometry::Validity::invalid) {
+                    ++out.stats.invalid_candidates;
+                }
+                else {
+                    ++out.stats.indeterminate_candidates;
+                }
+                return detail::GapVerdict::rejected;
+            }, &fields);
+            auto filled_live = live;
+            fill_failed = fill_failed || !checked_add(filled_live, filled.working_bytes_peak) ||
+                          !update_peak(out.stats, filled_live, limits);
+            return base;
+        };
+        for (unsigned sweep = 0; sweep != 4 && !stopped; ++sweep) {
             for (std::size_t axis : axes) {
                 if (boundary(control) != Boundary::none || out.stats.search_passes >= limits.max_search_passes ||
                     out.stats.candidate_evaluations >= limits.max_candidate_evaluations) {
@@ -839,68 +933,51 @@ BaselineOutcome run_aabb_baseline_impl(
                 }
                 ++out.stats.search_passes;
                 const auto query = query_limits(limits, out.stats, live);
-                bool stopped = false;
-                const auto accept = [&](const std::vector<geometry::CopyPose>& proposal) {
-                    if (boundary(control) != Boundary::none ||
-                        out.stats.candidate_evaluations >= limits.max_candidate_evaluations ||
-                        out.stats.validation_kernel_work >= limits.max_validation_kernel_work) {
-                        stopped = true;
-                        return detail::CompactionVerdict::stop;
-                    }
-                    const auto made = geometry::make_candidate(context, proposal);
-                    const auto* candidate = std::get_if<std::shared_ptr<const geometry::Candidate>>(&made);
-                    if (!candidate) {
-                        return detail::CompactionVerdict::rejected;
-                    }
-                    ++out.stats.candidate_evaluations;
-                    control.phase(runtime::Phase::validating);
-                    // Slides and refills keep copy order, so unmoved copies reuse
-                    // the last accepted arrangement's proofs.
-                    const auto checked = geometry::validate_incremental(
-                        accepted, *candidate, validation_limits(limits, out.stats, live), control);
-                    if (!record_validation(out.stats, checked.report, live, limits) ||
-                        boundary(control) != Boundary::none ||
-                        checked.report.code.find("LIMIT") != std::string::npos) {
-                        stopped = true;
-                        return detail::CompactionVerdict::stop;
-                    }
-                    if (checked.validated_solution) {
-                        accepted = checked.validated_solution;
-                        return detail::CompactionVerdict::accepted;
-                    }
-                    if (checked.report.validity == geometry::Validity::invalid) {
-                        ++out.stats.invalid_candidates;
-                    }
-                    else {
-                        ++out.stats.indeterminate_candidates;
-                    }
-                    return detail::CompactionVerdict::rejected;
-                };
                 detail::contract_axis(axis, rotations, shapes, copies, accept);
-                if (stopped) {
-                    if (accepted != incumbent.best()->solution && !offer(accepted, live)) {
-                        return out;
+                if (!stopped) {
+                    const auto work = detail::compact_axis(
+                        context->object()->mesh(), *bounds, context->constraints().pair_clearance_mm,
+                        context->constraints().wall_clearance_mm, axis, rotations, shapes, copies, capacity,
+                        query.max_kernel_work, query.max_vertex_visits, control, sweep % 2 == 0 ? 1 : -1, accept);
+                    if (!record_geometry(out.stats, work, live, limits)) {
+                        return finish("COMPACTION_WORK_LIMIT", TerminationReason::resource_limit);
                     }
-                    return finish("COMPACTION_VALIDATION_LIMIT", TerminationReason::resource_limit);
-                }
-                const auto work = detail::compact_axis(
-                    context->object()->mesh(), *bounds, context->constraints().pair_clearance_mm,
-                    context->constraints().wall_clearance_mm, axis, rotations, shapes, copies, capacity,
-                    query.max_kernel_work, query.max_vertex_visits, control,
-                    sweep % 2 == 0 ? 1 : -1, accept);
-                if (!record_geometry(out.stats, work, live, limits)) {
-                    return finish("COMPACTION_WORK_LIMIT", TerminationReason::resource_limit);
                 }
                 copies = accepted->copies();
                 if (accepted != incumbent.best()->solution && !offer(accepted, live)) {
                     return out;
                 }
                 if (stopped) {
-                    return finish("COMPACTION_VALIDATION_LIMIT", TerminationReason::resource_limit);
+                    break;
                 }
             }
         }
-        return finish("COMPACTION_EXHAUSTED", TerminationReason::search_stalled);
+        // Slides open space at the walls they moved away from, including sweeps
+        // cut short by the validation allowance. Then an FFT greedy layout from
+        // the empty box may beat the seeded patterns when their free space is
+        // fragmented; it replaces them only with more native-valid copies.
+        accepted = fill(accepted);
+        if (fill_failed) {
+            return finish("COMPACTION_MEMORY_LIMIT", TerminationReason::resource_limit);
+        }
+        if (accepted != incumbent.best()->solution && !offer(accepted, live)) {
+            return out;
+        }
+        if (limits.gap_fill_pitch_mm > 0 && accepted->copies().size() < capacity &&
+            boundary(control) == Boundary::none) {
+            const auto made = geometry::make_candidate(context, {});
+            const auto* candidate = std::get_if<std::shared_ptr<const geometry::Candidate>>(&made);
+            const auto empty = candidate ? geometry::validate(context, *candidate).validated_solution : nullptr;
+            const auto greedy = empty ? fill(empty) : nullptr;
+            if (fill_failed) {
+                return finish("COMPACTION_MEMORY_LIMIT", TerminationReason::resource_limit);
+            }
+            if (greedy && greedy->copies().size() > accepted->copies().size() && !offer(greedy, live)) {
+                return out;
+            }
+        }
+        return stopped ? finish("COMPACTION_VALIDATION_LIMIT", TerminationReason::resource_limit)
+                       : finish("COMPACTION_EXHAUSTED", TerminationReason::search_stalled);
     }
 
     if (interlocking) {

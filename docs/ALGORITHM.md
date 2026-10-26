@@ -186,6 +186,24 @@ deadline and cancellation limits bound the pass. Interval filling remains
 conservative and axis-wise motion can stop in a local minimum; this is not a
 claim that all remaining gaps are removable.
 
+After the sweeps, FFT gap filling inserts single copies in any permitted rotation.
+It rasterizes the container and every placed copy (dilated by the pair clearance)
+once on the run's pitch. The pitch is never finer than about 40^3 cells across the
+part's bounds, and coarsens when the grid, one translation mask per rotation and the
+FFT buffers would exceed the memory allowance; rasters and offsets are reused
+between the fills of one compaction pass. One box-scale
+correlation per rotation marks every translation clear of walls and copies. The
+lowest free translation (Z, then Y, then X of the kernel's bottom cell) is proposed
+and validated incrementally; a rejection clears only that translation. An
+accepted copy clears the translations its field blocks, from cached offsets that
+depend only on the two rotations: for cube rotations the lattice maps onto itself,
+so the offsets for rotations A and B are A applied to those for the identity and
+A^T B, and at most 24 small correlations serve every pair. Gap-fill checks are
+bounded per check, not by the phase allowance that whole-layout trials consume.
+The same filler then packs an empty box; that layout replaces the compacted one
+only when it holds more native-valid copies. Fields are conservative proposals:
+the native validator decides every insertion.
+
 The positive-clearance L-prism scoreboard case improves from one copy to two.
 The exact-contact L-prism case remains separate: its unresolved contact verdicts
 are not bypassed by compaction.
