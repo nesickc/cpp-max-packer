@@ -873,7 +873,8 @@ BaselineOutcome run_aabb_baseline_impl(
         // own rather than by the phase allowance that whole-layout trials consume.
         bool fill_failed = false;
         detail::GapFillCache fields;
-        const auto fill = [&](std::shared_ptr<const geometry::ValidatedSolution> base) {
+        const auto fill = [&](std::shared_ptr<const geometry::ValidatedSolution> base,
+                              std::array<int, 3> priority = { 2, 1, 0 }) {
             if (!(limits.gap_fill_pitch_mm > 0) || boundary(control) != Boundary::none) {
                 return base;
             }
@@ -882,6 +883,7 @@ BaselineOutcome run_aabb_baseline_impl(
             request.threads = limits.gap_fill_threads;
             request.max_working_bytes = remaining(limits.max_working_bytes, live);
             request.capacity = capacity;
+            request.priority = priority;
             // `base` advances with each insertion; keep the layout the filler reads alive.
             const auto start = base;
             const auto filled = detail::fill_gaps(
@@ -968,12 +970,26 @@ BaselineOutcome run_aabb_baseline_impl(
             const auto made = geometry::make_candidate(context, {});
             const auto* candidate = std::get_if<std::shared_ptr<const geometry::Candidate>>(&made);
             const auto empty = candidate ? geometry::validate(context, *candidate).validated_solution : nullptr;
-            const auto greedy = empty ? fill(empty) : nullptr;
-            if (fill_failed) {
-                return finish("COMPACTION_MEMORY_LIMIT", TerminationReason::resource_limit);
-            }
-            if (greedy && greedy->copies().size() > accepted->copies().size() && !offer(greedy, live)) {
-                return out;
+            // Each axis order gives a different greedy layout; the deadline bounds how many
+            // run. With only a few copies in the box the order hardly matters.
+            auto best = accepted;
+            bool first = true;
+            for (const auto priority : { std::array { 2, 1, 0 }, std::array { 2, 0, 1 }, std::array { 1, 2, 0 },
+                                         std::array { 0, 2, 1 }, std::array { 1, 0, 2 }, std::array { 0, 1, 2 } }) {
+                if (!empty || boundary(control) != Boundary::none || (!first && best->copies().size() < 8)) {
+                    break;
+                }
+                first = false;
+                const auto greedy = fill(empty, priority);
+                if (fill_failed) {
+                    return finish("COMPACTION_MEMORY_LIMIT", TerminationReason::resource_limit);
+                }
+                if (greedy->copies().size() > best->copies().size()) {
+                    best = greedy;
+                    if (!offer(best, live)) {
+                        return out;
+                    }
+                }
             }
         }
         return stopped ? finish("COMPACTION_VALIDATION_LIMIT", TerminationReason::resource_limit)

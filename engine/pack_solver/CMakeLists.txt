@@ -25,7 +25,8 @@ target_compile_definitions(spectrapack_solver_tests PRIVATE SPECTRAPACK_TEST_ROO
 target_link_libraries(spectrapack_solver_tests PRIVATE
   pack_solver spectrapack_test_support Catch2::Catch2WithMain)
 include(Catch)
-catch_discover_tests(spectrapack_solver_tests)
+# Timed search tests run to their own deadlines; several cases share one test.
+catch_discover_tests(spectrapack_solver_tests PROPERTIES TIMEOUT 60)
 
 set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
   "${PROJECT_SOURCE_DIR}/tests/cmake/QualificationTimeouts.cmake")

@@ -248,7 +248,9 @@ The current implementation is narrower than the original design:
 retain the validated uniform-grid baseline and staggered proposal
 for timed runs, validate improving residual-block proposals (depths 1–3)
 for timed runs, validate improving mesh-envelope stagger proposals
-if FFT admission is affordable:
+for timed runs, compact, FFT-gap-fill, then FFT-greedy-pack the empty box in
+    each axis order while time remains (layouts with fewer than 8 copies try one)
+if fixed-work, or no seeded phase placed a copy, and FFT admission is affordable:
     greedily insert from an empty layout using cached spectral pages
     on stall, try bounded physical face alignments and low-overlap candidates
     if the first trial completes, try insertion into the retained layout

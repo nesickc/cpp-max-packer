@@ -304,6 +304,8 @@ GapFillStats fill_gaps(const geometry::ValidationContext& context, std::span<con
         value.reserved_bytes = held;
         return value;
     };
+    // Rasterization observes the run's stop and deadline like the correlations do.
+    geometry::RepresentationAttemptStats attempt;
     compute::CorrelationLimits correlation;
     correlation.max_working_bytes = request.max_working_bytes;
     correlation.max_padded_cells = request.max_padded_cells;
@@ -313,12 +315,12 @@ GapFillStats fill_gaps(const geometry::ValidationContext& context, std::span<con
     };
 
     if (!kept.voxels) {
-        kept.voxels = owned(geometry::prepare_voxel_geometry(context.object(), limits()));
+        kept.voxels = owned(geometry::prepare_voxel_geometry(context.object(), limits(), attempt, control));
     }
     const auto& voxels = kept.voxels;
     if (voxels && !kept.container) {
         kept.container = owned(geometry::voxelize_container(context.container(), *window,
-                                                            context.constraints().wall_clearance_mm, limits()));
+                                                            context.constraints().wall_clearance_mm, limits(), attempt, control));
         kept.bytes += kept.container ? kept.container->cells().size() : 0;
     }
     const auto& container = kept.container;
@@ -329,7 +331,7 @@ GapFillStats fill_gaps(const geometry::ValidationContext& context, std::span<con
     const auto placed_field = [&](const geometry::CopyPose& pose, bool clip) -> std::shared_ptr<const geometry::CellField> {
         const auto own = footprint(*context.object(), pose, context.constraints().pair_clearance_mm, *window, clip);
         return own ? owned(geometry::voxelize_placed(voxels, *own, pose, context.constraints().pair_clearance_mm,
-                                                     limits()))
+                                                     limits(), attempt, control))
                    : nullptr;
     };
     std::vector<std::uint8_t> environment(environment_cells, 0);
@@ -368,7 +370,7 @@ GapFillStats fill_gaps(const geometry::ValidationContext& context, std::span<con
         state.matrix = cube_matrix(quaternion);
         auto& kernel_field = kept.kernels[quaternion];
         if (!kernel_field) {
-            kernel_field = owned(geometry::voxelize_object(voxels, window->lattice, quaternion, limits()));
+            kernel_field = owned(geometry::voxelize_object(voxels, window->lattice, quaternion, limits(), attempt, control));
             kept.bytes += kernel_field ? kernel_field->cells().size() : 0;
         }
         state.kernel = kernel_field;
@@ -456,28 +458,42 @@ GapFillStats fill_gaps(const geometry::ValidationContext& context, std::span<con
             stats.outcome = "GAP_FILL_INTERRUPTED";
             return stats;
         }
-        // Lowest free translation first, by the kernel's bottom cell (Z, then Y, then X).
+        // Lowest free translation first, by the kernel's bottom cell along the
+        // priority axes. Each cursor walks its mask in that order.
+        const auto& order = request.priority;
         Rotation* best = nullptr;
         std::tuple<std::int64_t, std::int64_t, std::int64_t> best_key {};
         CellIndex best_translation {};
+        std::size_t best_index {};
         for (auto& state : states) {
-            while (state.cursor != state.free.size() && !state.free[state.cursor]) {
-                ++state.cursor;
+            const auto located = [&](std::size_t cursor) {
+                std::array<std::uint64_t, 3> cell {};
+                cell[order[2]] = cursor % state.legal[order[2]];
+                cell[order[1]] = cursor / state.legal[order[2]] % state.legal[order[1]];
+                cell[order[0]] = cursor / (std::uint64_t { state.legal[order[2]] } * state.legal[order[1]]);
+                return cell;
+            };
+            for (; state.cursor != state.free.size(); ++state.cursor) {
+                const auto cell = located(state.cursor);
+                if (state.free[at(state.legal, cell[0], cell[1], cell[2])]) {
+                    break;
+                }
             }
             if (state.cursor == state.free.size()) {
                 continue;
             }
-            const auto plane = std::uint64_t { state.legal[0] } * state.legal[1];
-            const CellIndex translation { state.low[0] + static_cast<std::int64_t>(state.cursor % state.legal[0]),
-                                          state.low[1] +
-                                              static_cast<std::int64_t>(state.cursor / state.legal[0] % state.legal[1]),
-                                          state.low[2] + static_cast<std::int64_t>(state.cursor / plane) };
+            const auto cell = located(state.cursor);
+            const CellIndex translation { state.low[0] + static_cast<std::int64_t>(cell[0]),
+                                          state.low[1] + static_cast<std::int64_t>(cell[1]),
+                                          state.low[2] + static_cast<std::int64_t>(cell[2]) };
             const auto& first = state.kernel->window().first;
-            const std::tuple key { translation[2] + first[2], translation[1] + first[1], translation[0] + first[0] };
+            const std::tuple key { translation[order[0]] + first[order[0]], translation[order[1]] + first[order[1]],
+                                   translation[order[2]] + first[order[2]] };
             if (!best || key < best_key) {
                 best = &state;
                 best_key = key;
                 best_translation = translation;
+                best_index = at(state.legal, cell[0], cell[1], cell[2]);
             }
         }
         if (!best) {
@@ -498,7 +514,7 @@ GapFillStats fill_gaps(const geometry::ValidationContext& context, std::span<con
             stats.outcome = "GAP_FILL_STOPPED";
             return stats;
         }
-        best->free[best->cursor] = 0;
+        best->free[best_index] = 0;
         if (verdict == GapVerdict::rejected) {
             continue;
         }
@@ -519,7 +535,7 @@ GapFillStats fill_gaps(const geometry::ValidationContext& context, std::span<con
                     }
                     const auto kernel = kept.identity_placed
                                             ? owned(geometry::voxelize_object(voxels, window->lattice,
-                                                                              cube_quaternion(key), limits()))
+                                                                              cube_quaternion(key), limits(), attempt, control))
                                             : nullptr;
                     entry = kernel ? blocked_offsets(*kept.identity_placed, *kernel) : nullptr;
                 }

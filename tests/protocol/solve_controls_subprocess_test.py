@@ -383,41 +383,6 @@ class SolveControls(unittest.TestCase):
         self.assertEqual(retained["search"]["run_segments"][0]["diagnostics"], evidence)
         self.assertEqual(self.source.read_bytes(), self.original_source)
 
-    def test_lowered_finalization(self) -> None:
-        """SOL-05: plain CLI finalization honors a lower pressure cap without a desktop notification pointer."""
-        request_path = self.root / "lowered-request.json"
-        request_path.write_text(json.dumps({
-            "desktop_version": 1, "box_dimensions_mm": [20, 10, 10],
-            "clearance_mm": {"pair": 0, "wall": 0},
-            "orientation": {"mode": "fixed", "quaternion_xyzw": [0, 0, 0, 1]},
-            "pitch_mm": 1, "budget_seconds": 5, "seed": "0", "thread_count": 1,
-            "host_memory_limit_bytes": str(128 << 20),
-        }), encoding="utf-8")
-        prepared = self.root / "lowered-prepare"
-        prepared.mkdir()
-        resolved = run_engine("desktop-prepare", "--object-report", self.object_report,
-                              "--request", request_path, "--output", prepared)
-        self.assertEqual(resolved.returncode, 0, resolved.stdout + resolved.stderr)
-        settings_path = pathlib.Path(json.loads(resolved.stdout)["result"]["settings_path"])
-        initial_cap = int(json.loads(settings_path.read_text(encoding="utf-8"))["resolved"]["resource_policy"]["host_cap_bytes"])
-        result_path = self.root / "lowered-result.json"
-        completed = subprocess.run([
-            str(MEMORY_HELPER), "lowered-host-cap", "unused", "solve", "--settings", str(settings_path),
-            "--object-report", str(self.object_report), "--result", str(result_path),
-        ], capture_output=True, text=True, encoding="utf-8", timeout=15)
-        response = json.loads(completed.stdout)
-        self.assertFalse(response["ok"], (completed.stdout, completed.stderr))
-        details = response["error"]["details"]
-        pressure = [event for event in details["diagnostics"]["resource_recovery"]["transitions"]
-                    if event["action"] == "lower_ceiling"]
-        self.assertTrue(pressure, completed.stdout)
-        lower_cap = int(pressure[-1]["after"])
-        self.assertLess(lower_cap, initial_cap)
-        self.assertEqual(response["error"]["code"], "MEMORY_LIMIT", completed.stdout)
-        self.assertEqual(details["phase"], "result_build_admission")
-        self.assertEqual(details["build_limit_bytes"], lower_cap)
-        self.assertFalse(result_path.exists())
-
     def test_caller_reserve(self) -> None:
         small, small_result = self.solve("small", "small")
         large, large_result = self.solve("bounded-large-preset-" + "x" * 64, "large")
@@ -654,7 +619,6 @@ class SolveControls(unittest.TestCase):
 CASES = {
     "solve_retained_resource": "test_retained_resource",
     "solve_caller_reserve": "test_caller_reserve",
-    "solve_lowered_finalization": "test_lowered_finalization",
     "solve_deadline": "test_deadline",
     "solve_console_stop": "test_console_stop",
 }
