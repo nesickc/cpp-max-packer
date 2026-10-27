@@ -7,9 +7,9 @@ from fractions import Fraction
 from pathlib import Path
 
 try:
-    from benchmarks.representation_checks import PayloadError, strict_json
+    from benchmarks.representation_checks import KERNEL_REVISION, PayloadError, strict_json
 except ModuleNotFoundError:
-    from representation_checks import PayloadError, strict_json
+    from representation_checks import KERNEL_REVISION, PayloadError, strict_json
 
 
 ITEMS = ("rc/items/pryanik_1.STL", "rc/items/pryanik_2.STL",
@@ -517,7 +517,7 @@ def _validation(value, poses, context, limits):
         "fresh report")
     need(report["validity"] == "valid" and report["code"] == "VALID" and
          type(report["message"]) is str and report["message"] and
-         report["kernel_revision"] == "homogeneous-rational-interval-v4",
+         report["kernel_revision"] == KERNEL_REVISION,
          "fresh report verdict differs")
     number(report["epsilon_mm"], "fresh epsilon is invalid", 0.0)
     integer(report["aabb_pair_tests"], "fresh pair count is invalid", 0,
