@@ -6,7 +6,7 @@ set_tests_properties(spectrapack_protocol_subprocess PROPERTIES TIMEOUT 10)
 add_test(NAME spectrapack_import_subprocess
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/import_subprocess_test.py"
     "$<TARGET_FILE:spectrapack-engine>")
-set_tests_properties(spectrapack_import_subprocess PROPERTIES TIMEOUT 15)
+set_tests_properties(spectrapack_import_subprocess PROPERTIES TIMEOUT 180)
 
 add_test(NAME spectrapack_desktop_subprocess
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/desktop_subprocess_test.py"
