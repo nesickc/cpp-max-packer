@@ -538,9 +538,10 @@ TEST_CASE("Relative paired layers nest sheared prisms at different physical scal
     CHECK(geo::revalidate(result.run.best->solution).validated_solution);
 }
 
-TEST_CASE("Compaction refills concave layouts across scales and respects permitted rotations", "[solver][compaction]")
+namespace {
+// Each scale is its own test case so every case stays within the per-test timeout.
+void check_concave_refill(double scale)
 {
-    const double scale = GENERATE(1., 100.);
     const double gap = GENERATE(0., .125);
     const bool flipped_allowed = GENERATE(false, true);
     const bool resumed = GENERATE(false, true);
@@ -601,6 +602,17 @@ TEST_CASE("Compaction refills concave layouts across scales and respects permitt
         REQUIRE(result.run.best->score.enclosing_xy_span_sum_mm);
         CHECK(*result.run.best->score.enclosing_xy_span_sum_mm < (5.1 + 2 * gap) * scale);
     }
+}
+}  // namespace
+
+TEST_CASE("Compaction refills concave layouts and respects permitted rotations", "[solver][compaction]")
+{
+    check_concave_refill(1.);
+}
+
+TEST_CASE("Compaction refills concave layouts at a large physical scale", "[solver][compaction]")
+{
+    check_concave_refill(100.);
 }
 
 TEST_CASE("Compaction removes diagonal slack between rigid sloping solids", "[solver][compaction]")
