@@ -24,6 +24,7 @@
 #include "interlocking_stagger.hpp"
 #include "orientation_cube.hpp"
 #include "pipeline_profile.hpp"
+#include "slab_lattice.hpp"
 #include "storage_accounting.hpp"
 
 namespace spectrapack::solver {
@@ -501,7 +502,7 @@ BaselineOutcome run_aabb_baseline_impl(
     std::shared_ptr<const geometry::ValidatedSolution> initial,
     const std::vector<geometry::Quaternion>* exact_seeds, StaggerSummary* stagger = nullptr,
     SnapshotHandle entry = {}, bool blocks = false, bool interlocking = false, bool mixed = false,
-    bool compaction = false) {
+    bool compaction = false, bool slab_lattice = false) {
   BaselineOutcome out;
   if ((stagger || blocks || interlocking || compaction) && entry && entry->solution &&
       entry->solution->context() == context &&
@@ -776,6 +777,56 @@ BaselineOutcome run_aabb_baseline_impl(
             !checked_add(live, capacity * (6 * (sizeof(geometry::CopyPose) + 128) + sizeof(std::size_t))) ||
             !update_peak(out.stats, live, limits)) {
             return finish("COMPACTION_MEMORY_LIMIT", TerminationReason::resource_limit);
+        }
+        // Layered double lattices of a rotation and its twin can nest features
+        // that rows of one rotation leave apart; a valid one replaces the entry.
+        if (slab_lattice) {
+            detail::SlabLatticeRequest request;
+            request.threads = limits.gap_fill_threads;
+            request.max_working_bytes = remaining(limits.max_working_bytes, live);
+            request.capacity = capacity;
+            request.to_beat = entry->score.count;
+            std::vector<std::vector<geometry::CopyPose>> layouts;
+            // Planning takes at most a tenth of the remaining time (flipped twins,
+            // searched first, usually win early); validation and the row and
+            // stagger phases keep the rest.
+            auto planning = control;
+            if (planning.deadline) {
+                const auto now = planning.now();
+                planning.deadline = now + (std::max(*planning.deadline, now) - now) / 10;
+            }
+            detail::plan_slab_lattices(*context, seeds, request, planning, layouts);
+            for (auto& layout : layouts) {
+                if (boundary(control) != Boundary::none ||
+                    out.stats.candidate_evaluations >= limits.max_candidate_evaluations) {
+                    break;
+                }
+                const auto made = geometry::make_candidate(context, std::move(layout));
+                const auto* candidate = std::get_if<std::shared_ptr<const geometry::Candidate>>(&made);
+                if (!candidate) {
+                    continue;
+                }
+                ++out.stats.candidate_evaluations;
+                control.phase(runtime::Phase::validating);
+                const auto checked =
+                    geometry::validate(context, *candidate, validation_limits(limits, out.stats, live), control);
+                if (!record_validation(out.stats, checked.report, live, limits)) {
+                    return finish("SLAB_LATTICE_VALIDATION_LIMIT", TerminationReason::resource_limit);
+                }
+                if (checked.validated_solution) {
+                    if (!offer(checked.validated_solution, live)) {
+                        return out;
+                    }
+                    break;
+                }
+                if (checked.report.validity == geometry::Validity::invalid) {
+                    ++out.stats.invalid_candidates;
+                }
+                else {
+                    ++out.stats.indeterminate_candidates;
+                }
+            }
+            return finish("SLAB_LATTICE_EXHAUSTED", TerminationReason::search_stalled);
         }
         std::vector<geometry::Quaternion> rotations;
         std::vector<geometry::Bounds> shapes;
@@ -2043,11 +2094,11 @@ namespace detail {
 BaselineOutcome run_compaction_with_seeds(std::shared_ptr<const geometry::ValidationContext> context,
                                           const BaselineLimits& limits, const RunControl& control,
                                           const std::vector<geometry::Quaternion>& seeds, SnapshotSink sink,
-                                          SnapshotHandle initial)
+                                          SnapshotHandle initial, bool slab_lattice)
 {
     const auto solution = initial ? initial->solution : nullptr;
     return run_aabb_baseline_impl(std::move(context), limits, control, std::move(sink), solution, &seeds, nullptr,
-                                  std::move(initial), false, false, false, true);
+                                  std::move(initial), false, false, false, true, slab_lattice);
 }
 
 BaselineOutcome run_interlocking_stagger_with_seeds(std::shared_ptr<const geometry::ValidationContext> context,

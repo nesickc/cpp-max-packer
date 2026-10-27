@@ -26,6 +26,7 @@ if(BUILD_TESTING)
     solve_timed_memory_cap
     solve_timed_repacking
     solve_cube_64
+    solve_box_tolerance
     solve_empty
     solve_unicode_relocation
     solve_transforms

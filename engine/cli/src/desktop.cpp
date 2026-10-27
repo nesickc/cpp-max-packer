@@ -265,10 +265,8 @@ int restore(const std::map<std::string, std::filesystem::path>& options, const A
     else {
         catalog.quaternions = orientation->catalog_xyzw;
     }
-    const auto& dimensions = settings.at("container").at("dimensions_mm");
     auto context = geo::make_validation_context(
-        asset->solid(),
-        geo::BoxDimensions { dimensions[0].get<double>(), dimensions[1].get<double>(), dimensions[2].get<double>() },
+        asset->solid(), io::box_container(settings.at("container")),
         { settings.at("clearance_mm").at("pair").get<double>(), settings.at("clearance_mm").at("wall").get<double>(),
           *orientation });
     if (!std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(context)) {
@@ -471,12 +469,16 @@ std::variant<spectrapack::io::Json, spectrapack::io::Error> resolve_desktop_sett
         return *error;
     }
     const auto& record = asset->record();
+    Json container { { "kind", "box" }, { "dimensions_mm", request.at("box_dimensions_mm") } };
+    if (request.contains("box_tolerance_mm")) {
+        container["tolerance_mm"] = request.at("box_tolerance_mm");
+    }
     Json settings {
         { "settings_version", 1                                                                           },
         { "object_asset",
          { { "source_sha256", record.at("source").at("sha256") },
             { "accepted_solid_sha256", record.at("accepted_solid").at("sha256") } }                       },
-        { "container",        { { "kind", "box" }, { "dimensions_mm", request.at("box_dimensions_mm") } } },
+        { "container",        container                                                                   },
         { "clearance_mm",     request.at("clearance_mm")                                                  },
         { "orientation",      orientation                                                                 },
         { "search",

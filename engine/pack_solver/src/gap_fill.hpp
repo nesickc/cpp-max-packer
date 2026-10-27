@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string_view>
 
@@ -13,6 +14,10 @@
 namespace spectrapack::solver::detail {
 
 enum class GapVerdict { accepted, rejected, stop };
+
+// The signed-permutation matrix (row-major, world = M * local) of a cube
+// rotation; empty for any other rotation.
+std::optional<std::array<int, 9>> cube_matrix(const geometry::Quaternion& quaternion) noexcept;
 
 struct GapFillRequest {
     double pitch_mm {};

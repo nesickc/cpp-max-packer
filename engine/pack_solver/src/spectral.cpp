@@ -674,7 +674,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         }
     }
     auto preparation_stats = outcome.stagger.work;
-    for (unsigned layout = 0; layout != 4; ++layout) {
+    // Layered double lattices first, within a share of the remaining time, so
+    // later phases start from them and compaction refills whichever layout wins.
+    for (unsigned layout = 0; layout != 5; ++layout) {
         if (!timed || !outcome.run.best || boundary(control) != Boundary::none) {
             break;
         }
@@ -686,12 +688,14 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             remaining(limits.spectral.max_candidate_evaluations, preparation_stats.candidate_evaluations);
         const auto previous = outcome.run;
         auto blocked =
-            layout == 3 ? detail::run_compaction_with_seeds(context, block_limits, control, catalog.quaternions, sink,
-                                                            outcome.run.best)
-            : layout ? detail::run_interlocking_stagger_with_seeds(context, block_limits, control, catalog.quaternions,
-                                                                   sink, outcome.run.best, layout == 2)
-                     : detail::run_block_layout_with_seeds(context, block_limits, control, catalog.quaternions, sink,
-                                                           outcome.run.best);
+            layout == 0 || layout == 4
+                ? detail::run_compaction_with_seeds(context, block_limits, control, catalog.quaternions, sink,
+                                                    outcome.run.best, layout == 0)
+            : layout > 1 ? detail::run_interlocking_stagger_with_seeds(context, block_limits, control,
+                                                                       catalog.quaternions, sink, outcome.run.best,
+                                                                       layout == 3)
+                         : detail::run_block_layout_with_seeds(context, block_limits, control, catalog.quaternions,
+                                                               sink, outcome.run.best);
         auto total = outcome.run.stats;
         const bool counted = add_run_stats(total, blocked.stats) && add_run_stats(preparation_stats, blocked.stats);
         if (!blocked.best) {

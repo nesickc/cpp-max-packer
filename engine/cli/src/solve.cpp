@@ -740,8 +740,7 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         if (container_report) {
             return fail("ASSET_MISMATCH", "Box settings cannot use a container report.", 2);
         }
-        const auto& size = settings["container"]["dimensions_mm"];
-        container = geo::BoxDimensions { size[0].get<double>(), size[1].get<double>(), size[2].get<double>() };
+        container = io::box_container(settings["container"]);
     }
     else {
         if (!container_report) {

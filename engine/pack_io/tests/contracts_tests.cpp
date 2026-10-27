@@ -1275,6 +1275,29 @@ TEST_CASE("AT-14 keeps physical permissions stable across result segments", "[co
   }
 }
 
+TEST_CASE("A box tolerance grows the validated container recorded by results", "[contracts][results][metadata]") {
+  ContractValidator validator;
+  // Requested dimensions plus the tolerance must equal the recorded interior.
+  Json result = two_segment_result();
+  const auto recorded = result["container"]["dimensions_mm"];
+  auto requested = recorded;
+  for (auto& dimension : requested) dimension = dimension.get<double>() - 0.5;
+  for (auto* settings : {&result["search"]["resolved_settings"], &result["search"]["run_segments"][0]["resolved_settings"],
+                         &result["search"]["run_segments"][1]["resolved_settings"]}) {
+    (*settings)["container"]["dimensions_mm"] = requested;
+    (*settings)["container"]["tolerance_mm"] = 0.5;
+  }
+  CHECK(failure_of(validator.validate(ContractKind::results, result)) == nullptr);
+
+  for (auto* settings : {&result["search"]["resolved_settings"], &result["search"]["run_segments"][0]["resolved_settings"],
+                         &result["search"]["run_segments"][1]["resolved_settings"]})
+    (*settings)["container"].erase("tolerance_mm");
+  const auto outcome = validator.validate(ContractKind::results, result);
+  const auto* failure = failure_of(outcome);
+  REQUIRE(failure != nullptr);
+  CHECK(has_issue(*failure, "PHYSICAL_SETTINGS_MISMATCH"));
+}
+
 TEST_CASE("AT-14 rejects inconsistent derived result metrics", "[contracts][results][metadata]") {
   ContractValidator validator;
   auto require_issue = [&validator](Json result, std::string_view code) {

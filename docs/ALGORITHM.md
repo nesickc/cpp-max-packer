@@ -208,6 +208,47 @@ The positive-clearance L-prism scoreboard case improves from one copy to two.
 The exact-contact L-prism case remains separate: its unresolved contact verdicts
 are not bypassed by compaction.
 
+## Layered double lattices
+
+Flat parts often pack densest as identical layers in which a copy and its twin,
+turned half a turn about an axis in the layer, alternate so that thin rims and
+tabs nest over and under each other. Right after the seeded phase, timed box
+searches look for such layouts. For every world axis `k` and every pair of cube
+rotations with the same extent along `k` (unordered, one per class of the half
+turns that preserve the box), the copies share slabs of that thickness. In the
+slab plane rotation A sits on a lattice `i(px, 0) + j(sx, py)` and rotation B on
+the same lattice offset by `s`; slabs repeat along `k`, spread evenly over the
+height and at least the pair clearance apart. Flipped twins are searched first,
+then single rotations, then the rest.
+
+The part is rasterized once per bounds corner in its own frame (on the run's
+raster threads), with the lattice anchored at that corner; with a positive pair
+clearance the placed copy is also grown by it plus a micrometre-scale gap. A
+cube rotation only permutes and reverses cell axes, so every rotation's field
+anchored at its posed low corner comes from at most eight rasters without
+resampling. One FFT correlation per rotation pair, read at zero offset along `k`,
+gives the plan offsets at which the two copies would meet (the no-fit map). The
+lattice search then only reads maps: periods must avoid the A-A and B-B maps, and
+B offsets are lattice classes, so folding every blocked run of the A-B map into
+the lattice cell (one difference array per cell row) leaves the free ones.
+Periods are tried on coarse cells (about 20 across the part's plan), then on
+single cells around the best coarse lattices; B offsets are always single cells,
+because a twin's free window can be narrower than a coarse cell. Either
+sublattice may start at the box corner, since a twin that nests ahead of its
+partner can fit one more copy per row. Only improvements in copies per layer are
+kept. Planning takes at most a tenth of the remaining time; the best few layouts
+are then validated in full and the first valid one replaces the incumbent if it
+has more copies. The row, stagger and compaction phases follow and start from it.
+
+The simplified Pryanik in the 400 x 340 x 285 mm box at zero clearance goes from
+324 on-edge copies to 336 in 120 s: fourteen 28.4 mm slabs across the 400 mm side,
+each holding 12 copies and 12 flipped twins with every wing tucked against the
+neighbouring twin (330 in 60 s). Lattice periods are multiples of the roughly
+1 mm planning cell, and conservative cells keep copies up to a cell apart, so
+tighter nesting than that is not found. On parts whose rasters do not finish
+within the share, as for the exact Pryanik-2 mesh on one thread, the phase gives
+up without a layout.
+
 ## Conservative fields and FFT placement
 
 Use one physical voxel pitch `h` and a common world grid per search level. Do not independently normalize the object and container into unrelated voxel scales.
@@ -246,6 +287,7 @@ The current implementation is narrower than the original design:
 
 ```text
 retain the validated uniform-grid baseline and staggered proposal
+for timed runs, validate improving layered double lattices
 for timed runs, validate improving residual-block proposals (depths 1–3)
 for timed runs, validate improving mesh-envelope stagger proposals
 for timed runs, compact, FFT-gap-fill, then FFT-greedy-pack the empty box in
@@ -347,7 +389,7 @@ inspection. Full envelope analysis and source enclosure certification remain
 mandatory. CLI `--packing-envelope auto --accept-repair auto` selects this policy;
 automatic acceptance is rejected for welding and reconstruction.
 
-CGAL Alpha Wrapping uses source bounds diagonal / 60 for alpha and / 1000 for offset, with seed 0. These are automatic preparation policy, unrelated to search pitch. The visitor polls cancellation and bounds refinement steps, Steiner insertions, triangulation cells and queued gates. Output is capped before normal solid analysis. Admission accounts for retained source, generator scratch and bounded output; allocator overhead and process RSS remain outside portable buffer accounting.
+CGAL Alpha Wrapping uses source bounds diagonal / 60 for alpha and / 2000 for offset, with seed 0. These are automatic preparation policy, unrelated to search pitch. The visitor polls cancellation and bounds refinement steps, Steiner insertions, triangulation cells and queued gates. Output is capped before normal solid analysis. Admission accounts for retained source, generator scratch and bounded output; allocator overhead and process RSS remain outside portable buffer accounting.
 
 Independent enclosure checks traverse an envelope BVH against every retained source triangle using exact triangle predicates, reject all boundary contacts, then classify one point per connected source component. Vertex-only containment cannot pass a triangle crossing a concavity. Accepted and quantized envelopes must have no excluded cavity shells: otherwise surface enclosure would not imply material enclosure. Disconnected source components are checked separately. Finite source defects may remain inside the envelope; no manifold requirement is imposed on exported source triangles.
 

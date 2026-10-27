@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <numbers>
 
@@ -749,4 +750,64 @@ TEST_CASE("Gap filling keeps asymmetric proposals clear across cube rotations", 
     }
     CHECK(used.size() >= 2);
     CHECK(geo::revalidate(accepted).validated_solution);
+}
+
+#include "../src/slab_lattice.hpp"
+
+TEST_CASE("Slab lattices nest a stepped part with its half-turned twin", "[solver][slab-lattice]")
+{
+    // An L-shaped section: a full-length step 0.4 high under a half-length one.
+    // One rotation leaves every upper half empty; its twin, turned about the
+    // slab's cross axis, reaches over the lower step with 0.2 to spare, so a
+    // 7-long row holds four copies, not three.
+    const double clearance = GENERATE(0., .05);
+    const std::array<std::array<double, 2>, 6> section { { { 0, 0 }, { 2, 0 }, { 2, .4 }, { 1, .4 }, { 1, 1 }, { 0, 1 } } };
+    geo::test_support::Mesh mesh;
+    for (const double y : { 0., 1. }) {
+        for (const auto& [x, z] : section) {
+            mesh.vertices.push_back({ x, y, z });
+        }
+    }
+    for (std::uint32_t i = 1; i + 1 != 6; ++i) {
+        mesh.triangles.push_back({ { 0, i, i + 1 } });
+        mesh.triangles.push_back({ { 6, 7 + i, 6 + i } });
+    }
+    for (std::uint32_t a = 0; a != 6; ++a) {
+        const std::uint32_t b = (a + 1) % 6;
+        mesh.triangles.push_back({ { a, a + 6, b + 6 } });
+        mesh.triangles.push_back({ { a, b + 6, b } });
+    }
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = clearance;
+    constraints.orientations.mode = geo::OrientationMode::cube;
+    const double slack = .01 + 4 * clearance;
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(geo::make_validation_context(
+        geo::test_support::accepted(mesh, geo::AssetRole::object),
+        geo::BoxDimensions { 7 + slack, 1 + slack, 1 + slack }, constraints));
+    sol::detail::SlabLatticeRequest request;
+    request.threads = 4;
+    request.max_working_bytes = 512ULL << 20;
+    // Coarser planning cells keep the test quick; the 0.2 step gap still resolves.
+    request.max_padded_cells = 1 << 19;
+    request.capacity = 64;
+    request.to_beat = 3;
+    std::vector<std::vector<geo::CopyPose>> layouts;
+    // The part and its turns about each axis keep the planner small.
+    const std::vector<geo::Quaternion> rotations { { 0, 0, 0, 1 }, { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 } };
+    const auto stats = sol::detail::plan_slab_lattices(*context, rotations, request, {}, layouts);
+    INFO(stats.outcome << " pitch=" << stats.pitch_mm << " searches=" << stats.searches);
+    REQUIRE_FALSE(layouts.empty());
+    REQUIRE(layouts.front().size() >= 4);
+    const auto checked =
+        geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(
+                                   geo::make_candidate(context, layouts.front())));
+    INFO(checked.report.code);
+    REQUIRE(checked.validated_solution);
+    std::vector<geo::Quaternion> used;
+    for (const auto& copy : layouts.front()) {
+        if (std::find(used.begin(), used.end(), copy.rotation_xyzw) == used.end()) {
+            used.push_back(copy.rotation_xyzw);
+        }
+    }
+    CHECK(used.size() == 2);
 }

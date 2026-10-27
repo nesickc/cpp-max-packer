@@ -120,35 +120,6 @@ void stamp(std::vector<std::uint8_t>& environment, const GridWindow& window, con
     }
 }
 
-// Cube rotations map the voxel lattice onto itself, which lets one relative
-// rotation stand for every pair of absolute rotations with that relation.
-std::optional<Matrix> cube_matrix(const geometry::Quaternion& quaternion) noexcept
-{
-    const auto transform = geometry::RigidTransform::make(quaternion, {});
-    if (!transform) {
-        return {};
-    }
-    Matrix matrix {};
-    for (int column = 0; column != 3; ++column) {
-        geometry::Vec3 basis {};
-        basis[column] = 1;
-        const auto image = transform->apply(basis);
-        int nonzero = 0;
-        for (int row = 0; row != 3; ++row) {
-            const auto value = std::lround(image[row]);
-            if (std::abs(image[row] - static_cast<double>(value)) > 1e-9) {
-                return {};
-            }
-            matrix[row * 3 + column] = static_cast<int>(value);
-            nonzero += value != 0;
-        }
-        if (nonzero != 1) {
-            return {};
-        }
-    }
-    return matrix;
-}
-
 Matrix transposed_product(const Matrix& first, const Matrix& second) noexcept
 {
     Matrix result {};
@@ -223,6 +194,35 @@ std::shared_ptr<const T> owned(geometry::RepresentationOutcome<T>&& outcome)
 }
 
 }  // namespace
+
+// Cube rotations map the voxel lattice onto itself, which lets one relative
+// rotation stand for every pair of absolute rotations with that relation.
+std::optional<std::array<int, 9>> cube_matrix(const geometry::Quaternion& quaternion) noexcept
+{
+    const auto transform = geometry::RigidTransform::make(quaternion, {});
+    if (!transform) {
+        return {};
+    }
+    std::array<int, 9> matrix {};
+    for (int column = 0; column != 3; ++column) {
+        geometry::Vec3 basis {};
+        basis[column] = 1;
+        const auto image = transform->apply(basis);
+        int nonzero = 0;
+        for (int row = 0; row != 3; ++row) {
+            const auto value = std::lround(image[row]);
+            if (std::abs(image[row] - static_cast<double>(value)) > 1e-9) {
+                return {};
+            }
+            matrix[row * 3 + column] = static_cast<int>(value);
+            nonzero += value != 0;
+        }
+        if (nonzero != 1) {
+            return {};
+        }
+    }
+    return matrix;
+}
 
 struct GapFillCache::State {
     double pitch {};

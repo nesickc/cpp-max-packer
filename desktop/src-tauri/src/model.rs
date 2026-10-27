@@ -142,6 +142,8 @@ pub fn validate_settings(value: &Value) -> Outcome<()> {
     struct Settings {
         desktop_version: u32,
         box_dimensions_mm: [f64; 3],
+        #[serde(default)]
+        box_tolerance_mm: Option<f64>,
         clearance_mm: Clearance,
         orientation: Orientation,
         pitch_mm: f64,
@@ -202,6 +204,7 @@ pub fn validate_settings(value: &Value) -> Outcome<()> {
                 && settings.seed.bytes().all(|x| x.is_ascii_digit())));
     if settings.desktop_version != 1
         || !settings.box_dimensions_mm.into_iter().all(positive)
+        || settings.box_tolerance_mm.is_some_and(|t| !t.is_finite() || t < 0.0)
         || !positive(settings.pitch_mm)
         || !positive(settings.budget_seconds)
         || !settings.clearance_mm.pair.is_finite()
@@ -212,7 +215,7 @@ pub fn validate_settings(value: &Value) -> Outcome<()> {
     {
         return Err(error(
             "INVALID_SETTINGS",
-            "Version, dimensions, clearances, pitch, budget or uint64 seed is invalid.",
+            "Version, dimensions, tolerance, clearances, pitch, budget or uint64 seed is invalid.",
         ));
     }
     if let Orientation::Fixed { quaternion_xyzw } = settings.orientation {
