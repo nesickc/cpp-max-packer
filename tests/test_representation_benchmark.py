@@ -20,6 +20,9 @@ def load_checks():
     return module
 
 
+KERNEL_REVISION = load_checks().KERNEL_REVISION
+
+
 def _expectations():
     records = json.loads(EXPECTATIONS.read_text(encoding="utf-8"))["records"]
     return {record["path"]: record["expected"] for record in records}
@@ -93,7 +96,7 @@ def _cube_cells(low, high):
 def _validation(translation):
     report = {
         "validity": 0, "code": "VALID", "message": "complete",
-        "epsilon_mm": 1e-6, "kernel_revision": "homogeneous-rational-interval-v4",
+        "epsilon_mm": 1e-6, "kernel_revision": KERNEL_REVISION,
         "aabb_pair_tests": 0, "kernel_work": 100, "working_bytes_peak": 1000,
         "affected_ids_truncated": False, "affected_copy_ids": [],
         "checks": [{"check": index, "state": 1, "method": "checked"}
@@ -325,12 +328,12 @@ class RepresentationQualificationChecks(unittest.TestCase):
                 for side in ("validation_before", "validation_after"):
                     validation = run[side]
                     self.assertEqual(validation["report"]["kernel_revision"],
-                                     "homogeneous-rational-interval-v4")
+                                     KERNEL_REVISION)
                     self.assertEqual(validation["snapshot"]["report"]["kernel_revision"],
-                                     "homogeneous-rational-interval-v4")
+                                     KERNEL_REVISION)
                 if "through_wall_validation" in run:
                     self.assertEqual(run["through_wall_validation"]["report"]["kernel_revision"],
-                                     "homogeneous-rational-interval-v4")
+                                     KERNEL_REVISION)
         self.checks.verify_payload(payload, EXPECTATIONS, 3, 1)
 
     def test_rejects_obsolete_or_unknown_revision_in_each_native_report(self):
