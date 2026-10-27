@@ -15,6 +15,11 @@ LARGE_FIELD_WORK = 16_000_000_000
 SMALL_FIELD_WORK = 1_300_000_000
 MAX_CELLS = 16_777_216
 MAX_CELL_VISITS = 200_000_000
+# Reports must come from the validator this checkout builds.
+KERNEL_REVISION = re.search(
+    r'kRevision = "([^"]+)"',
+    (Path(__file__).parents[1] / "engine/pack_geometry/src/validation_kernel.hpp")
+    .read_text(encoding="utf-8")).group(1)
 SMALL_CASES = (
     ("rc/items/pryanik_1.STL", 4.0, (60, 100, 50)),
     ("rc/items/pryanik_2.STL", 4.0, (60, 100, 50)),
@@ -406,7 +411,7 @@ def _verify_report(value, name, validity):
     _need(isinstance(report.get("code"), str) and report["code"], f"{name}.code missing")
     _need(isinstance(report.get("message"), str), f"{name}.message missing")
     _number(report.get("epsilon_mm"), f"{name}.epsilon_mm", 0.0)
-    _same(report.get("kernel_revision"), "homogeneous-rational-interval-v4",
+    _same(report.get("kernel_revision"), KERNEL_REVISION,
           f"{name}.kernel_revision")
     for key in ("aabb_pair_tests", "kernel_work", "working_bytes_peak"):
         _integer(report.get(key), f"{name}.{key}")
