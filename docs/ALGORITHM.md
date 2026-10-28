@@ -91,7 +91,10 @@ Work is bounded at 32 million units per orientation, with half the remaining wor
 reserved for the coplanar fallback. Shared cancellation, deadline and memory
 admission remain enforced. Only the highest improving proposal from each
 orientation enters native validation; invalid or indeterminate results cannot
-replace the incumbent.
+replace the incumbent. With zero wall clearance, all interlocking planners keep the
+same tiny inward margin as mixed layouts whenever an axis has room for it, so
+rounding cannot push the far-wall column outside the box; an exact single fit is
+unchanged.
 The search uses no asset names, saved poses or altered physical constraints, and
 does not change manual voxel pitch or the fixed-work path.
 

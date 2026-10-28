@@ -117,13 +117,10 @@ public:
         geometry::Vec3 span {}, extent {};
         const double margin = pair > 0 ? std::min(.001, pair / 100) : 0;
         const double minimum_column = column_separation(pair + margin);
-        const double inset = wall + (wall > 0 ? std::min(.001, wall / 100) : 0);
         for (std::size_t axis = 0; axis < 3; ++axis) {
             extent[axis] = bounds_.max[axis] - bounds_.min[axis];
-            best.origin[axis] = container.min[axis] + inset - bounds_.min[axis];
-            span[axis] = container.max[axis] - container.min[axis] - 2 * inset - extent[axis];
             best.pitch[axis] = extent[axis] + pair + margin;
-            if (span[axis] < 0) {
+            if (!fit_walls(container, wall, axis, bounds_.min[axis], extent[axis], best.origin[axis], span[axis])) {
                 return {};
             }
         }
@@ -209,7 +206,6 @@ public:
         max_axis_cells = std::min<std::uint64_t>({ max_axis_cells, max_copies, 1'000'000 });
         const auto stop_before = work_ + (work_limit_ - work_) / 2;
         const double gap = pair + (pair > 0 ? std::min(.001, pair / 100) : 0);
-        const double inset = wall + (wall > 0 ? std::min(.001, wall / 100) : 0);
         geometry::Vec3 span {}, extent {};
         InterlockingLayout best;
         best.column = column_;
@@ -217,9 +213,7 @@ public:
         best.layer = layer_;
         for (std::size_t axis = 0; axis != 3; ++axis) {
             extent[axis] = bounds_.max[axis] - bounds_.min[axis];
-            span[axis] = container.max[axis] - container.min[axis] - 2 * inset - extent[axis];
-            best.origin[axis] = container.min[axis] + inset - bounds_.min[axis];
-            if (span[axis] < 0) {
+            if (!fit_walls(container, wall, axis, bounds_.min[axis], extent[axis], best.origin[axis], span[axis])) {
                 return {};
             }
         }
@@ -405,9 +399,6 @@ public:
     {
         max_axis_cells = std::min<std::uint64_t>({ max_axis_cells, max_copies, 1'000'000 });
         const double gap = pair + (pair > 0 ? std::min(.001, pair / 100) : 0);
-        const double roundoff_inset = 1e-12 * std::max({ 1.0, std::abs(container.max[0]), std::abs(container.max[1]),
-                                                         std::abs(container.max[2]) });
-        const double inset = wall + std::max(roundoff_inset, wall > 0 ? std::min(.001, wall / 100) : 0);
         geometry::Vec3 extent {}, span {};
         InterlockingLayout best;
         best.column = column_;
@@ -416,9 +407,7 @@ public:
         for (std::size_t axis = 0; axis != 3; ++axis) {
             extent[axis] =
                 std::max(bounds_.max[axis] - bounds_.min[axis], other.bounds_.max[axis] - other.bounds_.min[axis]);
-            span[axis] = container.max[axis] - container.min[axis] - 2 * inset - extent[axis];
-            best.origin[axis] = container.min[axis] + inset - bounds_.min[axis];
-            if (span[axis] < 0) {
+            if (!fit_walls(container, wall, axis, bounds_.min[axis], extent[axis], best.origin[axis], span[axis])) {
                 return {};
             }
         }
@@ -625,6 +614,26 @@ private:
         return result;
     }
 
+    // Place the first copy at the wall and return the span left for the rest.
+    // Copies stretched to both walls end flush with the far wall, where
+    // rounding origin + n * pitch can cross a zero-clearance wall and exact
+    // validation rejects the whole layout. A scale-aware inward margin avoids
+    // that whenever the span can hold it; an exact single fit stays exact.
+    static bool fit_walls(const geometry::Bounds& container, double wall, std::size_t axis, double low,
+                          double extent, double& origin, double& span)
+    {
+        const double inset = wall + (wall > 0 ? std::min(.001, wall / 100) : 0);
+        origin = container.min[axis] + inset - low;
+        span = container.max[axis] - container.min[axis] - 2 * inset - extent;
+        const double roundoff = wall > 0 ? 0
+                                         : 1e-12 * std::max({ 1.0, std::abs(container.max[0]),
+                                                              std::abs(container.max[1]), std::abs(container.max[2]) });
+        if (span >= 2 * roundoff) {
+            origin += roundoff;
+            span -= 2 * roundoff;
+        }
+        return span >= 0;
+    }
     static std::size_t bin(double value, double low, double step, std::size_t count)
     {
         return static_cast<std::size_t>(std::clamp(std::floor((value - low) / step), 0.0, double(count - 1)));
