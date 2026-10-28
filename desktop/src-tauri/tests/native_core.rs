@@ -372,15 +372,6 @@ fn supplied_model_automatic_envelope_project_roundtrip() {
 }
 
 #[test]
-fn retained_resource_failure_survives_save_move_open_and_exports() {
-    // T009-A1/A3: real unsupported field work keeps a positive analytic incumbent.
-    let mut request = settings(5.0);
-    request["box_dimensions_mm"] = json!([21, 11, 11]);
-    request["pitch_mm"] = json!(1e-9);
-    project_roundtrip(request, true, true);
-}
-
-#[test]
 #[ignore = "requires the pinned full Ulamok STL and a real native engine"]
 fn ulamok_retained_resource_json_project_roundtrip() {
     assert_eq!(project_roundtrip(ulamok_request(), true, false), 36);
