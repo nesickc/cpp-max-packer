@@ -5,8 +5,22 @@ everything here is **tunable**: change weights, page sizes, catalogs, schedules 
 recovery behaviour freely when `python tools/scoreboard.py` shows an improvement and
 the validity rules in spec §5.3 and §6 still hold. Update this file with the change;
 no decision record is needed. This file began with spec v0.2 §6 and is updated
-through 2026-10-19. Historical rationale lives in
+through 2026-10-21. Historical rationale lives in
 `spec/decisions/` and `doc/T-*.md` (frozen).
+
+## Desktop 45-degree orientations
+
+The desktop offers the `cube45` preset through **Include 45° turns**: the original 24 ordered cube orientations,
+followed by `R_x45 * R_cube`, `R_y45 * R_cube`, and `R_z45 * R_cube` in that order.
+These 96 unique proper rotations include positive and negative diagonal turns
+around all three world axes. They do not sample every combination of Euler angles.
+The native resolver records normalized, sign-canonical quaternions through the
+existing custom catalog contract. Its version-1 SHA256 is
+`7434d4e2eb8cd12e6a67af3a5d636a7435a4e50da043777586ff0fbff9eae4ef`.
+Cardinal orientations stay first; more orientations share the existing time and
+memory budgets, so a larger catalog does not guarantee a higher count in every
+bounded run. The 24-orientation cube mode remains the desktop default. All
+placements still require full-resolution validation.
 
 ## Baseline and staggered seed
 
@@ -77,7 +91,10 @@ Work is bounded at 32 million units per orientation, with half the remaining wor
 reserved for the coplanar fallback. Shared cancellation, deadline and memory
 admission remain enforced. Only the highest improving proposal from each
 orientation enters native validation; invalid or indeterminate results cannot
-replace the incumbent.
+replace the incumbent. With zero wall clearance, all interlocking planners keep the
+same tiny inward margin as mixed layouts whenever an axis has room for it, so
+rounding cannot push the far-wall column outside the box; an exact single fit is
+unchanged.
 The search uses no asset names, saved poses or altered physical constraints, and
 does not change manual voxel pitch or the fixed-work path.
 

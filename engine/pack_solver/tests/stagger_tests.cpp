@@ -7,6 +7,7 @@
 
 #include "../../pack_geometry/tests/validation_fixtures.hpp"
 #include "spectrapack/solver/spectral.hpp"
+#include "../src/baseline_internal.hpp"
 
 namespace geo = spectrapack::geometry;
 namespace sol = spectrapack::solver;
@@ -810,4 +811,36 @@ TEST_CASE("Slab lattices nest a stepped part with its half-turned twin", "[solve
         }
     }
     CHECK(used.size() == 2);
+}
+
+TEST_CASE("Zero-wall height stagger keeps far-wall columns inside the box", "[solver][interlocking][height-stagger]")
+{
+    // Stretching columns to both walls puts the last copy flush with the far
+    // wall; double rounding of origin + n * pitch can then cross it by one ulp.
+    const auto [scale, width] = GENERATE(table<double, double>({ { 1., 14.08 }, { 28.3, 400.162 } }));
+    auto mesh = geo::test_support::cuboid({ -1, -1, .5 }, { 1, 1, 2 });
+    geo::test_support::append_cuboid(mesh, { 1.05, -.4, .6 }, { 2, .4, .65 });
+    for (auto& vertex : mesh.vertices) {
+        for (auto& coordinate : vertex) {
+            coordinate *= scale;
+        }
+    }
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .125 * scale;
+    constraints.wall_clearance_mm = 0;
+    constraints.orientations.mode = geo::OrientationMode::fixed;
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(
+        geo::make_validation_context(geo::test_support::accepted(mesh, geo::AssetRole::object),
+                                     geo::BoxDimensions { width, 5 * scale, 20 * scale }, constraints));
+    const auto baseline = sol::run_aabb_baseline(context, {}, {});
+    REQUIRE(baseline.best);
+    sol::RunControl control;
+    control.deadline = control.now() + std::chrono::seconds(5);
+    const auto result = sol::detail::run_interlocking_stagger_with_seeds(context, {}, control,
+                                                                        { geo::Quaternion { 0, 0, 0, 1 } }, {},
+                                                                        baseline.best);
+    REQUIRE(result.best);
+    INFO("baseline=" << baseline.best->score.count << " result=" << result.best->score.count);
+    CHECK(result.best->score.count > baseline.best->score.count);
+    CHECK(geo::revalidate(result.best->solution).report.validity == geo::Validity::valid);
 }

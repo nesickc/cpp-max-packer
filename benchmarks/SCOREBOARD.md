@@ -26,6 +26,8 @@ or two copies.
 | 2026-10-20 | befd9a1 + automatic envelopes / validator v7, concurrent Python tests | cube64=64 \| lprism2=1 \| lprism-gap=2 \| pryanik2=435 \| pryanik2-0=447 \| ulamok=36 |
 | 2026-10-20 | befd9a1 + automatic envelopes / validator v7, isolated repeat | pryanik2-0=450 |
 | 2026-10-20 | 7361287 + diagonal compaction | cube64=64 \| lprism2=1 \| lprism-gap=2 \| pryanik2=435 \| pryanik2-0=450 \| ulamok=36 |
+| 2026-10-21 | ee08c71 (cube) | cube64=64 \| lprism2=1 \| lprism-gap=2 \| pryanik2=429 \| pryanik2-0=450 \| ulamok=36 |
+| 2026-10-21 | ee08c71 (cube45) | cube64=64 \| lprism2=1 \| lprism-gap=2 \| pryanik2=425 \| pryanik2-0=416 \| ulamok=36 |
 
 The low-RAM repeat had about 1.1 GiB available physical memory. Both Pryanik runs
 were refused before search (`IMPORT_WORKING_BYTES`); the previous engine also
@@ -46,3 +48,10 @@ and physical constraints are unchanged. The final desktop result occupies
 281.605 mm in Z and retains identical displayed/saved/restored/exported poses.
 Logs and results: `.local/diagonal/`;
 scoreboard artifacts: `.local/scoreboard/20261020-182445/`.
+
+The 45-degree catalog retains validity in all six cases but lowers the two Pryanik
+counts at the same 60-second budget. It is optional; the desktop default remains
+the 24 cube rotations. A separate diagonal-only bar fixture improves from zero to
+a validated fit with 45-degree turns and survives restore/export. Logs:
+`.local/rotations45/`; scoreboard artifacts: `.local/scoreboard/20261021-221507/`
+and `.local/scoreboard/20261021-221827/`.

@@ -16,6 +16,9 @@ const REPORT_LIMIT: u64 = 16 << 20;
 const RESULT_LIMIT: u64 = 64 << 20;
 const SOURCE_LIMIT: u64 = 256 << 20;
 const PREVIEW_LIMIT: u64 = 64 << 20;
+// Hash of the canonical native version-1 cube45 catalog, checked by the
+// real-engine Start/Save/Open/export test below.
+const CUBE45_CATALOG_HASH: &str = "7434d4e2eb8cd12e6a67af3a5d636a7435a4e50da043777586ff0fbff9eae4ef";
 
 struct ChildGuard {
     child: Child,
@@ -189,13 +192,20 @@ fn physical_orientation_equal(a: &Value, b: &Value) -> bool {
 
 fn public_artifact_matches(live: &Value, document: &Value, settings: &Value, object_report: &Value) -> Outcome<()> {
     let resolved = &document["search"]["resolved_settings"];
+    let orientation_matches = if settings["orientation"]["mode"] == "cube45" {
+        resolved["orientation"]["mode"] == "custom"
+            && resolved["resolved"]["orientation_catalog_version"] == 1
+            && resolved["resolved"]["orientation_catalog_sha256"] == CUBE45_CATALOG_HASH
+    } else {
+        physical_orientation_equal(&resolved["orientation"], &settings["orientation"])
+    };
     if document["count"] != live["count"]
         || document["placements"] != live["placements"]
         || document["solution_revision"] != live["solution_revision"]
         || !physical_value_equal(&resolved["container"]["dimensions_mm"], &settings["box_dimensions_mm"])
         || !physical_value_equal(&resolved["container"]["tolerance_mm"], &settings["box_tolerance_mm"])
         || !physical_value_equal(&resolved["clearance_mm"], &settings["clearance_mm"])
-        || !physical_orientation_equal(&resolved["orientation"], &settings["orientation"])
+        || !orientation_matches
         || !physical_value_equal(&resolved["resolved"]["pitch_mm"], &settings["pitch_mm"])
         || resolved["search"]["seed"] != settings["seed"]
     {
@@ -1850,6 +1860,39 @@ mod tests {
         .unwrap();
         let state = complete(core);
         assert!(state.last_error.is_none(), "{state:?}");
+    }
+    #[test]
+    fn cube45_start_save_open_and_export_preserve_native_catalog() {
+        let (root, core) = fixture();
+        import_fixture(&core);
+        let mut requested = settings();
+        requested["orientation"] = json!({"mode":"cube45"});
+        core.start(requested.clone()).unwrap();
+        let solved = complete(&core);
+        assert!(solved.last_error.is_none(), "{solved:?}");
+        let document = &solved.result.as_ref().unwrap()["document"];
+        assert!(document["count"].as_u64().unwrap() > 0);
+        let resolved = &document["search"]["resolved_settings"];
+        assert_eq!(resolved["orientation"]["mode"], "custom");
+        assert_eq!(resolved["orientation"]["quaternions_xyzw"].as_array().unwrap().len(), 96);
+        assert_eq!(resolved["resolved"]["orientation_catalog_sha256"], CUBE45_CATALOG_HASH);
+        let mut wrong_catalog = document.clone();
+        wrong_catalog["search"]["resolved_settings"]["resolved"]["orientation_catalog_sha256"] = json!("0".repeat(64));
+        assert!(public_artifact_matches(solved.live_result.as_ref().unwrap(), &wrong_catalog,
+            &requested, &document["assets"]["object"]).is_err());
+        let project = root.path().join("diagonal.spectrapack");
+        core.save_to(&project, requested.clone()).unwrap();
+        let saved = complete(&core);
+        assert!(saved.last_error.is_none(), "{saved:?}");
+        core.new_project().unwrap();
+        core.open_path(&project).unwrap();
+        let opened = complete(&core);
+        assert!(opened.last_error.is_none(), "{opened:?}");
+        assert_eq!(opened.draft_settings.as_ref().unwrap()["orientation"], requested["orientation"]);
+        assert_eq!(&opened.result.as_ref().unwrap()["document"], document);
+        core.export_to(root.path(), "stl").unwrap();
+        let exported = complete(&core);
+        assert!(exported.last_error.is_none(), "{exported:?}");
     }
     #[test]
     fn child_death_allows_new_and_verified_reimport_without_releasing_foreign_epoch() {

@@ -2696,7 +2696,7 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
               ],
               "properties": {
                 "mode": {
-                  "const": "cube"
+                  "enum": ["cube", "cube45"]
                 }
               },
               "additionalProperties": false
