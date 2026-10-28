@@ -29,6 +29,10 @@ usable desktop app**. Process exists only to serve that.
 
 - **One agent, full context.** Do the work yourself. Spawn a helper only for a
   clearly separate, parallel job (e.g. an unrelated script) or when the user asks.
+- **One chat per deliverable.** Start a new chat for a separate deliverable or
+  functional module, so the context holds only the relevant work; this file and
+  [PROJECT_STATUS.md](doc/PROJECT_STATUS.md) carry what a new chat needs. Stay in
+  the same chat for follow-ups that act on what it just found or built.
 - **Independent review** (`code_reviewer`) only when the user asks, or when a change
   touches the validator, clearance semantics, transforms or result contracts.
 - **Measure with the scoreboard.** `python tools/scoreboard.py` runs the fixed cases
@@ -68,9 +72,15 @@ usable desktop app**. Process exists only to serve that.
 
 ## Delivery
 
-- Short-lived `feature/<short-description>` branches, one goal each. Commits and
-  pushes to feature branches are authorized; open a ready PR to `main`. The user
-  reviews and merges; never merge automatically.
-- Stacking a branch on an unmerged one is fine when it saves waiting; say so in the PR.
+- **One branch and one PR per deliverable.** A deliverable is a piece of
+  functionality the user would merge and use on its own, e.g. a new packing phase
+  with its tests, docs and scoreboard result, or a desktop feature end to end.
+  Successive improvements toward the same deliverable are further commits on the
+  same `feature/<short-description>` branch and PR, not new PRs. Fixes needed to
+  get that PR green, CI included, belong in it too.
+- Commits and pushes to feature branches are authorized; open a ready PR to `main`
+  once the deliverable works. The user reviews and merges; never merge automatically.
+- Do not stack PRs for steps of one effort. Branch from an unmerged PR only for a
+  separate deliverable that needs its code, and say so in the PR.
 - Preserve existing ChatGPT sign-in and permissions. No API billing or Fast-speed
   changes.
