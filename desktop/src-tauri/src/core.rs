@@ -1829,7 +1829,8 @@ mod tests {
             "orientation":{"mode":"fixed","quaternion_xyzw":[0,0,0,1]},"pitch_mm":10,"budget_seconds":1,"seed":"42"})
     }
     fn complete(core: &Core) -> State {
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        // Checked STL export revalidates every copy; hosted runners need more than 15 s.
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(120);
         loop {
             let state = core.state();
             if state
