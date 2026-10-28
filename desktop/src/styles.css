@@ -11,3 +11,6 @@
 .repair-comparison { margin-top: 12px; overflow-wrap: anywhere; }
 .repair-comparison table { width: 100%; border-collapse: collapse; font-size: 11px; }
 .repair-comparison th, .repair-comparison td { padding: 6px 3px; border-bottom: 1px solid #304152; text-align: left; }
+
+.rotation-option { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: #9ab0c0; font-size: 11px; }
+.rotation-option input { accent-color: #63ccbd; }

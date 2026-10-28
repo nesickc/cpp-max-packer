@@ -3248,7 +3248,7 @@ export interface Settings {
         quaternion_xyzw: Q;
       }
     | {
-        mode: "cube";
+        mode: "cube" | "cube45";
       };
   pitch_mm: number;
   budget_seconds: number;
@@ -6016,7 +6016,7 @@ export interface Settings {
         quaternion_xyzw: Q;
       }
     | {
-        mode: "cube";
+        mode: "cube" | "cube45";
       };
   pitch_mm: number;
   budget_seconds: number;

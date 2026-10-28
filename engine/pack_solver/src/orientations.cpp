@@ -77,6 +77,30 @@ CatalogOutcome rejected(std::string_view code, std::string_view message, std::ui
 }
 }  // namespace
 
+std::array<geometry::Quaternion, 96> cube45_orientations() noexcept
+{
+    std::array<geometry::Quaternion, 96> result {};
+    const auto cubes = detail::cube_seed_array();
+    std::copy(cubes.begin(), cubes.end(), result.begin());
+    // Fixed sin(pi/8), cos(pi/8) inputs; canonical() normalizes on the locked toolchain.
+    constexpr double sine = 0.38268343236508977173;
+    constexpr double cosine = 0.92387953251128675613;
+    std::size_t index = cubes.size();
+    for (std::size_t axis = 0; axis != 3; ++axis) {
+        geometry::Quaternion turn { 0, 0, 0, cosine };
+        turn[axis] = sine;
+        const auto [x, y, z, w] = turn;
+        for (const auto& q : cubes) {
+            const auto [a, b, c, d] = q;
+            result[index++] = canonical({ w * a + x * d + y * c - z * b,
+                                          w * b - x * c + y * d + z * a,
+                                          w * c + x * b - y * a + z * d,
+                                          w * d - x * a - y * b - z * c });
+        }
+    }
+    return result;
+}
+
 CatalogOutcome make_orientation_catalog(const geometry::OrientationPolicy& policy, std::uint64_t maximum)
 {
     std::uint64_t raw_capacity_bytes_peak {};

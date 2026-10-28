@@ -54,7 +54,7 @@
               ],
               "properties": {
                 "mode": {
-                  "const": "cube"
+                  "enum": ["cube", "cube45"]
                 }
               },
               "additionalProperties": false
