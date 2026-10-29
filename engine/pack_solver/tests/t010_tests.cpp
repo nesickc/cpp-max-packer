@@ -536,8 +536,7 @@ TEST_CASE("T010 actual first quantized Pryanik2 copy completes within diagnostic
     REQUIRE(baseline.best->solution->copies().size() == 2);
     const auto bytes = quantized_copy(*native_context->object(), baseline.best->solution->copies().front());
     geo::ImportLimits import_limits;
-    // Diagnostic single-copy target. The separate actual two-copy export must
-    // still pass its original 1.3-billion aggregate allowance.
+    // Diagnostic target: half of the default 1.3-billion per-copy allowance.
     import_limits.max_predicate_work = 650'000'000;
     geo::detail::ImportAttemptStats stats;
     const auto imported = geo::detail::inspect_baked_world_draft(bytes, import_limits, stats);

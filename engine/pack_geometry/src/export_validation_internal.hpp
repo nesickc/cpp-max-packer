@@ -46,18 +46,17 @@ private:
     friend struct ExportBudget;
 };
 
+// Import limits apply to each staged copy separately, exactly as they bound one
+// user import of that mesh. The whole export is bounded by memory, cumulative
+// kernel and pair-test work, and the operation's cancellation/deadline.
 struct ExportBudget {
     validation_kernel::Budget kernel;
-    std::uint64_t import_predicate_used {};
-    std::uint64_t import_candidate_pairs_used {};
     std::uint64_t pair_tests_used {};
 
     ExportBudget(std::uint64_t max_kernel_work, std::uint64_t max_working_bytes,
                  const runtime::OperationControl& control = {}) noexcept;
     [[nodiscard]] std::optional<MemoryLease> lease_bytes(std::uint64_t bytes) noexcept;
     [[nodiscard]] MemoryLease adopt_bytes(std::uint64_t bytes) noexcept;
-    [[nodiscard]] bool consume_import_predicates(std::uint64_t units, std::uint64_t maximum) noexcept;
-    [[nodiscard]] bool consume_import_pairs(std::uint64_t units, std::uint64_t maximum) noexcept;
 };
 
 struct BakedWorldImport {
