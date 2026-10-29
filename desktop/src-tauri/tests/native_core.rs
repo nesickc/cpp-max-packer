@@ -387,7 +387,7 @@ fn ulamok_retained_resource_json_project_roundtrip() {
 }
 
 #[test]
-#[ignore = "T010 pending: full36 checked STL hits EXPORT_IMPORT_WORK_LIMIT"]
+#[ignore = "requires the pinned full Ulamok STL and a real native engine"]
 fn ulamok_retained_resource_checked_stl_qualification() {
     assert_eq!(project_roundtrip(ulamok_request(), true, true), 36);
 }
