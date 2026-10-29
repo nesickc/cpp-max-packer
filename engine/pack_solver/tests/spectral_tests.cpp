@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <cfenv>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <exception>
@@ -5142,4 +5143,30 @@ TEST_CASE("AT-16 catalog failures distinguish allocated capacity from planned ca
     CHECK(failed->run.diagnostic_code == "SPECTRAL_CATALOG_ALLOCATION");
     CHECK(failed->run.retained_solution == initial);
     CHECK(failed->run.stats.tracked_working_bytes_peak == stopped.run.stats.tracked_working_bytes_peak);
+}
+
+TEST_CASE("Timed search in an STL container still improves a resumed layout", "[solver][spectral][stl-container]")
+{
+    // Compaction and gap filling need a box; in an STL interior the timed run
+    // must keep the FFT search to fill the second, separated chamber.
+    const auto object = geo::test_support::accepted(geo::test_support::cuboid({ -.5, -.5, -.5 }, { .5, .5, .5 }),
+                                                    geo::AssetRole::object);
+    auto mesh = geo::test_support::cuboid({ 0, 0, 0 }, { 1.1, 1.1, 1.1 });
+    geo::test_support::append_cuboid(mesh, { 2.25, 0, 0 }, { 3.35, 1.1, 1.1 });
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(geo::make_validation_context(
+        object, geo::test_support::accepted(mesh, geo::AssetRole::container), {}));
+    const auto initial =
+        geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(
+                                   geo::make_candidate(context, { { "seed", { .55, .55, .55 }, { 0, 0, 0, 1 } } })))
+            .validated_solution;
+    REQUIRE(initial);
+    solver::SpectralLimits limits;
+    limits.resource_mode = solver::ResourceMode::timed;
+    solver::RunControl control;
+    control.deadline = control.now() + std::chrono::seconds(30);
+    const auto outcome = solver::run_cpu_spectral(context, { {}, .05 }, limits, control, {}, initial);
+    INFO(outcome.run.diagnostic_code);
+    REQUIRE(outcome.run.best);
+    CHECK(outcome.run.best->score.count == 2);
+    CHECK(geo::revalidate(outcome.run.best->solution).validated_solution);
 }

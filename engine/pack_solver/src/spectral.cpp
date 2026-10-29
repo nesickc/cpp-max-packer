@@ -720,10 +720,12 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             return outcome;
         }
     }
-    // Timed runs end with compaction's FFT gap filling and greedy layouts. The
-    // per-insertion box-correlation phase below remains for fixed-work runs and
-    // for timed runs whose seeded phases found no copy at all.
-    if (timed && outcome.run.best && outcome.run.best->score.count > 0) {
+    // Timed runs in a box end with compaction's FFT gap filling and greedy
+    // layouts. The per-insertion box-correlation phase below remains for
+    // fixed-work runs, STL containers (where compaction is unavailable) and
+    // timed runs whose seeded phases found no copy at all.
+    if (timed && std::holds_alternative<geometry::BoxDimensions>(context->container()) && outcome.run.best &&
+        outcome.run.best->score.count > 0) {
         return outcome;
     }
     renew_boundary(limits.spectral.max_candidate_evaluations, requested_limits.spectral.max_candidate_evaluations,

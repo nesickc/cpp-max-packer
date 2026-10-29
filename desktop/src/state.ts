@@ -30,6 +30,11 @@ export function settingsError(settings: Desktop.Settings): string | null {
   return null;
 }
 export function activeOperation(state: Desktop.State | null): boolean { return !!state?.operation && !state.operation.finished_at; }
+// The validated interior: each nominal dimension plus the allowed tolerance.
+export function effectiveDimensions(settings: Desktop.Settings): [number, number, number] {
+  const tolerance = Number.isFinite(settings.box_tolerance_mm) && settings.box_tolerance_mm! > 0 ? settings.box_tolerance_mm! : 0;
+  return settings.box_dimensions_mm.map(v => v + tolerance) as [number, number, number];
+}
 export function snapshotSettings(result: Desktop.ResultSnapshot): Desktop.Settings {
   const s = result.document.search.resolved_settings;
   return { desktop_version: 1, box_dimensions_mm: s.container.kind === 'box' ? [...s.container.dimensions_mm] : [100,100,100], ...(s.container.kind === 'box' && s.container.tolerance_mm !== undefined ? { box_tolerance_mm: s.container.tolerance_mm } : {}), clearance_mm: { ...s.clearance_mm }, orientation: s.orientation.mode === 'custom' && s.resolved.orientation_catalog_sha256 === cube45CatalogHash ? { mode: 'cube45' } : s.orientation.mode === 'cube' ? { mode: 'cube' } : { mode: 'fixed', quaternion_xyzw: s.orientation.mode === 'fixed' ? [...s.orientation.quaternion_xyzw] : [0,0,0,1] }, pitch_mm: s.resolved.pitch_mm, budget_seconds: s.search.budget_seconds ?? 60, seed: s.search.seed, thread_count: s.resolved.thread_count, budget_scope: s.search.budget_scope ?? 'search_only', ...(s.compute.host_memory_limit_bytes ? {host_memory_limit_bytes:s.compute.host_memory_limit_bytes} : {}) };

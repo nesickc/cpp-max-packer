@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Assets, Desktop, Results } from './generated/contracts';
 import { bridge, nativeAvailable } from './bridge';
-import { acceptState, activeOperation, defaultSettings, settingsError, snapshotSettings } from './state';
+import { acceptState, activeOperation, defaultSettings, effectiveDimensions, settingsError, snapshotSettings } from './state';
 import { Viewer } from './Viewer';
 
 const emptyPoses: Results.Placement[] = [];
@@ -119,7 +119,7 @@ export function App() {
   const repair = state?.repair;
   const preview = repair ? (repair.algorithm==='envelope' ? repair.before : repair[repairView]) : state?.object?.report.packing_envelope ? state.object.preview : live ? live.preview : result ? result.preview : state?.object?.preview ?? null;
   const envelopePreview = repair ? (repair.algorithm==='envelope' ? repair.after : null) : state?.object?.envelope_preview ?? null;
-  const displayedDimensions = useMemo(() => resultSettings?.box_dimensions_mm ?? (settings.box_dimensions_mm.every(v => Number.isFinite(v) && v > 0) ? settings.box_dimensions_mm : defaultSettings.box_dimensions_mm), [resultSettings, settings.box_dimensions_mm]);
+  const displayedDimensions = useMemo(() => effectiveDimensions(resultSettings ?? (settings.box_dimensions_mm.every(v => Number.isFinite(v) && v > 0) ? settings : defaultSettings)), [resultSettings, settings]);
   const report = state?.object?.report;
   // Native polling clones unchanged snapshots. Their revision and physical
   // dimensions, rather than transport object identities, own display updates.
