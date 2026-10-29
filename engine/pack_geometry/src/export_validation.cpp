@@ -314,17 +314,32 @@ std::optional<std::uint64_t> source_resident_bytes(const ValidationContext& cont
 struct BakedCopy {
     detail::BakedWorldImport imported;
     detail::ResidentPlacedSolid placed;
+
+    std::uint64_t resident_bytes() const noexcept
+    {
+        return imported.accepted_residency.bytes() + placed.kernel_residency.bytes();
+    }
 };
 
 // Copies already imported and checked in this call. Reader bytes are immutable
 // for the call, so a cached copy is exactly what a reread would rebuild; the
 // cache only spares the repeated import when a later neighbour is paired with
-// it. Cached copies keep their memory leases and the least recently used one
-// is released first. The cache stays within its share of the allowance so the
-// transient import and pair work keeps the rest.
+// it. Cached copies keep their memory leases but are optional: whenever a
+// reservation on the budget does not fit, the least recently used unpinned
+// copy is freed first, so the cache never rejects an export that fits without
+// it. The copy returned by the last find stays pinned while it is paired.
 class CopyCache {
 public:
-    CopyCache(std::size_t copies, std::uint64_t max_bytes) : entries_(copies), max_bytes_(max_bytes) {}
+    CopyCache(std::size_t copies, std::uint64_t max_bytes, detail::validation_kernel::Budget& budget) :
+        entries_(copies),
+        max_bytes_(max_bytes),
+        budget_(budget)
+    {
+        budget_.set_reclaimer(&CopyCache::reclaim, this);
+    }
+    CopyCache(const CopyCache&) = delete;
+    CopyCache& operator=(const CopyCache&) = delete;
+    ~CopyCache() { budget_.set_reclaimer(nullptr, nullptr); }
 
     static std::uint64_t bookkeeping_bytes(std::size_t copies) noexcept
     {
@@ -335,6 +350,7 @@ public:
 
     const BakedCopy* find(std::size_t index) noexcept
     {
+        pinned_ = index;
         auto& entry = entries_[index];
         if (!entry.copy) {
             return nullptr;
@@ -343,20 +359,14 @@ public:
         return &*entry.copy;
     }
 
-    void insert(std::size_t index, BakedCopy copy, std::uint64_t bytes)
+    void insert(std::size_t index, BakedCopy copy)
     {
+        pinned_ = kNone;
+        const auto bytes = copy.resident_bytes();
         if (bytes > max_bytes_) {
             return;
         }
-        while (bytes_ + bytes > max_bytes_) {
-            auto oldest = entries_.end();
-            for (auto it = entries_.begin(); it != entries_.end(); ++it) {
-                if (it->copy && (oldest == entries_.end() || it->last_use < oldest->last_use)) {
-                    oldest = it;
-                }
-            }
-            oldest->copy.reset();
-            bytes_ -= oldest->bytes;
+        while (bytes_ + bytes > max_bytes_ && evict_oldest()) {
         }
         entries_[index] = { std::move(copy), bytes, ++clock_ };
         bytes_ += bytes;
@@ -368,8 +378,31 @@ private:
         std::uint64_t bytes {};
         std::uint64_t last_use {};
     };
+    static constexpr auto kNone = std::numeric_limits<std::size_t>::max();
+
+    bool evict_oldest() noexcept
+    {
+        auto oldest = entries_.end();
+        for (auto it = entries_.begin(); it != entries_.end(); ++it) {
+            if (it->copy && static_cast<std::size_t>(it - entries_.begin()) != pinned_ &&
+                (oldest == entries_.end() || it->last_use < oldest->last_use)) {
+                oldest = it;
+            }
+        }
+        if (oldest == entries_.end()) {
+            return false;
+        }
+        bytes_ -= oldest->bytes;
+        oldest->copy.reset();
+        return true;
+    }
+
+    static bool reclaim(void* cache) noexcept { return static_cast<CopyCache*>(cache)->evict_oldest(); }
+
     std::vector<Entry> entries_;
     std::uint64_t max_bytes_ {}, bytes_ {}, clock_ {};
+    std::size_t pinned_ { kNone };
+    detail::validation_kernel::Budget& budget_;
 };
 
 bool strictly_separated_quantized_bounds(const detail::validation_kernel::ConservativeBounds& first,
@@ -623,23 +656,17 @@ ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSoluti
     }
     std::optional<CopyCache> cache;
     try {
-        // A quarter of the remaining allowance: rereads stay possible however
-        // much transient memory a single import or pair check needs.
-        cache.emplace(solution->copies().size(), (limits.max_working_bytes - budget.kernel.bytes_live()) / 4);
+        // A quarter of the remaining allowance keeps typical exports' peak
+        // memory modest; transient work reclaims cached copies when it needs them.
+        cache.emplace(solution->copies().size(), (limits.max_working_bytes - budget.kernel.bytes_live()) / 4,
+                      budget.kernel);
     }
     catch (const std::bad_alloc&) {
         return report(Validity::indeterminate, "EXPORT_ALLOCATION", "Copy cache storage allocation failed.", budget,
                       fresh_peak);
     }
-    const auto load_resident = [&](std::size_t index, std::uint64_t& resident) {
-        const auto before = budget.kernel.bytes_live();
-        auto loaded = load_copy(index, reader, limits, budget);
-        resident = budget.kernel.bytes_live() - before;
-        return loaded;
-    };
     for (std::size_t current = 0; current != solution->copies().size(); ++current) {
-        std::uint64_t copy_bytes {};
-        auto loaded = load_resident(current, copy_bytes);
+        auto loaded = load_copy(current, reader, limits, budget);
         if (const auto* failure = std::get_if<ClassifiedFailure>(&loaded)) {
             return report(*failure, budget, fresh_peak);
         }
@@ -686,9 +713,8 @@ ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSoluti
             }
             const auto* other = cache->find(prior);
             std::optional<BakedCopy> reread;
-            std::uint64_t reread_bytes {};
             if (!other) {
-                auto other_loaded = load_resident(prior, reread_bytes);
+                auto other_loaded = load_copy(prior, reader, limits, budget);
                 if (const auto* failure = std::get_if<ClassifiedFailure>(&other_loaded)) {
                     return report(*failure, budget, fresh_peak);
                 }
@@ -706,11 +732,11 @@ ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSoluti
                               budget, fresh_peak);
             }
             if (reread) {
-                cache->insert(prior, std::move(*reread), reread_bytes);
+                cache->insert(prior, std::move(*reread));
             }
         }
         certified_bounds.push_back(current_bounds);
-        cache->insert(current, std::move(copy), copy_bytes);
+        cache->insert(current, std::move(copy));
     }
     return report(Validity::valid, "VALID", "All quantized copies satisfy the geometry contract.", budget, fresh_peak);
 }

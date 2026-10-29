@@ -3,6 +3,7 @@
 #include <bit>
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <string>
 
@@ -197,8 +198,10 @@ TEST_CASE("AT-10 export rejects identical quantized copies")
 }
 
 namespace {
+// `padded` names a copy whose staged read carries 1 MiB of spare capacity,
+// which export memory must admit while that copy is imported.
 geo::ValidationReport export_separated_cubes(std::size_t copies, const geo::ExportValidationLimits& limits,
-                                             std::size_t* reads = nullptr)
+                                             std::size_t* reads = nullptr, std::size_t padded = SIZE_MAX)
 {
     geo::Constraints constraints;
     constraints.pair_clearance_mm = .5;
@@ -212,7 +215,11 @@ geo::ValidationReport export_separated_cubes(std::size_t copies, const geo::Expo
         if (reads) {
             ++*reads;
         }
-        return cube_bytes(centres[index] - 1, centres[index] + 1);
+        auto bytes = cube_bytes(centres[index] - 1, centres[index] + 1);
+        if (index == padded) {
+            bytes.reserve(bytes.size() + (1U << 20));
+        }
+        return std::move(bytes);
     }, limits);
 }
 
@@ -227,7 +234,29 @@ std::uint64_t one_copy_allowance(std::uint64_t geo::ImportLimits::*cap)
     }
     return limits.per_copy_import.*cap;
 }
+
+// Smallest working-memory allowance that validates three separated copies.
+std::uint64_t smallest_memory(std::size_t padded)
+{
+    geo::ExportValidationLimits limits;
+    std::uint64_t low = 0, high = export_separated_cubes(3, limits, nullptr, padded).working_bytes_peak;
+    while (low + 1 < high) {
+        limits.max_working_bytes = low + (high - low) / 2;
+        (export_separated_cubes(3, limits, nullptr, padded).validity == geo::Validity::valid ? high : low) =
+            limits.max_working_bytes;
+    }
+    limits.max_working_bytes = high;
+    REQUIRE(export_separated_cubes(3, limits, nullptr, padded).validity == geo::Validity::valid);
+    return high;
+}
 }  // namespace
+
+TEST_CASE("AT-10 export cached copies yield memory to later copies")
+{
+    // The first copy is imported before anything is cached. Copies cached
+    // ahead of the last one must give way, so it needs no more memory.
+    CHECK(smallest_memory(2) == smallest_memory(0));
+}
 
 TEST_CASE("AT-10 export import predicate cap applies to each copy, not the sum")
 {

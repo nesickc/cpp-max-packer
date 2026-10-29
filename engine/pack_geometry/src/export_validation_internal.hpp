@@ -37,6 +37,7 @@ public:
     MemoryLease& operator=(MemoryLease&&) noexcept;
     ~MemoryLease();
     [[nodiscard]] explicit operator bool() const noexcept;
+    [[nodiscard]] std::uint64_t bytes() const noexcept { return bytes_; }
     void reset() noexcept;
 
 private:

@@ -44,6 +44,11 @@ class Budget {
      [[nodiscard]] bool commit_completed_work(std::uint64_t units) noexcept;
      [[nodiscard]] bool reserve_bytes(std::uint64_t bytes) noexcept;
      void release_bytes(std::uint64_t bytes) noexcept;
+     // Optional residents (e.g. cached copies) may be freed on demand: when a
+     // reservation does not fit, the reclaimer is called until it fits or the
+     // reclaimer reports that nothing more can be freed.
+     using Reclaimer = bool (*)(void* context) noexcept;
+     void set_reclaimer(Reclaimer reclaimer, void* context) noexcept;
      [[nodiscard]] std::uint64_t work_used() const noexcept;
      [[nodiscard]] std::uint64_t work_remaining() const noexcept;
      [[nodiscard]] std::uint64_t bytes_live() const noexcept;
@@ -70,6 +75,8 @@ class Budget {
   runtime::StopCause interruption_ { runtime::StopCause::none };
   std::uint32_t poll_calls_ {};
   bool controlled_ {};
+  Reclaimer reclaimer_ {};
+  void* reclaim_context_ {};
 };
 
 class PreparedSolid;
