@@ -10,10 +10,12 @@ struct StaggerSummary;
 
 namespace spectrapack::solver::detail {
 
+// Slab lattice mode only proposes layered double lattices (slab_lattice.hpp)
+// and returns; otherwise slides, contracts and FFT-refills the entry layout.
 [[nodiscard]] BaselineOutcome run_compaction_with_seeds(std::shared_ptr<const geometry::ValidationContext>,
                                                         const BaselineLimits&, const RunControl&,
                                                         const std::vector<geometry::Quaternion>&, SnapshotSink,
-                                                        SnapshotHandle);
+                                                        SnapshotHandle, bool slab_lattice = false);
 
 // Physical refinement phases resume a prior phase's exact validated snapshot.
 struct IncumbentResumeAccess {

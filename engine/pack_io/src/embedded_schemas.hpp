@@ -161,6 +161,10 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
           },
           "minItems": 3,
           "maxItems": 3
+        },
+        "tolerance_mm": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/nonnegative",
+          "description": "Allowed oversize of the box: each validated interior dimension is dimensions_mm + tolerance_mm. Absent means 0."
         }
       },
       "additionalProperties": false
@@ -2660,6 +2664,9 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
           },
           "minItems": 3,
           "maxItems": 3
+        },
+        "box_tolerance_mm": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/nonnegative"
         },
         "clearance_mm": {
           "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/clearance"

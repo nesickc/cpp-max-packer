@@ -212,7 +212,7 @@ def validation_report(count):
         "validity": "valid", "code": "VALID",
         "message": "All requested physical checks completed.",
         "epsilon_mm": 1e-6,
-        "kernel_revision": "homogeneous-rational-interval-v4",
+        "kernel_revision": checks.KERNEL_REVISION,
         "aabb_pair_tests": count * (count - 1) // 2,
         "kernel_work": 1000 + count * 10,
         "working_bytes_peak": 4096 + count * 64,
@@ -435,11 +435,11 @@ class BaselinePayloadTests(unittest.TestCase):
                 self.assert_rejected(payload)
 
     def test_current_native_kernel_revision_qualifies(self):
-        """QA-01/AT-17: qualify the v4 original-solid validator report."""
+        """QA-01/AT-17: qualify the current original-solid validator report."""
         payload = complete_payload()
         revisions = {run["fresh_revalidation"]["report"]["kernel_revision"]
                      for case in payload["workloads"] for run in case["runs"]}
-        self.assertEqual(revisions, {"homogeneous-rational-interval-v4"})
+        self.assertEqual(revisions, {checks.KERNEL_REVISION})
         checks.verify_payload(payload, ROOT / "tests/fixtures/import-expectations.json", 3, 1)
 
     def test_rejects_stale_or_unknown_native_kernel_revision(self):

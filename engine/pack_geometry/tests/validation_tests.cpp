@@ -1,4 +1,5 @@
 #include <array>
+#include <random>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
@@ -1086,4 +1087,152 @@ TEST_CASE("opaque accepted and validation handles cannot be copied or reassigned
   CHECK_FALSE(std::is_copy_assignable_v<geo::ValidatedSolution>);
   CHECK_FALSE(std::is_move_constructible_v<geo::ValidatedSolution>);
   CHECK_FALSE(std::is_move_assignable_v<geo::ValidatedSolution>);
+}
+
+namespace {
+std::shared_ptr<const geo::ValidationContext> u_prism_context()
+{
+    // A nonconvex part in a small box, so additions and moves reach the full pair
+    // and containment classifiers rather than only bounds certificates.
+    geo::Constraints constraints;
+    constraints.orientations.mode = geo::OrientationMode::cube;
+    auto made = geo::make_validation_context(
+        geo::test_support::accepted(geo::test_support::u_prism(), geo::AssetRole::object),
+        geo::BoxDimensions { 8, 8, 3 }, constraints);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
+    return std::get<std::shared_ptr<const geo::ValidationContext>>(std::move(made));
+}
+
+// Places a part, unturned or half-turned about Z, with its bounding box at `corner`.
+geo::CopyPose at_corner(const std::shared_ptr<const geo::ValidationContext>& value, std::string id,
+                        geo::Vec3 corner, bool turned)
+{
+    const auto bounds = value->object()->bounds_mm();
+    const geo::Vec3 low = turned ? geo::Vec3 { -bounds.max[0], -bounds.max[1], bounds.min[2] } : bounds.min;
+    return { std::move(id),
+             { corner[0] - low[0], corner[1] - low[1], corner[2] - low[2] },
+             turned ? geo::Quaternion { 0, 0, 1, 0 } : geo::Quaternion { 0, 0, 0, 1 } };
+}
+
+std::shared_ptr<const geo::Candidate> candidate_of(const std::shared_ptr<const geo::ValidationContext>& value,
+                                                   std::vector<geo::CopyPose> copies)
+{
+    auto made = geo::make_candidate(value, std::move(copies));
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(made));
+    return std::get<std::shared_ptr<const geo::Candidate>>(std::move(made));
+}
+}  // namespace
+
+TEST_CASE("GEO-06 incremental validation rechecks every added or moved copy", "[incremental][GEO-06]")
+{
+    const auto value = u_prism_context();
+    const auto pose = [&](std::string id, geo::Vec3 corner, bool turned = false) {
+        return at_corner(value, std::move(id), corner, turned);
+    };
+    const std::vector<geo::CopyPose> base_copies { pose("a", { .1, .1, .1 }), pose("b", { 4.2, .1, .1 }, true),
+                                                   pose("c", { .1, 4.2, .1 }) };
+    const auto base = geo::validate(value, candidate_of(value, base_copies));
+    INFO(base.report.code);
+    REQUIRE(base.validated_solution);
+
+    struct Edit {
+        const char* name;
+        std::vector<geo::CopyPose> copies;
+        bool valid;
+    };
+    auto with = [&](std::size_t index, geo::CopyPose pose) {
+        auto copies = base_copies;
+        copies[index] = std::move(pose);
+        return copies;
+    };
+    auto plus = [&](geo::CopyPose pose) {
+        auto copies = base_copies;
+        copies.push_back(std::move(pose));
+        return copies;
+    };
+    const std::vector<Edit> edits {
+        { "separate addition", plus(pose("d", { 4.2, 4.2, .1 })), true },
+        { "addition overlapping a proven copy", plus(pose("d", { 1.1, .6, .1 })), false },
+        { "moved copy in a new free place", with(2, pose("c", { .1, 4.2, 1.6 }, true)), true },
+        { "moved copy overlapping a proven copy", with(2, pose("c", { 2, 2, .1 })), false },
+        { "moved copy outside the box", with(2, pose("c", { .1, 5.5, .1 })), false },
+        { "duplicate ID of a proven copy", plus(base_copies[0]), false },
+        { "reordered copies with an overlapping addition",
+         [&] {
+             auto copies = plus(pose("d", { 1.1, .6, .1 }));
+             std::swap(copies[0], copies[1]);
+             return copies;
+         }(), false },
+    };
+    for (const auto& edit : edits) {
+        const auto candidate = candidate_of(value, edit.copies);
+        const auto full = geo::validate(value, candidate);
+        const auto incremental = geo::validate_incremental(base.validated_solution, candidate);
+        CAPTURE(edit.name, full.report.code, incremental.report.code);
+        // Overlap at inexact coordinates may be invalid or indeterminate; both reject.
+        CHECK(static_cast<bool>(full.validated_solution) == edit.valid);
+        CHECK(incremental.report.validity == full.report.validity);
+        CHECK(incremental.report.code == full.report.code);
+        CHECK(static_cast<bool>(incremental.validated_solution) == edit.valid);
+    }
+}
+
+TEST_CASE("GEO-06 incremental validation refuses a base from another context", "[incremental][GEO-06]")
+{
+    const auto first = u_prism_context(), second = u_prism_context();
+    const auto base = geo::validate(first, candidate_of(first, { at_corner(first, "a", { .1, .1, .1 }, false) }));
+    REQUIRE(base.validated_solution);
+    const auto outcome = geo::validate_incremental(
+        base.validated_solution, candidate_of(second, { at_corner(second, "a", { .1, .1, .1 }, false) }));
+    CHECK(outcome.report.validity == geo::Validity::indeterminate);
+    CHECK(outcome.report.code == "VALIDATION_CONTEXT_MISMATCH");
+    CHECK_FALSE(outcome.validated_solution);
+}
+
+TEST_CASE("GEO-06 incremental and full validation agree on random edits", "[incremental][GEO-06]")
+{
+    const auto value = u_prism_context();
+    constexpr double h = 0.7071067811865475244;
+    const std::array<geo::Quaternion, 4> turns { { { 0, 0, 0, 1 }, { 0, 0, h, h }, { 0, 0, 1, 0 }, { 0, 0, -h, h } } };
+    std::mt19937 random(20261026);
+    std::uniform_real_distribution<double> x(-.5, 5.5), z(-.3, 2.3);
+    std::uniform_int_distribution<int> turn(0, 3);
+    const auto random_pose = [&](std::string id) {
+        // Corners keep a non-dyadic fraction, so world coordinates are inexact.
+        auto pose = at_corner(value, std::move(id), { x(random) + .013, x(random) + .029, z(random) + .007 }, false);
+        pose.rotation_xyzw = turns[turn(random)];
+        return pose;
+    };
+    std::vector<geo::CopyPose> base_copies;
+    for (int attempt = 0; attempt != 400 && base_copies.size() != 4; ++attempt) {
+        auto copies = base_copies;
+        copies.push_back(random_pose("base-" + std::to_string(base_copies.size())));
+        if (geo::validate(value, candidate_of(value, copies)).validated_solution) {
+            base_copies = std::move(copies);
+        }
+    }
+    REQUIRE(base_copies.size() >= 2);
+    const auto base = geo::validate(value, candidate_of(value, base_copies));
+    REQUIRE(base.validated_solution);
+    int valid = 0, rejected = 0;
+    for (int trial = 0; trial != 300; ++trial) {
+        auto copies = base_copies;
+        const int kind = trial % 3;
+        if (kind != 1) {
+            copies.push_back(random_pose("added"));
+        }
+        if (kind != 0) {
+            auto moved = random_pose(copies[trial % base_copies.size()].copy_id);
+            copies[trial % base_copies.size()] = moved;
+        }
+        const auto candidate = candidate_of(value, copies);
+        const auto full = geo::validate(value, candidate);
+        const auto incremental = geo::validate_incremental(base.validated_solution, candidate);
+        CAPTURE(trial, full.report.code, incremental.report.code);
+        REQUIRE(incremental.report.validity == full.report.validity);
+        (full.report.validity == geo::Validity::valid ? valid : rejected) += 1;
+    }
+    // Both outcomes must occur for the comparison to mean anything.
+    CHECK(valid >= 5);
+    CHECK(rejected >= 5);
 }

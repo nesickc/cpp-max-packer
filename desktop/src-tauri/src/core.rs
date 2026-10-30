@@ -202,7 +202,8 @@ fn public_artifact_matches(live: &Value, document: &Value, settings: &Value, obj
     if document["count"] != live["count"]
         || document["placements"] != live["placements"]
         || document["solution_revision"] != live["solution_revision"]
-        || !physical_value_equal(&document["container"]["dimensions_mm"], &settings["box_dimensions_mm"])
+        || !physical_value_equal(&resolved["container"]["dimensions_mm"], &settings["box_dimensions_mm"])
+        || !physical_value_equal(&resolved["container"]["tolerance_mm"], &settings["box_tolerance_mm"])
         || !physical_value_equal(&resolved["clearance_mm"], &settings["clearance_mm"])
         || !orientation_matches
         || !physical_value_equal(&resolved["resolved"]["pitch_mm"], &settings["pitch_mm"])
@@ -1714,7 +1715,8 @@ mod tests {
         let live = json!({"count":1,"solution_revision":2,"placements":[{"copy_id":"first","translation_mm":[1,2,3],"quaternion_xyzw":[0,0,0,1]}]});
         let mut document = json!({"count":1,"solution_revision":2,"placements":live["placements"],
             "container":{"dimensions_mm":settings["box_dimensions_mm"]},"assets":{"object":{}},
-            "search":{"resolved_settings":{"clearance_mm":settings["clearance_mm"],"orientation":settings["orientation"],
+            "search":{"resolved_settings":{"container":{"dimensions_mm":settings["box_dimensions_mm"]},
+                "clearance_mm":settings["clearance_mm"],"orientation":settings["orientation"],
                 "resolved":{"pitch_mm":settings["pitch_mm"]},"search":{"seed":settings["seed"]}}}});
         assert!(public_artifact_matches(&live, &document, &settings, &json!({})).is_ok());
         document["placements"][0]["translation_mm"] = json!([4, 5, 6]);
@@ -1733,7 +1735,8 @@ mod tests {
         let mut requested = settings();
         let mut document = json!({"count":1,"solution_revision":1,"placements":live["placements"],
             "container":{"dimensions_mm":requested["box_dimensions_mm"]},"assets":{"object":{}},
-            "search":{"resolved_settings":{"clearance_mm":requested["clearance_mm"],
+            "search":{"resolved_settings":{"container":{"dimensions_mm":requested["box_dimensions_mm"]},
+                "clearance_mm":requested["clearance_mm"],
                 "orientation":requested["orientation"],"resolved":{"pitch_mm":requested["pitch_mm"]},
                 "search":{"seed":requested["seed"]}}}});
         for q in [[0.0, 0.0, 0.0, -1.0], [0.0, 0.0, 0.0, 1.0000000005]] {
@@ -1864,6 +1867,8 @@ mod tests {
         import_fixture(&core);
         let mut requested = settings();
         requested["orientation"] = json!({"mode":"cube45"});
+        // One enveloped copy: checked export of several hits EXPORT_IMPORT_WORK_LIMIT.
+        requested["box_dimensions_mm"] = json!([20, 20, 20]);
         core.start(requested.clone()).unwrap();
         let solved = complete(&core);
         assert!(solved.last_error.is_none(), "{solved:?}");

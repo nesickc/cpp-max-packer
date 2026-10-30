@@ -164,23 +164,29 @@ jobs:
         run: |
           python tests/protocol/service_replay_perf.py out/build/windows-ninja-release/bin/spectrapack-engine.exe --samples 5 --requests 1000 > .local/ci/service-replay.json 2> .local/ci/service-replay.log
           exit $LASTEXITCODE
+      # Long hosted qualification runs only when dispatched, before a release.
       - name: Bounded STL import qualification and timings
+        if: github.event_name == 'workflow_dispatch'
         run: |
           python benchmarks/run_import.py --executable out/build/windows-ninja-release/bin/spectrapack-engine.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --output .local/ci/import.json --samples 3 --warmup 1 --timeout-seconds 120 --overall-timeout-seconds 600 *> .local/ci/import.log
           exit $LASTEXITCODE
       - name: Bounded independent solid validation qualification and timings
+        if: github.event_name == 'workflow_dispatch'
         run: |
           python benchmarks/run_validation.py --executable out/build/windows-ninja-release/bin/spectrapack_validation_benchmark.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --output .local/ci/validation.json --samples 3 --warmup 1 --timeout-seconds 300 --overall-timeout-seconds 600 *> .local/ci/validation.log
           exit $LASTEXITCODE
       - name: Generate million-triangle representation fixture
+        if: github.event_name == 'workflow_dispatch'
         run: |
           python benchmarks/subdivided_cube.py --output .local/ci/cube_subdivided_n300.stl --subdivisions 300 *> .local/ci/representation-fixture.log
           exit $LASTEXITCODE
       - name: Bounded physical baseline qualification and timings
+        if: github.event_name == 'workflow_dispatch'
         run: |
           python benchmarks/run_baseline.py --executable out/build/windows-ninja-release/bin/spectrapack_baseline_benchmark.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --output .local/ci/baseline.json --samples 3 --warmup 1 --timeout-seconds 1500 --overall-timeout-seconds 1800 *> .local/ci/baseline.log
           exit $LASTEXITCODE
       - name: Bounded geometry representation qualification and timings
+        if: github.event_name == 'workflow_dispatch'
         run: |
           python benchmarks/run_representation.py --executable out/build/windows-ninja-release/bin/spectrapack_representation_benchmark.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --large-fixture .local/ci/cube_subdivided_n300.stl --output .local/ci/representation.json --samples 3 --warmup 1 --timeout-seconds 1500 --overall-timeout-seconds 1800 *> .local/ci/representation.log
           exit $LASTEXITCODE

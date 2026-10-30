@@ -591,8 +591,15 @@ std::vector<ValidationIssue> semantics(ContractKind kind, const Json& value) {
                 "Resolved container references must match the accepted container asset.");
         }
       } else {
-        physical_match = physical_match && settings.at("container").at("kind") == "box" &&
-            settings.at("container").at("dimensions_mm") == container.at("dimensions_mm");
+        physical_match = physical_match && settings.at("container").at("kind") == "box";
+        if (physical_match) {
+          // The result records the validated interior: requested dimensions plus tolerance.
+          const auto& requested = settings.at("container").at("dimensions_mm");
+          const double tolerance = settings.at("container").value("tolerance_mm", 0.0);
+          for (std::size_t axis = 0; axis != 3; ++axis)
+            physical_match = physical_match &&
+                requested.at(axis).get<double>() + tolerance == container.at("dimensions_mm").at(axis).get<double>();
+        }
       }
       if (!physical_match)
         semantic_issue(issues, base, "PHYSICAL_SETTINGS_MISMATCH",

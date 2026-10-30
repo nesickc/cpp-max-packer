@@ -32,6 +32,9 @@ struct BaselineLimits {
   std::uint64_t max_validation_aabb_pair_tests{50'000'000};
   geometry::PhysicalQueryLimits per_query{};
   geometry::ValidationLimits per_validation{};
+  // Grid pitch and FFT threads for compaction's gap filling; zero pitch disables it.
+  double gap_fill_pitch_mm{};
+  std::uint32_t gap_fill_threads{1};
 };
 
 using RunControl = runtime::OperationControl;
