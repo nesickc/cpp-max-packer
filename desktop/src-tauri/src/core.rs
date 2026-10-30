@@ -1829,7 +1829,9 @@ mod tests {
             "orientation":{"mode":"fixed","quaternion_xyzw":[0,0,0,1]},"pitch_mm":10,"budget_seconds":1,"seed":"42"})
     }
     fn complete(core: &Core) -> State {
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        // Checked STL export revalidates every copy: 27 enveloped cubes take
+        // about 26 s on a desktop Release build, longer on hosted runners.
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(120);
         loop {
             let state = core.state();
             if state
@@ -1867,8 +1869,6 @@ mod tests {
         import_fixture(&core);
         let mut requested = settings();
         requested["orientation"] = json!({"mode":"cube45"});
-        // One enveloped copy: checked export of several hits EXPORT_IMPORT_WORK_LIMIT.
-        requested["box_dimensions_mm"] = json!([20, 20, 20]);
         core.start(requested.clone()).unwrap();
         let solved = complete(&core);
         assert!(solved.last_error.is_none(), "{solved:?}");

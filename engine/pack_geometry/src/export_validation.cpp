@@ -7,8 +7,10 @@
 #include <limits>
 #include <map>
 #include <new>
+#include <optional>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "export_validation_internal.hpp"
 #include "field_kernel.hpp"
@@ -69,24 +71,6 @@ std::optional<MemoryLease> ExportBudget::lease_bytes(std::uint64_t bytes) noexce
 
 MemoryLease ExportBudget::adopt_bytes(std::uint64_t bytes) noexcept { return MemoryLease(kernel, bytes); }
 
-bool ExportBudget::consume_import_predicates(std::uint64_t units, std::uint64_t maximum) noexcept
-{
-    if (import_predicate_used > maximum || units > maximum - import_predicate_used) {
-        return false;
-    }
-    import_predicate_used += units;
-    return true;
-}
-
-bool ExportBudget::consume_import_pairs(std::uint64_t units, std::uint64_t maximum) noexcept
-{
-    if (import_candidate_pairs_used > maximum || units > maximum - import_candidate_pairs_used) {
-        return false;
-    }
-    import_candidate_pairs_used += units;
-    return true;
-}
-
 namespace {
 
 ClassifiedFailure unresolved(std::string code, std::string message)
@@ -124,16 +108,8 @@ BakedWorldOutcome inspect_baked_world_stl(std::span<const std::byte> bytes, cons
         return unresolved("EXPORT_MEMORY_LIMIT", "The staged STL import exceeds export memory.");
     }
 
-    if (budget.import_predicate_used >= limits.max_predicate_work) {
-        return unresolved("EXPORT_IMPORT_WORK_LIMIT", "Cumulative import predicate work was exhausted.");
-    }
-    if (budget.import_candidate_pairs_used >= limits.max_candidate_pairs) {
-        return unresolved("EXPORT_IMPORT_PAIR_LIMIT", "Cumulative import candidate-pair work was exhausted.");
-    }
     auto attempt_limits = limits;
     attempt_limits.max_working_bytes = std::min(attempt_limits.max_working_bytes, scratch_bytes);
-    attempt_limits.max_predicate_work -= budget.import_predicate_used;
-    attempt_limits.max_candidate_pairs -= budget.import_candidate_pairs_used;
     ImportAttemptStats attempt_stats;
     ImportOutcome<AssetDraft> inspected;
     try {
@@ -145,11 +121,11 @@ BakedWorldOutcome inspect_baked_world_stl(std::span<const std::byte> bytes, cons
     catch (...) {
         return unresolved("EXPORT_QUANTIZED_IMPORT", "The staged STL import failed.");
     }
-    if (!budget.consume_import_predicates(attempt_stats.predicate_work, limits.max_predicate_work)) {
-        return unresolved("EXPORT_IMPORT_WORK_LIMIT", "Cumulative import predicate work was exhausted.");
+    if (attempt_stats.predicate_work > limits.max_predicate_work) {
+        return unresolved("EXPORT_IMPORT_WORK_LIMIT", "Per-copy import predicate work was exhausted.");
     }
-    if (!budget.consume_import_pairs(attempt_stats.candidate_pair_tests, limits.max_candidate_pairs)) {
-        return unresolved("EXPORT_IMPORT_PAIR_LIMIT", "Cumulative import candidate-pair work was exhausted.");
+    if (attempt_stats.candidate_pair_tests > limits.max_candidate_pairs) {
+        return unresolved("EXPORT_IMPORT_PAIR_LIMIT", "Per-copy import candidate-pair work was exhausted.");
     }
     if (import_profile_sink) {
         import_profile_sink(import_profile_context, { ImportProfilePhase::total, 0, attempt_stats.predicate_work, 0, 0,
@@ -172,10 +148,10 @@ BakedWorldOutcome inspect_baked_world_stl(std::span<const std::byte> bytes, cons
     const auto& report = draft->report();
     if (report.validity == Validity::indeterminate) {
         if (has_issue(report, "PREDICATE_WORK")) {
-            return unresolved("EXPORT_IMPORT_WORK_LIMIT", "Cumulative import predicate work was exhausted.");
+            return unresolved("EXPORT_IMPORT_WORK_LIMIT", "Per-copy import predicate work was exhausted.");
         }
         if (has_issue(report, "CANDIDATE_PAIR_LIMIT")) {
-            return unresolved("EXPORT_IMPORT_PAIR_LIMIT", "Cumulative import candidate-pair work was exhausted.");
+            return unresolved("EXPORT_IMPORT_PAIR_LIMIT", "Per-copy import candidate-pair work was exhausted.");
         }
         return unresolved("EXPORT_QUANTIZED_IMPORT", "The staged STL solid analysis was unresolved.");
     }
@@ -338,7 +314,97 @@ std::optional<std::uint64_t> source_resident_bytes(const ValidationContext& cont
 struct BakedCopy {
     detail::BakedWorldImport imported;
     detail::ResidentPlacedSolid placed;
+
+    std::uint64_t resident_bytes() const noexcept
+    {
+        return imported.accepted_residency.bytes() + placed.kernel_residency.bytes();
+    }
 };
+
+// Copies already imported and checked in this call. Reader bytes are immutable
+// for the call, so a cached copy is exactly what a reread would rebuild; the
+// cache only spares the repeated import when a later neighbour is paired with
+// it. Cached copies keep their memory leases but are optional: whenever a
+// reservation on the budget does not fit, the least recently used unpinned
+// copy is freed first, so the cache never rejects an export that fits without
+// it. The copy returned by the last find stays pinned while it is paired.
+class CopyCache {
+public:
+    CopyCache(std::size_t copies, std::uint64_t max_bytes, detail::validation_kernel::Budget& budget) :
+        entries_(copies),
+        max_bytes_(max_bytes),
+        budget_(budget)
+    {
+        budget_.set_reclaimer(&CopyCache::reclaim, this);
+    }
+    CopyCache(const CopyCache&) = delete;
+    CopyCache& operator=(const CopyCache&) = delete;
+    ~CopyCache() { budget_.set_reclaimer(nullptr, nullptr); }
+
+    static std::uint64_t bookkeeping_bytes(std::size_t copies) noexcept
+    {
+        constexpr auto maximum = std::numeric_limits<std::uint64_t>::max();
+        return copies > (maximum - sizeof(CopyCache)) / sizeof(Entry) ? maximum
+                                                                      : sizeof(CopyCache) + copies * sizeof(Entry);
+    }
+
+    const BakedCopy* find(std::size_t index) noexcept
+    {
+        pinned_ = index;
+        auto& entry = entries_[index];
+        if (!entry.copy) {
+            return nullptr;
+        }
+        entry.last_use = ++clock_;
+        return &*entry.copy;
+    }
+
+    void insert(std::size_t index, BakedCopy copy)
+    {
+        pinned_ = kNone;
+        const auto bytes = copy.resident_bytes();
+        if (bytes > max_bytes_) {
+            return;
+        }
+        while (bytes_ + bytes > max_bytes_ && evict_oldest()) {
+        }
+        entries_[index] = { std::move(copy), bytes, ++clock_ };
+        bytes_ += bytes;
+    }
+
+private:
+    struct Entry {
+        std::optional<BakedCopy> copy;
+        std::uint64_t bytes {};
+        std::uint64_t last_use {};
+    };
+    static constexpr auto kNone = std::numeric_limits<std::size_t>::max();
+
+    bool evict_oldest() noexcept
+    {
+        auto oldest = entries_.end();
+        for (auto it = entries_.begin(); it != entries_.end(); ++it) {
+            if (it->copy && static_cast<std::size_t>(it - entries_.begin()) != pinned_ &&
+                (oldest == entries_.end() || it->last_use < oldest->last_use)) {
+                oldest = it;
+            }
+        }
+        if (oldest == entries_.end()) {
+            return false;
+        }
+        bytes_ -= oldest->bytes;
+        oldest->copy.reset();
+        return true;
+    }
+
+    static bool reclaim(void* cache) noexcept { return static_cast<CopyCache*>(cache)->evict_oldest(); }
+
+    std::vector<Entry> entries_;
+    std::uint64_t max_bytes_ {}, bytes_ {}, clock_ {};
+    std::size_t pinned_ { kNone };
+    detail::validation_kernel::Budget& budget_;
+};
+
 bool strictly_separated_quantized_bounds(const detail::validation_kernel::ConservativeBounds& first,
                                          const detail::validation_kernel::ConservativeBounds& second,
                                          double clearance) noexcept
@@ -419,14 +485,11 @@ std::optional<ClassifiedFailure> check_enclosed_copy(std::size_t index, MeshView
             faces[f][v] = it->second;
         }
     }
-    auto remaining = limits.per_copy_import;
-    remaining.max_predicate_work -= std::min(remaining.max_predicate_work, budget.import_predicate_used);
-    remaining.max_candidate_pairs -= std::min(remaining.max_candidate_pairs, budget.import_candidate_pairs_used);
+    const auto& per_copy = limits.per_copy_import;
     std::uint64_t work = 0, pairs = 0;
-    const auto status = detail::certify_surface_enclosure(envelope, { vertices, faces }, remaining,
+    const auto status = detail::certify_surface_enclosure(envelope, { vertices, faces }, per_copy,
                                                           budget.kernel.control(), &work, &pairs);
-    if (!budget.consume_import_predicates(work, limits.per_copy_import.max_predicate_work) ||
-        !budget.consume_import_pairs(pairs, limits.per_copy_import.max_candidate_pairs)) {
+    if (work > per_copy.max_predicate_work || pairs > per_copy.max_candidate_pairs) {
         return ClassifiedFailure { Validity::indeterminate, "EXPORT_ENCLOSURE_LIMIT",
                                    "Source enclosure exhausted its work allowance." };
     }
@@ -486,7 +549,14 @@ ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSoluti
 {
     namespace kernel = detail::validation_kernel;
     control.phase(runtime::Phase::validating);
-    ExportBudget budget(limits.validation.max_kernel_work, limits.max_working_bytes, control);
+    // Kernel work, like import work, is allowed per copy: one allowance for the
+    // fresh source validation and one for each staged copy's checks.
+    const auto copies = solution ? solution->copies().size() : 0;
+    const auto max_kernel_work =
+        limits.validation.max_kernel_work > std::numeric_limits<std::uint64_t>::max() / (copies + 1)
+            ? std::numeric_limits<std::uint64_t>::max()
+            : limits.validation.max_kernel_work * (copies + 1);
+    ExportBudget budget(max_kernel_work, limits.max_working_bytes, control);
     if (control.poll() != runtime::StopCause::none) {
         return report(Validity::indeterminate, "EXPORT_INTERRUPTED", "Native export validation was interrupted.",
                       budget);
@@ -579,6 +649,22 @@ ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSoluti
         return report(Validity::indeterminate, "EXPORT_ALLOCATION", "Quantized bound storage allocation failed.",
                       budget, fresh_peak);
     }
+    auto cache_lease = budget.lease_bytes(CopyCache::bookkeeping_bytes(solution->copies().size()));
+    if (!cache_lease) {
+        return report(Validity::indeterminate, "EXPORT_MEMORY_LIMIT", "Copy cache storage exceeds export memory.",
+                      budget, fresh_peak);
+    }
+    std::optional<CopyCache> cache;
+    try {
+        // A quarter of the remaining allowance keeps typical exports' peak
+        // memory modest; transient work reclaims cached copies when it needs them.
+        cache.emplace(solution->copies().size(), (limits.max_working_bytes - budget.kernel.bytes_live()) / 4,
+                      budget.kernel);
+    }
+    catch (const std::bad_alloc&) {
+        return report(Validity::indeterminate, "EXPORT_ALLOCATION", "Copy cache storage allocation failed.", budget,
+                      fresh_peak);
+    }
     for (std::size_t current = 0; current != solution->copies().size(); ++current) {
         auto loaded = load_copy(current, reader, limits, budget);
         if (const auto* failure = std::get_if<ClassifiedFailure>(&loaded)) {
@@ -625,12 +711,16 @@ ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSoluti
                                                     constraints.pair_clearance_mm)) {
                 continue;
             }
-            auto other_loaded = load_copy(prior, reader, limits, budget);
-            if (const auto* failure = std::get_if<ClassifiedFailure>(&other_loaded)) {
-                return report(*failure, budget, fresh_peak);
+            const auto* other = cache->find(prior);
+            std::optional<BakedCopy> reread;
+            if (!other) {
+                auto other_loaded = load_copy(prior, reader, limits, budget);
+                if (const auto* failure = std::get_if<ClassifiedFailure>(&other_loaded)) {
+                    return report(*failure, budget, fresh_peak);
+                }
+                other = &reread.emplace(std::get<BakedCopy>(std::move(other_loaded)));
             }
-            auto other = std::get<BakedCopy>(std::move(other_loaded));
-            const auto pair = kernel::classify_pair(*copy.placed.solid, *other.placed.solid,
+            const auto pair = kernel::classify_pair(*copy.placed.solid, *other->placed.solid,
                                                     constraints.pair_clearance_mm, budget.kernel);
             const auto pair_validity = detail::classify_export_pair(pair);
             if (pair_validity == Validity::indeterminate) {
@@ -641,8 +731,12 @@ ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSoluti
                 return report(Validity::invalid, "EXPORT_QUANTIZED_PAIR", "Quantization violates pair clearance.",
                               budget, fresh_peak);
             }
+            if (reread) {
+                cache->insert(prior, std::move(*reread));
+            }
         }
         certified_bounds.push_back(current_bounds);
+        cache->insert(current, std::move(copy));
     }
     return report(Validity::valid, "VALID", "All quantized copies satisfy the geometry contract.", budget, fresh_peak);
 }

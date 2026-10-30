@@ -2369,7 +2369,8 @@ TEST_CASE_METHOD(PublicationFixture, "AT-14 writer retains initial JSON after co
     const auto result_path = destination / std::filesystem::u8path(u8"результат.json");
     const auto stl_path = destination / "packed.stl";
     io::test::set_export_stage_token_for_test("companion-write");
-    io::test::fail_export_stage_write_number_for_test(42);
+    // Source, PLY and initial JSON, then the STL header, count and one batch of triangle records.
+    io::test::fail_export_stage_write_number_for_test(7);
     const PublicationActor actor(L"rename");
     const auto outcome = run(destination, result_path, stl_path);
     io::test::fail_export_stage_write_number_for_test(0);
@@ -2400,8 +2401,8 @@ TEST_CASE_METHOD(PublicationFixture, "AT-14 writer retains initial JSON after fi
     const auto stl_path = destination / "packed.stl";
     io::test::set_export_stage_tokens_for_test({ "source-final-update", "ply-final-update", "primary-final-update",
                                                  "stl-final-update", "companion-final-update", "final-update" });
-    // One source, PLY, and initial JSON write; STL uses 2 + 3 * 12 writes; then companion and final JSON.
-    io::test::fail_export_stage_write_number_for_test(43);
+    // One source, PLY, and initial JSON write; STL uses 2 + 1 batched writes; then companion and final JSON.
+    io::test::fail_export_stage_write_number_for_test(8);
     const PublicationActor actor(L"substitute");
     const auto outcome = run(destination, result_path, stl_path);
     io::test::fail_export_stage_write_number_for_test(0);

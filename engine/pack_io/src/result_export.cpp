@@ -2187,6 +2187,14 @@ ExportOutcome ResultPublisher::publish(const ExportRequest& request, const runti
             if (auto problem = stl_stage.write(std::as_bytes(std::span(&count32, 1)))) {
                 return post_primary_error(*problem);
             }
+            // Triangle records are batched: one write call per record made
+            // staging hundreds of copies of a detailed mesh take minutes.
+            std::array<std::byte, 1310 * 50> records;
+            std::size_t buffered {};
+            const auto append = [&](std::span<const std::byte> bytes) {
+                std::memcpy(records.data() + buffered, bytes.data(), bytes.size());
+                buffered += bytes.size();
+            };
             std::uint64_t first {};
             for (const auto& copy : request.solution->copies()) {
                 detail::poll_operation();
@@ -2232,18 +2240,23 @@ ExportOutcome ResultPublisher::publish(const ExportRequest& request, const runti
                     std::array<float, 3> normal { static_cast<float>(normal_double[0]),
                                                   static_cast<float>(normal_double[1]),
                                                   static_cast<float>(normal_double[2]) };
-                    if (auto problem = stl_stage.write(std::as_bytes(std::span(normal)))) {
-                        return post_primary_error(*problem);
-                    }
-                    if (auto problem = stl_stage.write(std::as_bytes(std::span(points)))) {
-                        return post_primary_error(*problem);
-                    }
                     const std::uint16_t attribute {};
-                    if (auto problem = stl_stage.write(std::as_bytes(std::span(&attribute, 1)))) {
-                        return post_primary_error(*problem);
+                    append(std::as_bytes(std::span(normal)));
+                    append(std::as_bytes(std::span(points)));
+                    append(std::as_bytes(std::span(&attribute, 1)));
+                    if (buffered == records.size()) {
+                        if (auto problem = stl_stage.write(records)) {
+                            return post_primary_error(*problem);
+                        }
+                        buffered = 0;
                     }
                 }
                 first += mesh.triangles.size();
+            }
+            if (buffered != 0) {
+                if (auto problem = stl_stage.write(std::span(records).first(buffered))) {
+                    return post_primary_error(*problem);
+                }
             }
         }
         if (auto problem = stl_stage.close()) {

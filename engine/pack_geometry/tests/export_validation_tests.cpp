@@ -1,8 +1,11 @@
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <catch2/catch_test_macros.hpp>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
+#include <string>
 
 #include "../src/export_validation_internal.hpp"
 #include "spectrapack/geometry/export_validation.hpp"
@@ -156,7 +159,8 @@ TEST_CASE("AT-10 export accepts touching separate quantized copies")
         return index == 0 ? left : right;
     });
     CHECK(result.validity == geo::Validity::valid);
-    CHECK(reads == 3);
+    // The touching pair is checked against the first copy already imported.
+    CHECK(reads == 2);
 }
 
 TEST_CASE("T010 strictly separated reread quantized bounds avoid prior-copy import", "[T010]")
@@ -193,52 +197,92 @@ TEST_CASE("AT-10 export rejects identical quantized copies")
     CHECK(result.validity == geo::Validity::invalid);
 }
 
-TEST_CASE("AT-10 export import predicate budget is cumulative")
+namespace {
+// `padded` names a copy whose staged read carries 1 MiB of spare capacity,
+// which export memory must admit while that copy is imported.
+geo::ValidationReport export_separated_cubes(std::size_t copies, const geo::ExportValidationLimits& limits,
+                                             std::size_t* reads = nullptr, std::size_t padded = SIZE_MAX)
 {
-    const auto bytes = cube_bytes(4, 6);
-    const auto inspected = geo::inspect_stl(bytes, { geo::AssetRole::object, geo::Units::mm });
-    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::AssetDraft>>(inspected));
-    const auto work = std::get<std::shared_ptr<const geo::AssetDraft>>(inspected)->report().predicate_work;
-    REQUIRE(work > 0);
-    geo::ExportValidationLimits limits;
-    limits.per_copy_import.max_predicate_work = 2 * work - 1;
-    std::size_t reads {};
-    const auto result = geo::validate_quantized_export(
-        solution({
-            { "a", { 3, 5, 5 }, { 0, 0, 0, 1 } },
-            { "b", { 7, 5, 5 }, { 0, 0, 0, 1 } }
-    }),
-        [&](std::size_t) -> geo::ExportCopyRead {
-        ++reads;
-        return bytes;
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .5;
+    const std::array<double, 3> centres { 1.5, 5, 8.5 };
+    std::vector<geo::CopyPose> poses;
+    for (std::size_t index = 0; index != copies; ++index) {
+        poses.push_back({ "copy" + std::to_string(index), { centres[index], 5, 5 }, { 0, 0, 0, 1 } });
+    }
+    return geo::validate_quantized_export(solution_in(std::move(poses), geo::BoxDimensions { 10, 10, 10 }, constraints),
+                                          [&](std::size_t index) -> geo::ExportCopyRead {
+        if (reads) {
+            ++*reads;
+        }
+        auto bytes = cube_bytes(centres[index] - 1, centres[index] + 1);
+        if (index == padded) {
+            bytes.reserve(bytes.size() + (1U << 20));
+        }
+        return std::move(bytes);
     }, limits);
-    CHECK(result.validity == geo::Validity::indeterminate);
-    CHECK(result.code == "EXPORT_IMPORT_WORK_LIMIT");
-    CHECK(reads == 2);
 }
 
-TEST_CASE("AT-10 export import candidate-pair budget is cumulative")
+// Smallest power of two admitting one copy under the given cap. It is below
+// twice that copy's work, so a cap shared by three copies would reject them.
+std::uint64_t one_copy_allowance(std::uint64_t geo::ImportLimits::*cap)
 {
-    const auto bytes = cube_bytes(4, 6);
-    const auto inspected = geo::inspect_stl(bytes, { geo::AssetRole::object, geo::Units::mm });
-    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::AssetDraft>>(inspected));
-    const auto pairs = std::get<std::shared_ptr<const geo::AssetDraft>>(inspected)->report().candidate_pair_tests;
-    REQUIRE(pairs > 0);
     geo::ExportValidationLimits limits;
-    limits.per_copy_import.max_candidate_pairs = 2 * pairs - 1;
+    for (limits.per_copy_import.*cap = 1;
+         export_separated_cubes(1, limits).validity != geo::Validity::valid; limits.per_copy_import.*cap *= 2) {
+        REQUIRE(limits.per_copy_import.*cap < (1ULL << 40));
+    }
+    return limits.per_copy_import.*cap;
+}
+
+// Smallest working-memory allowance that validates three separated copies.
+std::uint64_t smallest_memory(std::size_t padded)
+{
+    geo::ExportValidationLimits limits;
+    std::uint64_t low = 0, high = export_separated_cubes(3, limits, nullptr, padded).working_bytes_peak;
+    while (low + 1 < high) {
+        limits.max_working_bytes = low + (high - low) / 2;
+        (export_separated_cubes(3, limits, nullptr, padded).validity == geo::Validity::valid ? high : low) =
+            limits.max_working_bytes;
+    }
+    limits.max_working_bytes = high;
+    REQUIRE(export_separated_cubes(3, limits, nullptr, padded).validity == geo::Validity::valid);
+    return high;
+}
+}  // namespace
+
+TEST_CASE("AT-10 export cached copies yield memory to later copies")
+{
+    // The first copy is imported before anything is cached. Copies cached
+    // ahead of the last one must give way, so it needs no more memory.
+    CHECK(smallest_memory(2) == smallest_memory(0));
+}
+
+TEST_CASE("AT-10 export import predicate cap applies to each copy, not the sum")
+{
+    geo::ExportValidationLimits limits;
+    limits.per_copy_import.max_predicate_work = one_copy_allowance(&geo::ImportLimits::max_predicate_work);
+    REQUIRE(limits.per_copy_import.max_predicate_work > 1);
     std::size_t reads {};
-    const auto result = geo::validate_quantized_export(
-        solution({
-            { "a", { 3, 5, 5 }, { 0, 0, 0, 1 } },
-            { "b", { 7, 5, 5 }, { 0, 0, 0, 1 } }
-    }),
-        [&](std::size_t) -> geo::ExportCopyRead {
-        ++reads;
-        return bytes;
-    }, limits);
-    CHECK(result.validity == geo::Validity::indeterminate);
-    CHECK(result.code == "EXPORT_IMPORT_PAIR_LIMIT");
-    CHECK(reads == 2);
+    const auto passed = export_separated_cubes(3, limits, &reads);
+    CHECK(passed.validity == geo::Validity::valid);
+    CHECK(reads == 3);
+    limits.per_copy_import.max_predicate_work /= 2;
+    const auto capped = export_separated_cubes(3, limits);
+    CHECK(capped.validity == geo::Validity::indeterminate);
+    CHECK(capped.code == "EXPORT_IMPORT_WORK_LIMIT");
+}
+
+TEST_CASE("AT-10 export import candidate-pair cap applies to each copy, not the sum")
+{
+    geo::ExportValidationLimits limits;
+    limits.per_copy_import.max_candidate_pairs = one_copy_allowance(&geo::ImportLimits::max_candidate_pairs);
+    REQUIRE(limits.per_copy_import.max_candidate_pairs > 1);
+    CHECK(export_separated_cubes(3, limits).validity == geo::Validity::valid);
+    limits.per_copy_import.max_candidate_pairs /= 2;
+    const auto capped = export_separated_cubes(3, limits);
+    CHECK(capped.validity == geo::Validity::indeterminate);
+    CHECK(capped.code == "EXPORT_IMPORT_PAIR_LIMIT");
 }
 
 TEST_CASE("AT-10 export preserves import uncertainty ahead of cleanup rejection")
@@ -280,20 +324,47 @@ TEST_CASE("AT-10 export pair limits include fresh source validation")
     CHECK(result.code == "EXPORT_PAIR_LIMIT");
 }
 
-TEST_CASE("AT-10 export kernel work includes fresh source validation")
+TEST_CASE("AT-10 export fresh source validation keeps one kernel-work allowance")
 {
     const auto source = solution({
         { "copy", { 5, 5, 5 }, { 0, 0, 0, 1 } }
     });
-    REQUIRE(source->report().kernel_work > 0);
+    REQUIRE(source->report().kernel_work > 1);
     geo::ExportValidationLimits limits;
-    limits.validation.max_kernel_work = source->report().kernel_work;
+    limits.validation.max_kernel_work = source->report().kernel_work - 1;
+    std::size_t reads {};
     const auto result = geo::validate_quantized_export(source, [&](std::size_t) -> geo::ExportCopyRead {
+        ++reads;
         return cube_bytes(4, 6);
     }, limits);
     CHECK(result.validity == geo::Validity::indeterminate);
     CHECK(result.code == "KERNEL_WORK_LIMIT");
-    CHECK(result.kernel_work == limits.validation.max_kernel_work);
+    CHECK(reads == 0);
+}
+
+TEST_CASE("AT-10 export kernel-work allowance scales with copy count")
+{
+    const auto unlimited = export_separated_cubes(3, {});
+    REQUIRE(unlimited.validity == geo::Validity::valid);
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .5;
+    const auto source_work = solution_in(
+                                 {
+                                     { "copy0", { 1.5, 5, 5 }, { 0, 0, 0, 1 } },
+                                     { "copy1", { 5, 5, 5 }, { 0, 0, 0, 1 } },
+                                     { "copy2", { 8.5, 5, 5 }, { 0, 0, 0, 1 } },
+    },
+                                 geo::BoxDimensions { 10, 10, 10 }, constraints)
+                                 ->report()
+                                 .kernel_work;
+    // Enough for fresh validation and a quarter of the total, so one shared
+    // allowance could not also finish the three staged copies.
+    geo::ExportValidationLimits limits;
+    limits.validation.max_kernel_work = std::max<std::uint64_t>((unlimited.kernel_work + 3) / 4, source_work);
+    REQUIRE(limits.validation.max_kernel_work < unlimited.kernel_work);
+    const auto scaled = export_separated_cubes(3, limits);
+    CHECK(scaled.validity == geo::Validity::valid);
+    CHECK(scaled.kernel_work == unlimited.kernel_work);
 }
 
 TEST_CASE("AT-10 export preserves a lower fresh source memory cap")
@@ -613,4 +684,37 @@ TEST_CASE("Packing envelope export rejects an excluded cavity hidden inside sour
     });
     CHECK(checked.validity == geo::Validity::invalid);
     CHECK(checked.code == "EXPORT_ENVELOPE_CAVITY");
+}
+
+TEST_CASE("Packing envelope export applies import and enclosure caps to each copy", "[export][envelope]")
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .5;
+    const std::array<double, 3> centres { 1.5, 5, 8.5 };
+    const auto run = [&](std::size_t copies, std::uint64_t max_predicate_work) {
+        std::vector<geo::CopyPose> poses;
+        for (std::size_t index = 0; index != copies; ++index) {
+            poses.push_back({ "copy" + std::to_string(index), { centres[index], 5, 5 }, { 0, 0, 0, 1 } });
+        }
+        geo::ExportValidationLimits limits;
+        limits.per_copy_import.max_predicate_work = max_predicate_work;
+        return geo::validate_quantized_export(solution_in(std::move(poses), geo::BoxDimensions { 10, 10, 10 },
+                                                          constraints),
+                                              [&](std::size_t index) -> geo::ExportCopyRead {
+            return cube_bytes(centres[index] - 1, centres[index] + 1);
+        }, limits, {}, [&](std::size_t index) -> geo::ExportCopyRead {
+            return binary_mesh(ts::cuboid({ centres[index] - .5, 4.5, 4.5 }, { centres[index] + .5, 5.5, 5.5 }));
+        });
+    };
+    // Smallest doubling allowance that admits one enveloped copy. It is below
+    // twice that copy's larger import or enclosure work, so any cap shared by
+    // the three copies' imports and enclosures would reject the export.
+    std::uint64_t allowance = 1;
+    while (run(1, allowance).validity != geo::Validity::valid) {
+        REQUIRE(allowance < (1ULL << 40));
+        allowance *= 2;
+    }
+    const auto checked = run(3, allowance);
+    CHECK(checked.validity == geo::Validity::valid);
+    CHECK(checked.code == "VALID");
 }

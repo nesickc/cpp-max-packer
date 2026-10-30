@@ -771,9 +771,11 @@ bool Budget::reserve_bytes(std::uint64_t bytes) noexcept {
         exhausted_ = true;
         return false;
     }
-  if (bytes_live_ > max_working_bytes_ || bytes > max_working_bytes_ - bytes_live_) {
-    exhausted_=true; memory_exhausted_=true;
-    return false;
+  while (bytes_live_ > max_working_bytes_ || bytes > max_working_bytes_ - bytes_live_) {
+    if (reclaimer_ == nullptr || !reclaimer_(reclaim_context_)) {
+      exhausted_=true; memory_exhausted_=true;
+      return false;
+    }
   }
   bytes_live_ += bytes;
   bytes_peak_ = std::max(bytes_peak_,bytes_live_);
@@ -782,6 +784,10 @@ bool Budget::reserve_bytes(std::uint64_t bytes) noexcept {
 
 void Budget::release_bytes(std::uint64_t bytes) noexcept {
   bytes_live_ = bytes > bytes_live_ ? 0 : bytes_live_ - bytes;
+}
+void Budget::set_reclaimer(Reclaimer reclaimer, void* context) noexcept {
+  reclaimer_ = reclaimer;
+  reclaim_context_ = context;
 }
 std::uint64_t Budget::work_used() const noexcept { return work_used_; }
 std::uint64_t Budget::work_remaining() const noexcept {
