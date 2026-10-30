@@ -109,6 +109,23 @@ enum class SegmentTriangleCrossing : std::uint8_t {
     const Vec3& first, const Vec3& second,
     const std::array<Vec3, 3>& triangle, WorkBudget& budget) noexcept;
 
+// Outward-rounded interval enclosure of one triangle's plane for repeated
+// side tests. A point's interval dot product with the enclosed normal contains
+// the exact orientation determinant, so a strict answer is exact; anything
+// else is left to the exact predicates.
+class PlaneEnclosure {
+ public:
+  PlaneEnclosure(const std::array<Vec3, 3>& triangle, WorkBudget& budget) noexcept;
+  // True only when all three points lie strictly on one side of the plane,
+  // which proves the points' triangle disjoint from this one.
+  [[nodiscard]] bool strictly_separates(const std::array<Vec3, 3>& points, WorkBudget& budget) const noexcept;
+
+ private:
+  Vec3 base_{};
+  std::array<double, 3> low_{}, high_{};
+  bool valid_{};
+};
+
 struct VolumeResult {
   Sign sign{Sign::uncertain};
   std::optional<double> six_volume;

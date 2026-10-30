@@ -309,6 +309,55 @@ TEST_CASE("GEO-02 certified interval filters agree with exact dyadic fallback",
   check3({tiny, 0, 0}, {0, tiny, 0}, {0, 0, tiny}, {0, 0, 0});
 }
 
+TEST_CASE("GEO-02 interval plane separation implies exact strict sides",
+          "[geometry][predicates][GEO-02][filter]") {
+  const auto exact_side = [](const std::array<geo::Vec3, 3>& plane, const geo::Vec3& point) {
+    exact::WorkBudget budget{100'000'000};
+    return exact::orient3d(plane[0], plane[1], plane[2], point, budget,
+                           exact::EvaluationMode::exact_only, nullptr);
+  };
+  // Returns whether the filter separated the points, after checking that a
+  // separation is never claimed without exact strict agreement.
+  const auto check = [&](const std::array<geo::Vec3, 3>& plane, const std::array<geo::Vec3, 3>& points) {
+    exact::WorkBudget budget{100'000'000};
+    const exact::PlaneEnclosure enclosure(plane, budget);
+    const bool separated = enclosure.strictly_separates(points, budget);
+    if (separated) {
+      const auto first = exact_side(plane, points[0]);
+      CHECK((first == exact::Sign::positive || first == exact::Sign::negative));
+      CHECK(exact_side(plane, points[1]) == first);
+      CHECK(exact_side(plane, points[2]) == first);
+    }
+    return separated;
+  };
+
+  std::mt19937_64 random{0x9a7e'11ULL};
+  std::uniform_int_distribution<int> mantissa{-1'000'000, 1'000'000};
+  std::uniform_int_distribution<int> exponent{-60, 60};
+  const auto value = [&] { return std::ldexp(static_cast<double>(mantissa(random)), exponent(random)); };
+  const auto point = [&] { return geo::Vec3{value(), value(), value()}; };
+  int separated = 0;
+  for (int sample = 0; sample != 512; ++sample) {
+    separated += check({point(), point(), point()}, {point(), point(), point()});
+  }
+  CHECK(separated > 0);
+
+  const std::array<geo::Vec3, 3> plane{geo::Vec3{0, 0, 1}, geo::Vec3{1, 0, 1}, geo::Vec3{0, 1, 1}};
+  CHECK(check(plane, {geo::Vec3{0, 0, 2}, geo::Vec3{5, 5, 1.5}, geo::Vec3{-3, 2, 1.25}}));
+  // A point on the plane, or one ulp across it, is never separated.
+  CHECK_FALSE(check(plane, {geo::Vec3{0, 0, 2}, geo::Vec3{5, 5, 1}, geo::Vec3{-3, 2, 1.25}}));
+  CHECK_FALSE(check(plane, {geo::Vec3{0, 0, 2}, geo::Vec3{5, 5, std::nextafter(1.0, 0.0)}, geo::Vec3{-3, 2, 3}}));
+  const double tiny = std::numeric_limits<double>::denorm_min();
+  check({geo::Vec3{0, 0, 0}, geo::Vec3{tiny, 0, 0}, geo::Vec3{0, tiny, 0}},
+        {geo::Vec3{0, 0, tiny}, geo::Vec3{tiny, tiny, tiny}, geo::Vec3{0, tiny, tiny}});
+  const double maximum = std::numeric_limits<double>::max();
+  CHECK_FALSE(check({geo::Vec3{0, 0, 0}, geo::Vec3{maximum, 0, 0}, geo::Vec3{0, maximum, 0}},
+                    {geo::Vec3{0, 0, 1}, geo::Vec3{1, 1, 1}, geo::Vec3{0, 1, 1}}));
+  // A degenerate plane separates nothing.
+  CHECK_FALSE(check({geo::Vec3{0, 0, 0}, geo::Vec3{1, 1, 1}, geo::Vec3{2, 2, 2}},
+                    {geo::Vec3{0, 0, 1}, geo::Vec3{1, 0, 1}, geo::Vec3{0, 1, 1}}));
+}
+
 TEST_CASE("GEO-02 filter paths, caps, and floating environment fail closed",
           "[geometry][predicates][GEO-02][filter]") {
   SECTION("strict enclosure hits and cancellation falls back") {

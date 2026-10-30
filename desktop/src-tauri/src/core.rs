@@ -1830,8 +1830,9 @@ mod tests {
     }
     fn complete(core: &Core) -> State {
         // Checked STL export revalidates every copy: 27 enveloped cubes take
-        // about 26 s on a desktop Release build, longer on hosted runners.
-        let until = std::time::Instant::now() + std::time::Duration::from_secs(120);
+        // about 4 s on an 8-thread desktop Release build, longer on hosted
+        // runners with fewer cores.
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
             let state = core.state();
             if state
