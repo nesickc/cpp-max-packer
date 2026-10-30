@@ -9,6 +9,7 @@
 #include <memory>
 #include <new>
 #include <optional>
+#include <stop_token>
 #include <string_view>
 #include <thread>
 #include <utility>
@@ -331,8 +332,9 @@ struct BakedCopy {
 // copy is freed first, so the cache never rejects an export that fits without
 // it. The copy returned by the last find stays pinned while it is paired.
 // Held copies were checked ahead of their turn by parallel workers. They sit
-// outside the size cap and are freed only on demand, after every cached copy,
-// latest turn first. The last resort gives up work still running ahead.
+// outside the size cap and are freed first on demand, latest turn first; then
+// the last resort gives up work still running ahead; only then is a cached
+// copy freed.
 class CopyCache {
 public:
     CopyCache(std::size_t copies, std::uint64_t max_bytes, detail::validation_kernel::Budget& budget) :
@@ -433,9 +435,11 @@ private:
 
     static bool reclaim(void* cache) noexcept
     {
+        // Memory only parallel checking holds goes first, so cached copies
+        // are evicted exactly when a serial export would evict them.
         auto& self = *static_cast<CopyCache*>(cache);
-        return self.evict_oldest() || self.evict_held() ||
-               (self.last_resort_ && self.last_resort_(self.last_resort_context_));
+        return self.evict_held() || (self.last_resort_ && self.last_resort_(self.last_resort_context_)) ||
+               self.evict_oldest();
     }
 
     std::vector<Entry> entries_;
@@ -609,8 +613,9 @@ struct CopyContext {
 };
 
 // Everything one copy must satisfy on its own: exact reimport, a cavity-free
-// envelope enclosing its raw source triangles, and container clearance. The
-// readers are called in that order, the source only after the envelope passed.
+// envelope enclosing its raw source triangles, and container clearance. Here
+// the source is read only after the envelope passed; copies checked ahead
+// stage both reads first, which immutable readers make equivalent.
 template <class ReadPacking, class ReadSource>
 CheckOutcome check_copy(ReadPacking&& read_packing, ReadSource&& read_source, const CopyContext& context,
                         const ExportValidationLimits& limits, ExportBudget& budget)
@@ -650,10 +655,14 @@ CheckOutcome check_copy(ReadPacking&& read_packing, ReadSource&& read_source, co
     return CheckedCopy { std::move(copy), bounds };
 }
 
-// Moves a worker-checked copy's residency onto the export budget. It always
-// fits: it fit the worker's allowance, which the export budget had free.
-bool rebind(BakedCopy& copy, ExportBudget& budget) noexcept
+// Moves a worker-checked copy's residency onto the export budget, but only
+// into memory that is free: it never evicts what a serial export would keep.
+bool rebind(BakedCopy& copy, ExportBudget& budget, std::uint64_t max_working_bytes) noexcept
 {
+    const auto live = budget.kernel.bytes_live();
+    if (live > max_working_bytes || copy.resident_bytes() > max_working_bytes - live) {
+        return false;
+    }
     auto accepted = budget.lease_bytes(copy.imported.accepted_residency.bytes());
     auto placed = budget.lease_bytes(copy.placed.kernel_residency.bytes());
     if (!accepted || !placed) {
@@ -680,11 +689,31 @@ struct AheadCheck {
 // stays sound while this thread pairs earlier copies meanwhile.
 class AheadBatch {
 public:
-    AheadBatch() = default;
+    // Workers stop for the operation's own stop and when the batch is given up.
+    explicit AheadBatch(const runtime::OperationControl& control) :
+        forward_(control.stop, Forward { &stop_ }),
+        control_(control)
+    {
+        control_.stop = stop_.get_token();
+    }
     AheadBatch(const AheadBatch&) = delete;
     AheadBatch& operator=(const AheadBatch&) = delete;
-    ~AheadBatch() { join(); }
+    ~AheadBatch()
+    {
+        stop_.request_stop();
+        join();
+    }
 
+private:
+    struct Forward {
+        std::stop_source* source;
+        void operator()() const noexcept { source->request_stop(); }
+    };
+    std::stop_source stop_;
+    std::stop_callback<Forward> forward_;
+
+public:
+    runtime::OperationControl control_;
     // Budgets outlive the checks, whose copies lease from them.
     std::vector<std::optional<ExportBudget>> budgets;
     std::vector<AheadCheck> checks;
@@ -698,7 +727,7 @@ public:
         try {
             auto outcome = check_copy([&] { return std::move(check.packing); },
                                       [&] { return std::move(*check.source); }, context, limits, own);
-            if (!own.kernel.exhausted()) {
+            if (!own.kernel.exhausted() && !stop_.stop_requested()) {
                 check.checked.emplace(std::move(outcome));
             }
         }
@@ -725,6 +754,7 @@ public:
         if (!reservation) {
             return false;
         }
+        stop_.request_stop();
         join();
         for (auto& check : checks) {
             check.checked.reset();
@@ -738,10 +768,12 @@ public:
 
 }  // namespace
 
-ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSolution> solution,
-                                           const ExportCopyReader& reader, const ExportValidationLimits& limits,
-                                           const runtime::OperationControl& control,
-                                           const ExportCopyReader& enclosed_source)
+ValidationReport detail::validate_quantized_export_with_workers(std::shared_ptr<const ValidatedSolution> solution,
+                                                               const ExportCopyReader& reader,
+                                                               const ExportValidationLimits& limits,
+                                                               const runtime::OperationControl& control,
+                                                               const ExportCopyReader& enclosed_source,
+                                                               unsigned workers)
 {
     namespace kernel = detail::validation_kernel;
     control.phase(runtime::Phase::validating);
@@ -923,7 +955,6 @@ ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSoluti
     // memory for pairing, so the report is always the serial one. Copy 0 runs
     // here first and sizes the slices.
     const auto copy_count = solution->copies().size();
-    const auto workers = std::max(1U, std::thread::hardware_concurrency());
     std::uint64_t copy_peak {};
     std::unique_ptr<AheadBatch> running;
     cache->set_last_resort(
@@ -934,13 +965,15 @@ ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSoluti
     const auto start_batch = [&](std::size_t first) -> std::unique_ptr<AheadBatch> {
         const auto live = budget.kernel.bytes_live();
         const auto free = limits.max_working_bytes > live ? limits.max_working_bytes - live : 0;
-        if (workers < 2 || copy_count - first < 2 || copy_peak > free / 2) {
+        if (workers < 2 || copy_count - first < 2 || copy_peak > free / 3) {
             return nullptr;
         }
         std::unique_ptr<AheadBatch> batch;
         try {
-            batch = std::make_unique<AheadBatch>();
-            std::uint64_t reserved {};
+            batch = std::make_unique<AheadBatch>(control);
+            // One copy's peak stays free for pairing, which rarely then needs
+            // to give the batch up.
+            std::uint64_t reserved = copy_peak;
             while (batch->checks.size() != workers && first + batch->checks.size() != copy_count) {
                 AheadCheck check;
                 check.index = first + batch->checks.size();
@@ -957,12 +990,13 @@ ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSoluti
                 batch->checks.push_back(std::move(check));
             }
             // It fits the free memory, so the lease reclaims nothing.
-            if (batch->checks.empty() || !(batch->reservation = budget.lease_bytes(reserved))) {
+            if (batch->checks.empty() || !(batch->reservation = budget.lease_bytes(reserved - copy_peak))) {
                 return nullptr;
             }
             batch->budgets.resize(batch->checks.size());
             for (std::size_t k = 0; k != batch->checks.size(); ++k) {
-                batch->budgets[k].emplace(budget.kernel.work_remaining(), batch->checks[k].allowance, control);
+                batch->budgets[k].emplace(budget.kernel.work_remaining(), batch->checks[k].allowance,
+                                          batch->control_);
             }
             batch->threads.reserve(batch->checks.size());
         }
@@ -1007,11 +1041,12 @@ ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSoluti
         batch->reservation.reset();
         for (auto& check : batch->checks) {
             if (auto* checked = check.checked ? std::get_if<CheckedCopy>(&*check.checked) : nullptr) {
-                if (!rebind(checked->copy, budget)) {
-                    return report(Validity::indeterminate, "EXPORT_MEMORY_LIMIT",
-                                  "A checked copy exceeds export memory.", budget, fresh_peak);
+                if (rebind(checked->copy, budget, limits.max_working_bytes)) {
+                    cache->hold(check.index, std::move(checked->copy));
                 }
-                cache->hold(check.index, std::move(checked->copy));
+                else {
+                    check.checked.reset();
+                }
             }
         }
         const auto next = current + batch->checks.size();
@@ -1019,27 +1054,21 @@ ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSoluti
             running = start_batch(next);
         }
         for (auto& check : batch->checks) {
+            // A held copy freed for memory is checked again like any other.
+            auto held = cache->take(check.index);
+            const auto* failure = check.checked ? std::get_if<ClassifiedFailure>(&*check.checked) : nullptr;
             std::optional<CheckOutcome> checked;
-            if (check.checked && check.work <= budget.kernel.work_remaining() &&
+            if ((failure || held) && check.work <= budget.kernel.work_remaining() &&
                 budget.kernel.commit_completed_work(check.work)) {
-                if (auto* failure = std::get_if<ClassifiedFailure>(&*check.checked)) {
-                    checked.emplace(std::move(*failure));
+                if (failure) {
+                    checked.emplace(*failure);
                 }
                 else {
-                    // A held copy freed for memory is rebuilt exactly by a reread.
-                    auto copy = cache->take(check.index);
-                    if (!copy) {
-                        auto reloaded = load_copy(check.index, reader, limits, budget);
-                        if (const auto* failure = std::get_if<ClassifiedFailure>(&reloaded)) {
-                            return report(*failure, budget, fresh_peak);
-                        }
-                        copy.emplace(std::get<BakedCopy>(std::move(reloaded)));
-                    }
-                    checked.emplace(CheckedCopy { std::move(*copy), std::get<CheckedCopy>(*check.checked).bounds });
+                    checked.emplace(CheckedCopy { std::move(*held), std::get<CheckedCopy>(*check.checked).bounds });
                 }
             }
             else {
-                (void)cache->take(check.index);
+                held.reset();
                 checked.emplace(check_here(check.index));
             }
             if (const auto* failure = std::get_if<ClassifiedFailure>(&*checked)) {
@@ -1052,6 +1081,15 @@ ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSoluti
         current = next;
     }
     return report(Validity::valid, "VALID", "All quantized copies satisfy the geometry contract.", budget, fresh_peak);
+}
+
+ValidationReport validate_quantized_export(std::shared_ptr<const ValidatedSolution> solution,
+                                           const ExportCopyReader& reader, const ExportValidationLimits& limits,
+                                           const runtime::OperationControl& control,
+                                           const ExportCopyReader& enclosed_source)
+{
+    return detail::validate_quantized_export_with_workers(std::move(solution), reader, limits, control,
+                                                          enclosed_source, std::thread::hardware_concurrency());
 }
 
 }  // namespace spectrapack::geometry

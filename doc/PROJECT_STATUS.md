@@ -89,8 +89,8 @@ History: [benchmarks/SCOREBOARD.md](../benchmarks/SCOREBOARD.md).
 4. `10_kg_np.stl` is 400 x 350 x 285 mm; the real Nova Post box is
    400 x 340 x 285 mm. Use box dimensions for that comparison.
 5. Checked STL export of large envelope layouts is large and CPU-bound: 429
-   Pryanik copies write a 2.9 GB STL in about 100 s on eight threads (about
-   29 minutes before). Every copy is still reimported and enclosure-certified;
+   Pryanik copies write a 2.9 GB STL in about 95 s on eight threads (13 minutes
+   before). Every copy is still reimported and enclosure-certified;
    fewer cores take proportionally longer.
 
 Diagonal compaction and automatic envelopes are merged through PR #32. See
