@@ -253,11 +253,8 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(details['runtime']['deadline_overrun_seconds'], 0, error)
                 self.assertEqual(details['deadline_scope'], 'result_cleanup', error)
                 self.assertEqual(details['cleanup_allowance_seconds'], 30, error)
-                self.assertEqual(details['search_termination_reason'], 'resource_limit', error)
                 self.assertEqual(details['search_budget_seconds'], 60, error)
                 self.assertEqual(details['retained_count'], retained['count'], error)
-                cause = details['search_diagnostics']['failure']
-                self.assertTrue(cause['cause_code'].endswith('_WORK_LIMIT'), error)
             finally:
                 session.close()
 

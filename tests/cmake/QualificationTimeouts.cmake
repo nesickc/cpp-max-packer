@@ -51,3 +51,12 @@ if(envelope_import_index GREATER -1)
     PROPERTIES TIMEOUT 180)
 endif()
 unset(envelope_import_index)
+
+# Gap filling rasterizes every cube rotation at 0.1 mm; hosted Debug exceeds 60 seconds.
+list(FIND spectrapack_solver_tests_TESTS
+  "Gap filling keeps asymmetric proposals clear across cube rotations" gap_fill_index)
+if(gap_fill_index GREATER -1)
+  set_tests_properties("Gap filling keeps asymmetric proposals clear across cube rotations"
+    PROPERTIES TIMEOUT 180)
+endif()
+unset(gap_fill_index)

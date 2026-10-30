@@ -1267,6 +1267,13 @@ std::variant<std::filesystem::path, Error> admitted_absolute_export_path(const s
 }
 }  // namespace
 
+geometry::BoxDimensions box_container(const Json& container)
+{
+    const auto& d = container.at("dimensions_mm");
+    const double tolerance = container.value("tolerance_mm", 0.0);
+    return { d.at(0).get<double>() + tolerance, d.at(1).get<double>() + tolerance, d.at(2).get<double>() + tolerance };
+}
+
 namespace test {
 #ifdef SPECTRAPACK_ASSET_LOADER_TESTING
 void fail_pinned_reference_query_for_test(bool enabled) noexcept { export_fail_pinned_reference_query.store(enabled); }

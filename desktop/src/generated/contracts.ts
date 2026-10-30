@@ -177,6 +177,10 @@ export interface Box {
    * @maxItems 3
    */
   dimensions_mm: [number, number, number];
+  /**
+   * Allowed oversize of the box: each validated interior dimension is dimensions_mm + tolerance_mm. Absent means 0.
+   */
+  tolerance_mm?: number;
 }
 export interface StlId {
   kind: "stl_volume";
@@ -2080,6 +2084,10 @@ export interface Box {
    * @maxItems 3
    */
   dimensions_mm: [number, number, number];
+  /**
+   * Allowed oversize of the box: each validated interior dimension is dimensions_mm + tolerance_mm. Absent means 0.
+   */
+  tolerance_mm?: number;
 }
 export interface StlRef {
   kind: "stl_volume";
@@ -3010,6 +3018,10 @@ export interface Box {
    * @maxItems 3
    */
   dimensions_mm: [number, number, number];
+  /**
+   * Allowed oversize of the box: each validated interior dimension is dimensions_mm + tolerance_mm. Absent means 0.
+   */
+  tolerance_mm?: number;
 }
 export interface StlRef {
   kind: "stl_volume";
@@ -3241,6 +3253,7 @@ export interface Settings {
    * @maxItems 3
    */
   box_dimensions_mm: [number, number, number];
+  box_tolerance_mm?: number;
   clearance_mm: Clearance;
   orientation:
     | {
@@ -5049,6 +5062,10 @@ export interface Box {
    * @maxItems 3
    */
   dimensions_mm: [number, number, number];
+  /**
+   * Allowed oversize of the box: each validated interior dimension is dimensions_mm + tolerance_mm. Absent means 0.
+   */
+  tolerance_mm?: number;
 }
 export interface StlRef {
   kind: "stl_volume";
@@ -6009,6 +6026,7 @@ export interface Settings {
    * @maxItems 3
    */
   box_dimensions_mm: [number, number, number];
+  box_tolerance_mm?: number;
   clearance_mm: Clearance;
   orientation:
     | {
@@ -6088,6 +6106,10 @@ export interface Box {
    * @maxItems 3
    */
   dimensions_mm: [number, number, number];
+  /**
+   * Allowed oversize of the box: each validated interior dimension is dimensions_mm + tolerance_mm. Absent means 0.
+   */
+  tolerance_mm?: number;
 }
 export interface StlRef {
   kind: "stl_volume";

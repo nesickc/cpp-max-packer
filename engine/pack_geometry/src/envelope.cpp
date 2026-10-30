@@ -52,7 +52,7 @@ std::optional<EnvelopeParameters> envelope_parameters(Bounds bounds)
 {
     const double diagonal =
         std::hypot(bounds.max[0] - bounds.min[0], bounds.max[1] - bounds.min[1], bounds.max[2] - bounds.min[2]);
-    const double alpha = diagonal / 60.0, offset = diagonal / 1000.0;
+    const double alpha = diagonal / 60.0, offset = diagonal / 2000.0;
     if (!std::isfinite(diagonal) || !(offset > 0)) {
         return {};
     }

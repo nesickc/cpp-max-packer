@@ -161,7 +161,7 @@ Search speed in v1 comes primarily from voxel resolution, BVHs, and repeated-sha
 
 ### 5.2 Frames and transforms
 
-Use a right-handed world frame with Z up and millimeters throughout the engine. A box occupies `[0,W] × [0,D] × [0,H]`. Preserve an STL container's original axes and translate its bounding-box minimum to the world origin after unit conversion; record that mapping. Do not rotate the container automatically.
+Use a right-handed world frame with Z up and millimeters throughout the engine. A box occupies `[0,W] × [0,D] × [0,H]`. A box may carry a size tolerance `t ≥ 0` (default 0.1 mm in the desktop, absent means 0): real boxes are made to a dimensional tolerance, so the validated interior is `[0,W+t] × [0,D+t] × [0,H+t]` and results record that interior beside the requested dimensions and tolerance. Preserve an STL container's original axes and translate its bounding-box minimum to the world origin after unit conversion; record that mapping. Do not rotate the container automatically.
 
 For the object, let `s` be the selected source-unit scale and `a` the source bounding-box center expressed in millimeters:
 
@@ -267,7 +267,7 @@ Use a single main window: configuration panel on the left, 3D viewer in the cent
 | Area | Required controls and feedback |
 | --- | --- |
 | Object | Import/replace STL; units; dimensions; triangle count; diagnostics; repair proposal preview/accept/reject; original/LOD viewer toggle |
-| Container | Box or STL interior volume; internal W/D/H; independent STL units; bounds; diagnostic status; container transparency |
+| Container | Box or STL interior volume; internal W/D/H and allowed size tolerance; independent STL units; bounds; diagnostic status; container transparency |
 | Constraints | Pair clearance and wall clearance in mm; 24 cube rotations by default; optional 45° turns around each world axis expand search to 96 orientations |
 | Search | Fast/Balanced/Thorough; total run budget; Start; Stop and keep best; Continue; seed and maximum additional work in advanced controls |
 | Resources | Auto/CPU/Vulkan; selected device; detected capability; resolved pitch; estimated RAM/VRAM; advanced pitch, thread, and memory limits |
@@ -403,7 +403,7 @@ Implement versioned JSON Schemas for settings, assets, results, protocol records
 | --- | --- |
 | Identity | `schema_version`, `job_id`, `solution_revision`, creation time, engine version/commit |
 | Assets | Source SHA-256, accepted-solid SHA-256, repair record reference, original unit scale, source-to-local mapping, portable asset path |
-| Container | Box dimensions or container asset reference and its source-to-world transform; interior-volume semantics |
+| Container | Validated box interior (requested dimensions plus tolerance, both kept in resolved settings) or container asset reference and its source-to-world transform; interior-volume semantics |
 | Constraints | Pair/wall clearance, allowed orientation policy and catalog hash, unchanged physical dimensions |
 | Search | Fully resolved settings, pitch levels, seed, work counts, run segments, backend/device/driver transitions, elapsed times |
 | Packing | `count` and exactly that many `{copy_id, translation_mm, quaternion_xyzw, local_to_world}` records |

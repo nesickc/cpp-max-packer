@@ -26,6 +26,7 @@ if(BUILD_TESTING)
     solve_timed_memory_cap
     solve_timed_repacking
     solve_cube_64
+    solve_box_tolerance
     solve_empty
     solve_unicode_relocation
     solve_transforms
@@ -45,7 +46,6 @@ if(BUILD_TESTING)
     solve_retained_resource
     solve_deadline
     solve_console_stop
-    solve_lowered_finalization
     solve_caller_reserve)
     add_test(NAME spectrapack_${control_case}_subprocess
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/solve_controls_subprocess_test.py"

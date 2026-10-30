@@ -43,6 +43,10 @@ private:
                                                    const AssetLoadLimits& limits = {},
                                                    std::shared_ptr<const VerifiedAsset> reuse_candidate = {});
 
+// Validated interior of a box container setting: each of dimensions_mm grows by
+// tolerance_mm (absent: 0), the oversize the user accepts for a real box.
+[[nodiscard]] geometry::BoxDimensions box_container(const Json& container);
+
 enum class ResultCatalogBinding { normalized_policy, resolved_policy };
 struct ResultCatalog {
     std::uint64_t version { 1 };

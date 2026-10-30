@@ -496,6 +496,21 @@ class SolveSubprocessTests(unittest.TestCase):
             json.dumps(tampered, separators=(",", ":")).encode("utf-8"))
         self.assertEqual(self.source_path.read_bytes(), self.source_bytes)
 
+    def test_box_tolerance(self):
+        # A 39.95 mm box holds 27 cubes of 10 mm; 0.1 mm of allowed oversize holds 64.
+        settings = self.settings((39.95, 39.95, 39.95))
+        completed, _, result_path, _ = self.solve(settings, self.root / "exact")
+        self.assertEqual(completed.returncode, 0, (completed.stdout, completed.stderr))
+        self.assertEqual(json.loads(result_path.read_text(encoding="utf-8"))["count"], 27)
+        settings["container"]["tolerance_mm"] = 0.1
+        completed, _, result_path, _ = self.solve(settings, self.root / "tolerant")
+        self.assertEqual(completed.returncode, 0, (completed.stdout, completed.stderr))
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        self.assertEqual((result["count"], result["validation"]["status"]), (64, "valid"))
+        self.assertEqual(result["container"]["dimensions_mm"], [39.95 + 0.1] * 3)
+        self.assertEqual(result["search"]["resolved_settings"]["container"],
+                         {"kind": "box", "dimensions_mm": [39.95] * 3, "tolerance_mm": 0.1})
+
     def test_empty(self):
         completed, _, result_path, _ = self.solve(self.settings((5.0, 5.0, 5.0), 1, 1))
         self.assertEqual(completed.returncode, 0, (completed.stdout, completed.stderr))
@@ -895,6 +910,7 @@ CASES = {
     "solve_timed_memory_cap": "test_timed_solve_without_policy_honors_explicit_memory_cap",
     "solve_timed_repacking": "test_timed_solve_without_resource_policy_repacks_after_field_denial",
     "solve_cube_64": "test_cube_64",
+    "solve_box_tolerance": "test_box_tolerance",
     "solve_empty": "test_empty",
     "solve_unicode_relocation": "test_unicode_relocation",
     "solve_transforms": "test_transforms",

@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <numbers>
 
@@ -538,9 +540,10 @@ TEST_CASE("Relative paired layers nest sheared prisms at different physical scal
     CHECK(geo::revalidate(result.run.best->solution).validated_solution);
 }
 
-TEST_CASE("Compaction refills concave layouts across scales and respects permitted rotations", "[solver][compaction]")
+namespace {
+// Each scale is its own test case so every case stays within the per-test timeout.
+void check_concave_refill(double scale)
 {
-    const double scale = GENERATE(1., 100.);
     const double gap = GENERATE(0., .125);
     const bool flipped_allowed = GENERATE(false, true);
     const bool resumed = GENERATE(false, true);
@@ -602,6 +605,17 @@ TEST_CASE("Compaction refills concave layouts across scales and respects permitt
         CHECK(*result.run.best->score.enclosing_xy_span_sum_mm < (5.1 + 2 * gap) * scale);
     }
 }
+}  // namespace
+
+TEST_CASE("Compaction refills concave layouts and respects permitted rotations", "[solver][compaction]")
+{
+    check_concave_refill(1.);
+}
+
+TEST_CASE("Compaction refills concave layouts at a large physical scale", "[solver][compaction]")
+{
+    check_concave_refill(100.);
+}
 
 TEST_CASE("Compaction removes diagonal slack between rigid sloping solids", "[solver][compaction]")
 {
@@ -643,6 +657,160 @@ TEST_CASE("Compaction removes diagonal slack between rigid sloping solids", "[so
     for (const auto& copy : result.run.best->solution->copies()) {
         CHECK(copy.rotation_xyzw == geo::Quaternion { 0, 0, 0, 1 });
     }
+}
+
+#include "../src/gap_fill.hpp"
+#include "../src/orientation_cube.hpp"
+
+TEST_CASE("Gap filling inserts natively valid copies into a free pocket", "[solver][gap-fill]")
+{
+    const double scale = GENERATE(1., 100.);
+    const bool all_rotations = GENERATE(false, true);
+    const auto mesh = geo::test_support::cuboid({ 0, 0, 0 }, { scale, scale, scale });
+    geo::Constraints constraints;
+    constraints.orientations.mode = geo::OrientationMode::cube;
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(
+        geo::make_validation_context(geo::test_support::accepted(mesh, geo::AssetRole::object),
+                                     geo::BoxDimensions { 3.5 * scale, 1.5 * scale, 1.5 * scale }, constraints));
+    const auto low = context->object()->bounds_mm().min;
+    const auto at = [&](std::string id, double x) {
+        return geo::CopyPose { std::move(id), { x * scale - low[0], .1 * scale - low[1], .1 * scale - low[2] },
+                               { 0, 0, 0, 1 } };
+    };
+    auto accepted =
+        geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(
+                                   geo::make_candidate(context, { at("left", 0), at("right", 2.5) })))
+            .validated_solution;
+    REQUIRE(accepted);
+    sol::detail::GapFillRequest request;
+    request.pitch_mm = .1 * scale;
+    request.max_working_bytes = 256ULL << 20;
+    request.capacity = 8;
+    const auto rotations = all_rotations ? sol::detail::cube_seed_quaternions()
+                                         : std::vector<geo::Quaternion> { { 0, 0, 0, 1 } };
+    const auto stats =
+        sol::detail::fill_gaps(*context, accepted->copies(), rotations, request, {}, [&](const geo::CopyPose& pose) {
+        auto copies = accepted->copies();
+        copies.push_back(pose);
+        const auto checked = geo::validate_incremental(
+            accepted, std::get<std::shared_ptr<const geo::Candidate>>(geo::make_candidate(context, copies)));
+        if (!checked.validated_solution) {
+            return sol::detail::GapVerdict::rejected;
+        }
+        accepted = checked.validated_solution;
+        return sol::detail::GapVerdict::accepted;
+    });
+    INFO(stats.outcome << " pitch=" << stats.pitch_mm << " proposals=" << stats.proposals);
+    CHECK(stats.accepted == 1);
+    // Field updates keep later proposals clear of the inserted copy.
+    CHECK(stats.proposals == stats.accepted);
+    CHECK(accepted->copies().size() == 3);
+    CHECK(geo::revalidate(accepted).validated_solution);
+}
+
+TEST_CASE("Gap filling keeps asymmetric proposals clear across cube rotations", "[solver][gap-fill]")
+{
+    // An elevated body with a low side wing: only correctly rotated blocked
+    // offsets keep every later proposal clear of the copies already placed.
+    auto mesh = geo::test_support::cuboid({ -1, -1, .5 }, { 1, 1, 1 });
+    geo::test_support::append_cuboid(mesh, { .8, -.4, 0 }, { 2, .4, .2 });
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = .05;
+    constraints.orientations.mode = geo::OrientationMode::cube;
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(
+        geo::make_validation_context(geo::test_support::accepted(mesh, geo::AssetRole::object),
+                                     geo::BoxDimensions { 7, 6, 5 }, constraints));
+    auto accepted = geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(
+                                               geo::make_candidate(context, {})))
+                        .validated_solution;
+    REQUIRE(accepted);
+    sol::detail::GapFillRequest request;
+    request.pitch_mm = .1;
+    request.max_working_bytes = 512ULL << 20;
+    request.capacity = 64;
+    const auto stats = sol::detail::fill_gaps(*context, {}, sol::detail::cube_seed_quaternions(), request, {},
+                                              [&](const geo::CopyPose& pose) {
+        auto copies = accepted->copies();
+        copies.push_back(pose);
+        const auto checked = geo::validate_incremental(
+            accepted, std::get<std::shared_ptr<const geo::Candidate>>(geo::make_candidate(context, copies)));
+        if (!checked.validated_solution) {
+            return sol::detail::GapVerdict::rejected;
+        }
+        accepted = checked.validated_solution;
+        return sol::detail::GapVerdict::accepted;
+    });
+    INFO(stats.outcome << " pitch=" << stats.pitch_mm << " proposals=" << stats.proposals);
+    CHECK(stats.accepted >= 6);
+    CHECK(stats.proposals == stats.accepted);
+    std::vector<geo::Quaternion> used;
+    for (const auto& copy : accepted->copies()) {
+        if (std::find(used.begin(), used.end(), copy.rotation_xyzw) == used.end()) {
+            used.push_back(copy.rotation_xyzw);
+        }
+    }
+    CHECK(used.size() >= 2);
+    CHECK(geo::revalidate(accepted).validated_solution);
+}
+
+#include "../src/slab_lattice.hpp"
+
+TEST_CASE("Slab lattices nest a stepped part with its half-turned twin", "[solver][slab-lattice]")
+{
+    // An L-shaped section: a full-length step 0.4 high under a half-length one.
+    // One rotation leaves every upper half empty; its twin, turned about the
+    // slab's cross axis, reaches over the lower step with 0.2 to spare, so a
+    // 7-long row holds four copies, not three.
+    const double clearance = GENERATE(0., .05);
+    const std::array<std::array<double, 2>, 6> section { { { 0, 0 }, { 2, 0 }, { 2, .4 }, { 1, .4 }, { 1, 1 }, { 0, 1 } } };
+    geo::test_support::Mesh mesh;
+    for (const double y : { 0., 1. }) {
+        for (const auto& [x, z] : section) {
+            mesh.vertices.push_back({ x, y, z });
+        }
+    }
+    for (std::uint32_t i = 1; i + 1 != 6; ++i) {
+        mesh.triangles.push_back({ { 0, i, i + 1 } });
+        mesh.triangles.push_back({ { 6, 7 + i, 6 + i } });
+    }
+    for (std::uint32_t a = 0; a != 6; ++a) {
+        const std::uint32_t b = (a + 1) % 6;
+        mesh.triangles.push_back({ { a, a + 6, b + 6 } });
+        mesh.triangles.push_back({ { a, b + 6, b } });
+    }
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = clearance;
+    constraints.orientations.mode = geo::OrientationMode::cube;
+    const double slack = .01 + 4 * clearance;
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(geo::make_validation_context(
+        geo::test_support::accepted(mesh, geo::AssetRole::object),
+        geo::BoxDimensions { 7 + slack, 1 + slack, 1 + slack }, constraints));
+    sol::detail::SlabLatticeRequest request;
+    request.threads = 4;
+    request.max_working_bytes = 512ULL << 20;
+    // Coarser planning cells keep the test quick; the 0.2 step gap still resolves.
+    request.max_padded_cells = 1 << 19;
+    request.capacity = 64;
+    request.to_beat = 3;
+    std::vector<std::vector<geo::CopyPose>> layouts;
+    // The part and its turns about each axis keep the planner small.
+    const std::vector<geo::Quaternion> rotations { { 0, 0, 0, 1 }, { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 } };
+    const auto stats = sol::detail::plan_slab_lattices(*context, rotations, request, {}, layouts);
+    INFO(stats.outcome << " pitch=" << stats.pitch_mm << " searches=" << stats.searches);
+    REQUIRE_FALSE(layouts.empty());
+    REQUIRE(layouts.front().size() >= 4);
+    const auto checked =
+        geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(
+                                   geo::make_candidate(context, layouts.front())));
+    INFO(checked.report.code);
+    REQUIRE(checked.validated_solution);
+    std::vector<geo::Quaternion> used;
+    for (const auto& copy : layouts.front()) {
+        if (std::find(used.begin(), used.end(), copy.rotation_xyzw) == used.end()) {
+            used.push_back(copy.rotation_xyzw);
+        }
+    }
+    CHECK(used.size() == 2);
 }
 
 TEST_CASE("Zero-wall height stagger keeps far-wall columns inside the box", "[solver][interlocking][height-stagger]")

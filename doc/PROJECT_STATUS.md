@@ -1,6 +1,6 @@
 # Project status
 
-Updated 2026-10-23. Details belong in PRs and `.local/` logs.
+Updated 2026-10-28. Details belong in PRs and `.local/` logs.
 
 ## What works
 
@@ -25,6 +25,13 @@ Updated 2026-10-23. Details belong in PRs and `.local/` logs.
   Whole-arrangement axis sweeps compact validated layouts and refill freed space;
   native-validated contraction recovers diagonal slack missed by coarse bins.
   Equal-count compactness improvements now reach the desktop and saved result.
+- **Interlocking layers:** timed searches try layered double lattices of a
+  rotation and its flipped twin (FFT no-fit maps per rotation pair). The
+  simplified Pryanik at 0/0 mm in 400 x 340 x 285 mm goes from 324 to **336**
+  in 120 s (330 in 60 s): 14 slabs of 12 + 12 nested twins. Bunny: 45 (was 40).
+- **Box tolerance:** boxes accept an allowed oversize (desktop default 0.1 mm,
+  ADR 0022); results record the validated interior. Envelopes now use
+  diagonal/2000 offset, so projects saved with older envelopes need re-import.
 - **Bulba:** automatic envelope generation takes about 24 seconds, versus 54 with
   redundant source analysis, with byte-identical geometry. The unchanged search
   now saves **24 validated copies in 400 x 340 x 285 mm**, at 0/0 mm clearance,
@@ -85,6 +92,6 @@ History: [benchmarks/SCOREBOARD.md](../benchmarks/SCOREBOARD.md).
    about 12 minutes (a 2.9 GB STL). Exact source-enclosure certification costs about
    1 s per copy (139k source triangles, ~286k exact triangle pairs).
 
-Diagonal compaction and automatic envelopes are merged through PR #30. See
+Diagonal compaction and automatic envelopes are merged through PR #32. See
 [ADR 0021](../spec/decisions/0021-packing-envelopes.md), [ALGORITHM.md](../docs/ALGORITHM.md),
 [BUILDING.md](../docs/BUILDING.md) and [AGENTS.md](../AGENTS.md).

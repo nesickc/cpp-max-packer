@@ -178,6 +178,7 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
     const fixture = fixtures.find(f => f.kind === 'results' && f.schema_valid && f.semantic_valid)!;
     const document = structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];
     document.container = { kind: 'box', dimensions_mm: [10,20,30] };
+    document.search.resolved_settings.container = { kind: 'box', dimensions_mm: [10,20,30] };
     const preview = { preview_id: 'result-mesh', format: 'ply' as const, sha256: 'a'.repeat(64), byte_length: 10, triangle_count: 12, coordinate_frame: 'object_local_mm' as const };
     const initial: Desktop.State = { desktop_version: 1, session_id: 'session-ui', revision: 1, object: { id: 'object-current', display_name: 'Object.stl', report: document.assets.object, preview: { ...preview, preview_id: 'new-import-mesh' } }, draft_settings: structuredClone(defaultSettings), result: { id: 'result-previous', document, preview, origin: 'solve' }, operation: null, last_error: null };
     native.state.mockResolvedValue(initial); native.save.mockResolvedValue({ operation_id: 'save-test' });
@@ -191,6 +192,17 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
     expect(native.save.mock.calls[0][0].settings.clearance_mm).toEqual({ pair: 2.5, wall: 1 });
     expect(screen.getByTestId('viewer').textContent).toBe('10,20,30 / result-mesh');
     expect(document.container.dimensions_mm).toEqual([10,20,30]);
+  });
+  it('shows a tolerant result in its validated interior', async () => {
+    const fixture = fixtures.find(f => f.kind === 'results' && f.schema_valid && f.semantic_valid)!;
+    const document = structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];
+    document.container = { kind: 'box', dimensions_mm: [10.5,20.5,30.5] };
+    document.search.resolved_settings.container = { kind: 'box', dimensions_mm: [10,20,30], tolerance_mm: .5 };
+    const preview = { preview_id: 'result-mesh', format: 'ply' as const, sha256: 'a'.repeat(64), byte_length: 10, triangle_count: 12, coordinate_frame: 'object_local_mm' as const };
+    const initial: Desktop.State = { desktop_version: 1, session_id: 'session-ui', revision: 1, object: { id: 'object-current', display_name: 'Object.stl', report: document.assets.object, preview }, draft_settings: structuredClone(defaultSettings), result: { id: 'result-previous', document, preview, origin: 'solve' }, operation: null, last_error: null };
+    native.state.mockResolvedValue(initial);
+    render(<App />);
+    await waitFor(() => expect(screen.getByTestId('viewer').textContent).toBe('10.5,20.5,30.5 / result-mesh'));
   });
 });
 

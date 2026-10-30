@@ -3,7 +3,7 @@ import type { Desktop } from './generated/contracts';
 // Native version-1 cube45 catalog; also checked at the Rust publication boundary.
 export const cube45CatalogHash = '7434d4e2eb8cd12e6a67af3a5d636a7435a4e50da043777586ff0fbff9eae4ef';
 
-export const defaultSettings: Desktop.Settings = { desktop_version: 1, box_dimensions_mm: [100, 100, 100], clearance_mm: { pair: 1, wall: 1 }, orientation: { mode: 'cube' }, pitch_mm: 2, budget_seconds: 60, seed: '0', thread_count: 1, budget_scope: 'total_start' };
+export const defaultSettings: Desktop.Settings = { desktop_version: 1, box_dimensions_mm: [100, 100, 100], box_tolerance_mm: 0.1, clearance_mm: { pair: 1, wall: 1 }, orientation: { mode: 'cube' }, pitch_mm: 2, budget_seconds: 60, seed: '0', thread_count: 1, budget_scope: 'total_start' };
 export function acceptState(current: Desktop.State | null, incoming: Desktop.State): Desktop.State {
   if (current && (current.session_id !== incoming.session_id || incoming.revision <= current.revision)) return current;
   const old = current?.live_result, next = incoming.live_result;
@@ -19,6 +19,7 @@ export function acceptState(current: Desktop.State | null, incoming: Desktop.Sta
 export function settingsError(settings: Desktop.Settings): string | null {
   const positive = (value: number) => Number.isFinite(value) && value > 0;
   if (!settings.box_dimensions_mm.every(positive)) return 'Box dimensions must be positive millimeters.';
+  if (settings.box_tolerance_mm !== undefined && !(Number.isFinite(settings.box_tolerance_mm) && settings.box_tolerance_mm >= 0)) return 'Box tolerance must be zero or positive millimeters.';
   if (!Object.values(settings.clearance_mm).every(v => Number.isFinite(v) && v >= 0)) return 'Clearances must be zero or positive.';
   if (!positive(settings.pitch_mm)) return 'Pitch must be positive millimeters.';
   if (!positive(settings.budget_seconds)) return 'Search budget must be positive seconds.';
@@ -29,7 +30,12 @@ export function settingsError(settings: Desktop.Settings): string | null {
   return null;
 }
 export function activeOperation(state: Desktop.State | null): boolean { return !!state?.operation && !state.operation.finished_at; }
+// The validated interior: each nominal dimension plus the allowed tolerance.
+export function effectiveDimensions(settings: Desktop.Settings): [number, number, number] {
+  const tolerance = Number.isFinite(settings.box_tolerance_mm) && settings.box_tolerance_mm! > 0 ? settings.box_tolerance_mm! : 0;
+  return settings.box_dimensions_mm.map(v => v + tolerance) as [number, number, number];
+}
 export function snapshotSettings(result: Desktop.ResultSnapshot): Desktop.Settings {
   const s = result.document.search.resolved_settings;
-  return { desktop_version: 1, box_dimensions_mm: result.document.container.kind === 'box' ? result.document.container.dimensions_mm : [100,100,100], clearance_mm: { ...s.clearance_mm }, orientation: s.orientation.mode === 'custom' && s.resolved.orientation_catalog_sha256 === cube45CatalogHash ? { mode: 'cube45' } : s.orientation.mode === 'cube' ? { mode: 'cube' } : { mode: 'fixed', quaternion_xyzw: s.orientation.mode === 'fixed' ? [...s.orientation.quaternion_xyzw] : [0,0,0,1] }, pitch_mm: s.resolved.pitch_mm, budget_seconds: s.search.budget_seconds ?? 60, seed: s.search.seed, thread_count: s.resolved.thread_count, budget_scope: s.search.budget_scope ?? 'search_only', ...(s.compute.host_memory_limit_bytes ? {host_memory_limit_bytes:s.compute.host_memory_limit_bytes} : {}) };
+  return { desktop_version: 1, box_dimensions_mm: s.container.kind === 'box' ? [...s.container.dimensions_mm] : [100,100,100], ...(s.container.kind === 'box' && s.container.tolerance_mm !== undefined ? { box_tolerance_mm: s.container.tolerance_mm } : {}), clearance_mm: { ...s.clearance_mm }, orientation: s.orientation.mode === 'custom' && s.resolved.orientation_catalog_sha256 === cube45CatalogHash ? { mode: 'cube45' } : s.orientation.mode === 'cube' ? { mode: 'cube' } : { mode: 'fixed', quaternion_xyzw: s.orientation.mode === 'fixed' ? [...s.orientation.quaternion_xyzw] : [0,0,0,1] }, pitch_mm: s.resolved.pitch_mm, budget_seconds: s.search.budget_seconds ?? 60, seed: s.search.seed, thread_count: s.resolved.thread_count, budget_scope: s.search.budget_scope ?? 'search_only', ...(s.compute.host_memory_limit_bytes ? {host_memory_limit_bytes:s.compute.host_memory_limit_bytes} : {}) };
 }
