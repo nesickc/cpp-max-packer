@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <stop_token>
 #include <string>
 
 #include "../src/export_validation_internal.hpp"
@@ -717,4 +718,151 @@ TEST_CASE("Packing envelope export applies import and enclosure caps to each cop
     const auto checked = run(3, allowance);
     CHECK(checked.validity == geo::Validity::valid);
     CHECK(checked.code == "VALID");
+}
+
+namespace {
+// A row of 2 mm cubes in a 20 mm box with 0.5 mm pair clearance. Copies past
+// the first are checked ahead in parallel when memory allows, so these exports
+// exercise the ordered parallel path. At the default 3 mm spacing quantized
+// bounds separate every pair; at 2.5 mm neighbours sit exactly at clearance
+// and need the exact pair check.
+constexpr std::size_t kRow = 6;
+double row_centre(std::size_t index, double spacing = 3) { return 1.5 + spacing * static_cast<double>(index); }
+std::shared_ptr<const geo::ValidatedSolution> row_solution(double spacing = 3)
+{
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = .5;
+    std::vector<geo::CopyPose> poses;
+    for (std::size_t index = 0; index != kRow; ++index) {
+        poses.push_back({ "copy" + std::to_string(index), { row_centre(index, spacing), 5, 5 }, { 0, 0, 0, 1 } });
+    }
+    return solution_in(std::move(poses), geo::BoxDimensions { 20, 10, 10 }, constraints);
+}
+std::vector<std::byte> row_bytes(std::size_t index, double spacing = 3)
+{
+    return cube_bytes(row_centre(index, spacing) - 1, row_centre(index, spacing) + 1);
+}
+
+// Smallest working-memory allowance that validates the row. It leaves no room
+// for a second copy to be checked ahead, so the export runs one copy at a time.
+std::uint64_t smallest_row_memory(const geo::ExportCopyReader& reader, double spacing = 3)
+{
+    const auto source = row_solution(spacing);
+    geo::ExportValidationLimits limits;
+    std::uint64_t low = 0, high = geo::validate_quantized_export(source, reader, limits).working_bytes_peak;
+    while (low + 1 < high) {
+        limits.max_working_bytes = low + (high - low) / 2;
+        (geo::validate_quantized_export(source, reader, limits).validity == geo::Validity::valid ? high : low) =
+            limits.max_working_bytes;
+    }
+    return high;
+}
+}  // namespace
+
+TEST_CASE("Export reports the first failing copy in copy order", "[export][parallel]")
+{
+    // Copy 3 overlaps copy 2 and copy 5 leaves the box. Checking copy 5 ahead
+    // must not displace the earlier pair failure.
+    const auto reader = [](std::size_t index) -> geo::ExportCopyRead {
+        if (index == 3) {
+            return cube_bytes(row_centre(2), row_centre(2) + 2);
+        }
+        if (index == 5) {
+            return cube_bytes(19, 21);
+        }
+        return row_bytes(index);
+    };
+    for (int run = 0; run != 3; ++run) {
+        const auto result = geo::validate_quantized_export(row_solution(), reader);
+        CHECK(result.validity == geo::Validity::invalid);
+        CHECK(result.code == "EXPORT_QUANTIZED_PAIR");
+    }
+    const auto contained = geo::validate_quantized_export(row_solution(), [](std::size_t index) -> geo::ExportCopyRead {
+        return index == 5 ? cube_bytes(19, 21) : row_bytes(index);
+    });
+    CHECK(contained.validity == geo::Validity::invalid);
+    CHECK(contained.code == "EXPORT_QUANTIZED_CONTAINMENT");
+}
+
+TEST_CASE("Export verdict and work do not depend on spare memory", "[export][parallel]")
+{
+    std::size_t reads {};
+    const geo::ExportCopyReader reader = [&](std::size_t index) -> geo::ExportCopyRead {
+        ++reads;
+        return row_bytes(index);
+    };
+    const auto ample = geo::validate_quantized_export(row_solution(), reader);
+    REQUIRE(ample.validity == geo::Validity::valid);
+    CHECK(reads == kRow);
+
+    // From one copy at a time up to every copy ahead at once, the export
+    // checks the same copies with the same work and reaches the same verdict.
+    const auto smallest = smallest_row_memory(reader);
+    REQUIRE(smallest < ample.working_bytes_peak);
+    geo::ExportValidationLimits limits;
+    for (auto bytes = smallest; bytes <= ample.working_bytes_peak;
+         bytes += (ample.working_bytes_peak - smallest) / 16 + 1) {
+        limits.max_working_bytes = bytes;
+        const auto result = geo::validate_quantized_export(row_solution(), reader, limits);
+        CAPTURE(bytes);
+        CHECK(result.validity == geo::Validity::valid);
+        CHECK(result.kernel_work == ample.kernel_work);
+        CHECK(result.aabb_pair_tests == ample.aabb_pair_tests);
+        CHECK(result.working_bytes_peak <= bytes);
+    }
+}
+
+TEST_CASE("Export pair checks under memory pressure keep the verdict", "[export][parallel]")
+{
+    // Exact pair checks need memory while later copies are checked ahead; the
+    // workers' allowance must yield to them rather than fail the export.
+    constexpr double spacing = 2.5;
+    const geo::ExportCopyReader reader = [&](std::size_t index) -> geo::ExportCopyRead {
+        return row_bytes(index, spacing);
+    };
+    const auto ample = geo::validate_quantized_export(row_solution(spacing), reader);
+    REQUIRE(ample.validity == geo::Validity::valid);
+    const auto smallest = smallest_row_memory(reader, spacing);
+    REQUIRE(smallest < ample.working_bytes_peak);
+    geo::ExportValidationLimits limits;
+    for (auto bytes = smallest; bytes <= ample.working_bytes_peak;
+         bytes += (ample.working_bytes_peak - smallest) / 32 + 1) {
+        limits.max_working_bytes = bytes;
+        const auto result = geo::validate_quantized_export(row_solution(spacing), reader, limits);
+        CAPTURE(bytes, result.code);
+        CHECK(result.validity == geo::Validity::valid);
+    }
+}
+
+TEST_CASE("Export cancellation while copies are checked ahead is indeterminate", "[export][parallel]")
+{
+    std::stop_source stop;
+    spectrapack::runtime::OperationControl control;
+    control.stop = stop.get_token();
+    std::size_t reads {};
+    const auto result = geo::validate_quantized_export(row_solution(), [&](std::size_t index) -> geo::ExportCopyRead {
+        if (++reads == 3) {
+            stop.request_stop();
+        }
+        return row_bytes(index);
+    }, {}, control);
+    CHECK(result.validity == geo::Validity::indeterminate);
+    CHECK(result.code == "OPERATION_CANCELLED");
+}
+
+TEST_CASE("Packing envelope export checks every copy's source when copies run ahead", "[export][envelope][parallel]")
+{
+    const auto source_for = [](std::size_t protruding) {
+        return [protruding](std::size_t index) -> geo::ExportCopyRead {
+            const auto centre = row_centre(index);
+            const auto low = index == protruding ? centre - 1.2 : centre - .5;
+            return binary_mesh(ts::cuboid({ low, 4.5, 4.5 }, { centre + .5, 5.5, 5.5 }));
+        };
+    };
+    const auto envelopes = [](std::size_t index) -> geo::ExportCopyRead { return row_bytes(index); };
+    const auto valid = geo::validate_quantized_export(row_solution(), envelopes, {}, {}, source_for(kRow));
+    CHECK(valid.validity == geo::Validity::valid);
+    const auto protruding = geo::validate_quantized_export(row_solution(), envelopes, {}, {}, source_for(4));
+    CHECK(protruding.validity == geo::Validity::invalid);
+    CHECK(protruding.code == "EXPORT_SOURCE_ENCLOSURE");
 }

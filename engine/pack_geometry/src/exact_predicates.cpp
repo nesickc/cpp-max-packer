@@ -515,12 +515,25 @@ Interval singleton(double value) noexcept {
   return {value, value, std::isfinite(value)};
 }
 
+// Bit-exact std::nextafter toward -inf/+inf for finite values. The filter
+// widens about forty bounds per orientation, and the library call dominated
+// the export enclosure proof.
+double next_down(double value) noexcept {
+  if (value == 0.0) return -std::numeric_limits<double>::denorm_min();
+  const auto bits = std::bit_cast<std::uint64_t>(value);
+  return std::bit_cast<double>(value > 0.0 ? bits - 1 : bits + 1);
+}
+
+double next_up(double value) noexcept {
+  if (value == 0.0) return std::numeric_limits<double>::denorm_min();
+  const auto bits = std::bit_cast<std::uint64_t>(value);
+  return std::bit_cast<double>(value > 0.0 ? bits + 1 : bits - 1);
+}
+
 Interval widen(double low, double high) noexcept {
   if (!std::isfinite(low) || !std::isfinite(high)) return {};
-  const double widened_low =
-      std::nextafter(low, -std::numeric_limits<double>::infinity());
-  const double widened_high =
-      std::nextafter(high, std::numeric_limits<double>::infinity());
+  const double widened_low = next_down(low);
+  const double widened_high = next_up(high);
   if (!std::isfinite(widened_low) || !std::isfinite(widened_high)) return {};
   return {widened_low, widened_high, true};
 }
@@ -1095,6 +1108,55 @@ SegmentTriangleCrossing segment_triangle_crossing(
   return same_strict_side(edge0, edge1, edge2)
              ? SegmentTriangleCrossing::crossing
              : SegmentTriangleCrossing::none;
+}
+
+// The scalar triple product (p - a) . ((b - a) x (c - a)) is the orientation
+// determinant of (a, b, c, p) up to a sign shared by every point, so strict
+// interval signs prove strict sides. Like orient3d's filter it needs nearest
+// rounding without flush-to-zero, checked once for the enclosure's lifetime.
+PlaneEnclosure::PlaneEnclosure(const std::array<Vec3, 3>& triangle, WorkBudget& budget) noexcept :
+    base_(triangle[0])
+{
+  // Six differences, six products and three subtractions, as in orient3d.
+  if (!finite(triangle[0]) || !finite(triangle[1]) || !finite(triangle[2]) ||
+      !filter_environment_supported() || !budget.consume(60)) {
+    return;
+  }
+  std::array<Interval, 3> u, v;
+  for (int axis = 0; axis != 3; ++axis) {
+    u[axis] = interval_subtract(singleton(triangle[1][axis]), singleton(triangle[0][axis]));
+    v[axis] = interval_subtract(singleton(triangle[2][axis]), singleton(triangle[0][axis]));
+  }
+  const std::array<Interval, 3> normal{
+      interval_subtract(interval_multiply(u[1], v[2]), interval_multiply(u[2], v[1])),
+      interval_subtract(interval_multiply(u[2], v[0]), interval_multiply(u[0], v[2])),
+      interval_subtract(interval_multiply(u[0], v[1]), interval_multiply(u[1], v[0]))};
+  for (int axis = 0; axis != 3; ++axis) {
+    if (!normal[axis].valid) return;
+    low_[axis] = normal[axis].low;
+    high_[axis] = normal[axis].high;
+  }
+  valid_ = true;
+}
+
+bool PlaneEnclosure::strictly_separates(const std::array<Vec3, 3>& points, WorkBudget& budget) const noexcept
+{
+  if (!valid_) return false;
+  std::optional<Sign> side;
+  for (const auto& point : points) {
+    // Three differences, three products and two sums.
+    if (!finite(point) || !budget.consume(40)) return false;
+    Interval dot{};
+    for (int axis = 0; axis != 3; ++axis) {
+      const auto term = interval_multiply(interval_subtract(singleton(point[axis]), singleton(base_[axis])),
+                                          Interval{low_[axis], high_[axis], true});
+      dot = axis == 0 ? term : interval_add(dot, term);
+    }
+    const auto sign = strict_sign(dot);
+    if (!sign || (side && *side != *sign)) return false;
+    side = sign;
+  }
+  return true;
 }
 
 namespace {

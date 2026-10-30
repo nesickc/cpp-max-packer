@@ -1,6 +1,6 @@
 # Project status
 
-Updated 2026-10-28. Details belong in PRs and `.local/` logs.
+Updated 2026-10-30. Details belong in PRs and `.local/` logs.
 
 ## What works
 
@@ -88,9 +88,10 @@ History: [benchmarks/SCOREBOARD.md](../benchmarks/SCOREBOARD.md).
    Results remain `best_found`.
 4. `10_kg_np.stl` is 400 x 350 x 285 mm; the real Nova Post box is
    400 x 340 x 285 mm. Use box dimensions for that comparison.
-5. Checked STL export of large envelope layouts is slow: 420 Pryanik copies take
-   about 12 minutes (a 2.9 GB STL). Exact source-enclosure certification costs about
-   1 s per copy (139k source triangles, ~286k exact triangle pairs).
+5. Checked STL export of large envelope layouts is large and CPU-bound: 429
+   Pryanik copies write a 2.9 GB STL in about 100 s on eight threads (about
+   29 minutes before). Every copy is still reimported and enclosure-certified;
+   fewer cores take proportionally longer.
 
 Diagonal compaction and automatic envelopes are merged through PR #32. See
 [ADR 0021](../spec/decisions/0021-packing-envelopes.md), [ALGORITHM.md](../docs/ALGORITHM.md),
