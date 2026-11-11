@@ -34,62 +34,83 @@ Release, eight threads; 10-second analytic and 60-second STL budgets; Pryanik in
 
 ## Current goal: Core v1.0
 
-The spec defines the MVP (§2.3, §3 Core tier, §11.4). These are the known gaps, in the
-order a user meets them. Items 1–7 are one branch and PR each; item 8 is a run. Not in
-v1.0: Vulkan, STL containers, upright/free-3D search, crash recovery, Windows 10 and
-further packing-count work.
+In working order; each item is one branch and PR. Spec v0.4 records the decisions behind
+it. Not in v1.0: Vulkan, STL containers, free-3D search, search presets, crash recovery,
+Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
 
-1. [ ] **Installer** (SYS-01/02, §4.3). The supported build and CI stop at
-   `cargo build`: the NSIS bundle is never built, skips WebView2 and is version 0.0.0.
-   *Done when* one command produces a versioned setup containing the offline WebView2
-   installer, plus the staged engine as a zip.
-2. [ ] **Search panel** (UI-01/03, SOL-05/08, §7.1–7.2). A new project starts at a
-   fixed 2 mm pitch, 60 s and one thread; no presets, RAM estimate, remaining budget
-   or time since improvement. *Done when* Fast/Balanced/Thorough set the budget and
-   an object-sized pitch (coarsened to fit RAM, with a notice), threads default to
-   the shell's value, and resolved pitch, threads, RAM and both times are shown.
-3. [ ] **Continue** (SOL-06, §8.2, §11.4, AT-13). Engine and desktop have none; every
-   Start is a fresh job. *Done when* Continue adds budget to a stopped, finished or
-   reopened result, starts from its revalidated poses with geometry, box, clearances
-   and rotations locked, never lowers the count and records a second run segment.
-4. [ ] **Project and export actions** (UI-01, §7.1, §8.5). Save always asks for a
-   path; no viewport PNG; no open-output-folder. *Done when* Save reuses the current
-   path, Save As asks, Export PNG writes the view with its count/settings companion,
-   and a finished save or export can reveal its folder.
-5. [ ] **Long operations** (UI-03, §10.1, AT-16). Prompt Stop, and results kept through
-   write and allocation failures, are already tested. Only a solve can be stopped:
-   envelope builds (~24 s) and STL export (~95 s for 429 Pryanik copies) show no
-   progress. *Done when* export reports copies done, both cancel cleanly, and a test
-   fails an export on an unwritable target and finds the result and project intact.
-6. [ ] **Guide and messages** (§2.2, §8.5, M6). `docs/DESKTOP.md` is a stale developer
-   note; the results panel lacks the geometric-only scope note; a quantization
-   failure gives no advice. *Done when* DESKTOP.md is a short user guide opened from
-   the app (best found, envelopes, failed exports), the scope note is shown, and a
-   failed STL export says to raise clearance and that the JSON stays valid.
-7. [ ] **CLI surface** (DATA-01, §8.1, AT-01/13). `pack`, `validate` and `benchmark`
-   return `METHOD_UNSUPPORTED`; the stdio service answers only `capabilities.get`.
-   *Done when* question B is settled and the shipped commands repeat a desktop job
-   headless, including a standalone `validate` that exits 5 on a failed result.
-8. [ ] **Release run** (AT-01, AT-14, AT-15 box journey, §11.4). A checklist in the
-   guide, run from the installer on clean Windows 11, offline: the whole journey,
-   keyboard, screenshot, Save As, error recovery, CLI job, `scoreboard.py --record`.
+**Daily use**
 
-Spec questions to settle first (this page does not change the spec):
+1. [ ] **Drag and drop** (UI-01). *Done when* dropping one STL on the window imports it
+   exactly as the Import button does, and anything else is refused with a message.
+2. [ ] **Box presets** (UI-01). *Done when* a list fills W/D/H and stays editable.
+   Nova Post, mm: 0.5 kg 170x120x90, 1 kg 240x170x90, 2 kg 340x240x90, 3 kg 240x240x200,
+   5 kg 400x240x200, 10 kg 400x340x285, 15 kg 600x350x280, 20 kg 470x400x420,
+   30 kg 700x400x420. Only the 10 kg interior is measured; the rest are published sizes.
+3. [ ] **Build output and installer** (SYS-01/02, §4.3). Binaries sit deep in `out/` and
+   `desktop/src-tauri/target/`; no installer is built. *Done when* one command leaves
+   `bin/release/spectrapack-desktop.exe` with its engine (`bin/debug/` likewise) and
+   another builds a versioned NSIS setup with the offline WebView2 installer, in CI too.
 
-- A. §7.2 gives Balanced and Thorough Free 3D orientations, which SOL-03 makes Later.
-- B. §8.1 requires `pack`/`validate`/`benchmark` and eleven stdio methods; the app
-  ships on `inspect`, `solve` and its own session protocol. Build them or narrow §8.1.
-- C. AT-11 is Core but needs the exact-contact L-prism pair (`lprism2` finds 1 of 2).
-- D. §7.3 full-resolution copy inspection, AT-15 LOD switching and §10.1 parser
-  fuzzing are unbuilt and carry no Later mark.
+**Denser packing**
+
+4. [ ] **Density cases** (QA-01). Add to the scoreboard, 0.1/0.1 mm clearance, measured
+   today: 10 mm sphere in a 24.6 mm cube, **10 of 14** (face-centred, proved optimal
+   for 14; grid 8); in a 40.6 mm cube, 66 of 66; 40 mm spheres in 400x340x285,
+   **540 of about 690** by hexagonal layers (grid 504). Not yet measured, with 45° turns
+   allowed: 5 square tiles where a grid fits 4, and 10 where it fits 9 (both proved
+   optimal). The 17-tile packing needs free rotation and stays a later target. The L
+   pair in a box with 0.05 mm slack finds 2 and becomes the AT-11 gate.
+5. [ ] **Solver cleanup** (first slice of item 8). Simplify seeding and compaction in
+   `pack_solver` (10,500 lines) before extending them; scoreboard unchanged.
+6. [ ] **Denser search**, tried in this order, each kept only if the scoreboard moves.
+   (a) Repeating patterns: search the three repeat vectors of one copy, or of a copy
+   and its twin, on the existing pair no-fit maps, then the placement in the box that
+   holds most. It replaces the grid, stagger and twin-layer seeds if it beats them.
+   (b) One more copy: insert an overlapping copy and move its neighbours downhill on
+   total overlap until none is left, for the last copies and the wall regions. Poses
+   are continuous so free rotation can join later. (c) Settling with shaking, only if
+   measured cheap enough. *Done when* the small cube reaches 14, the box case 620,
+   and no other case loses count or validity.
+
+**Robustness**
+
+7. [ ] **Hostile files** (§10.1). No fuzzing or sanitizer build exists. *Done when* STL
+   import, project open and the JSON/protocol readers each have a fuzz target that CI
+   runs under AddressSanitizer with time and memory caps, every finding has a
+   reproducer test, and an adversarial mesh cannot hang or exhaust the envelope build.
+8. [ ] **Review and simplify**, one PR per module: `pack_io` (10,000 lines), CLI (4,600,
+   including the stub commands), geometry outside the validator, desktop shell (4,800).
+   *Done when* each PR removes more than it adds with tests and scoreboard unchanged.
+   Validator, clearance, transform and contract changes get an independent review.
+
+**Finish the desktop**
+
+9. [ ] **Search panel** (UI-01/03, SOL-05/08). *Done when* threads default to the
+   shell's value and resolved pitch, threads, estimated RAM, remaining budget and time
+   since improvement are shown. Starts at one thread and a fixed 2 mm pitch today.
+10. [ ] **Continue** (SOL-06, §8.2, AT-13). Every Start is a fresh job. *Done when*
+    Continue adds budget to a stopped, finished or reopened result from its revalidated
+    poses, with geometry, box, clearances and rotations locked, and never lowers the count.
+11. [ ] **Project and export actions** (§7.1, §8.5). *Done when* Save reuses the current
+    path, Save As asks, Export PNG writes the view, and a save or export can reveal
+    its folder.
+12. [ ] **Long operations** (UI-03, AT-16). Envelope builds (~24 s) and STL export (~95 s
+    for 429 Pryanik copies) show no progress and cannot be stopped. *Done when* both
+    report progress and cancel cleanly, and a failed write leaves result and project intact.
+13. [ ] **Guide and messages** (§2.2, §8.5). *Done when* `docs/DESKTOP.md` is a short user
+    guide opened from the app, the results panel states the geometric-only scope, and a
+    failed STL export says to raise clearance and that the JSON stays valid.
+14. [ ] **Release run** (AT-01, AT-14, AT-15 box journey). From the installer on clean
+    Windows 11, offline: the whole journey, then `scoreboard.py --record`.
 
 ## Known problems
 
 1. Conservative envelopes can close recesses/cavities and reduce nesting; they neither
    repair the source nor establish printability. No shrinking to fit.
 2. Reconstruction is approximate and can erase features; prefer the envelope.
-3. The exact-contact L-prism pair remains unfound. The bracket's known 50-copy layout
-   is a target: 42 found in an exterior-size box, real interior dimensions unknown.
+3. Exact fits with no slack stay undecided and are rejected: the L pair needs 0.05 mm
+   of box slack, which the desktop size tolerance supplies. The bracket's known 50-copy
+   layout is a target: 42 found in an exterior-size box, interior dimensions unknown.
 4. `10_kg_np.stl` is 400 x 350 x 285 mm, not the real 400 x 340 x 285 mm Nova Post box.
 5. Checked STL export of large envelope layouts is large and CPU-bound: 429 Pryanik
    copies write a 2.9 GB STL in about 95 s on eight threads (13 minutes before).
