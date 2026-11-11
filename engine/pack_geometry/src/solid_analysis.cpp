@@ -611,6 +611,9 @@ Validity certify_surface_enclosure(MeshView envelope, MeshView source, const Imp
         }
         const fcl::AABBd box(fcl::Vector3d(triangle_bounds.min[0], triangle_bounds.min[1], triangle_bounds.min[2]),
                              fcl::Vector3d(triangle_bounds.max[0], triangle_bounds.max[1], triangle_bounds.max[2]));
+        // Most candidate pairs are split by one triangle's plane. The interval
+        // plane tests prove that cheaply; the rest take the exact relation.
+        std::optional<exact::PlaneEnclosure> source_plane;
         std::vector<int> pending { 0 };
         while (!pending.empty()) {
             operation_checkpoint(control);
@@ -628,8 +631,16 @@ Validity certify_surface_enclosure(MeshView envelope, MeshView source, const Imp
             if (++pairs > limits.max_candidate_pairs) {
                 return Validity::indeterminate;
             }
-            const auto relation = exact::triangle_relation(points, triangle_points(envelope, bv.primitiveId()),
-                                                           no_shared(), no_shared(), 0, budget);
+            const auto envelope_points = triangle_points(envelope, bv.primitiveId());
+            if (!source_plane) {
+                source_plane.emplace(points, budget);
+            }
+            if (source_plane->strictly_separates(envelope_points, budget) ||
+                exact::PlaneEnclosure(envelope_points, budget).strictly_separates(points, budget)) {
+                continue;
+            }
+            const auto relation =
+                exact::triangle_relation(points, envelope_points, no_shared(), no_shared(), 0, budget);
             if (relation == exact::TriangleRelation::uncertain) {
                 return Validity::indeterminate;
             }
