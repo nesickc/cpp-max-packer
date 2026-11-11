@@ -455,6 +455,7 @@ Analytic fixtures are generated from checked-in parameters with exact dimensions
 | `lprism-01` | The same L; 3.35×2.35×1.25 mm box; pair/wall 0.1/0.1 mm | Core AT-11 gate: the pair is found with 0.05 mm of box slack. |
 | `sphere14`, `sphere66` | 10 mm sphere; 24.6 mm and 40.6 mm cubes; pair/wall 0.1/0.1 mm | Dense sphere layouts: 14 face-centred where a grid fits 8, and 66 in stacked layers where it fits 64. |
 | `sphere40-np` | 40 mm sphere; 400×340×285 mm; pair/wall 0.1/0.1 mm; 4 mm pitch; 60 s | Hexagonal layers hold 690; a grid holds 504. |
+| `yasya-0`, `yasya-1`, `yasya-wall0` | Local model `Yasya-250_V6.stl` as its packing envelope; 400×240×200 mm; pair/wall 0/0, 1/1 and 1/0 mm; 2 mm pitch; 60 s | A looser clearance must not find fewer copies: all three should reach the 74 found at 1/1 mm. Skipped where the model is absent. |
 | `tile5`, `tile10` | 10×10×2 mm tile; 27.5 mm and 37.6 mm square trays 2.3 mm high; pair/wall 0.1/0.1 mm; 45° turns | Tilted squares: 5 and 10 where a grid fits 4 and 9. |
 
 Rules: a change must not drop any case below its floor or produce a non-`valid` result. Raise a floor when an improvement is reliable. Add a case when a new user scenario matters; do not remove one to make a change pass. Record notable runs with `--record` in `benchmarks/SCOREBOARD.md`. Counts are `best_found`, never optimality claims.

@@ -52,6 +52,16 @@ CASES = {
 }
 # Cases whose known layout needs the desktop's 45-degree turns.
 CUBE45_CASES = {'tile5', 'tile10'}
+# Cases packed as the desktop packs them: the automatic packing envelope, 2 mm pitch.
+# A looser clearance must not find fewer copies, so every count here should reach 74;
+# yasya-0 still returns 72 in some runs and yasya-wall0 is slow to get there.
+# The model is local only; the cases are skipped where it is absent.
+CASES.update({
+    'yasya-0':     ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 0.0, 0.0, 2.0, 60, 72, 74),
+    'yasya-1':     ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 1.0, 1.0, 2.0, 60, 74, 74),
+    'yasya-wall0': ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 1.0, 0.0, 2.0, 60, 64, 74),
+})
+ENVELOPE_CASES = {'yasya-0', 'yasya-1', 'yasya-wall0'}
 
 
 def write_binary_stl(path, triangles):
@@ -145,12 +155,14 @@ def run(args, **kw):
     return subprocess.run([str(a) for a in args], capture_output=True, text=True, **kw)
 
 
-def inspect(stl, directory):
+def inspect(stl, directory, envelope=False):
     """Inspect once per source content; reuse the accepted report on later runs."""
     digest = hashlib.sha256(stl.read_bytes()).hexdigest()[:16]
-    report = directory / f'{stl.stem}-{digest}.report.json'
+    report = directory / f'{stl.stem}-{digest}{"-envelope" if envelope else ""}.report.json'
     if not report.exists():
-        done = run([ENGINE, 'inspect', '--stl', stl, '--units', 'mm', '--role', 'object', '--report', report])
+        options = ['--packing-envelope', 'auto', '--accept-repair', 'auto',
+                   '--available-host-bytes', 4 << 30] if envelope else ['--role', 'object']
+        done = run([ENGINE, 'inspect', '--stl', stl, '--units', 'mm', '--report', report, *options])
         if done.returncode != 0:
             raise RuntimeError(f'inspect {stl} failed: {done.stdout} {done.stderr}')
     data = json.loads(report.read_text())
@@ -222,7 +234,10 @@ def run_case(name, out, threads, orientation='cube'):
     case_dir = out / name
     case_dir.mkdir(parents=True, exist_ok=True)
     stl = generated_stl(source[4:], out.parent / 'inputs') if source.startswith('gen:') else REPO / source
-    report_path, report = inspect(stl, out.parent / 'inputs')
+    if not stl.exists():
+        return {'case': name, 'count': None, 'status': 'skipped', 'seconds': 0.0, 'termination': f'{source} is absent',
+                'time_to_best': None, 'floor': floor, 'target': target, 'reference': '-', 'ok': True}
+    report_path, report = inspect(stl, out.parent / 'inputs', name in ENVELOPE_CASES)
     settings = case_dir / 'settings.json'
     resolved = settings_for(report, box, pair, wall, pitch, budget, threads)
     if orientation == 'cube45':
