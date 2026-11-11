@@ -58,9 +58,9 @@ further packing-count work.
    and a finished save or export can reveal its folder.
 5. [ ] **Long operations** (UI-03, §10.1, AT-16). Prompt Stop, and results kept through
    write and allocation failures, are already tested. Only a solve can be stopped:
-   envelope builds (~24 s) and STL export (minutes) show no progress. *Done when*
-   export reports copies done, both cancel cleanly, and a test fails an export on an
-   unwritable target and finds the result and project intact.
+   envelope builds (~24 s) and STL export (~95 s for 429 Pryanik copies) show no
+   progress. *Done when* export reports copies done, both cancel cleanly, and a test
+   fails an export on an unwritable target and finds the result and project intact.
 6. [ ] **Guide and messages** (§2.2, §8.5, M6). `docs/DESKTOP.md` is a stale developer
    note; the results panel lacks the geometric-only scope note; a quantization
    failure gives no advice. *Done when* DESKTOP.md is a short user guide opened from
@@ -91,8 +91,9 @@ Spec questions to settle first (this page does not change the spec):
 3. The exact-contact L-prism pair remains unfound. The bracket's known 50-copy layout
    is a target: 42 found in an exterior-size box, real interior dimensions unknown.
 4. `10_kg_np.stl` is 400 x 350 x 285 mm, not the real 400 x 340 x 285 mm Nova Post box.
-5. Checked STL export of large envelope layouts is slow: 420 Pryanik copies take
-   about 12 minutes (2.9 GB), roughly 1 s per copy for source-enclosure certification.
+5. Checked STL export of large envelope layouts is large and CPU-bound: 429 Pryanik
+   copies write a 2.9 GB STL in about 95 s on eight threads (13 minutes before).
+   Every copy is still reimported and enclosure-certified; fewer cores take longer.
 6. Projects saved before the diagonal/2000 envelope offset need re-import.
 
 See [ALGORITHM.md](../docs/ALGORITHM.md) and [BUILDING.md](../docs/BUILDING.md).

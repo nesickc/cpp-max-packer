@@ -3,6 +3,7 @@
 #include <optional>
 
 #include "exact_predicates.hpp"
+#include "spectrapack/geometry/export_validation.hpp"
 #include "spectrapack/geometry/import.hpp"
 #include "validation_kernel.hpp"
 
@@ -79,6 +80,15 @@ ImportOutcome<AssetDraft> inspect_baked_world_draft(std::span<const std::byte>, 
                                                     ImportAttemptStats&, const runtime::OperationControl& = {});
 [[nodiscard]] BakedWorldOutcome inspect_baked_world_stl(std::span<const std::byte>, const ImportLimits&, ExportBudget&);
 [[nodiscard]] BakedPlacementOutcome prepare_baked_world(std::shared_ptr<const AcceptedSolid>, ExportBudget&);
+
+// validate_quantized_export with at most `workers` threads checking copies
+// ahead; 0 or 1 checks every copy on the calling thread. The report must not
+// depend on it.
+[[nodiscard]] ValidationReport validate_quantized_export_with_workers(std::shared_ptr<const ValidatedSolution>,
+                                                                    const ExportCopyReader&,
+                                                                    const ExportValidationLimits&,
+                                                                    const runtime::OperationControl&,
+                                                                    const ExportCopyReader&, unsigned workers);
 
 [[nodiscard]] Validity classify_export_containment(const validation_kernel::ContainmentResult&) noexcept;
 [[nodiscard]] Validity classify_export_pair(const validation_kernel::PairResult&) noexcept;
