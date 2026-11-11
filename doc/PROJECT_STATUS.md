@@ -53,18 +53,24 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
 
 **Denser packing**
 
-4. [ ] **Sphere and L-prism cases** (QA-01). Add to the scoreboard, 0.1/0.1 mm clearance,
-   measured today: 10 mm sphere in a 24.6 mm cube, **10 of 14** (the face-centred
-   arrangement, proved optimal for 14; a grid gives 8); in a 40.6 mm cube, 66 of 66; 40 mm spheres in
-   400x340x285, **540 of about 690** by hexagonal layers (grid 504). The L pair in a
-   box with 0.05 mm slack finds 2 and becomes the AT-11 gate.
+4. [ ] **Density cases** (QA-01). Add to the scoreboard, 0.1/0.1 mm clearance, measured
+   today: 10 mm sphere in a 24.6 mm cube, **10 of 14** (face-centred, proved optimal
+   for 14; grid 8); in a 40.6 mm cube, 66 of 66; 40 mm spheres in 400x340x285,
+   **540 of about 690** by hexagonal layers (grid 504). Not yet measured, with 45° turns
+   allowed: 5 square tiles where a grid fits 4, and 10 where it fits 9 (both proved
+   optimal). The 17-tile packing needs free rotation and stays a later target. The L
+   pair in a box with 0.05 mm slack finds 2 and becomes the AT-11 gate.
 5. [ ] **Solver cleanup** (first slice of item 8). Simplify seeding and compaction in
    `pack_solver` (10,500 lines) before extending them; scoreboard unchanged.
-6. [ ] **Tight compaction**. Compaction slides copies along X, Y and Z only, once after
-   seeding. *Done when* copies settle along any direction, the pass repeats during the
-   search with refill of the openings it makes, the small cube reaches 14, the box
-   case reaches 620, and no other case loses count or validity. If settling alone
-   stalls, try hexagonal seeds before adding more mechanism.
+6. [ ] **Denser search**, tried in this order, each kept only if the scoreboard moves.
+   (a) Repeating patterns: search the three repeat vectors of one copy, or of a copy
+   and its twin, on the existing pair no-fit maps, then the placement in the box that
+   holds most. It replaces the grid, stagger and twin-layer seeds if it beats them.
+   (b) One more copy: insert an overlapping copy and move its neighbours downhill on
+   total overlap until none is left, for the last copies and the wall regions. Poses
+   are continuous so free rotation can join later. (c) Settling with shaking, only if
+   measured cheap enough. *Done when* the small cube reaches 14, the box case 620,
+   and no other case loses count or validity.
 
 **Robustness**
 
