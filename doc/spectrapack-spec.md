@@ -1,12 +1,14 @@
 # SpectraPack — application specification
 
-**Version:** 0.3 • **Date:** 18 October 2026 • **Status:** development baseline; implementation status is tracked separately
+**Version:** 0.4 • **Date:** 11 November 2026 • **Status:** development baseline; implementation status is tracked separately
 
 This document specifies a local Windows application that packs as many rigid copies of one STL model as it can find into a fixed container, displays the packing, and exports the count and placements. The algorithm is based on spectral packing and the psacking reference implementation. Version 1.0 (**Core**) is a C++ CPU engine, analytic box containers, mesh diagnostics, a desktop UI and a fixed quality scoreboard. AMD-compatible GPU acceleration, STL containers and crash recovery are **Later** (v1.x).
 
 This is a development specification, not an implementation or a claim of measured performance. It fixes what the product must do and the validity contract. It does not fix how the search works: algorithm parameters and strategies live in [docs/ALGORITHM.md](../docs/ALGORITHM.md) and may change whenever the scoreboard improves. “MUST” is a requirement for the tier it belongs to; “SHOULD” permits a documented exception.
 
 Version 0.3 splits requirements into Core and Later tiers, moves algorithm details out of §6, replaces the §6.6 accounting policy with a simpler degrade-and-continue rule, makes the §9 scoreboard the quality gate and narrows the §11.3 change procedure. Requirement, AT and M0–M6 identifiers are preserved; protocol, settings, result and project schema versions are unchanged. Earlier rationale is in `spec/decisions/` and the frozen `doc/T-*.md` tickets; see [current status](PROJECT_STATUS.md).
+
+Version 0.4 records tier decisions taken while using the application. Search presets (§7.2), the `pack`/`validate`/`benchmark` commands and the stdio job and project methods (§8.1), and the exact-contact part of AT-11 move to Later. Full-resolution copy inspection and LOD switching are dropped. Box size presets and drag-and-drop import join §7.1. Parser fuzzing (§10.1) stays Core. Identifiers and schema versions are unchanged.
 
 ## 1. Product decision
 
@@ -51,7 +53,7 @@ The solution is **geometric packing**. v1 does not certify gravity stability, su
 
 **Core (v1.0)** is every requirement marked Core in §3: a usable Windows desktop application and CLI that imports an STL, packs it into a box on the CPU with independently validated placements, shows the result, and saves/exports it. Packing quality is measured on the §9 scoreboard.
 
-**Later (v1.x)** covers requirements marked Later: Vulkan/AMD acceleration and its qualification, STL containers, upright/free-3D rotation search, checkpoint recovery after a crash, fault-injection suites, deterministic fixed-work replay and Windows 10 qualification. Their text stays in this spec as the design target; they do not block v1.0.
+**Later (v1.x)** covers requirements marked Later: Vulkan/AMD acceleration and its qualification, STL containers, upright/free-3D rotation search, checkpoint recovery after a crash, fault-injection suites, deterministic fixed-work replay, Windows 10 qualification, the Fast/Balanced/Thorough search presets (§7.2) and the `pack`/`validate`/`benchmark` commands with the stdio job and project methods (§8.1). Their text stays in this spec as the design target; they do not block v1.0.
 
 Beyond v1.x: multiple distinct object types, quantities or values per type, physical assembly constraints, distributed search, Linux/macOS installers, interactive manual placement editing and 3MF export.
 
@@ -266,10 +268,10 @@ Use a single main window: configuration panel on the left, 3D viewer in the cent
 
 | Area | Required controls and feedback |
 | --- | --- |
-| Object | Import/replace STL; units; dimensions; triangle count; diagnostics; repair proposal preview/accept/reject; original/LOD viewer toggle |
-| Container | Box or STL interior volume; internal W/D/H and allowed size tolerance; independent STL units; bounds; diagnostic status; container transparency |
+| Object | Import/replace STL from a file dialog or by dropping the file on the window; units; dimensions; triangle count; diagnostics; repair proposal preview/accept/reject; original/LOD viewer toggle |
+| Container | Box or STL interior volume; internal W/D/H and allowed size tolerance; box size presets (Nova Post boxes) that fill W/D/H and stay editable; independent STL units; bounds; diagnostic status; container transparency |
 | Constraints | Pair clearance and wall clearance in mm; 24 cube rotations by default; optional 45° turns around each world axis expand search to 96 orientations |
-| Search | Fast/Balanced/Thorough; total run budget; Start; Stop and keep best; Continue; seed and maximum additional work in advanced controls |
+| Search | Total run budget and pitch (Fast/Balanced/Thorough presets are Later, §7.2); Start; Stop and keep best; Continue; seed and maximum additional work in advanced controls |
 | Resources | Auto/CPU/Vulkan; selected device; detected capability; resolved pitch; estimated RAM/VRAM; advanced pitch, thread, and memory limits |
 | Results | Best validated count; elapsed and remaining budget; time since improvement; utilization if available; termination reason; geometry validation status |
 | Project/export | New/Open/Save/Save As; export result JSON; export packed STL; export a viewport PNG; open output folder |
@@ -279,6 +281,8 @@ Constraints are immutable for a running job. Editing them creates pending settin
 Progress reports phases (`preparing`, `voxelizing`, `planning_fft`, `placing`, `improving`, `validating`, `saving`) and elapsed budget. Show progress within a bounded phase when meaningful; do not invent a percentage of “optimal packing found.” Best count never decreases on the active job's timeline.
 
 ### 7.2 Initial presets
+
+Presets are Later: they wait until search quality has settled. Until then the desktop exposes the budget, pitch and permitted rotations directly. The table is the design target.
 
 | Preset | Default total job budget | Orientations when unrestricted | Target pitch before memory adjustment |
 | --- | --- | --- | --- |
@@ -296,7 +300,7 @@ Provide orbit, pan, zoom, fit-to-container, reset view, orthographic/perspective
 
 Offer Original, Envelope and Overlay views using the same per-copy transforms, selection, hiding and clipping. For exact assets the full accepted mesh is the packing boundary; for envelope assets show the retained source and the full envelope separately. These controls never change acceptance or search.
 
-Render a shared object mesh with instance transforms. Use display LODs during interaction; offer full-resolution inspection of a selected copy. Do not load `N` full meshes into GPU memory. The visible best packing must correspond to one complete validated solution revision. A separately enabled candidate/debug preview is clearly identified as unvalidated and cannot be exported as the best result.
+Render a shared object mesh with instance transforms. Use one display LOD; the viewer does not need the full-resolution mesh. Do not load `N` full meshes into GPU memory. The visible best packing must correspond to one complete validated solution revision. A separately enabled candidate/debug preview is clearly identified as unvalidated and cannot be exported as the best result.
 
 UI events run independently of engine computation. Throttle progress/preview delivery to at most four updates per second and coalesce obsolete preview revisions. Keyboard focus, resize, window movement, and Stop remain usable during long native work. Missing graphics acceleration may degrade rendering quality, but CPU solving and result export remain available.
 
@@ -312,7 +316,9 @@ preserves the displayed canonical poses and their Save/export association.
 
 ### 8.1 CLI and service
 
-Required command surface, with detailed flags specified in the generated CLI help:
+Core ships `capabilities`, `inspect`, `solve` and the desktop session commands: the desktop application, the tests and the scoreboard use nothing else. `pack`, `validate`, `benchmark` and every stdio method below except `capabilities.get` are Later, and this section is their design target.
+
+Command surface, with detailed flags specified in the generated CLI help:
 
 ```text
 spectrapack-engine capabilities --json
@@ -457,7 +463,7 @@ Timed runs on one machine vary; compare repeated runs before claiming an improve
 
 These are required implementation tests, not results obtained while writing this document. Test names and fixtures become permanent regression identifiers. Each test must check an observable contract, not merely repeat an internal function's implementation.
 
-Tiers: AT-02 and the GPU parts of AT-12 and AT-16 are Later, as are AT-13's kill-during-checkpoint recovery, AT-15's AMD-host frame-time measurement and STL-container journey, AT-01's Windows 10 run and AT-17's Benchy suite. For Core, AT-17 is satisfied by the §9 scoreboard with every result validated.
+Tiers: AT-02 and the GPU parts of AT-12 and AT-16 are Later, as are AT-13's kill-during-checkpoint recovery, AT-15's AMD-host frame-time measurement and STL-container journey, AT-01's Windows 10 run and AT-17's Benchy suite. For Core, AT-17 is satisfied by the §9 scoreboard with every result validated. AT-11's exact-contact pair and its fixed-work reinsertion run are Later; for Core the same two L prisms must be found at 0.1 mm pair and wall clearance in a box with 0.05 mm of slack. For Core, AT-01 and AT-13 are exercised through `inspect`/`solve` and the desktop session, not `pack` or the stdio methods.
 
 | ID | Scenario and passing condition |
 | --- | --- |
@@ -475,7 +481,7 @@ Tiers: AT-02 and the GPU parts of AT-12 and AT-16 are Later, as are AT-13's kill
 | AT-12 | Compare every translation of small asymmetric binary fields with a direct integer cross-correlation oracle, including non-power-of-two extents, nonzero kernel origins, rotations, and boundary placements. No circular aliases. CPU/GPU values on the small oracle suite differ from integers by less than 0.25 and round identically; candidate validity always uses discrete/solid checks. Inject bad normalization and an FFT error to verify rejection/fallback. Exercise supported CPU thread counts; fixed-work runs reproduce counts and transforms on the same build/configuration, including resolved thread count. |
 | AT-13 | Start, query, stop, continue, and interrupt a job through CLI and service. Duplicate requests do not duplicate work. Kill the process during a trial and during checkpoint replacement; reopening preserves the last complete validated result. Drop/coalesce progress events and restart the UI without corrupting the engine's best state. Errors and terminal states match the protocol. |
 | AT-14 | Save/move/open a project with repaired and unrepaired fixtures, nontrivial source origins, and rotations. JSON transforms, viewer transforms, and exported vertices agree. Result count matches placement records. Tampered hashes, inconsistent matrices, unsupported schemas, truncated archives, path traversal, and STL quantization violations are rejected clearly. Export streams within the memory cap and includes the per-copy triangle map. |
-| AT-15 | Complete the full desktop journey using box and STL containers. Verify controls, settings/result association, copy selection, clipping, LOD switching, keyboard operation, screenshots, Save As, and error recovery. On the qualified AMD host, orbit a 1,000-copy display scene using a 20,000-triangle shared LOD at 1080p with median frame time ≤33 ms and p95 ≤50 ms over a recorded 10-second interaction. Count/placements are not changed by hiding copies. |
+| AT-15 | Complete the full desktop journey using box and STL containers. Verify controls, settings/result association, copy selection, clipping, keyboard operation, screenshots, Save As, and error recovery. On the qualified AMD host, orbit a 1,000-copy display scene using a 20,000-triangle shared LOD at 1080p with median frame time ≤33 ms and p95 ≤50 ms over a recorded 10-second interaction. Count/placements are not changed by hiding copies. |
 | AT-16 | Inject host/device allocation failure, GPU device loss, an unresponsive native operation, and a full output disk. Memory remains within declared caps or the operation terminates gracefully; no invalid trial replaces the incumbent. Auto resumes from its valid checkpoint on CPU when feasible. The UI acknowledges Stop within 250 ms and remains interactive even if the engine must be terminated. |
 | AT-17 | Run the pinned Benchy and synthetic suites, save counts plus poses, and independently invoke the standalone validator on every result and STL export. Benchy counts meet the baseline rules in section 9. Record five-seed summaries for the standard case and CPU/AMD release evidence. Fail the suite on any invalid published packing; do not discard failed seeds from reports. |
 
@@ -505,7 +511,7 @@ The standalone validator reuses the geometry contract but bypasses all search oc
 | M5 — AMD acceleration | Vulkan/VkFFT fields and reductions; bounded caching; resource preflight; device loss and CPU fallback | AT-02, GPU AT-12, and AT-16 pass on a real Windows Radeon device. Same geometry validity contract as CPU. |
 | M6 — full v1 qualification | Benchy release suite; high-detail imports; installer/runtime verification; export recovery; user/developer documentation | All requirements and AT-01–AT-17 pass or their documented optional benchmark status applies; publish count-and-placement artifacts with hardware provenance. |
 
-M0–M6 remain as history labels. From v0.3, progress is tracked by Core requirements and the §9 scoreboard, not milestone gates; M5 (AMD) and the AMD parts of M6 are Later. No milestone requires running the original CUDA psacking application; its source and paper are references, and direct oracle tests establish this port's behavior.
+M0–M6 remain as history labels. Since v0.3, progress is tracked by Core requirements and the §9 scoreboard, not milestone gates; M5 (AMD) and the AMD parts of M6 are Later. No milestone requires running the original CUDA psacking application; its source and paper are references, and direct oracle tests establish this port's behavior.
 
 ### 11.2 Repository organization
 
