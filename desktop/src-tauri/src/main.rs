@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use spectrapack_desktop::{core::Core, model::*, security};
-use tauri::{Manager, State as Managed};
+use tauri::{Emitter, Manager, State as Managed};
 
 #[tauri::command]
 fn desktop_state(core: Managed<'_, Core>) -> State {
@@ -24,6 +24,20 @@ async fn desktop_import_object(
         .await;
     path.map(|file| core.import_path(file.path(), request))
         .transpose()
+}
+/// Files the window itself received by drag and drop. The webview is told only that
+/// a drop happened, so it can never name a path to import.
+#[derive(Default)]
+struct Dropped(std::sync::Mutex<Vec<std::path::PathBuf>>);
+
+#[tauri::command]
+fn desktop_import_dropped(
+    core: Managed<'_, Core>,
+    dropped: Managed<'_, Dropped>,
+    request: ImportRequest,
+) -> Outcome<Receipt> {
+    let paths = std::mem::take(&mut *dropped.0.lock().unwrap());
+    core.import_dropped(&paths, request)
 }
 #[tauri::command]
 fn desktop_start(core: Managed<'_, Core>, request: StartRequest) -> Outcome<Receipt> {
@@ -134,6 +148,13 @@ fn main() {
         }
     };
     let outcome = tauri::Builder::default()
+        .manage(Dropped::default())
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
+                *window.state::<Dropped>().0.lock().unwrap() = paths.clone();
+                let _ = window.emit("desktop-drop", ());
+            }
+        })
         .setup(move |app| {
             if let Err(failure) = setup_desktop(app, engine) {
                 startup_error(failure);
@@ -147,6 +168,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             desktop_state,
             desktop_import_object,
+            desktop_import_dropped,
             desktop_repair,
             desktop_start,
             desktop_stop,

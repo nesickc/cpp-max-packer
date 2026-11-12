@@ -1,10 +1,11 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Desktop } from '../src/generated/contracts';
 import fixtures from '../../tests/contracts/schema-fixtures.json';
 import { cube45CatalogHash, defaultSettings, snapshotSettings } from '../src/state';
 
-const native = vi.hoisted(() => ({ state: vi.fn(), save: vi.fn(), start: vi.fn(), newProject: vi.fn(), importObject: vi.fn(), open: vi.fn(), repair: vi.fn() }));
+const native = vi.hoisted(() => ({ state: vi.fn(), save: vi.fn(), start: vi.fn(), newProject: vi.fn(), importObject: vi.fn(), open: vi.fn(), repair: vi.fn(),
+  importDropped: vi.fn(), drop: () => {}, onDrop: vi.fn((handler: () => void) => { native.drop = handler; return Promise.resolve(() => {}); }) }));
 vi.mock('../src/bridge', () => ({ nativeAvailable: () => true, bridge: native }));
 vi.mock('../src/Viewer', () => ({ Viewer: (props: { dimensions: number[]; preview: { preview_id: string } | null }) => <div data-testid="viewer">{props.dimensions.join(',')} / {props.preview?.preview_id}</div> }));
 import { App } from '../src/App';
@@ -217,4 +218,29 @@ it('creates a packing envelope without user-supplied geometry parameters',async(
   const button=await screen.findByRole('button',{name:'Create packing envelope',hidden:true});
   fireEvent.click(button);
   await waitFor(()=>expect(native.repair).toHaveBeenCalledWith({action:'envelope'}));
+});
+
+it('imports a dropped STL with the chosen units, and refuses a drop while an operation runs', async () => {
+  const idle: Desktop.State = {desktop_version:1,session_id:'drop',revision:1,object:null,
+    draft_settings:structuredClone(defaultSettings),result:null,operation:null,last_error:null};
+  native.state.mockResolvedValue(idle);
+  native.importDropped.mockResolvedValue({operation_id:'import-1'});
+  render(<App/>);
+  await waitFor(() => expect(screen.getByRole('button', {name:/Import STL/}).hasAttribute('disabled')).toBe(false));
+  fireEvent.change(screen.getByLabelText('Source units'), {target:{value:'inch'}});
+  act(() => native.drop());
+  await waitFor(() => expect(native.importDropped).toHaveBeenCalledWith({units:'inch'}));
+  expect(native.importObject).not.toHaveBeenCalled();
+
+  native.importDropped.mockRejectedValue({code:'DROP_REFUSED',message:'Only an STL file can be dropped.'});
+  act(() => native.drop());
+  expect((await screen.findByRole('alert')).textContent).toContain('Only an STL file can be dropped.');
+
+  native.importDropped.mockClear();
+  native.state.mockResolvedValue({...idle, revision:2, operation:{id:'solve-1',kind:'solve',phase:'running',
+    started_at:'2026-11-12T00:00:00Z',finished_at:null,result_id:null,detail:null}});
+  await waitFor(() => expect(screen.getByRole('button', {name:/Import STL/}).hasAttribute('disabled')).toBe(true));
+  act(() => native.drop());
+  expect((await screen.findByRole('alert')).textContent).toContain('Wait for the current operation to finish');
+  expect(native.importDropped).not.toHaveBeenCalled();
 });

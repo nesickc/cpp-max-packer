@@ -6,7 +6,8 @@ packing, placement validation and export; the desktop presents those results.
 
 ## Pack an object
 
-1. Choose the STL's units, then import it. Inspect dimensions and diagnostics.
+1. Choose the STL's units, then import it with the button or by dropping one STL
+   file on the window. Inspect dimensions and diagnostics.
    Invalid geometry cannot start a packing job. Import does not alter the file.
 2. Enter the box's internal width, depth and height in millimeters. Pair and
    wall clearances are independent; both default to 1 mm and can be zero.
