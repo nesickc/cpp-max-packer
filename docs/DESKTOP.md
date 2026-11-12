@@ -9,7 +9,9 @@ packing, placement validation and export; the desktop presents those results.
 1. Choose the STL's units, then import it with the button or by dropping one STL
    file on the window. Inspect dimensions and diagnostics.
    Invalid geometry cannot start a packing job. Import does not alter the file.
-2. Enter the box's internal width, depth and height in millimeters. Pair and
+2. Pick a box preset or enter the box's internal width, depth and height in
+   millimeters. A preset only fills the fields; only the Nova Post 10 kg interior
+   is measured, the other presets are published sizes. Pair and
    wall clearances are independent; both default to 1 mm and can be zero.
 3. Choose fixed or cube rotations, pitch, budget and CPU thread count from the
    engine's supported range (up to eight on Windows). New drafts default to at
