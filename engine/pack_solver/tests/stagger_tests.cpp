@@ -755,14 +755,10 @@ TEST_CASE("Gap filling keeps asymmetric proposals clear across cube rotations", 
 
 #include "../src/slab_lattice.hpp"
 
-TEST_CASE("Slab lattices nest a stepped part with its half-turned twin", "[solver][slab-lattice]")
+namespace {
+// A unit-deep prism over a six-cornered x-z section that is seen whole from its first corner.
+geo::test_support::Mesh extruded(const std::array<std::array<double, 2>, 6>& section)
 {
-    // An L-shaped section: a full-length step 0.4 high under a half-length one.
-    // One rotation leaves every upper half empty; its twin, turned about the
-    // slab's cross axis, reaches over the lower step with 0.2 to spare, so a
-    // 7-long row holds four copies, not three.
-    const double clearance = GENERATE(0., .05);
-    const std::array<std::array<double, 2>, 6> section { { { 0, 0 }, { 2, 0 }, { 2, .4 }, { 1, .4 }, { 1, 1 }, { 0, 1 } } };
     geo::test_support::Mesh mesh;
     for (const double y : { 0., 1. }) {
         for (const auto& [x, z] : section) {
@@ -778,6 +774,47 @@ TEST_CASE("Slab lattices nest a stepped part with its half-turned twin", "[solve
         mesh.triangles.push_back({ { a, a + 6, b + 6 } });
         mesh.triangles.push_back({ { a, b + 6, b } });
     }
+    return mesh;
+}
+}  // namespace
+
+TEST_CASE("Slab lattices stack chevrons closer than their height", "[solver][slab-lattice]")
+{
+    // A roof-shaped section 1.4 high whose arms are 0.4 thick. Identical layers
+    // need 1.4 each, so a 3-high box holds two rows of two. A layer can instead
+    // sink over the one below until the arms meet, which fits at least three.
+    const auto mesh = extruded({ { { 1, 1.4 }, { 0, .4 }, { 0, 0 }, { 1, 1 }, { 2, 0 }, { 2, .4 } } });
+    geo::Constraints constraints;
+    constraints.orientations.mode = geo::OrientationMode::cube;
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(geo::make_validation_context(
+        geo::test_support::accepted(mesh, geo::AssetRole::object), geo::BoxDimensions { 4.01, 1.01, 3 }, constraints));
+    sol::detail::SlabLatticeRequest request;
+    request.threads = 4;
+    request.max_working_bytes = 512ULL << 20;
+    request.max_padded_cells = 1 << 19;
+    request.capacity = 64;
+    request.to_beat = 4;
+    std::vector<std::vector<geo::CopyPose>> layouts;
+    const std::vector<geo::Quaternion> rotations { { 0, 0, 0, 1 }, { 1, 0, 0, 0 } };
+    const auto stats = sol::detail::plan_slab_lattices(*context, rotations, request, {}, layouts);
+    INFO(stats.outcome << " pitch=" << stats.pitch_mm << " searches=" << stats.searches);
+    REQUIRE_FALSE(layouts.empty());
+    REQUIRE(layouts.front().size() >= 6);
+    const auto checked =
+        geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(
+                                   geo::make_candidate(context, layouts.front())));
+    INFO(checked.report.code);
+    REQUIRE(checked.validated_solution);
+}
+
+TEST_CASE("Slab lattices nest a stepped part with its half-turned twin", "[solver][slab-lattice]")
+{
+    // An L-shaped section: a full-length step 0.4 high under a half-length one.
+    // One rotation leaves every upper half empty; its twin, turned about the
+    // slab's cross axis, reaches over the lower step with 0.2 to spare, so a
+    // 7-long row holds four copies, not three.
+    const double clearance = GENERATE(0., .05);
+    const auto mesh = extruded({ { { 0, 0 }, { 2, 0 }, { 2, .4 }, { 1, .4 }, { 1, 1 }, { 0, 1 } } });
     geo::Constraints constraints;
     constraints.pair_clearance_mm = constraints.wall_clearance_mm = clearance;
     constraints.orientations.mode = geo::OrientationMode::cube;

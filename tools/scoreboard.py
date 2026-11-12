@@ -41,12 +41,12 @@ CASES = {
     'ulamok':     ('rc/items/ulamok_2kg_simplified.stl', (400, 350, 285), 0.1, 1.0, 4.0, 60, 36, 36),
     # Density cases, all at 0.1/0.1 mm with a little box slack. Targets are known layouts:
     # the L pair; 14 face-centred spheres (grid 8); stacked 4x4 and 3x3 sphere layers
-    # (grid 64); hexagonal sphere layers stacked along Y (grid 504); and one or more
+    # (grid 64); nested hexagonal sphere layers (grid 504, unnested layers 540); and one or more
     # squares turned 45 degrees among axis-aligned ones (grids 4 and 9).
     'lprism-01':   ('gen:lprism', (3.35, 2.35, 1.25), 0.1, 0.1, 0.25, 10, 2, 2),
     'sphere14':    ('gen:sphere10', (24.6, 24.6, 24.6), 0.1, 0.1, 0.5, 10, 10, 14),
     'sphere66':    ('gen:sphere10', (40.6, 40.6, 40.6), 0.1, 0.1, 1.0, 10, 64, 66),
-    'sphere40-np': ('gen:sphere40', (400, 340, 285), 0.1, 0.1, 4.0, 60, 540, 690),
+    'sphere40-np': ('gen:sphere40', (400, 340, 285), 0.1, 0.1, 4.0, 60, 600, 690),
     'tile5':       ('gen:tile10', (27.5, 27.5, 2.3), 0.1, 0.1, 0.5, 10, 4, 5),
     'tile10':      ('gen:tile10', (37.6, 37.6, 2.3), 0.1, 0.1, 0.5, 10, 9, 10),
 }

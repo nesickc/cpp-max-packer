@@ -34,7 +34,7 @@ Release, eight threads; 10-second analytic and 60-second STL budgets; Pryanik in
 | lprism-01 (0.1/0.1 mm, 0.05 mm slack) | 2 | 2 | 2 |
 | sphere14 (10 mm, 24.6 mm cube) | 10 | 10 | 14 |
 | sphere66 (10 mm, 40.6 mm cube) | 64 (66 once) | 64 | 66 |
-| sphere40-np (40 mm, 400 x 340 x 285 mm) | 540 | 540 | 690 |
+| sphere40-np (40 mm, 400 x 340 x 285 mm) | **600** | 600 | 690 |
 | tile5, tile10 (45° turns) | 4, 9 | 4, 9 | 5, 10 |
 | yasya-0, -1, -wall0 (envelope, 400 x 240 x 200 mm) | **74**, 74, 74 | 74 | 74 |
 
@@ -72,6 +72,10 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    are continuous so free rotation can join later. (c) Settling with shaking, only if
    measured cheap enough. *Done when* the small cube reaches 14, the box case 620,
    and no other case loses count or validity.
+   Progress on (a): layers may now shift and sit closer than a part's height, which
+   takes the box case from 540 to 600. Still open in (a): repeat vectors are whole
+   planning cells (about 0.2 mm for the 10 mm sphere), so the small cube, which has
+   0.1 mm to spare, stays at 10 until a lattice is tightened to validated contact.
 
 **Robustness**
 
