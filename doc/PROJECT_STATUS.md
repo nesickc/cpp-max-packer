@@ -48,7 +48,7 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
 
 1. [x] **Drag and drop** (UI-01). Dropping one STL on the window imports it as the
    Import button does; anything else, or a drop during an operation, is refused with a message.
-2. [ ] **Box presets** (UI-01). *Done when* a list fills W/D/H and stays editable.
+2. [x] **Box presets** (UI-01). A list fills W/D/H, which stay editable.
    Nova Post, mm: 0.5 kg 170x120x90, 1 kg 240x170x90, 2 kg 340x240x90, 3 kg 240x240x200,
    5 kg 400x240x200, 10 kg 400x340x285, 15 kg 600x350x280, 20 kg 470x400x420,
    30 kg 700x400x420. Only the 10 kg interior is measured; the rest are published sizes.

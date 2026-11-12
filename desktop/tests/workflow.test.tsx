@@ -244,3 +244,19 @@ it('imports a dropped STL with the chosen units, and refuses a drop while an ope
   expect((await screen.findByRole('alert')).textContent).toContain('Wait for the current operation to finish');
   expect(native.importDropped).not.toHaveBeenCalled();
 });
+
+it('fills the box from a preset and keeps the dimensions editable', async () => {
+  native.state.mockResolvedValue({desktop_version:1,session_id:'presets',revision:1,object:null,
+    draft_settings:structuredClone(defaultSettings),result:null,operation:null,last_error:null} satisfies Desktop.State);
+  render(<App/>);
+  const preset = await screen.findByLabelText('Box preset') as HTMLSelectElement;
+  expect(preset.value).toBe('');
+  fireEvent.change(preset, {target:{value:'Nova Post 10 kg'}});
+  expect(['Width','Depth','Height'].map(label => (screen.getByLabelText(label) as HTMLInputElement).value)).toEqual(['400','340','285']);
+  expect(preset.value).toBe('Nova Post 10 kg');
+  fireEvent.change(screen.getByLabelText('Depth'), {target:{value:'338'}});
+  expect(preset.value).toBe('');
+  expect((screen.getByLabelText('Width') as HTMLInputElement).value).toBe('400');
+  fireEvent.change(screen.getByLabelText('Depth'), {target:{value:'340'}});
+  expect(preset.value).toBe('Nova Post 10 kg');
+});

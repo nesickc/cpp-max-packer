@@ -4,6 +4,23 @@ import type { Desktop } from './generated/contracts';
 export const cube45CatalogHash = '7434d4e2eb8cd12e6a67af3a5d636a7435a4e50da043777586ff0fbff9eae4ef';
 
 export const defaultSettings: Desktop.Settings = { desktop_version: 1, box_dimensions_mm: [100, 100, 100], box_tolerance_mm: 0.1, clearance_mm: { pair: 1, wall: 1 }, orientation: { mode: 'cube' }, pitch_mm: 2, budget_seconds: 60, seed: '0', thread_count: 1, budget_scope: 'total_start' };
+// Nova Post boxes, width x depth x height in millimetres. Only the 10 kg interior is
+// measured; the others are the carrier's published sizes.
+export const boxPresets: readonly { name: string; dimensions_mm: readonly [number, number, number] }[] = [
+  { name: 'Nova Post 0.5 kg', dimensions_mm: [170, 120, 90] },
+  { name: 'Nova Post 1 kg', dimensions_mm: [240, 170, 90] },
+  { name: 'Nova Post 2 kg', dimensions_mm: [340, 240, 90] },
+  { name: 'Nova Post 3 kg', dimensions_mm: [240, 240, 200] },
+  { name: 'Nova Post 5 kg', dimensions_mm: [400, 240, 200] },
+  { name: 'Nova Post 10 kg', dimensions_mm: [400, 340, 285] },
+  { name: 'Nova Post 15 kg', dimensions_mm: [600, 350, 280] },
+  { name: 'Nova Post 20 kg', dimensions_mm: [470, 400, 420] },
+  { name: 'Nova Post 30 kg', dimensions_mm: [700, 400, 420] },
+];
+// The preset whose size the box currently has, or '' for a custom size.
+export function presetName(dimensions: readonly number[]): string {
+  return boxPresets.find(p => p.dimensions_mm.every((v, i) => v === dimensions[i]))?.name ?? '';
+}
 export function acceptState(current: Desktop.State | null, incoming: Desktop.State): Desktop.State {
   if (current && (current.session_id !== incoming.session_id || incoming.revision <= current.revision)) return current;
   const old = current?.live_result, next = incoming.live_result;
