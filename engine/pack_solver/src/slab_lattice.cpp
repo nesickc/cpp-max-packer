@@ -40,28 +40,41 @@ std::shared_ptr<const T> owned(geometry::RepresentationOutcome<T>&& outcome)
     return value ? std::move(*value) : nullptr;
 }
 
-// Plan offsets (cells along u, v) at which a copy of Q, level with a copy of P
-// placed at the origin, meets P grown by the pair clearance.
+// Offsets (cells) between the bounds' low corners at which a copy of Q meets a
+// copy of P grown by the pair clearance.
+struct Volume {
+    std::array<std::int64_t, 3> first {}, shape {};
+    std::vector<std::uint8_t> blocked;
+};
+
+// One plane of a volume: plan offsets (cells along u, v) at a fixed offset along
+// the slab normal. Beyond the volume the plane is empty: the copies cannot meet.
 struct NoFit {
     Cells first {}, shape {};
-    std::vector<std::uint8_t> blocked;
+    const std::uint8_t* data {};
+    std::int64_t step_u {}, step_v {};
+    bool at(std::int64_t i, std::int64_t j) const noexcept { return data[i * step_u + j * step_v] != 0; }
     bool operator()(std::int64_t u, std::int64_t v) const noexcept
     {
         u -= first[0];
         v -= first[1];
-        return u >= 0 && v >= 0 && u < shape[0] && v < shape[1] && blocked[u + shape[0] * v];
-    }
-    NoFit transposed() const
-    {
-        NoFit result { { first[1], first[0] }, { shape[1], shape[0] }, std::vector<std::uint8_t>(blocked.size()) };
-        for (std::int64_t v = 0; v != shape[1]; ++v) {
-            for (std::int64_t u = 0; u != shape[0]; ++u) {
-                result.blocked[v + shape[1] * u] = blocked[u + shape[0] * v];
-            }
-        }
-        return result;
+        return u >= 0 && v >= 0 && u < shape[0] && v < shape[1] && at(u, v);
     }
 };
+
+NoFit plane(const Volume& volume, std::size_t k, std::size_t u, std::size_t v, std::int64_t offset) noexcept
+{
+    const std::array<std::int64_t, 3> step { 1, volume.shape[0], volume.shape[0] * volume.shape[1] };
+    const auto index = offset - volume.first[k];
+    if (index < 0 || index >= volume.shape[k]) {
+        return {};
+    }
+    return { { volume.first[u], volume.first[v] },
+             { volume.shape[u], volume.shape[v] },
+             volume.blocked.data() + index * step[k],
+             step[u],
+             step[v] };
+}
 
 // Cells on a lattice anchored at a posed copy's bounds' low corner, so cell
 // offsets between two fields are offsets between the copies' low corners.
@@ -80,8 +93,11 @@ struct Shape {
 
 // A = i(px, 0) + j(sx, py) and B = A + (su, sv), in cells of the plan axes.
 // The first sublattice starts at the box corner: A, or B when `b_first`.
+// With a `rise`, each layer sits that many cells above the last and (tu, tv)
+// across from it, so it can sink into the hollows below; otherwise layers are
+// identical and a full thickness apart.
 struct Lattice {
-    std::int64_t px {}, sx {}, py {}, su {}, sv {};
+    std::int64_t px {}, sx {}, py {}, su {}, sv {}, tu {}, tv {}, rise {};
     std::uint64_t count {};
     bool b_first {};
 };
@@ -127,11 +143,11 @@ public:
         // Each row of blocked A-B offsets as runs [first, last] along u.
         for (std::int64_t v = 0; v != ab.shape[1]; ++v) {
             for (std::int64_t u = 0; u != ab.shape[0]; ++u) {
-                if (!ab.blocked[u + ab.shape[0] * v]) {
+                if (!ab.at(u, v)) {
                     continue;
                 }
                 const auto first = u;
-                while (u + 1 != ab.shape[0] && ab.blocked[u + 1 + ab.shape[0] * v]) {
+                while (u + 1 != ab.shape[0] && ab.at(u + 1, v)) {
                     ++u;
                 }
                 runs_.push_back({ ab.first[1] + v, ab.first[0] + first, ab.first[0] + u });
@@ -181,15 +197,15 @@ public:
         return true;
     }
 
-private:
-    struct Run {
-        std::int64_t v, first, last;
-    };
-
     static std::uint64_t bound(Cells room, std::int64_t px, std::int64_t py) noexcept
     {
         return static_cast<std::uint64_t>((room[0] / px + 1) * (room[1] / py + 1));
     }
+
+private:
+    struct Run {
+        std::int64_t v, first, last;
+    };
 
     void attempt(Lattice l, std::vector<Lattice>& found)
     {
@@ -279,7 +295,8 @@ struct Level {
     // The part in its own frame, by the bounds corner its lattice is anchored at.
     std::array<std::shared_ptr<const geometry::CellField>, 8> local_kernels, local_grown;
     std::vector<std::shared_ptr<const Field>> kernels, grown;
-    std::map<std::tuple<std::size_t, std::size_t, std::size_t>, std::shared_ptr<const NoFit>> maps;
+    std::map<std::pair<std::size_t, std::size_t>, std::shared_ptr<const Volume>> volumes;
+    std::uint64_t volume_bytes {};
 };
 
 }  // namespace
@@ -527,11 +544,20 @@ SlabLatticeStats plan_slab_lattices(const geometry::ValidationContext& context,
         stats.working_bytes_peak = std::max(stats.working_bytes_peak, held);
         return true;
     };
-    const auto no_fit = [&](Level& level, const Task& task, std::size_t p,
-                            std::size_t q) -> std::shared_ptr<const NoFit> {
-        auto& entry = level.maps[{ task.k, p, q }];
-        if (entry || !ensure_fields(level, p) || !ensure_fields(level, q)) {
-            return entry;
+    const auto volume = [&](Level& level, std::size_t p, std::size_t q) -> std::shared_ptr<const Volume> {
+        if (const auto known = level.volumes.find({ p, q }); known != level.volumes.end()) {
+            return known->second;
+        }
+        if (!ensure_fields(level, p) || !ensure_fields(level, q)) {
+            return nullptr;
+        }
+        // Volumes matter only while their pair is searched: start over once they
+        // pass their share of memory or would crowd out the next correlation.
+        if (level.volume_bytes > request.max_working_bytes / 8 ||
+            held + fft_bytes + fft_bytes / 8 > request.max_working_bytes) {
+            held -= level.volume_bytes;
+            level.volume_bytes = 0;
+            level.volumes.clear();
         }
         const auto& placed = *level.grown[p];
         const auto& kernel = *level.kernels[q];
@@ -543,31 +569,20 @@ SlabLatticeStats plan_slab_lattices(const geometry::ValidationContext& context,
         if (!result) {
             return nullptr;
         }
-        // Both copies sit with their bounds' low face on the slab floor.
-        const auto floor_index = -result->translation_first[task.k];
-        if (floor_index < 0 || floor_index >= std::int64_t { result->shape[task.k] }) {
-            return nullptr;
-        }
         stats.working_bytes_peak = std::max(stats.working_bytes_peak, held + fft_bytes);
-        auto map = std::make_shared<NoFit>();
-        map->first = { result->translation_first[task.u], result->translation_first[task.v] };
-        map->shape = { std::int64_t { result->shape[task.u] }, std::int64_t { result->shape[task.v] } };
-        map->blocked.resize(static_cast<std::size_t>(map->shape[0] * map->shape[1]));
-        for (std::int64_t j = 0; j != map->shape[1]; ++j) {
-            for (std::int64_t i = 0; i != map->shape[0]; ++i) {
-                std::array<std::int64_t, 3> index {};
-                index[task.u] = i;
-                index[task.v] = j;
-                index[task.k] = floor_index;
-                const auto at =
-                    index[0] + result->shape[0] * (index[1] + std::int64_t { result->shape[1] } * index[2]);
-                // Exact integer overlap counts carry a small FFT residual.
-                map->blocked[static_cast<std::size_t>(i + map->shape[0] * j)] = std::round(result->values[at]) != 0;
-            }
+        auto made = std::make_shared<Volume>();
+        for (std::size_t axis = 0; axis != 3; ++axis) {
+            made->first[axis] = result->translation_first[axis];
+            made->shape[axis] = result->shape[axis];
         }
-        held += map->blocked.size();
-        entry = map;
-        return entry;
+        // Exact integer overlap counts carry a small FFT residual.
+        made->blocked.resize(result->values.size());
+        std::transform(result->values.begin(), result->values.end(), made->blocked.begin(),
+                       [](double overlap) { return static_cast<std::uint8_t>(std::round(overlap) != 0); });
+        held += made->blocked.size();
+        level.volume_bytes += made->blocked.size();
+        level.volumes[{ p, q }] = made;
+        return made;
     };
     const auto room_cells = [&](const Shape& shape, std::size_t u, std::size_t v, double level_pitch) {
         Cells room {};
@@ -635,25 +650,30 @@ SlabLatticeStats plan_slab_lattices(const geometry::ValidationContext& context,
     std::uint64_t best = request.to_beat;
     // Searches one task at one pitch; false when interrupted or a map failed.
     const auto search_task = [&](Level& level, const Task& task, bool along_v, const RunControl& until) {
-        const auto room_a = room_cells(shapes[task.a], task.u, task.v, level.pitch);
-        const auto room_b = room_cells(shapes[task.b], task.u, task.v, level.pitch);
+        const std::size_t u = along_v ? task.v : task.u, v = along_v ? task.u : task.v;
+        const auto room_a = room_cells(shapes[task.a], u, v, level.pitch);
+        const auto room_b = room_cells(shapes[task.b], u, v, level.pitch);
         if (room_a[0] < 0 || room_a[1] < 0 || room_b[0] < 0 || room_b[1] < 0) {
             return true;
         }
-        const auto aa = no_fit(level, task, task.a, task.a);
-        const auto bb = no_fit(level, task, task.b, task.b);
-        const auto ab = no_fit(level, task, task.a, task.b);
-        if (!aa || !bb || !ab) {
+        const auto aa = volume(level, task.a, task.a), bb = volume(level, task.b, task.b),
+                   ab = volume(level, task.a, task.b), ba = volume(level, task.b, task.a);
+        // A, B, then B over A and A over B, for a layer `offset` cells above another.
+        const auto between = [&](std::int64_t offset) {
+            return std::array { plane(*aa, task.k, u, v, offset), plane(*bb, task.k, u, v, offset),
+                                plane(*ab, task.k, u, v, offset), plane(*ba, task.k, u, v, offset) };
+        };
+        // Level copies sit with their bounds' low faces on the same slab floor.
+        const auto level_maps = aa && bb && ab && ba ? between(0) : std::array<NoFit, 4> {};
+        if (!level_maps[0].data || !level_maps[1].data || !level_maps[2].data) {
             // One pair's map failing leaves the other pairs to search.
             stats.outcome = interrupted_or("SLAB_LATTICE_CORRELATION");
             return stats.outcome != "SLAB_LATTICE_INTERRUPTED";
         }
         ++stats.searches;
-        const auto taa = along_v ? aa->transposed() : NoFit {}, tbb = along_v ? bb->transposed() : NoFit {},
-                   tab = along_v ? ab->transposed() : NoFit {};
-        Search search(along_v ? taa : *aa, along_v ? tbb : *bb, along_v ? tab : *ab,
-                      along_v ? Cells { room_a[1], room_a[0] } : room_a,
-                      along_v ? Cells { room_b[1], room_b[0] } : room_b, best / task.layers);
+        // Shifted layers can stack closer than identical ones, so layouts with
+        // down to half as many copies per layer are still worth stacking.
+        Search search(level_maps[0], level_maps[1], level_maps[2], room_a, room_b, best / (2 * task.layers));
         // Periods on coarse cells first (about 20 across the part's plan), then
         // on single cells around the best coarse lattices. B offsets are always
         // single cells: a twin's free window can be narrower than a coarse cell.
@@ -678,6 +698,62 @@ SlabLatticeStats plan_slab_lattices(const geometry::ValidationContext& context,
                 plans.push_back({ total, task, along_v, lattice });
             }
         }
+        // Shifted layers on the densest plan lattices: every rise below the reach
+        // of the maps, closest first, and every shift within one lattice cell.
+        const double thick = shapes[task.a].extent[task.k];
+        const auto height =
+            static_cast<std::int64_t>(std::floor((room_mm[task.k] - 2 * (wall + cushion) - thick) / level.pitch));
+        std::int64_t reach {};
+        for (const auto* each : { aa.get(), bb.get(), ab.get(), ba.get() }) {
+            reach = std::max(reach, each->first[task.k] + each->shape[task.k] - 1);
+        }
+        std::vector<std::array<NoFit, 4>> above;
+        for (auto base = found.rbegin(); done && base != found.rend() && base - found.rbegin() < 4; ++base) {
+            auto l = *base;
+            const auto per_layer = Search::bound(room_a, l.px, l.py) + Search::bound(room_b, l.px, l.py);
+            for (l.rise = 1; done && l.rise <= reach; ++l.rise) {
+                const auto layers = static_cast<std::uint64_t>(height / l.rise + 1);
+                if (layers * per_layer <= best) {
+                    break;
+                }
+                above.clear();
+                for (std::int64_t m = 1; m * l.rise <= reach; ++m) {
+                    above.push_back(between(m * l.rise));
+                }
+                for (l.tv = 0; done && l.tv != l.py; ++l.tv) {
+                    done = until.poll() == runtime::StopCause::none;
+                    for (l.tu = 0; l.tu != l.px; ++l.tu) {
+                        bool free = true;
+                        for (std::size_t m = 1; free && m <= above.size(); ++m) {
+                            const auto& maps = above[m - 1];
+                            const auto qu = static_cast<std::int64_t>(m) * l.tu,
+                                       qv = static_cast<std::int64_t>(m) * l.tv;
+                            free = clear(maps[0], l, qu, qv, false) && clear(maps[1], l, qu, qv, false) &&
+                                   clear(maps[2], l, qu + l.su, qv + l.sv, false) &&
+                                   clear(maps[3], l, qu - l.su, qv - l.sv, false);
+                        }
+                        if (!free) {
+                            continue;
+                        }
+                        for (const bool b_first : { false, true }) {
+                            const auto ou = b_first ? -l.su : 0, ov = b_first ? -l.sv : 0;
+                            std::uint64_t total {};
+                            for (std::int64_t m = 0; m != static_cast<std::int64_t>(layers); ++m) {
+                                total += count(room_a, l, ou + m * l.tu, ov + m * l.tv) +
+                                         count(room_b, l, ou + m * l.tu + l.su, ov + m * l.tv + l.sv);
+                            }
+                            if (total > best && total <= request.capacity) {
+                                best = total;
+                                auto stacked = task;
+                                stacked.layers = layers;
+                                l.b_first = b_first;
+                                plans.push_back({ total, stacked, along_v, l });
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if (!done) {
             stats.outcome = "SLAB_LATTICE_INTERRUPTED";
         }
@@ -700,14 +776,16 @@ SlabLatticeStats plan_slab_lattices(const geometry::ValidationContext& context,
         const auto& task = plan->task;
         const std::size_t u = plan->along_v ? task.v : task.u, v = plan->along_v ? task.u : task.v;
         const double thick = shapes[task.a].extent[task.k];
-        const double rise =
-            task.layers > 1 ? (room_mm[task.k] - 2 * (wall + cushion) - thick) / static_cast<double>(task.layers - 1)
-                            : 0;
+        const auto& l = plan->lattice;
+        const double rise = l.rise != 0 ? pitch * static_cast<double>(l.rise)
+                            : task.layers > 1
+                                ? (room_mm[task.k] - 2 * (wall + cushion) - thick) / static_cast<double>(task.layers - 1)
+                                : 0;
         std::vector<geometry::CopyPose> copies;
         copies.reserve(plan->total);
-        const auto& l = plan->lattice;
         for (std::uint64_t layer = 0; layer != task.layers; ++layer) {
-            const std::int64_t shift_u = l.b_first ? -l.su : 0, shift_v = l.b_first ? -l.sv : 0;
+            const auto shift_u = (l.b_first ? -l.su : 0) + static_cast<std::int64_t>(layer) * l.tu;
+            const auto shift_v = (l.b_first ? -l.sv : 0) + static_cast<std::int64_t>(layer) * l.tv;
             for (const auto [index, qu, qv] : { std::tuple { task.a, shift_u, shift_v },
                                                 std::tuple { task.b, shift_u + l.su, shift_v + l.sv } }) {
                 const auto& shape = shapes[index];

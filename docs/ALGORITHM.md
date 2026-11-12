@@ -264,6 +264,18 @@ kept. Planning takes at most a tenth of the remaining time; the best few layouts
 are then validated in full and the first valid one replaces the incumbent if it
 has more copies. The row, stagger and compaction phases follow and start from it.
 
+Layers need not be identical. One correlation per rotation pair is kept whole, so
+its plane at any height gives the offsets at which a copy that much higher would
+meet one below. On the densest few plan lattices of each pair the search then adds
+a third repeat vector: every layer sits `rise` cells above the last and `(tu, tv)`
+across from it. Rises are tried closest first, each with every shift inside one
+lattice cell, against every layer within reach of the maps (A over A, B over B, B
+over A and A over B). A layer can so sink into the hollows of the one below, as
+spheres do, or nest over it without a shift, as cups and chevrons do. Because a
+shifted stack can hold more layers, plan lattices with down to half the copies per
+layer of the best identical-layer layout are still searched. Layouts are counted
+layer by layer, since a shifted layer can lose or gain a row at the walls.
+
 The simplified Pryanik in the 400 x 340 x 285 mm box at zero clearance goes from
 324 on-edge copies to 336 in 120 s: fourteen 28.4 mm slabs across the 400 mm side,
 each holding 12 copies and 12 flipped twins with every wing tucked against the
