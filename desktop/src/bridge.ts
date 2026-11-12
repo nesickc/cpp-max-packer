@@ -1,10 +1,14 @@
 import { invoke, isTauri } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import type { Desktop } from './generated/contracts';
 
 export const nativeAvailable = () => isTauri();
 export const bridge = {
   state: () => invoke<Desktop.State>('desktop_state'),
   importObject: (request: Desktop.ImportRequest) => invoke<Desktop.OperationReceipt | null>('desktop_import_object', { request }),
+  // The window reports that files were dropped; Rust keeps their paths.
+  onDrop: (handler: () => void) => listen('desktop-drop', handler),
+  importDropped: (request: Desktop.ImportRequest) => invoke<Desktop.OperationReceipt>('desktop_import_dropped', { request }),
   repair: (request: Desktop.RepairRequest) => invoke<Desktop.OperationReceipt>('desktop_repair', { request }),
   start: (request: Desktop.StartRequest) => invoke<Desktop.OperationReceipt>('desktop_start', { request }),
   stop: (request: Desktop.StopRequest) => invoke<Desktop.StopResponse>('desktop_stop', { request }),

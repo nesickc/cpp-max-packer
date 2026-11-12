@@ -923,6 +923,17 @@ impl Core {
         Ok(receipt)
     }
 
+    // A drop is an import of exactly one STL file; anything else is refused unchanged.
+    pub fn import_dropped(&self, paths: &[PathBuf], request: ImportRequest) -> Outcome<Receipt> {
+        let [source] = paths else {
+            return Err(error("DROP_REFUSED", "Drop exactly one STL file to import it."));
+        };
+        if !source.extension().is_some_and(|e| e.eq_ignore_ascii_case("stl")) || !source.is_file() {
+            return Err(error("DROP_REFUSED", "Only an STL file can be dropped. Use Open project for a saved project."));
+        }
+        self.import_path(source, request)
+    }
+
     fn import_preview(&self, root: &Path, reference: &Value, triangles: u64) -> Outcome<Option<Value>> {
         let relative = reference["path"].as_str().ok_or_else(||error("ASSET_MISMATCH", "Import preview missing."))?;
         let path = security::scoped(root, &root.join(relative))?;

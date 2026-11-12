@@ -222,6 +222,29 @@ fn assert_active_solve(core: &Core, operation_id: &str) {
 }
 
 #[test]
+fn dropping_one_stl_imports_it_and_anything_else_is_refused() {
+    let (root, core, source) = fixture();
+    let request = || ImportRequest { units: "mm".into(), scale_mm: None };
+    let project = root.path().join("saved.spectrapack");
+    std::fs::write(&project, b"not an STL").unwrap();
+    for refused in [vec![], vec![source.clone(), source.clone()], vec![project], vec![root.path().to_path_buf()]] {
+        let failure = core.import_dropped(&refused, request()).unwrap_err();
+        assert_eq!(failure.code, "DROP_REFUSED", "{refused:?}");
+        assert!(failure.message.contains("STL"), "{failure:?}");
+    }
+    let untouched = core.state();
+    assert!(untouched.object.is_none() && untouched.operation.is_none(), "{untouched:?}");
+
+    core.import_dropped(&[source.clone()], request()).unwrap();
+    let dropped = wait(&core).object.unwrap();
+    import(&core, &source);
+    let picked = core.state().object.unwrap();
+    assert_eq!(dropped["display_name"], picked["display_name"]);
+    assert_eq!(dropped["report"]["accepted_solid"]["triangle_count"], picked["report"]["accepted_solid"]["triangle_count"]);
+    assert_eq!(dropped["report"]["dimensions_mm"], picked["report"]["dimensions_mm"]);
+}
+
+#[test]
 fn real_native_import_is_asynchronous_and_scoped() {
     let (_root, core, source) = fixture();
     let started = Instant::now();

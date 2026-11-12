@@ -131,7 +131,21 @@ export function App() {
   }, [displayPoses]);
   const selectedPose = poses.find(p => p.copy_id === selected);
   const setDimension = (index: number, value: number) => setSettings(s => { const dimensions: [number, number, number] = [...s.box_dimensions_mm]; dimensions[index] = value; return { ...s, box_dimensions_mm: dimensions }; });
-  const importObject = () => run(() => bridge.importObject(units === 'custom' ? { units, scale_mm: scale } : { units }));
+  const importRequest: Desktop.ImportRequest = units === 'custom' ? { units, scale_mm: scale } : { units };
+  const importBlocked = disabled || (units === 'custom' && (!Number.isFinite(scale) || scale <= 0));
+  const importObject = () => run(() => bridge.importObject(importRequest));
+  // A dropped file follows the Import button: same units, same availability.
+  const importDropped = useRef(() => {});
+  importDropped.current = () => {
+    if (importBlocked) setError({ message: busy || commandPending ? 'Wait for the current operation to finish, then drop the STL again.' : 'Enter a positive custom scale, then drop the STL again.' });
+    else void run(() => bridge.importDropped(importRequest));
+  };
+  useEffect(() => {
+    if (!native) return;
+    let alive = true, stop = () => {};
+    void bridge.onDrop(() => importDropped.current()).then(unlisten => { if (alive) stop = unlisten; else unlisten(); });
+    return () => { alive = false; stop(); };
+  }, [native]);
   const startPacking = () => run(async () => {
     const next: Desktop.Settings = { ...structuredClone(settings), budget_scope: 'total_start' };
     await bridge.start({ settings: next });
@@ -148,7 +162,7 @@ export function App() {
     <main className="workspace">
       <aside className="configuration" aria-label="Packing configuration"><div className="config-scroll"><div className="panel-heading"><span className="eyebrow">SET UP YOUR PACKING</span><h1>Packing setup</h1><p>Import an object and configure a box.</p></div>
         <section className="config-section"><div className="section-title"><span className="step">01</span><h2>Object</h2>{accepted && <span className="pill valid">Accepted</span>}</div>
-          <div className="import-card"><span className="file-icon">◇</span><strong>{state?.object?.display_name ?? 'Select an object'}</strong><p>{report ? `${report.dimensions_mm.join(' × ')} mm` : 'Import creates a checked packing envelope and retains the original STL.'}</p><button className="secondary" disabled={disabled || (units === 'custom' && (!Number.isFinite(scale) || scale <= 0))} onClick={importObject}>{report ? 'Replace STL' : 'Import STL'} <span>↗</span></button></div>
+          <div className="import-card"><span className="file-icon">◇</span><strong>{state?.object?.display_name ?? 'Select an object'}</strong><p>{report ? `${report.dimensions_mm.join(' × ')} mm` : 'Import an STL or drop it on the window. A checked packing envelope is created and the original STL is retained.'}</p><button className="secondary" disabled={importBlocked} onClick={importObject}>{report ? 'Replace STL' : 'Import STL'} <span>↗</span></button></div>
           <p className="hint">Packing uses an outer envelope. Closed recesses can reduce nesting; inspect Original, Envelope or Overlay after import.</p>
           <label className="select-label">Source units<select aria-label="Source units" value={units} onChange={e => setUnits(e.target.value as typeof units)}><option value="mm">Millimeters (mm)</option><option value="inch">Inches (in)</option><option value="custom">Custom scale</option></select></label>
           {units === 'custom' && <NumberField label="Millimeters per source unit" value={scale} min={0.000001} onChange={setScale} />}

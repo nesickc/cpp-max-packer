@@ -8,7 +8,7 @@ import fixtures from '../../tests/contracts/schema-fixtures.json';
 import nativePreview from './fixtures/cube10mm-double.json';
 
 const device = vi.hoisted(() => ({ created: vi.fn(), disposed: vi.fn(), render: vi.fn(), loop: null as (() => void) | null, controls: [] as OrbitControls[] }));
-const native = vi.hoisted(() => ({ state: vi.fn(), preview: vi.fn() }));
+const native = vi.hoisted(() => ({ state: vi.fn(), preview: vi.fn(), onDrop: vi.fn(() => Promise.resolve(() => {})) }));
 vi.mock('../src/bridge', () => ({ nativeAvailable: () => true, bridge: native }));
 vi.mock('three', async importOriginal => {
   const actual = await importOriginal<typeof import('three')>();
