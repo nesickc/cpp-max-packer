@@ -36,7 +36,7 @@ Release, eight threads; 10-second analytic and 60-second STL budgets; Pryanik in
 | sphere66 (10 mm, 40.6 mm cube) | 64 (66 once) | 64 | 66 |
 | sphere40-np (40 mm, 400 x 340 x 285 mm) | 540 | 540 | 690 |
 | tile5, tile10 (45° turns) | 4, 9 | 4, 9 | 5, 10 |
-| yasya-0, -1, -wall0 (envelope, 400 x 240 x 200 mm) | 72 or 74, 74, 74 | 72, 74, 64 | 74 |
+| yasya-0, -1, -wall0 (envelope, 400 x 240 x 200 mm) | **74**, 74, 74 | 74 | 74 |
 
 ## Current goal: Core v1.0
 
@@ -117,7 +117,7 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    copies write a 2.9 GB STL in about 95 s on eight threads (13 minutes before).
    Every copy is still reimported and enclosure-certified; fewer cores take longer.
 6. Projects saved before the diagonal/2000 envelope offset need re-import.
-7. A looser clearance can find fewer copies: Yasya at 0/0 mm returns 72 in some runs
-   and 74 in others, against 74 at 1/1 mm. The timed search depends on machine load.
+7. Timed searches still depend on machine load: the same settings can return a
+   different count on a busy machine (the 40.6 mm sphere cube gave 66 once, 64 since).
 
 See [ALGORITHM.md](../docs/ALGORITHM.md) and [BUILDING.md](../docs/BUILDING.md).

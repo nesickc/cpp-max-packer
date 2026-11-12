@@ -1791,7 +1791,11 @@ BaselineOutcome run_aabb_baseline_impl(
           return out;
         }
         // A search-only margin prevents the observed non-dyadic gap rounding
-        // below the immutable requested clearance. Preserve the exact count.
+        // below the immutable requested clearance. At zero pair clearance it
+        // also keeps neighbouring bounds apart: flush bounds can overlap by
+        // rounding, which sends every pair to the full mesh checks (measured
+        // at about a thousand times the work on an enveloped part). Preserve
+        // the exact count; an exact fit has no slack and stays flush.
         const auto& original = grid[axis];
         const auto pair = context->constraints().pair_clearance_mm;
         const auto wall = context->constraints().wall_clearance_mm;
@@ -1800,7 +1804,7 @@ BaselineOutcome run_aabb_baseline_impl(
         const bool rounding = inexact_sum(shape.bounds_mm.max[axis], -shape.bounds_mm.min[axis]) ||
                               inexact_sum(span, pair) || inexact_sum(bounds->min[axis], wall) ||
                               inexact_sum(anchor, -shape.bounds_mm.min[axis]);
-        if (original.count && (pair > 0 || wall > 0) && rounding) {
+        if (original.count && (pair == 0 || rounding)) {
             const double count = static_cast<double>(original.count);
             const double slack = (bounds->max[axis] - bounds->min[axis]) - 2 * wall - count * span - (count - 1) * pair;
             const double margin = .5 * slack / (count + 1);

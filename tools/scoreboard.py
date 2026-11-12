@@ -53,13 +53,12 @@ CASES = {
 # Cases whose known layout needs the desktop's 45-degree turns.
 CUBE45_CASES = {'tile5', 'tile10'}
 # Cases packed as the desktop packs them: the automatic packing envelope, 2 mm pitch.
-# A looser clearance must not find fewer copies, so every count here should reach 74;
-# yasya-0 still returns 72 in some runs and yasya-wall0 is slow to get there.
+# A looser clearance must not find fewer copies, so every count here reaches 74.
 # The model is local only; the cases are skipped where it is absent.
 CASES.update({
-    'yasya-0':     ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 0.0, 0.0, 2.0, 60, 72, 74),
+    'yasya-0':     ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 0.0, 0.0, 2.0, 60, 74, 74),
     'yasya-1':     ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 1.0, 1.0, 2.0, 60, 74, 74),
-    'yasya-wall0': ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 1.0, 0.0, 2.0, 60, 64, 74),
+    'yasya-wall0': ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 1.0, 0.0, 2.0, 60, 74, 74),
 })
 ENVELOPE_CASES = {'yasya-0', 'yasya-1', 'yasya-wall0'}
 
