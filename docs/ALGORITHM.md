@@ -276,12 +276,34 @@ shifted stack can hold more layers, plan lattices with down to half the copies p
 layer of the best identical-layer layout are still searched. Layouts are counted
 layer by layer, since a shifted layer can lose or gain a row at the walls.
 
+A lattice read from the maps is looser than the part allows: conservative cells
+keep copies up to a cell farther apart than each surface needs, which with about
+fifty cells across a part is a few per cent of every period. So the search counts
+each lattice twice: as found, and in the room it would have if every period gave
+up four cells (two contacts of two cells; never half of the period). An
+improvement of either count makes a candidate, so the best lattice that needs no
+tightening is never lost; coarse periods also stand for the finer ones just below
+them. Each candidate is then tightened. Its cells shrink, along all three axes
+together and then along each axis alone, by bisection for as long as that adds
+copies. The validator accepts or rejects every step on the lattice's corner
+cluster: the copies within one period plus twice a copy's reach of the box corner,
+which holds a copy of each kind with every neighbour that could meet it.
+Candidates are tightened best first, and only the count the validator let through
+competes with the incumbent; the whole layout is validated afterwards as before.
+Among equal counts the search prefers a B offset, and a layer shift, with free
+cells on every side: one pinned in a single cell sits off-centre between its
+neighbours and can tighten less. Searching and tightening each take at most a
+tenth of the remaining time, and one cluster check at most a sixteenth of that,
+because copies a hair past the clearance can take the exact kernel seconds. At
+zero pair clearance contact cannot be validated, so tightening adds nothing there.
+
 The simplified Pryanik in the 400 x 340 x 285 mm box at zero clearance goes from
 324 on-edge copies to 336 in 120 s: fourteen 28.4 mm slabs across the 400 mm side,
 each holding 12 copies and 12 flipped twins with every wing tucked against the
-neighbouring twin (330 in 60 s). Lattice periods are multiples of the roughly
-1 mm planning cell, and conservative cells keep copies up to a cell apart, so
-tighter nesting than that is not found. On parts whose rasters do not finish
+neighbouring twin (330 in 60 s). Lattices are still found on whole planning
+cells, and tightening only shrinks them along their axes, so a layout that needs
+a half-cell shift between layers is not found: 66 spheres of 10 mm in a 40.6 mm
+cube stay at 64. On parts whose rasters do not finish
 within the share, as for the exact Pryanik-2 mesh on one thread, the phase gives
 up without a layout.
 

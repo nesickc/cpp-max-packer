@@ -32,9 +32,9 @@ Release, eight threads; 10-second analytic and 60-second STL budgets; Pryanik in
 | pryanik2-0 (0/1 mm) | **450** (447 beside other jobs) | 416 | 416 |
 | ulamok | 36 | 36 | 36 |
 | lprism-01 (0.1/0.1 mm, 0.05 mm slack) | 2 | 2 | 2 |
-| sphere14 (10 mm, 24.6 mm cube) | 10 | 10 | 14 |
+| sphere14 (10 mm, 24.6 mm cube) | **14** | 14 | 14 |
 | sphere66 (10 mm, 40.6 mm cube) | 64 (66 once) | 64 | 66 |
-| sphere40-np (40 mm, 400 x 340 x 285 mm) | **600** | 600 | 690 |
+| sphere40-np (40 mm, 400 x 340 x 285 mm) | **660** | 660 | 690 |
 | tile5, tile10 (45° turns) | 4, 9 | 4, 9 | 5, 10 |
 | yasya-0, -1, -wall0 (envelope, 400 x 240 x 200 mm) | **74**, 74, 74 | 74 | 74 |
 
@@ -63,7 +63,7 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    the scoreboard above. The 17-tile packing needs free rotation: a later target.
 5. [ ] **Solver cleanup** (first slice of item 8). Simplify seeding and compaction in
    `pack_solver` (10,500 lines) before extending them; scoreboard unchanged.
-6. [ ] **Denser search**, tried in this order, each kept only if the scoreboard moves.
+6. [x] **Denser search**, tried in this order, each kept only if the scoreboard moves.
    (a) Repeating patterns: search the three repeat vectors of one copy, or of a copy
    and its twin, on the existing pair no-fit maps, then the placement in the box that
    holds most. It replaces the grid, stagger and twin-layer seeds if it beats them.
@@ -72,10 +72,12 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    are continuous so free rotation can join later. (c) Settling with shaking, only if
    measured cheap enough. *Done when* the small cube reaches 14, the box case 620,
    and no other case loses count or validity.
-   Progress on (a): layers may now shift and sit closer than a part's height, which
-   takes the box case from 540 to 600. Still open in (a): repeat vectors are whole
-   planning cells (about 0.2 mm for the 10 mm sphere), so the small cube, which has
-   0.1 mm to spare, stays at 10 until a lattice is tightened to validated contact.
+   Reached with (a) alone: layers shift and sit closer than a part's height (box
+   case 540 to 600), and each lattice is tightened from conservative cells until the
+   validator reports contact (small cube 10 to 14, box case 660). Not reached: the
+   66-sphere cube needs a half-cell layer shift and stays at 64, the tile cases need
+   (b), and tightening adds nothing at zero pair clearance, so the STL cases are
+   unchanged. (b) and (c) are untried.
 
 **Robustness**
 

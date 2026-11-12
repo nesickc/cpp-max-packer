@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <map>
 #include <numbers>
 
 #include "../../pack_geometry/tests/validation_fixtures.hpp"
@@ -778,6 +779,80 @@ geo::test_support::Mesh extruded(const std::array<std::array<double, 2>, 6>& sec
 }
 }  // namespace
 
+namespace {
+// A sphere as a subdivided icosahedron of 1280 faces inscribed in it, low corner at the origin.
+geo::test_support::Mesh icosphere(double diameter)
+{
+    const double t = (1 + std::sqrt(5.)) / 2;
+    geo::test_support::Mesh mesh;
+    mesh.vertices = { { -1, t, 0 }, { 1, t, 0 }, { -1, -t, 0 }, { 1, -t, 0 }, { 0, -1, t },  { 0, 1, t },
+                      { 0, -1, -t }, { 0, 1, -t }, { t, 0, -1 }, { t, 0, 1 },  { -t, 0, -1 }, { -t, 0, 1 } };
+    mesh.triangles = { { 0, 11, 5 }, { 0, 5, 1 },  { 0, 1, 7 },  { 0, 7, 10 }, { 0, 10, 11 }, { 1, 5, 9 }, { 5, 11, 4 },
+                       { 11, 10, 2 }, { 10, 7, 6 }, { 7, 1, 8 },  { 3, 9, 4 },  { 3, 4, 2 },   { 3, 2, 6 }, { 3, 6, 8 },
+                       { 3, 8, 9 },  { 4, 9, 5 },  { 2, 4, 11 }, { 6, 2, 10 }, { 8, 6, 7 },   { 9, 8, 1 } };
+    const auto unit = [](geo::Vec3 p) {
+        const double length = std::hypot(p[0], p[1], p[2]);
+        return geo::Vec3 { p[0] / length, p[1] / length, p[2] / length };
+    };
+    for (auto& vertex : mesh.vertices) {
+        vertex = unit(vertex);
+    }
+    for (int level = 0; level != 3; ++level) {
+        std::map<std::pair<std::uint32_t, std::uint32_t>, std::uint32_t> midpoints;
+        const auto middle = [&](std::uint32_t a, std::uint32_t b) {
+            const auto [entry, added] = midpoints.try_emplace(std::minmax(a, b), std::uint32_t(mesh.vertices.size()));
+            if (added) {
+                const auto p = mesh.vertices[a], q = mesh.vertices[b];
+                mesh.vertices.push_back(unit({ p[0] + q[0], p[1] + q[1], p[2] + q[2] }));
+            }
+            return entry->second;
+        };
+        std::vector<geo::Triangle> finer;
+        for (const auto& [a, b, c] : mesh.triangles) {
+            const auto ab = middle(a, b), bc = middle(b, c), ca = middle(c, a);
+            finer.insert(finer.end(), { { a, ab, ca }, { b, bc, ab }, { c, ca, bc }, { ab, bc, ca } });
+        }
+        mesh.triangles = std::move(finer);
+    }
+    for (auto& vertex : mesh.vertices) {
+        for (auto& value : vertex) {
+            value = diameter / 2 * (value + 1);
+        }
+    }
+    return mesh;
+}
+}  // namespace
+
+TEST_CASE("Slab lattices tighten spheres to face-centred contact", "[solver][slab-lattice]")
+{
+    // Fourteen 10 mm spheres fit a 24.6 mm cube 0.1 mm apart only on the corners
+    // and face centres of a cube 14.28 to 14.4 mm wide. Planning cells are 0.2 mm
+    // and conservative, so that lattice exists only once a looser one has been
+    // shrunk until the spheres touch.
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = .1;
+    constraints.orientations.mode = geo::OrientationMode::cube;
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(geo::make_validation_context(
+        geo::test_support::accepted(icosphere(10), geo::AssetRole::object), geo::BoxDimensions { 24.6, 24.6, 24.6 },
+        constraints));
+    sol::detail::SlabLatticeRequest request;
+    request.threads = 4;
+    request.max_working_bytes = 512ULL << 20;
+    request.capacity = 64;
+    request.to_beat = 8;
+    std::vector<std::vector<geo::CopyPose>> layouts;
+    const std::vector<geo::Quaternion> rotations { { 0, 0, 0, 1 } };
+    const auto stats = sol::detail::plan_slab_lattices(context, rotations, request, {}, layouts);
+    INFO(stats.outcome << " pitch=" << stats.pitch_mm << " searches=" << stats.searches);
+    REQUIRE_FALSE(layouts.empty());
+    REQUIRE(layouts.front().size() == 14);
+    const auto checked =
+        geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(
+                                   geo::make_candidate(context, layouts.front())));
+    INFO(checked.report.code);
+    REQUIRE(checked.validated_solution);
+}
+
 TEST_CASE("Slab lattices stack chevrons closer than their height", "[solver][slab-lattice]")
 {
     // A roof-shaped section 1.4 high whose arms are 0.4 thick. Identical layers
@@ -796,7 +871,7 @@ TEST_CASE("Slab lattices stack chevrons closer than their height", "[solver][sla
     request.to_beat = 4;
     std::vector<std::vector<geo::CopyPose>> layouts;
     const std::vector<geo::Quaternion> rotations { { 0, 0, 0, 1 }, { 1, 0, 0, 0 } };
-    const auto stats = sol::detail::plan_slab_lattices(*context, rotations, request, {}, layouts);
+    const auto stats = sol::detail::plan_slab_lattices(context, rotations, request, {}, layouts);
     INFO(stats.outcome << " pitch=" << stats.pitch_mm << " searches=" << stats.searches);
     REQUIRE_FALSE(layouts.empty());
     REQUIRE(layouts.front().size() >= 6);
@@ -832,7 +907,7 @@ TEST_CASE("Slab lattices nest a stepped part with its half-turned twin", "[solve
     std::vector<std::vector<geo::CopyPose>> layouts;
     // The part and its turns about each axis keep the planner small.
     const std::vector<geo::Quaternion> rotations { { 0, 0, 0, 1 }, { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 } };
-    const auto stats = sol::detail::plan_slab_lattices(*context, rotations, request, {}, layouts);
+    const auto stats = sol::detail::plan_slab_lattices(context, rotations, request, {}, layouts);
     INFO(stats.outcome << " pitch=" << stats.pitch_mm << " searches=" << stats.searches);
     REQUIRE_FALSE(layouts.empty());
     REQUIRE(layouts.front().size() >= 4);

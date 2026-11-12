@@ -787,15 +787,9 @@ BaselineOutcome run_aabb_baseline_impl(
             request.capacity = capacity;
             request.to_beat = entry->score.count;
             std::vector<std::vector<geometry::CopyPose>> layouts;
-            // Planning takes at most a tenth of the remaining time (flipped twins,
-            // searched first, usually win early); validation and the row and
-            // stagger phases keep the rest.
-            auto planning = control;
-            if (planning.deadline) {
-                const auto now = planning.now();
-                planning.deadline = now + (std::max(*planning.deadline, now) - now) / 10;
-            }
-            detail::plan_slab_lattices(*context, seeds, request, planning, layouts);
+            // Planning takes at most a fifth of the remaining time; validation and
+            // the row and stagger phases keep the rest.
+            detail::plan_slab_lattices(context, seeds, request, control, layouts);
             for (auto& layout : layouts) {
                 if (boundary(control) != Boundary::none ||
                     out.stats.candidate_evaluations >= limits.max_candidate_evaluations) {
