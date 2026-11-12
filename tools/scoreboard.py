@@ -39,7 +39,29 @@ CASES = {
     'pryanik2':   ('rc/items/pryanik_2.STL', (400, 340, 285), 1.0, 1.0, 4.0, 60, 425, 426),
     'pryanik2-0': ('rc/items/pryanik_2.STL', (400, 340, 285), 0.0, 1.0, 4.0, 60, 416, 416),
     'ulamok':     ('rc/items/ulamok_2kg_simplified.stl', (400, 350, 285), 0.1, 1.0, 4.0, 60, 36, 36),
+    # Density cases, all at 0.1/0.1 mm with a little box slack. Targets are known layouts:
+    # the L pair; 14 face-centred spheres (grid 8); stacked 4x4 and 3x3 sphere layers
+    # (grid 64); hexagonal sphere layers stacked along Y (grid 504); and one or more
+    # squares turned 45 degrees among axis-aligned ones (grids 4 and 9).
+    'lprism-01':   ('gen:lprism', (3.35, 2.35, 1.25), 0.1, 0.1, 0.25, 10, 2, 2),
+    'sphere14':    ('gen:sphere10', (24.6, 24.6, 24.6), 0.1, 0.1, 0.5, 10, 10, 14),
+    'sphere66':    ('gen:sphere10', (40.6, 40.6, 40.6), 0.1, 0.1, 1.0, 10, 64, 66),
+    'sphere40-np': ('gen:sphere40', (400, 340, 285), 0.1, 0.1, 4.0, 60, 540, 690),
+    'tile5':       ('gen:tile10', (27.5, 27.5, 2.3), 0.1, 0.1, 0.5, 10, 4, 5),
+    'tile10':      ('gen:tile10', (37.6, 37.6, 2.3), 0.1, 0.1, 0.5, 10, 9, 10),
 }
+# Cases whose known layout needs the desktop's 45-degree turns.
+CUBE45_CASES = {'tile5', 'tile10'}
+# Cases packed as the desktop packs them: the automatic packing envelope, 2 mm pitch.
+# A looser clearance must not find fewer copies, so every count here should reach 74;
+# yasya-0 still returns 72 in some runs and yasya-wall0 is slow to get there.
+# The model is local only; the cases are skipped where it is absent.
+CASES.update({
+    'yasya-0':     ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 0.0, 0.0, 2.0, 60, 72, 74),
+    'yasya-1':     ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 1.0, 1.0, 2.0, 60, 74, 74),
+    'yasya-wall0': ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 1.0, 0.0, 2.0, 60, 64, 74),
+})
+ENVELOPE_CASES = {'yasya-0', 'yasya-1', 'yasya-wall0'}
 
 
 def write_binary_stl(path, triangles):
@@ -54,7 +76,8 @@ def write_binary_stl(path, triangles):
 
 
 def voxel_solid(cells, size):
-    """Closed outward-oriented boundary of a union of axis-aligned cubes of edge `size`."""
+    """Closed outward-oriented boundary of a union of axis-aligned cells of edge(s) `size`."""
+    sizes = size if isinstance(size, tuple) else (size,) * 3
     occupied = set(cells)
     triangles = []
     for x, y, z in occupied:
@@ -75,9 +98,41 @@ def voxel_solid(cells, size):
                     p = list(corner)
                     p[a] += da
                     p[b] += db
-                    quad.append(tuple(c * size for c in p))
+                    quad.append(tuple(c * edge for c, edge in zip(p, sizes)))
                 triangles += [(quad[0], quad[1], quad[2]), (quad[0], quad[2], quad[3])]
     return triangles
+
+
+def icosphere(diameter, levels=3):
+    """Outward-oriented subdivided icosahedron inscribed in a sphere, lower corner at the origin."""
+    t = (1 + 5 ** 0.5) / 2
+    points = [(-1, t, 0), (1, t, 0), (-1, -t, 0), (1, -t, 0), (0, -1, t), (0, 1, t), (0, -1, -t), (0, 1, -t),
+              (t, 0, -1), (t, 0, 1), (-t, 0, -1), (-t, 0, 1)]
+    faces = [(0, 11, 5), (0, 5, 1), (0, 1, 7), (0, 7, 10), (0, 10, 11), (1, 5, 9), (5, 11, 4), (11, 10, 2),
+             (10, 7, 6), (7, 1, 8), (3, 9, 4), (3, 4, 2), (3, 2, 6), (3, 6, 8), (3, 8, 9), (4, 9, 5), (2, 4, 11),
+             (6, 2, 10), (8, 6, 7), (9, 8, 1)]
+
+    def unit(p):
+        length = sum(c * c for c in p) ** 0.5
+        return tuple(c / length for c in p)
+
+    points = [unit(p) for p in points]
+    for _ in range(levels):
+        midpoints, finer = {}, []
+
+        def middle(a, b):
+            key = (min(a, b), max(a, b))
+            if key not in midpoints:
+                points.append(unit(tuple((points[a][i] + points[b][i]) / 2 for i in range(3))))
+                midpoints[key] = len(points) - 1
+            return midpoints[key]
+
+        for a, b, c in faces:
+            ab, bc, ca = middle(a, b), middle(b, c), middle(c, a)
+            finer += [(a, ab, ca), (b, bc, ab), (c, ca, bc), (ab, bc, ca)]
+        faces = finer
+    radius = diameter / 2
+    return [tuple(tuple(radius * c + radius for c in points[i]) for i in face) for face in faces]
 
 
 def generated_stl(name, directory):
@@ -87,6 +142,10 @@ def generated_stl(name, directory):
             write_binary_stl(path, voxel_solid([(0, 0, 0)], 10.0))
         elif name == 'lprism':
             write_binary_stl(path, voxel_solid([(0, 0, 0), (1, 0, 0), (0, 1, 0)], 1.0))
+        elif name == 'tile10':
+            write_binary_stl(path, voxel_solid([(0, 0, 0)], (10.0, 10.0, 2.0)))
+        elif name in ('sphere10', 'sphere40'):
+            write_binary_stl(path, icosphere(float(name[6:])))
         else:
             raise ValueError(name)
     return path
@@ -96,12 +155,14 @@ def run(args, **kw):
     return subprocess.run([str(a) for a in args], capture_output=True, text=True, **kw)
 
 
-def inspect(stl, directory):
+def inspect(stl, directory, envelope=False):
     """Inspect once per source content; reuse the accepted report on later runs."""
     digest = hashlib.sha256(stl.read_bytes()).hexdigest()[:16]
-    report = directory / f'{stl.stem}-{digest}.report.json'
+    report = directory / f'{stl.stem}-{digest}{"-envelope" if envelope else ""}.report.json'
     if not report.exists():
-        done = run([ENGINE, 'inspect', '--stl', stl, '--units', 'mm', '--role', 'object', '--report', report])
+        options = ['--packing-envelope', 'auto', '--accept-repair', 'auto',
+                   '--available-host-bytes', 4 << 30] if envelope else ['--role', 'object']
+        done = run([ENGINE, 'inspect', '--stl', stl, '--units', 'mm', '--report', report, *options])
         if done.returncode != 0:
             raise RuntimeError(f'inspect {stl} failed: {done.stdout} {done.stderr}')
     data = json.loads(report.read_text())
@@ -168,10 +229,15 @@ def settings_for(report, box, pair, wall, pitch, budget, threads):
 
 def run_case(name, out, threads, orientation='cube'):
     source, box, pair, wall, pitch, budget, floor, target = CASES[name]
+    if name in CUBE45_CASES:
+        orientation = 'cube45'
     case_dir = out / name
     case_dir.mkdir(parents=True, exist_ok=True)
     stl = generated_stl(source[4:], out.parent / 'inputs') if source.startswith('gen:') else REPO / source
-    report_path, report = inspect(stl, out.parent / 'inputs')
+    if not stl.exists():
+        return {'case': name, 'count': None, 'status': 'skipped', 'seconds': 0.0, 'termination': f'{source} is absent',
+                'time_to_best': None, 'floor': floor, 'target': target, 'reference': '-', 'ok': True}
+    report_path, report = inspect(stl, out.parent / 'inputs', name in ENVELOPE_CASES)
     settings = case_dir / 'settings.json'
     resolved = settings_for(report, box, pair, wall, pitch, budget, threads)
     if orientation == 'cube45':

@@ -1,6 +1,6 @@
 # Project status
 
-Updated 2026-11-11. Details belong in PRs and `.local/` logs.
+Updated 2026-11-12. Details belong in PRs and `.local/` logs.
 
 ## What works
 
@@ -31,6 +31,12 @@ Release, eight threads; 10-second analytic and 60-second STL budgets; Pryanik in
 | pryanik2 (1/1 mm) | **435** | 425 | 426 |
 | pryanik2-0 (0/1 mm) | **450** (447 beside other jobs) | 416 | 416 |
 | ulamok | 36 | 36 | 36 |
+| lprism-01 (0.1/0.1 mm, 0.05 mm slack) | 2 | 2 | 2 |
+| sphere14 (10 mm, 24.6 mm cube) | 10 | 10 | 14 |
+| sphere66 (10 mm, 40.6 mm cube) | 64 (66 once) | 64 | 66 |
+| sphere40-np (40 mm, 400 x 340 x 285 mm) | 540 | 540 | 690 |
+| tile5, tile10 (45° turns) | 4, 9 | 4, 9 | 5, 10 |
+| yasya-0, -1, -wall0 (envelope, 400 x 240 x 200 mm) | 72 or 74, 74, 74 | 72, 74, 64 | 74 |
 
 ## Current goal: Core v1.0
 
@@ -53,13 +59,8 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
 
 **Denser packing**
 
-4. [ ] **Density cases** (QA-01). Add to the scoreboard, 0.1/0.1 mm clearance, measured
-   today: 10 mm sphere in a 24.6 mm cube, **10 of 14** (face-centred, proved optimal
-   for 14; grid 8); in a 40.6 mm cube, 66 of 66; 40 mm spheres in 400x340x285,
-   **540 of about 690** by hexagonal layers (grid 504). Not yet measured, with 45° turns
-   allowed: 5 square tiles where a grid fits 4, and 10 where it fits 9 (both proved
-   optimal). The 17-tile packing needs free rotation and stays a later target. The L
-   pair in a box with 0.05 mm slack finds 2 and becomes the AT-11 gate.
+4. [x] **Density cases** (QA-01). Spheres, tilted tiles and the L pair at 0.1 mm are on
+   the scoreboard above. The 17-tile packing needs free rotation: a later target.
 5. [ ] **Solver cleanup** (first slice of item 8). Simplify seeding and compaction in
    `pack_solver` (10,500 lines) before extending them; scoreboard unchanged.
 6. [ ] **Denser search**, tried in this order, each kept only if the scoreboard moves.
@@ -116,5 +117,7 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    copies write a 2.9 GB STL in about 95 s on eight threads (13 minutes before).
    Every copy is still reimported and enclosure-certified; fewer cores take longer.
 6. Projects saved before the diagonal/2000 envelope offset need re-import.
+7. A looser clearance can find fewer copies: Yasya at 0/0 mm returns 72 in some runs
+   and 74 in others, against 74 at 1/1 mm. The timed search depends on machine load.
 
 See [ALGORITHM.md](../docs/ALGORITHM.md) and [BUILDING.md](../docs/BUILDING.md).
