@@ -56,3 +56,4 @@ a validated fit with 45-degree turns and survives restore/export. Logs:
 `.local/rotations45/`; scoreboard artifacts: `.local/scoreboard/20261021-221507/`
 and `.local/scoreboard/20261021-221827/`.
 | 2026-11-12 | f7df2c1 (cube) | cube64=64 \| lprism2=1 \| lprism-gap=2 \| pryanik2=435 \| pryanik2-0=450 \| ulamok=36 \| lprism-01=2 \| sphere14=10 \| sphere66=64 \| sphere40-np=540 \| tile5=4 \| tile10=9 |
+| 2026-11-12 | 215584d (cube) | cube64=64 \| lprism2=1 \| lprism-gap=2 \| pryanik2=435 \| pryanik2-0=450 \| ulamok=36 \| lprism-01=2 \| sphere14=10 \| sphere66=64 \| sphere40-np=540 \| tile5=4 \| tile10=9 \| yasya-0=74 \| yasya-1=74 \| yasya-wall0=74 |

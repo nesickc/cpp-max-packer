@@ -269,7 +269,9 @@ fn stop_receipt_is_prompt_and_retains_real_native_valid_solution() {
     let (_root, core, source) = fixture();
     import(&core, &source);
     let mut long = settings(30.0);
-    long["box_dimensions_mm"] = json!([400, 400, 400]);
+    // Large enough to keep the search busy, small enough that the packing stays under
+    // the 1 MiB live packing record (about 3,900 copies).
+    long["box_dimensions_mm"] = json!([150, 150, 150]);
     long["pitch_mm"] = 1.into();
     let receipt = core.start(long).unwrap();
     // T011-A4/A5, SOL-06: native baseline work emits placing/validating.

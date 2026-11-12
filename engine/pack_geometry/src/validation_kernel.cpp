@@ -3031,16 +3031,13 @@ std::optional<SupportPairResult> layer_support_pair_certificate(const PosedBound
 std::optional<ContainmentResult> bounds_box_certificate(const PosedBounds& object, BoxDimensions box, double clearance,
                                                         Budget& budget)
 {
-    if (clearance == 0.0) {
-        return std::nullopt;
-    }
     const auto unresolved = [&](const char* code) {
         return ContainmentResult { Decision::indeterminate, Threshold::indeterminate, "posed-bounds-box", code };
     };
     if (!supported_floating_environment()) {
         return unresolved("KERNEL_FLOATING_ENVIRONMENT");
     }
-    if (!(clearance > 0.0) || !std::isfinite(clearance) ||
+    if (!(clearance >= 0.0) || !std::isfinite(clearance) ||
         !(box.width_mm > 0 && box.depth_mm > 0 && box.height_mm > 0) || !std::isfinite(box.width_mm) ||
         !std::isfinite(box.depth_mm) || !std::isfinite(box.height_mm)) {
         return unresolved("KERNEL_INPUT_INVALID");
@@ -3060,6 +3057,8 @@ std::optional<ContainmentResult> bounds_box_certificate(const PosedBounds& objec
     }
     // A rotated source envelope may be loose. It can prove containment, never
     // disprove it; insufficient envelope clearance defers to actual vertices.
+    // So does an envelope exactly on a wall at zero clearance: whether the
+    // solid touches that wall is the vertices' answer.
     for (int axis = 0; axis != 3; ++axis) {
         const auto first = compare_gap({ 0, object.conservative.bounds_mm.min[axis], 1 }, low[axis], clearance, budget);
         const auto second =
@@ -3067,7 +3066,8 @@ std::optional<ContainmentResult> bounds_box_certificate(const PosedBounds& objec
         if (first == ExactOrder::indeterminate || second == ExactOrder::indeterminate) {
             return unresolved(exact_failure_code(budget));
         }
-        if (first == ExactOrder::less || second == ExactOrder::less) {
+        if (first == ExactOrder::less || second == ExactOrder::less ||
+            (clearance == 0.0 && (first == ExactOrder::equal || second == ExactOrder::equal))) {
             return std::nullopt;
         }
     }

@@ -30,6 +30,13 @@ For a box, generate a grid of oriented object AABBs for each allowed baseline or
 
 Place the grid deterministically and validate it using authoritative geometry. Preserve its best result as a starting incumbent. Account conservatively for numerical uncertainty in the floor and check boundary placements. This baseline deliberately works in physical coordinates, so a coarse voxel grid cannot prevent an obvious exact box tiling.
 
+At zero pair clearance, where an axis has slack, the grid spreads it as equal margins between
+copies and walls without changing the count. Flush bounds can overlap by rounding, which
+sends every pair to the full mesh checks: on an enveloped part that measured about a
+thousand times the work and consumed the baseline's whole allowance on the plain grid. An exact fit has no slack and stays flush. Wall
+containment is proved from a copy's bounds at zero wall clearance as well, so a copy's mesh
+is expanded only when another check needs it.
+
 The bounded T015-P1 package additionally investigates a physical staggered-row
 seed within the existing permitted rotations and work budget. It preserves the
 AABB incumbent and sends complete proposals to authoritative solid validation;

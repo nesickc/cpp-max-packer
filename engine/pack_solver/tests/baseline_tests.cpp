@@ -133,45 +133,16 @@ TEST_CASE("T010 a resource-exhausted batch never retries or replaces its valid p
     CHECK(geo::revalidate(result.best->solution).validated_solution);
 }
 
-TEST_CASE("T010 geometric batch rejection retries stable poses through full validation",
-          "[solver][T010][baseline-batches]")
+TEST_CASE("T010 zero-clearance grid of binary-0.1 cubes keeps every cell", "[solver][T010][baseline-batches]")
 {
-    // Binary0.1 translations can overlap by an exact sub-ULP amount at zero
-    // clearance. A failed group must not discard later individually valid poses.
+    // Flush binary0.1 translations overlap by an exact sub-ULP amount at zero
+    // clearance. Spreading the axis slack keeps all 39 cells valid.
     const auto context = baseline_context(.1, { 4, .1, .1 });
-    const auto witness = validated(
-        context, {
-                     { "first", { .05, .05, .05 }, { 0, 0, 0, 1 } },
-                     { "later", { .25, .05, .05 }, { 0, 0, 0, 1 } }
-    });
-    struct Capture {
-        bool rejected_group {}, accepted_after_group {};
-    } capture;
-    struct ResetProfile {
-        ~ResetProfile() { solver::detail::baseline_profile_sink = nullptr; }
-    } reset;
-    solver::detail::baseline_profile_context = &capture;
-    solver::detail::baseline_profile_sink = [](void* opaque,
-                                               const solver::detail::BaselineProfileSample& sample) noexcept {
-        auto& state = *static_cast<Capture*>(opaque);
-        if (sample.phase != solver::detail::BaselineProfilePhase::validation) {
-            return;
-        }
-        if (sample.copy_count > 2 && !sample.native_valid) {
-            state.rejected_group = true;
-        }
-        if (state.rejected_group && sample.native_valid && sample.copy_count >= 2) {
-            state.accepted_after_group = true;
-        }
-    };
     solver::BaselineLimits limits;
     limits.max_search_passes = 1;
     const auto result = solver::run_aabb_baseline(context, limits, {});
     REQUIRE(result.best);
-    CHECK(result.best->score.count >= witness->copies().size());
-    CHECK(capture.rejected_group);
-    CHECK(capture.accepted_after_group);
-    CHECK(result.stats.invalid_candidates + result.stats.indeterminate_candidates > 0);
+    CHECK(result.best->score.count == 39);
     CHECK(result.best->solution->copies().front().copy_id == "baseline-0-0");
     CHECK(geo::revalidate(result.best->solution).validated_solution);
 }

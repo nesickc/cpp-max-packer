@@ -2,6 +2,7 @@
 #include <random>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -239,7 +240,10 @@ TEST_CASE("AT-06 accepts a single authoritative cube inside a box") {
 TEST_CASE("GEO-06 many separated noncuboid copies validate within bounded instance memory", "[bounds_first][GEO-06]")
 {
     const auto solid = geo::test_support::accepted(geo::test_support::u_prism(), geo::AssetRole::object);
-    const auto made = geo::make_validation_context(solid, geo::BoxDimensions { 20, 24, 32 }, { 1, 1, {} });
+    // Zero wall clearance must not expand each copy's mesh to check the walls.
+    const double wall = GENERATE(1.0, 0.0);
+    CAPTURE(wall);
+    const auto made = geo::make_validation_context(solid, geo::BoxDimensions { 20, 24, 32 }, { 1, wall, {} });
     REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
     const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
     std::vector<geo::CopyPose> copies;
@@ -321,6 +325,23 @@ TEST_CASE("GEO-06 loose rotated source bounds cannot reject an enclosed sparse s
     });
     CHECK(outside.report.validity == geo::Validity::invalid);
     CHECK_FALSE(outside.validated_solution);
+
+    // At zero wall clearance the same loose envelope still defers to the vertices,
+    // and an envelope strictly inside a larger box is enough on its own.
+    const auto touching = geo::make_validation_context(solid, geo::BoxDimensions { 8, 5, 3 },
+                                                       { .5, 0, { geo::OrientationMode::free, {} } });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(touching));
+    const auto tight = std::get<std::shared_ptr<const geo::ValidationContext>>(touching);
+    CHECK(validate_copies(tight, { { "sparse", { 4, 3.75, 1.5 }, rotated } }).report.validity == geo::Validity::valid);
+    CHECK(validate_copies(tight, { { "sparse", { 4, 5.25, 1.5 }, rotated } }).report.validity ==
+          geo::Validity::invalid);
+    const auto roomy = geo::make_validation_context(solid, geo::BoxDimensions { 20, 20, 20 },
+                                                    { .5, 0, { geo::OrientationMode::free, {} } });
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(roomy));
+    const auto certified = validate_copies(std::get<std::shared_ptr<const geo::ValidationContext>>(roomy),
+                                           { { "sparse", { 10, 10, 10 }, rotated } });
+    CHECK(certified.report.validity == geo::Validity::valid);
+    CHECK(certified.report.checks[4].method == "outward-bounds-box");
 }
 
 TEST_CASE("GEO-06 mixed certificates and lazy full validation retain cumulative limits", "[bounds_first][GEO-06]")
@@ -398,11 +419,13 @@ TEST_CASE("GEO-06 noncuboid cardinal bounds resolve all signed wall thresholds",
     };
     const auto solid = geo::test_support::accepted(mesh, geo::AssetRole::object);
     const auto bounds = solid->bounds_mm();
+    // Zero wall clearance uses the same bounds: contact is valid, crossing is not.
+    const double wall = GENERATE(1.0, 0.0);
     const auto made = geo::make_validation_context(solid,
                                                    geo::BoxDimensions {
                                                        20, 20, 20
     },
-                                                   { 1, 1, { geo::OrientationMode::cube, {} } });
+                                                   { 1, wall, { geo::OrientationMode::cube, {} } });
     REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
     const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
     const double half_sqrt = std::sqrt(.5);
@@ -425,7 +448,7 @@ TEST_CASE("GEO-06 noncuboid cardinal bounds resolve all signed wall thresholds",
     for (int rotation = 0; rotation != 3; ++rotation) {
         for (int axis = 0; axis != 3; ++axis) {
             for (const bool upper : { false, true }) {
-                for (const double gap : { 1 - delta, 1.0, 1 + delta }) {
+                for (const double gap : { wall - delta, wall, wall + delta }) {
                     const int local = source[rotation][axis], direction = sign[rotation][axis];
                     const double low = direction * (direction > 0 ? bounds.min[local] : bounds.max[local]);
                     const double high = direction * (direction > 0 ? bounds.max[local] : bounds.min[local]);
@@ -434,8 +457,8 @@ TEST_CASE("GEO-06 noncuboid cardinal bounds resolve all signed wall thresholds",
                     const auto result = validate_copies(value, {
                                                                    { "wall", translation, rotations[rotation] }
                     });
-                    CAPTURE(rotation, axis, upper, gap, result.report.code);
-                    CHECK(result.report.validity == (gap < 1 ? geo::Validity::invalid : geo::Validity::valid));
+                    CAPTURE(wall, rotation, axis, upper, gap, result.report.code);
+                    CHECK(result.report.validity == (gap < wall ? geo::Validity::invalid : geo::Validity::valid));
                 }
             }
         }
