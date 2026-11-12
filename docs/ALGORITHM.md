@@ -5,7 +5,7 @@ everything here is **tunable**: change weights, page sizes, catalogs, schedules 
 recovery behaviour freely when `python tools/scoreboard.py` shows an improvement and
 the validity rules in spec §5.3 and §6 still hold. Update this file with the change;
 no decision record is needed. This file began with spec v0.2 §6 and is updated
-through 2026-10-21. Historical rationale lives in
+through 2026-11-12. Historical rationale lives in
 `spec/decisions/` and `doc/T-*.md` (frozen).
 
 ## Desktop 45-degree orientations
@@ -232,6 +232,61 @@ The positive-clearance L-prism scoreboard case improves from one copy to two.
 The exact-contact L-prism case remains separate: its unresolved contact verdicts
 are not bypassed by compaction.
 
+Slides and the refill that follows take at most half of the phase's time, also
+inside a whole-layout validation; inserting copies (next section) takes half of
+what is left and the greedy layouts the rest. Before, slides on a dense layout
+could use the whole budget: 660 spheres spent 30 s in them without a change.
+
+## One more copy
+
+When gap filling finds no free place, a copy may still fit where its neighbours
+can move aside. This search keeps two pictures of the part, neither of which
+proves anything: a signed distance field (negative inside) on about 400,000
+nodes, reaching past the bounds by the pair clearance, and up to 4,000 points on
+the surface. Field nodes within two cells of a triangle hold the exact distance
+to it, the rest the distance to the triangle nearest to a neighbouring node;
+signs come from the parity of surface crossings along X. Two copies overlap
+where a surface point of one lies nearer to the other than the pair clearance
+plus a margin. Its depth, and the field's gradient there, say how far and which
+way the two should part. Both copies' points are read against the other's field.
+
+A new copy starts as a seed, a tenth of full size, on a grid of points through
+the box (half a part apart, the emptiest first), in every rotation that gives a
+different solid and fits the box. It grows by 2 % of full size per round for as
+long as the deepest overlap stays shallow. Each round every pushed copy takes
+half of the translation that best answers its points in the least-squares sense
+(a 3 x 3 system, so pushes that a wall blocks or that cancel do not dilute the
+rest); its neighbour takes the other half. Walls are exact for a box and simply
+limit the move. Only copies that have moved are looked at, with whatever they
+come near, and an attempt that moves more than 64 copies is given up: one copy
+is made room for nearby. Every eighth point carries the growth and all of them
+finish the layout. When the overlap stops shrinking for 60 rounds the layout is
+jammed and the next seed is tried. Attempts do not depend on each other and run
+on all threads.
+
+Growing in matters. A full-size copy dropped into a dense spot overlaps deeply,
+and the nearest way out of a neighbour is often the wrong one: with five tiles
+in a square, one start in 262 settled. The seed is a search device only; every
+layout offered to the validator holds the full-size copy.
+
+A copy that has moved is validated anew against all its neighbours, so it keeps
+the full gap and margin to each of them, also to one it sat nearer to before;
+letting such pairs stay as close as they were produced layouts that touched.
+The margin starts at half a field step and halves, up to three times, when the
+layout jams with it. A settled layout is validated incrementally, the moved
+copies and the new one against everything; a rejection ends the attempt.
+
+In 60 s the bunny (packing envelope, 400 x 340 x 285 mm, zero clearance) goes
+from 45 copies to 47, and five tiles fit a 27.4 mm square at zero pair clearance
+with the fifth turned 45 degrees (4 before). Other cases keep their counts.
+Dense lattices have no slack to gather and give every seed up within
+milliseconds. On the exact Pryanik-2 mesh a 436-copy layout settled once, but
+its validation did not finish in the time left. At a positive pair clearance a copy
+in a 45-degree turn cannot be validated beside another copy at all: the validator
+proves clearance only for cardinal poses or for bounds that are already clear,
+so the tile cases at 0.1 mm stay at 4 and 9 whatever is proposed. Rotations of
+placed copies never change, and a copy never moves to a different gap.
+
 ## Layered double lattices
 
 Flat parts often pack densest as identical layers in which a copy and its twin,
@@ -348,8 +403,9 @@ retain the validated uniform-grid baseline and staggered proposal
 for timed runs, validate improving layered double lattices
 for timed runs, validate improving residual-block proposals (depths 1–3)
 for timed runs, validate improving mesh-envelope stagger proposals
-for timed runs, compact, FFT-gap-fill, then FFT-greedy-pack the empty box in
-    each axis order while time remains (layouts with fewer than 8 copies try one)
+for timed runs, compact, FFT-gap-fill, grow in one more copy while one fits,
+    then FFT-greedy-pack the empty box in each axis order while time remains
+    (layouts with fewer than 8 copies try one)
 if fixed-work, or no seeded phase placed a copy, and FFT admission is affordable:
     greedily insert from an empty layout using cached spectral pages
     on stall, try bounded physical face alignments and low-overlap candidates

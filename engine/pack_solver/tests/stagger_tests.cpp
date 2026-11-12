@@ -499,11 +499,16 @@ TEST_CASE("Timed mixed interlocking alternates permitted upside-down copies",
     control.deadline = control.now() + std::chrono::seconds(5);
     const auto result = sol::run_cpu_spectral(context, { {}, .001 }, limits, control, {}, baseline.best->solution);
     REQUIRE(result.run.best);
-    CHECK(result.run.best->score.count == (flipped_allowed ? 2 : 1));
+    // Without the flip a second copy can still fit with one wing above the
+    // other's, which a later phase may find; it must not be flipped either.
+    CHECK(result.run.best->score.count >= (flipped_allowed ? 2U : 1U));
     CHECK(geo::revalidate(result.run.best->solution).report.validity == geo::Validity::valid);
-    if (flipped_allowed && result.run.best->score.count == 2) {
-        const auto& copies = result.run.best->solution->copies();
+    const auto& copies = result.run.best->solution->copies();
+    if (flipped_allowed && copies.size() == 2) {
         CHECK(copies[0].rotation_xyzw != copies[1].rotation_xyzw);
+    }
+    for (const auto& copy : copies) {
+        CHECK((flipped_allowed || copy.rotation_xyzw == geo::Quaternion { 0, 0, 0, 1 }));
     }
 }
 
@@ -955,4 +960,45 @@ TEST_CASE("Zero-wall height stagger keeps far-wall columns inside the box", "[so
     INFO("baseline=" << baseline.best->score.count << " result=" << result.best->score.count);
     CHECK(result.best->score.count > baseline.best->score.count);
     CHECK(geo::revalidate(result.best->solution).report.validity == geo::Validity::valid);
+}
+
+#include "../src/insert_relax.hpp"
+
+TEST_CASE("One more copy fits once its neighbours move aside", "[solver][insert]")
+{
+    // Two cubes leave gaps of 5, 5 and 1.5 mm along a 31.5 mm box: no place for
+    // a third, although 11.5 mm are free in all.
+    const auto mesh = geo::test_support::cuboid({ 0, 0, 0 }, { 10, 10, 10 });
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = .1;
+    const auto context = std::get<std::shared_ptr<const geo::ValidationContext>>(
+        geo::make_validation_context(geo::test_support::accepted(mesh, geo::AssetRole::object),
+                                     geo::BoxDimensions { 31.5, 10.4, 10.4 }, constraints));
+    const auto low = context->object()->bounds_mm().min;
+    std::vector<geo::CopyPose> layout { { "left", { 5 - low[0], .2 - low[1], .2 - low[2] }, { 0, 0, 0, 1 } },
+                                        { "right", { 20 - low[0], .2 - low[1], .2 - low[2] }, { 0, 0, 0, 1 } } };
+    auto accepted = geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(
+                                               geo::make_candidate(context, layout)))
+                        .validated_solution;
+    REQUIRE(accepted);
+    sol::RunControl control;
+    control.deadline = control.now() + std::chrono::seconds(20);
+    const std::vector<geo::Quaternion> rotations { { 0, 0, 0, 1 } };
+    const auto stats = sol::detail::insert_copies(*context, layout, rotations, 3, 2, control,
+                                                  [&](const std::vector<geo::CopyPose>& proposal) {
+        const auto checked = geo::validate_incremental(
+            accepted, std::get<std::shared_ptr<const geo::Candidate>>(geo::make_candidate(context, proposal)));
+        if (!checked.validated_solution) {
+            return sol::detail::CompactionVerdict::rejected;
+        }
+        accepted = checked.validated_solution;
+        return sol::detail::CompactionVerdict::accepted;
+    });
+    INFO(stats.outcome << " attempts=" << stats.attempts << " proposals=" << stats.proposals);
+    CHECK(layout.size() == 3);
+    CHECK(accepted->copies().size() == 3);
+    // The copies that were there keep their names and order.
+    CHECK(layout[0].copy_id == "left");
+    CHECK(layout[1].copy_id == "right");
+    CHECK(geo::revalidate(accepted).validated_solution);
 }

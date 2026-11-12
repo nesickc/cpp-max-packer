@@ -49,18 +49,25 @@ CASES = {
     'sphere40-np': ('gen:sphere40', (400, 340, 285), 0.1, 0.1, 4.0, 60, 660, 690),
     'tile5':       ('gen:tile10', (27.5, 27.5, 2.3), 0.1, 0.1, 0.5, 10, 4, 5),
     'tile10':      ('gen:tile10', (37.6, 37.6, 2.3), 0.1, 0.1, 0.5, 10, 9, 10),
+    # The validator proves a positive pair clearance only for cardinal poses or clear
+    # bounds, so a turned tile beside another can never pass at 0.1 mm. The same two
+    # layouts at zero pair clearance ask the search what the validator can answer.
+    'tile5-0':     ('gen:tile10', (27.4, 27.4, 2.3), 0.0, 0.1, 0.5, 10, 4, 5),
+    'tile10-0':    ('gen:tile10', (37.4, 37.4, 2.3), 0.0, 0.1, 0.5, 10, 9, 10),
 }
 # Cases whose known layout needs the desktop's 45-degree turns.
-CUBE45_CASES = {'tile5', 'tile10'}
+CUBE45_CASES = {'tile5', 'tile10', 'tile5-0', 'tile10-0'}
 # Cases packed as the desktop packs them: the automatic packing envelope, 2 mm pitch.
 # A looser clearance must not find fewer copies, so every count here reaches 74.
-# The model is local only; the cases are skipped where it is absent.
+# The models are local only; the cases are skipped where they are absent.
+# The bunny is an irregular part with no known best layout: its target is the best found.
 CASES.update({
     'yasya-0':     ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 0.0, 0.0, 2.0, 60, 74, 74),
     'yasya-1':     ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 1.0, 1.0, 2.0, 60, 74, 74),
     'yasya-wall0': ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 1.0, 0.0, 2.0, 60, 74, 74),
+    'bunny':       ('rc/items/bunny.stl', (400, 340, 285), 0.0, 0.0, 2.0, 60, 46, 47),
 })
-ENVELOPE_CASES = {'yasya-0', 'yasya-1', 'yasya-wall0'}
+ENVELOPE_CASES = {'yasya-0', 'yasya-1', 'yasya-wall0', 'bunny'}
 
 
 def write_binary_stl(path, triangles):
