@@ -31,10 +31,14 @@ struct SlabLatticeStats {
 // part and its flipped twin. In the slab plane the copies form a double lattice
 // (one lattice per rotation, offset from each other), so rims and tabs can nest
 // against the neighbouring twin. Each pair's no-fit offsets come from one FFT
-// correlation of conservative fields at the same slab height; the lattice search
-// then only reads those maps. Identical layers repeat across the box. Layouts
-// are returned best first and must still pass the native validator.
-SlabLatticeStats plan_slab_lattices(const geometry::ValidationContext& context,
+// correlation of conservative fields; the lattice search then only reads those
+// maps. Layers repeat across the box, identical or shifted and sunk into each
+// other. Conservative cells leave copies a little apart, so each promising
+// lattice is then shrunk until the validator reports contact on a small cluster
+// of its copies. Searching and tightening together take at most a fifth of the
+// time left. Layouts are returned best first and must still pass the native
+// validator in full.
+SlabLatticeStats plan_slab_lattices(const std::shared_ptr<const geometry::ValidationContext>& context,
                                     std::span<const geometry::Quaternion> rotations, const SlabLatticeRequest& request,
                                     const RunControl& control, std::vector<std::vector<geometry::CopyPose>>& layouts);
 

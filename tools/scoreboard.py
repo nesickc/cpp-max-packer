@@ -44,9 +44,9 @@ CASES = {
     # (grid 64); nested hexagonal sphere layers (grid 504, unnested layers 540); and one or more
     # squares turned 45 degrees among axis-aligned ones (grids 4 and 9).
     'lprism-01':   ('gen:lprism', (3.35, 2.35, 1.25), 0.1, 0.1, 0.25, 10, 2, 2),
-    'sphere14':    ('gen:sphere10', (24.6, 24.6, 24.6), 0.1, 0.1, 0.5, 10, 10, 14),
+    'sphere14':    ('gen:sphere10', (24.6, 24.6, 24.6), 0.1, 0.1, 0.5, 10, 14, 14),
     'sphere66':    ('gen:sphere10', (40.6, 40.6, 40.6), 0.1, 0.1, 1.0, 10, 64, 66),
-    'sphere40-np': ('gen:sphere40', (400, 340, 285), 0.1, 0.1, 4.0, 60, 600, 690),
+    'sphere40-np': ('gen:sphere40', (400, 340, 285), 0.1, 0.1, 4.0, 60, 660, 690),
     'tile5':       ('gen:tile10', (27.5, 27.5, 2.3), 0.1, 0.1, 0.5, 10, 4, 5),
     'tile10':      ('gen:tile10', (37.6, 37.6, 2.3), 0.1, 0.1, 0.5, 10, 9, 10),
 }
