@@ -402,13 +402,70 @@ TEST_CASE("T011 inexact represented vertices require separation before bypassing
     CHECK(unresolved.material_overlap == kernel::Decision::indeterminate);
     CHECK(unresolved.code == "KERNEL_BOUNDARY_UNRESOLVED");
 
+    // A turned copy one unit higher. Its base passes 0.0786 beside the lower
+    // copy's apex, so the two are 1.00308 apart: provable above a clearance of
+    // 1.003 from the surfaces, and not provable at 1.0031.
     const geo::Quaternion rotation { 0, 0, std::sin(.173 / 2), std::cos(.173 / 2) };
     const auto rotated = make_solid(mesh, geo::AssetRole::object, { 0, 0, 2 }, rotation, setup);
     const auto origin = make_solid(mesh, geo::AssetRole::object, { 0, 0, 0 }, identity, setup);
-    kernel::Budget rotated_budget { 200'000'000, 64 * 1024 * 1024 };
-    const auto uncertain_gap = kernel::classify_pair(*origin.placed, *rotated.placed, 1, rotated_budget);
-    CHECK(uncertain_gap.material_overlap == kernel::Decision::no);
-    CHECK(uncertain_gap.surface_gap == kernel::Threshold::indeterminate);
+    for (const double clearance : { 1., 1.003, 1.0031, 1.5 }) {
+        kernel::Budget rotated_budget { 200'000'000, 64 * 1024 * 1024 };
+        const auto gap = kernel::classify_pair(*origin.placed, *rotated.placed, clearance, rotated_budget);
+        CAPTURE(clearance);
+        CHECK(gap.material_overlap == kernel::Decision::no);
+        CHECK(gap.surface_gap == (clearance < 1.00308 ? kernel::Threshold::above : kernel::Threshold::indeterminate));
+    }
+    // With the apex under the turned base the distance is exactly one unit:
+    // intervals cannot prove equality, so the gap stays undecided.
+    const auto over = make_solid(mesh, geo::AssetRole::object, { -.3, -.3, 2 }, rotation, setup);
+    kernel::Budget over_budget { 200'000'000, 64 * 1024 * 1024 };
+    const auto equal_gap = kernel::classify_pair(*origin.placed, *over.placed, 1, over_budget);
+    CHECK(equal_gap.material_overlap == kernel::Decision::no);
+    CHECK(equal_gap.surface_gap == kernel::Threshold::indeterminate);
+}
+
+TEST_CASE("AT-09 a turned pair at an exactly known distance is above only below that distance",
+          "[geometry][AT-09][oblique-clearance]")
+{
+    // The quaternion (0, 0, 1, 2) turns by the 3-4-5 angle about Z, so a cube of
+    // half side 5 has integer world vertices and its +X face lies in the plane
+    // 0.6 x + 0.8 y = 5 with centre (3, 4). An aligned cube with a corner at
+    // (6, 8) is then exactly 5 away, in exact arithmetic, while the bounds are
+    // only 1 apart. Everything stays exact when scaled by a power of two.
+    const geo::Quaternion turned { 0, 0, 1, 2 };
+    for (const double scale : { 1. / 1024, 1., 1048576. }) {
+        for (const double far : { 0., 1125899906842624. }) {
+            const auto cube = geo::test_support::cuboid({ -5 * scale, -5 * scale, -5 * scale },
+                                                        { 5 * scale, 5 * scale, 5 * scale });
+            kernel::Budget setup { 200'000'000, 64 * 1024 * 1024 };
+            const auto tilted = make_solid(cube, geo::AssetRole::object, { far, 0, 0 }, turned, setup);
+            const auto aligned =
+                make_solid(cube, geo::AssetRole::object, { far + 11 * scale, 13 * scale, 0 }, identity, setup);
+            const double distance = 5 * scale;
+            const auto gap = [&](double clearance, bool reversed) {
+                kernel::Budget budget { 200'000'000, 64 * 1024 * 1024 };
+                const auto result = reversed
+                                        ? kernel::classify_pair(*aligned.placed, *tilted.placed, clearance, budget)
+                                        : kernel::classify_pair(*tilted.placed, *aligned.placed, clearance, budget);
+                CHECK(result.material_overlap == kernel::Decision::no);
+                return result.surface_gap;
+            };
+            for (const bool reversed : { false, true }) {
+                CAPTURE(scale, far, reversed);
+                // At the distance and one unit in the last place beyond it: never above.
+                CHECK(gap(distance, reversed) == kernel::Threshold::indeterminate);
+                CHECK(gap(std::nextafter(distance, 2 * distance), reversed) == kernel::Threshold::indeterminate);
+                CHECK(gap(distance * 1.5, reversed) == kernel::Threshold::indeterminate);
+                // One unit in the last place nearer is true but need not be provable.
+                CHECK(gap(std::nextafter(distance, 0.), reversed) != kernel::Threshold::below);
+                if (far == 0.) {
+                    // Intervals are a few units in the last place wide, so a
+                    // margin of one part in a billion is proved.
+                    CHECK(gap(distance * (1 - 1e-9), reversed) == kernel::Threshold::above);
+                }
+            }
+        }
+    }
 }
 
 TEST_CASE("Separated sloping faces remain decidable after inexact rigid translation",
