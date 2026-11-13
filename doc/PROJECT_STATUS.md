@@ -1,6 +1,6 @@
 # Project status
 
-Updated 2026-11-12. Details belong in PRs and `.local/` logs.
+Updated 2026-11-13. Details belong in PRs and `.local/` logs.
 
 ## What works
 
@@ -35,8 +35,10 @@ Release, eight threads; 10-second analytic and 60-second STL budgets; Pryanik in
 | sphere14 (10 mm, 24.6 mm cube) | **14** | 14 | 14 |
 | sphere66 (10 mm, 40.6 mm cube) | 64 (66 once) | 64 | 66 |
 | sphere40-np (40 mm, 400 x 340 x 285 mm) | **660** | 660 | 690 |
-| tile5, tile10 (45° turns) | 4, 9 | 4, 9 | 5, 10 |
+| tile5, tile10 (45° turns, 0.1/0.1 mm) | 4, 9 | 4, 9 | 5, 10 |
+| tile5-0, tile10-0 (45° turns, 0/0.1 mm) | **5**, 9 | 4, 9 | 5, 10 |
 | yasya-0, -1, -wall0 (envelope, 400 x 240 x 200 mm) | **74**, 74, 74 | 74 | 74 |
+| bunny (envelope, 400 x 340 x 285 mm, local model) | **47** | 46 | 47 |
 
 ## Current goal: Core v1.0
 
@@ -75,9 +77,12 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    Reached with (a) alone: layers shift and sit closer than a part's height (box
    case 540 to 600), and each lattice is tightened from conservative cells until the
    validator reports contact (small cube 10 to 14, box case 660). Not reached: the
-   66-sphere cube needs a half-cell layer shift and stays at 64, the tile cases need
-   (b), and tightening adds nothing at zero pair clearance, so the STL cases are
-   unchanged. (b) and (c) are untried.
+   66-sphere cube needs a half-cell layer shift and stays at 64, and tightening adds
+   nothing at zero pair clearance.
+   (b) grows one more copy in from a seed while its neighbours move aside: bunny 45
+   to 47, five tiles at zero pair clearance 4 to 5; lattices and the other STL cases
+   have no slack for it. The tile cases at 0.1 mm are blocked by known problem 9,
+   not by the search. (c) is untried.
 
 **Robustness**
 
@@ -127,5 +132,9 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    different count on a busy machine (the 40.6 mm sphere cube gave 66 once, 64 since).
 8. The desktop cannot show a packing of about 3,900 copies or more: a live packing is
    one record capped at 1 MiB, and a larger one ends the search with a publication error.
+9. At a positive pair clearance a copy in a 45° turn is validated only when its bounds
+   are clear of every neighbour's: the validator proves clearance exactly for cardinal
+   poses alone. With the default 1 mm clearance "Include 45° turns" therefore adds
+   nothing a bounding box could not; at zero clearance turned copies validate.
 
 See [ALGORITHM.md](../docs/ALGORITHM.md) and [BUILDING.md](../docs/BUILDING.md).
