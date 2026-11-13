@@ -163,6 +163,21 @@ gap certifies disjoint boundaries; unresolved leaves remain indeterminate. Shell
 witness and requested-clearance checks still follow. Rounded vertices suggest
 axes only and never supply the proof.
 
+Validator v8 proves a positive pair clearance for poses that are not cardinal.
+Exact triangle distances need cardinal poses, so until v7 any other pair passed
+only when its bounding boxes were already clear by the clearance: a copy in a
+45-degree turn could not be validated beside another one, however far apart
+their surfaces were. Now every triangle pair that outward bounds do not put
+farther apart than the clearance is projected onto the rounded direction between
+its two closest points. Along any axis a triangle projects between its
+vertices, so a gap between the two projected ranges, divided by the axis
+length, is a lower bound of the distance. The ranges come from the vertex
+intervals that enclose the actual rigid transforms, the gap is rounded down and
+the threshold up, and the gap must be strictly above the clearance. One
+unproved triangle pair leaves the copy pair indeterminate, so a pair at exactly
+the clearance or nearer is never accepted; unlike the exact path, this one
+cannot call a pair invalid. Cardinal pairs keep the exact path unchanged.
+
 The positive-clearance benchmark now finds 435 validated Pryanik-2 copies, up
 from 425 with mixed orientations, without changing the box, 1/1 mm clearances, permitted rotations or
 60-second budget. The bounded search can still miss layouts; these counts are
@@ -281,11 +296,11 @@ from 45 copies to 47, and five tiles fit a 27.4 mm square at zero pair clearance
 with the fifth turned 45 degrees (4 before). Other cases keep their counts.
 Dense lattices have no slack to gather and give every seed up within
 milliseconds. On the exact Pryanik-2 mesh a 436-copy layout settled once, but
-its validation did not finish in the time left. At a positive pair clearance a copy
-in a 45-degree turn cannot be validated beside another copy at all: the validator
-proves clearance only for cardinal poses or for bounds that are already clear,
-so the tile cases at 0.1 mm stay at 4 and 9 whatever is proposed. Rotations of
-placed copies never change, and a copy never moves to a different gap.
+its validation did not finish in the time left. Until validator v8 a copy in a
+45-degree turn could not be validated beside another at a positive pair
+clearance, so the five-tile layout was proposed and rejected at 0.1 mm; with v8
+that case goes from 4 to 5 as well. Rotations of placed copies never change,
+and a copy never moves to a different gap.
 
 ## Layered double lattices
 

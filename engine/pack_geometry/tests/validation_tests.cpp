@@ -1259,3 +1259,209 @@ TEST_CASE("GEO-06 incremental and full validation agree on random edits", "[incr
     CHECK(valid >= 5);
     CHECK(rejected >= 5);
 }
+
+TEST_CASE("GEO-06 turned copies prove a positive pair clearance from their surfaces", "[oblique-clearance][AT-09]")
+{
+    // A tile turned 45 degrees about Z beside an aligned one, whose corner faces
+    // the middle of the turned tile's side. Their bounds overlap at every gap
+    // tried, so only the surfaces can prove the clearance.
+    const double scale = GENERATE(1., 100.);
+    const double clearance = .1 * scale;
+    const auto object = geo::test_support::accepted(
+        geo::test_support::cuboid({ 0, 0, 0 }, { 10 * scale, 10 * scale, 2 * scale }), geo::AssetRole::object);
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = clearance;
+    constraints.orientations.mode = geo::OrientationMode::free;
+    const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(geo::make_validation_context(
+        object, geo::BoxDimensions { 60 * scale, 60 * scale, 2.3 * scale }, constraints));
+    const auto low = object->bounds_mm().min;
+    REQUIRE(low[0] == -5 * scale);
+    const geo::Quaternion turned { 0, 0, std::sin(std::numbers::pi / 8), std::cos(std::numbers::pi / 8) };
+    const double root = std::sqrt(2.);
+    const auto pair = [&](double gap, const geo::Quaternion& first_rotation) {
+        std::vector<geo::CopyPose> copies;
+        if (first_rotation == turned) {
+            // Two turned tiles side by side, face to face.
+            const double step = (10 * scale + gap) / root;
+            copies = { { "a", { 20 * scale, 20 * scale, .15 * scale - low[2] }, turned },
+                       { "b", { 20 * scale + step, 20 * scale + step, .15 * scale - low[2] }, turned } };
+        }
+        else {
+            const double corner = (60 * scale / root - 5 * scale - gap) / root;
+            copies = { { "a", { corner - 5 * scale, corner - 5 * scale, .15 * scale - low[2] }, first_rotation },
+                       { "b", { 30 * scale, 30 * scale, .15 * scale - low[2] }, turned } };
+        }
+        return validate_copies(value, std::move(copies));
+    };
+    for (const auto& first_rotation : { geo::Quaternion { 0, 0, 0, 1 }, turned }) {
+        for (const double factor : { 1.05, 1.5, 20. }) {
+            const auto checked = pair(factor * clearance, first_rotation);
+            INFO("scale=" << scale << " gap=" << factor << " clearances, code=" << checked.report.code);
+            REQUIRE(checked.validated_solution);
+            CHECK(geo::revalidate(checked.validated_solution).validated_solution);
+        }
+        // Nearer than the clearance, touching, and overlapping are never valid.
+        for (const double factor : { .95, .5, 0., -3. }) {
+            const auto checked = pair(factor * clearance, first_rotation);
+            INFO("scale=" << scale << " gap=" << factor << " clearances, code=" << checked.report.code);
+            CHECK_FALSE(checked.validated_solution);
+            CHECK(checked.report.validity != geo::Validity::valid);
+        }
+    }
+}
+
+TEST_CASE("GEO-06 a turned corner inside a slot keeps its clearance to both sides", "[oblique-clearance][AT-09]")
+{
+    // The corner of a U prism turned 45 degrees enters the slot of an aligned
+    // one. The corner lies inside the aligned part's bounds and convex hull;
+    // its two sides pass the slot's upper corners at the gap under test.
+    const double scale = GENERATE(1., 100.);
+    const double clearance = .1 * scale;
+    const auto object =
+        geo::test_support::accepted(geo::test_support::u_prism(scale, scale), geo::AssetRole::object);
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = clearance;
+    constraints.orientations.mode = geo::OrientationMode::free;
+    const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(geo::make_validation_context(
+        object, geo::BoxDimensions { 12 * scale, 12 * scale, 1.3 * scale }, constraints));
+    const auto low = object->bounds_mm().min;
+    REQUIRE(low[0] == -1.5 * scale);
+    REQUIRE(low[1] == -1.5 * scale);
+    const geo::Quaternion turned { 0, 0, std::sin(std::numbers::pi / 8), std::cos(std::numbers::pi / 8) };
+    const double root = std::sqrt(2.);
+    const auto nested = [&](double gap) {
+        // The slot is one unit wide; a corner `depth` below its top passes the
+        // slot's corners at (0.5 - depth) / sqrt(2).
+        const double depth = .5 * scale - gap * root;
+        return validate_copies(
+            value, { { "slot", { 6 * scale, 4 * scale, .15 * scale - low[2] }, { 0, 0, 0, 1 } },
+                     { "corner", { 6 * scale, 4 * scale + 1.5 * scale - depth + 1.5 * scale * root,
+                                   .15 * scale - low[2] }, turned } });
+    };
+    for (const double factor : { 1.05, 2. }) {
+        const auto checked = nested(factor * clearance);
+        INFO("scale=" << scale << " gap=" << factor << " clearances, code=" << checked.report.code);
+        REQUIRE(checked.validated_solution);
+    }
+    for (const double factor : { .95, 0., -1. }) {
+        const auto checked = nested(factor * clearance);
+        INFO("scale=" << scale << " gap=" << factor << " clearances, code=" << checked.report.code);
+        CHECK_FALSE(checked.validated_solution);
+    }
+}
+
+TEST_CASE("GEO-06 freely rotated copies at a known distance are valid only above the clearance",
+          "[oblique-clearance][AT-09]")
+{
+    // Each pair is built so that its distance is known without any distance
+    // computation: a plane with all of one copy on one side and all of the other
+    // copy at least `gap` beyond it, and two points exactly `gap` apart.
+    const double clearance = .1;
+    const auto multiply = [](const geo::Quaternion& a, const geo::Quaternion& b) -> geo::Quaternion {
+        return { a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+                 a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+                 a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+                 a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2] };
+    };
+    const auto rotated = [](const geo::Quaternion& q, const geo::Vec3& p) {
+        return geo::RigidTransform::make(q, {})->apply(p);
+    };
+    std::mt19937 random(20261113);
+    std::uniform_real_distribution<double> unit(-1., 1.);
+    geo::Constraints constraints;
+    constraints.pair_clearance_mm = constraints.wall_clearance_mm = clearance;
+    constraints.orientations.mode = geo::OrientationMode::free;
+
+    SECTION("a vertex over the middle of a face")
+    {
+        const geo::Vec3 half { 2, 1, .5 };
+        const auto object = geo::test_support::accepted(
+            geo::test_support::cuboid({ -half[0], -half[1], -half[2] }, half), geo::AssetRole::object);
+        const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(
+            geo::make_validation_context(object, geo::BoxDimensions { 40, 40, 40 }, constraints));
+        for (int trial = 0; trial != 60; ++trial) {
+            geo::Quaternion first {}, second {};
+            for (auto* quaternion : { &first, &second }) {
+                double length = 0;
+                while (!(length > .1)) {
+                    length = 0;
+                    for (auto& component : *quaternion) {
+                        component = unit(random);
+                        length += component * component;
+                    }
+                }
+                // Unit length and a nonnegative W, as poses must be.
+                for (auto& component : *quaternion) {
+                    component /= (*quaternion)[3] < 0 ? -std::sqrt(length) : std::sqrt(length);
+                }
+            }
+            // The second copy's +X face, and the first copy's vertex farthest against its normal.
+            const auto normal = rotated(second, { 1, 0, 0 });
+            const geo::Vec3 second_at { 20, 20, 20 };
+            geo::Vec3 nearest {};
+            double least = std::numeric_limits<double>::infinity();
+            for (unsigned corner = 0; corner != 8; ++corner) {
+                const auto vertex = rotated(first, { corner & 1 ? half[0] : -half[0], corner & 2 ? half[1] : -half[1],
+                                                     corner & 4 ? half[2] : -half[2] });
+                const double along = vertex[0] * normal[0] + vertex[1] * normal[1] + vertex[2] * normal[2];
+                if (along < least) {
+                    least = along;
+                    nearest = vertex;
+                }
+            }
+            for (const double factor : { .9, .999, 1.001, 1.1 }) {
+                const double reach = half[0] + factor * clearance;
+                geo::Vec3 first_at {};
+                for (std::size_t axis = 0; axis != 3; ++axis) {
+                    first_at[axis] = second_at[axis] + reach * normal[axis] - nearest[axis];
+                }
+                const auto checked =
+                    validate_copies(value, { { "a", first_at, first }, { "b", second_at, second } });
+                INFO("trial=" << trial << " gap=" << factor << " clearances, code=" << checked.report.code);
+                if (factor < 1) {
+                    CHECK_FALSE(checked.validated_solution);
+                }
+                else {
+                    CHECK(checked.validated_solution);
+                }
+            }
+        }
+    }
+    SECTION("an edge across an edge")
+    {
+        // Two rods turned 45 degrees about their own axes, so that an edge of
+        // the lower one faces up and an edge of the upper one faces down, then
+        // turned to different headings about Z.
+        const double side = .2, ridge = side / std::sqrt(2.);
+        const auto object = geo::test_support::accepted(
+            geo::test_support::cuboid({ -5, -side / 2, -side / 2 }, { 5, side / 2, side / 2 }), geo::AssetRole::object);
+        const auto value = std::get<std::shared_ptr<const geo::ValidationContext>>(
+            geo::make_validation_context(object, geo::BoxDimensions { 40, 40, 40 }, constraints));
+        const geo::Quaternion rolled { std::sin(std::numbers::pi / 8), 0, 0, std::cos(std::numbers::pi / 8) };
+        for (int trial = 0; trial != 40; ++trial) {
+            const double heading = unit(random) * std::numbers::pi, crossing = .4 + (unit(random) + 1) * 1.1;
+            const auto about_z = [](double angle) -> geo::Quaternion {
+                return { 0, 0, std::sin(angle / 2), std::cos(angle / 2) };
+            };
+            const auto lower = multiply(about_z(heading), rolled);
+            auto upper = multiply(about_z(heading + crossing), rolled);
+            if (upper[3] < 0) {
+                for (auto& component : upper) {
+                    component = -component;
+                }
+            }
+            for (const double factor : { .9, .99, 1.01, 1.1 }) {
+                const auto checked = validate_copies(
+                    value, { { "lower", { 20 + unit(random), 20 + unit(random), 20 }, lower },
+                             { "upper", { 20, 20, 20 + 2 * ridge + factor * clearance }, upper } });
+                INFO("trial=" << trial << " gap=" << factor << " clearances, code=" << checked.report.code);
+                if (factor < 1) {
+                    CHECK_FALSE(checked.validated_solution);
+                }
+                else {
+                    CHECK(checked.validated_solution);
+                }
+            }
+        }
+    }
+}

@@ -2411,12 +2411,151 @@ ExactOrder exact_triangle_distance(const std::array<ExactInputPoint,3>& first,
 Threshold conservative_surface_gap(const PlacedSolid& first,const PlacedSolid& second,
                                     double clearance,Budget& budget) noexcept;
 
+// The vector between the rounded closest points of two triangles, from the
+// first to the second. It only suggests an axis; nothing is proved from it.
+Vec3 closest_direction(const std::array<Vec3, 3>& a, const std::array<Vec3, 3>& b) noexcept
+{
+    const auto sub = [](const Vec3& u, const Vec3& v) -> Vec3 {
+        return { u[0] - v[0], u[1] - v[1], u[2] - v[2] };
+    };
+    const auto along = [](const Vec3& origin, const Vec3& step, double t) -> Vec3 {
+        return { origin[0] + t * step[0], origin[1] + t * step[1], origin[2] + t * step[2] };
+    };
+    const auto dot = [](const Vec3& u, const Vec3& v) { return u[0] * v[0] + u[1] * v[1] + u[2] * v[2]; };
+    // Ericson, Real-Time Collision Detection, 5.1.5: the point of a triangle nearest to p.
+    const auto on_triangle = [&](const Vec3& p, const std::array<Vec3, 3>& t) -> Vec3 {
+        const Vec3 ab = sub(t[1], t[0]), ac = sub(t[2], t[0]), ap = sub(p, t[0]);
+        const double d1 = dot(ab, ap), d2 = dot(ac, ap);
+        if (d1 <= 0 && d2 <= 0) {
+            return t[0];
+        }
+        const Vec3 bp = sub(p, t[1]);
+        const double d3 = dot(ab, bp), d4 = dot(ac, bp);
+        if (d3 >= 0 && d4 <= d3) {
+            return t[1];
+        }
+        const double vc = d1 * d4 - d3 * d2;
+        if (vc <= 0 && d1 >= 0 && d3 <= 0) {
+            return along(t[0], ab, d1 / (d1 - d3));
+        }
+        const Vec3 cp = sub(p, t[2]);
+        const double d5 = dot(ab, cp), d6 = dot(ac, cp);
+        if (d6 >= 0 && d5 <= d6) {
+            return t[2];
+        }
+        const double vb = d5 * d2 - d1 * d6;
+        if (vb <= 0 && d2 >= 0 && d6 <= 0) {
+            return along(t[0], ac, d2 / (d2 - d6));
+        }
+        const double va = d3 * d6 - d5 * d4;
+        if (va <= 0 && d4 - d3 >= 0 && d5 - d6 >= 0) {
+            return along(t[1], sub(t[2], t[1]), (d4 - d3) / ((d4 - d3) + (d5 - d6)));
+        }
+        const double scale = 1 / (va + vb + vc);
+        return along(along(t[0], ab, vb * scale), ac, vc * scale);
+    };
+    double best = std::numeric_limits<double>::infinity();
+    Vec3 direction {};
+    const auto offer = [&](const Vec3& from, const Vec3& to) {
+        const auto step = sub(to, from);
+        const double length = dot(step, step);
+        if (length < best) {
+            best = length;
+            direction = step;
+        }
+    };
+    for (int vertex = 0; vertex != 3; ++vertex) {
+        offer(a[vertex], on_triangle(a[vertex], b));
+        offer(on_triangle(b[vertex], a), b[vertex]);
+    }
+    // Ericson 5.1.9: the nearest points of two segments.
+    for (int i = 0; i != 3; ++i) {
+        for (int j = 0; j != 3; ++j) {
+            const Vec3& p1 = a[i];
+            const Vec3& p2 = b[j];
+            const Vec3 d1 = sub(a[(i + 1) % 3], p1), d2 = sub(b[(j + 1) % 3], p2), r = sub(p1, p2);
+            const double aa = dot(d1, d1), ee = dot(d2, d2), f = dot(d2, r), c = dot(d1, r), bb = dot(d1, d2);
+            if (!(aa > 0) || !(ee > 0)) {
+                continue;  // A degenerate edge is covered by its end points.
+            }
+            const double denominator = aa * ee - bb * bb;
+            double s = denominator > 0 ? std::clamp((bb * f - c * ee) / denominator, 0.0, 1.0) : 0.0;
+            double t = (bb * s + f) / ee;
+            if (t < 0) {
+                t = 0;
+                s = std::clamp(-c / aa, 0.0, 1.0);
+            }
+            else if (t > 1) {
+                t = 1;
+                s = std::clamp((bb - c) / aa, 0.0, 1.0);
+            }
+            offer(along(p1, d1, s), along(p2, d2, t));
+        }
+    }
+    return direction;
+}
+
+// Proves that two triangles are farther apart than the clearance. Along any
+// axis n, every point of a convex set projects between the projections of its
+// vertices, so a gap g between the two projected ranges puts the triangles at
+// least g / |n| apart. The ranges come from the outward vertex intervals that
+// enclose the actual rigid transforms, the gap is rounded down and the
+// threshold up. The axis is the rounded direction between the closest points,
+// along which the projected gap is the distance itself. Failure proves nothing.
+bool triangles_farther_than(const PlacedSolid& first, const Triangle& a, const PlacedSolid& second,
+                            const Triangle& b, double clearance, Budget& budget) noexcept
+{
+    constexpr auto infinity = std::numeric_limits<double>::infinity();
+    // Fifteen rounded closest-point queries, six interval projections and the threshold.
+    if (!budget.consume_work(768)) {
+        return false;
+    }
+    const auto axis = closest_direction(triangle_points(first, a), triangle_points(second, b));
+    const double scale = std::max({ std::abs(axis[0]), std::abs(axis[1]), std::abs(axis[2]) });
+    if (!(scale > 0.0) || !std::isfinite(scale)) {
+        return false;
+    }
+    IntervalVec3 direction;
+    for (int coordinate = 0; coordinate != 3; ++coordinate) {
+        // Any finite axis is admissible, so the rounded quotient is taken as it is.
+        direction[coordinate] = point_interval(axis[coordinate] / scale);
+    }
+    const auto projection = [&](const PlacedSolid& solid, const Triangle& face) {
+        Interval range = interval_dot(solid.vertex_intervals[face[0]], direction);
+        for (int vertex = 1; vertex != 3 && range.valid; ++vertex) {
+            const auto value = interval_dot(solid.vertex_intervals[face[vertex]], direction);
+            range.valid = value.valid;
+            range.low = std::min(range.low, value.low);
+            range.high = std::max(range.high, value.high);
+        }
+        return range;
+    };
+    const auto from = projection(first, a), to = projection(second, b);
+    const auto length_squared = interval_dot(direction, direction);
+    const auto limit =
+        multiply_interval(multiply_interval(point_interval(clearance), point_interval(clearance)), length_squared);
+    if (!from.valid || !to.valid || !limit.valid) {
+        return false;
+    }
+    // The axis points from the first triangle to the second.
+    const double gap = std::nextafter(to.low - from.high, -infinity);
+    if (!(gap > 0.0)) {
+        return false;
+    }
+    return std::nextafter(gap * gap, -infinity) > limit.high;
+}
+
 Threshold exact_surface_gap(const PlacedSolid& first,const PlacedSolid& second,
                             double clearance,Budget& budget) noexcept {
   if (clearance==0.0) return Threshold::above;
-  if (!first.is_cardinal || !second.is_cardinal || first.exact_vertices.empty() ||
-      second.exact_vertices.empty())
-    return conservative_surface_gap(first,second,clearance,budget);
+  // Exact triangle distances need cardinal poses. Any other pair is proved from
+  // outward vertex intervals: first by its bounds, then triangle by triangle.
+  // Intervals can show a gap above the clearance and nothing else, so a pair at
+  // or below it stays indeterminate.
+  const bool exact = first.is_cardinal && second.is_cardinal && !first.exact_vertices.empty() &&
+                     !second.exact_vertices.empty();
+  if (!exact && conservative_surface_gap(first,second,clearance,budget)==Threshold::above)
+    return Threshold::above;
   if (!(clearance >= 0.0) || !std::isfinite(clearance)) {
       return Threshold::indeterminate;
   }
@@ -2465,6 +2604,12 @@ Threshold exact_surface_gap(const PlacedSolid& first,const PlacedSolid& second,
               continue;
           }
           const auto& b = second_mesh.triangles[triangle_bounds[index].face];
+          if (!exact) {
+              if (!triangles_farther_than(first, a, second, b, clearance, budget)) {
+                  return Threshold::indeterminate;
+              }
+              continue;
+          }
           const auto relation = exact_triangle_distance(exact_triangle_points(first, a),
                                                         exact_triangle_points(second, b), clearance, budget);
           if (relation == ExactOrder::less) {
