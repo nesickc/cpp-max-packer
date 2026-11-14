@@ -100,7 +100,9 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
     const initial: Desktop.State = {desktop_version:1, session_id:'resource-live', revision:1,
       object:{id:'object', display_name:'Cube.stl', report:document.assets.object, preview:null},
       draft_settings:{...defaultSettings, host_memory_limit_bytes:'134217728'},
-      result:{id:'result', document, preview:null, origin:'solve'}, operation:null, last_error:null,
+      result:{id:'result', document, preview:null, origin:'solve'}, last_error:null,
+      operation:{id:'solve-0', kind:'solve', phase:'finished', started_at:'2026-11-14T00:00:00Z',
+        finished_at:'2026-11-14T00:01:00Z', result_id:'result', detail:null},
       cpu_runtime:{version:1, supported_min:1, supported_max:8, default_thread_count:8,
         resource_status:{admitted_host_cap_bytes:'5368709120', actual_threads:4, recovery_count:'3',
           last_cause:'VALIDATION_KERNEL_WORK_LIMIT', last_action:'grant_work'}}};
@@ -159,37 +161,55 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
         placements:Array.from({length:count},(_,i)=>({...document.placements[0],copy_id:`copy-${i}`})) as Desktop.LiveResult['placements'] });
       const operation: Desktop.Operation = {id:'solve-1', kind:'solve', phase:'improving', started_at:'2026-11-14T10:00:00Z',
         finished_at:null, result_id:null, detail:null};
+      const status = (estimated: string): NonNullable<Desktop.State['cpu_runtime']> => ({version:1, supported_min:1, supported_max:8,
+        default_thread_count:4, resource_status:{admitted_host_cap_bytes:'8589934592', estimated_working_bytes:estimated,
+          actual_threads:6, recovery_count:'0', last_cause:'', last_action:''}});
+      // An empty live layout is not an improvement.
       const running: Desktop.State = {desktop_version:1, session_id:'search-panel', revision:1,
         object:{id:'object', display_name:'Cube.stl', report:document.assets.object, preview:null},
-        draft_settings:sent, result:null, live_result:live(24, 1), operation, last_error:null,
-        cpu_runtime:{version:1, supported_min:1, supported_max:8, default_thread_count:4,
-          resource_status:{admitted_host_cap_bytes:'8589934592', estimated_working_bytes:'966367641', actual_threads:6,
-            recovery_count:'0', last_cause:'', last_action:''}}};
+        draft_settings:sent, result:null, live_result:live(0, 1), operation, last_error:null, cpu_runtime:status('966367641')};
       native.state.mockResolvedValue(running);
       render(<App/>);
       const panel = () => screen.getByLabelText('Search status').textContent;
       await waitFor(()=>expect(panel()).toContain('Remaining budget90.0 s'));
-      for (const fact of ['Pitch3 mm', 'Threads6', 'Estimated RAM0.90 GiB', 'Host ceiling8.00 GiB', 'Since improvement0.0 s'])
+      for (const fact of ['Pitch3 mm', 'Threads6', 'Estimated RAM921.6 MiB', 'Host ceiling8.00 GiB', 'Since improvementNo packing yet'])
         expect(panel()).toContain(fact);
+      native.state.mockResolvedValue({...running, revision:2, live_result:live(24, 2)});
+      await waitFor(()=>expect(panel()).toContain('Since improvement0.0 s'));
       expect(screen.queryByText(/Pending settings for the next run/)).toBeNull();
       vi.setSystemTime(new Date('2026-11-14T10:00:35Z'));
       await waitFor(()=>expect(panel()).toContain('Since improvement5.0 s'));
       expect(panel()).toContain('Remaining budget85.0 s');
-      native.state.mockResolvedValue({...running, revision:2, live_result:live(25, 2)});
+      native.state.mockResolvedValue({...running, revision:3, live_result:live(25, 3)});
       await waitFor(()=>expect(panel()).toContain('Since improvement0.0 s'));
 
       document.search.resolved_settings.resolved = {...document.search.resolved_settings.resolved, pitch_mm:3, thread_count:6};
       document.search.resolved_settings.resolution = {mode:'manual', pitch_mm:3};
       document.search.resolved_settings.search.budget_seconds = 120;
+      document.search.resolved_settings.search.budget_scope = 'total_start';
       document.search.pitch_levels_mm = [3, 6];
       document.search.elapsed_seconds = 50;
+      document.search.runtime = {total_elapsed_seconds:52, preparation_seconds:1, cleanup_seconds:0, deadline_overrun_seconds:0} as unknown as typeof document.search.runtime;
       document.metrics.time_to_best_seconds = 38;
-      native.state.mockResolvedValue({...running, revision:3, live_result:live(25, 2),
-        result:{id:'result-1', document, preview:null, origin:'solve'},
-        operation:{...operation, phase:'finished', finished_at:'2026-11-14T10:00:52Z', result_id:'result-1', completion_elapsed_seconds:52}});
+      const finished: Desktop.State = {...running, revision:4, live_result:live(25, 3), result:{id:'result-1', document, preview:null, origin:'solve'},
+        operation:{...operation, phase:'finished', finished_at:'2026-11-14T10:00:52Z', result_id:'result-1', completion_elapsed_seconds:52}};
+      native.state.mockResolvedValue(finished);
       await waitFor(()=>expect(panel()).toContain('Since improvement12.0 s'));
-      for (const fact of ['Pitch3 mm, coarsened to 6 mm', 'Threads6', 'Estimated RAM0.90 GiB', 'Remaining budget70.0 s'])
+      for (const fact of ['Pitch3 mm, coarsened to 6 mm', 'Threads6', 'Estimated RAM921.6 MiB', 'Remaining budget68.0 s'])
         expect(panel()).toContain(fact);
+      // The result still shows all its own settings.
+      expect(screen.getByText('Pitch: 3 mm · CPU threads: 6')).toBeDefined();
+      // A search-only budget excludes preparation.
+      const searchOnly = structuredClone(document);
+      searchOnly.search.resolved_settings.search.budget_scope = 'search_only';
+      native.state.mockResolvedValue({...finished, revision:5, result:{id:'result-1', document:searchOnly, preview:null, origin:'solve'}});
+      await waitFor(()=>expect(panel()).toContain('Remaining budget70.0 s'));
+      // A later solve that kept this result does not lend it its memory status.
+      native.state.mockResolvedValue({...finished, revision:6, cpu_runtime:status('12345678'),
+        operation:{...operation, id:'solve-2', phase:'finished', finished_at:'2026-11-14T10:02:00Z', completion_elapsed_seconds:3}});
+      await waitFor(()=>expect(panel()).toContain('Estimated RAM—'));
+      expect(panel()).toContain('Host ceiling—');
+      expect(panel()).toContain('Pitch3 mm, coarsened to 6 mm');
     } finally { vi.useRealTimers(); }
   });
   it('UI-02 T015 shows the native live packing while Save and export stay unavailable', async () => {

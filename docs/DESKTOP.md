@@ -26,8 +26,9 @@ packing, placement validation and export; the desktop presents those results.
    fields and FFT buffers (made before they are allocated) against the host
    memory ceiling, the remaining budget and the time since the count last rose.
    The estimate describes a box-wide correlation at the chosen pitch; searches
-   in a box often use much less. A reopened result shows its own pitch, threads,
-   budget and improvement times; its memory estimate is not stored.
+   in a box often use much less. A result shows its own pitch, threads, budget
+   and improvement times; the memory estimate is not stored, so it appears only
+   beside the result its own search produced.
 5. Inspect the complete result in the viewer. Selection, hiding and clipping
    affect the view only. The displayed count always belongs to the full result.
 
