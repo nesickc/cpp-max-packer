@@ -14,12 +14,20 @@ packing, placement validation and export; the desktop presents those results.
    is measured, the other presets are published sizes. Pair and
    wall clearances are independent; both default to 1 mm and can be zero.
 3. Choose fixed or cube rotations, pitch, budget and CPU thread count from the
-   engine's supported range (up to eight on Windows). New drafts default to at
-   most four threads. Pitch controls the search representation;
-   it never changes the object's physical size.
+   engine's supported range (up to eight on Windows). Until you choose a count,
+   Start uses the shell's default for this computer (at most four threads), shown
+   once an object is prepared; Open restores a project's recorded count. Pitch
+   controls the search representation; it never changes the object's physical size.
 4. Start the job. Stop requests a safe termination and keeps the engine's
    validated result. Completion can follow the acknowledgement because a
    native operation may need to reach a safe boundary.
+   During the search and after it, the panel under the viewer shows the resolved
+   pitch, the CPU threads in use, the engine's estimate of the search's largest
+   fields and FFT buffers (made before they are allocated) against the host
+   memory ceiling, the remaining budget and the time since the count last rose.
+   The estimate describes a box-wide correlation at the chosen pitch; searches
+   in a box often use much less. A reopened result shows its own pitch, threads,
+   budget and improvement times; its memory estimate is not stored.
 5. Inspect the complete result in the viewer. Selection, hiding and clipping
    affect the view only. The displayed count always belongs to the full result.
 

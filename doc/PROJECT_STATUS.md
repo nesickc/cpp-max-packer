@@ -1,6 +1,6 @@
 # Project status
 
-Updated 2026-11-13. Details belong in PRs and `.local/` logs.
+Updated 2026-11-14. Details belong in PRs and `.local/` logs.
 
 ## What works
 
@@ -9,7 +9,8 @@ Updated 2026-11-13. Details belong in PRs and `.local/` logs.
   interlocking twin layers, whole-arrangement compaction and checked export.
 - **Desktop:** units and diagnostics, box with size tolerance (default 0.1 mm, ADR
   0022), clearances, 24 cube rotations or 96 with 45° turns, Start/Stop, live validated
-  packing, portable Save/Open, JSON and checked STL export. Results keep their settings.
+  packing with a search panel, portable Save/Open, JSON and checked STL export. Results
+  keep their settings.
 - **Packing envelopes** ([ADR 0021](../spec/decisions/0021-packing-envelopes.md)): every
   desktop import builds a cavity-free CGAL envelope that native validation checks
   against the retained source. Original, Envelope and Overlay views share poses,
@@ -98,9 +99,10 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
 
 **Finish the desktop**
 
-9. [ ] **Search panel** (UI-01/03, SOL-05/08). *Done when* threads default to the
-   shell's value and resolved pitch, threads, estimated RAM, remaining budget and time
-   since improvement are shown. Starts at one thread and a fixed 2 mm pitch today.
+9. [x] **Search panel** (UI-01/03, SOL-05/08). Threads start at the shell's default
+   (at most four) and Open keeps a project's count. Under the viewer, during a search
+   and after it: resolved pitch, threads, the engine's RAM estimate against the host
+   ceiling, remaining budget and time since the count last rose.
 10. [ ] **Continue** (SOL-06, §8.2, AT-13). Every Start is a fresh job. *Done when*
     Continue adds budget to a stopped, finished or reopened result from its revalidated
     poses, with geometry, box, clearances and rotations locked, and never lowers the count.
@@ -133,5 +135,8 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    different count on a busy machine (the 40.6 mm sphere cube gave 66 once, 64 since).
 8. The desktop cannot show a packing of about 3,900 copies or more: a live packing is
    one record capped at 1 MiB, and a larger one ends the search with a publication error.
+9. The panel's RAM estimate is the engine's preflight for a box-wide correlation at the
+   run pitch, which timed box searches skip (Pryanik at 2 mm: 0.66 GiB estimated, 0.09 GiB
+   peak). Lattice and gap-fill phases choose their own cells and do not report them.
 
 See [ALGORITHM.md](../docs/ALGORITHM.md) and [BUILDING.md](../docs/BUILDING.md).
