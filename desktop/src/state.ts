@@ -3,7 +3,11 @@ import type { Desktop } from './generated/contracts';
 // Native version-1 cube45 catalog; also checked at the Rust publication boundary.
 export const cube45CatalogHash = '7434d4e2eb8cd12e6a67af3a5d636a7435a4e50da043777586ff0fbff9eae4ef';
 
-export const defaultSettings: Desktop.Settings = { desktop_version: 1, box_dimensions_mm: [100, 100, 100], box_tolerance_mm: 0.1, clearance_mm: { pair: 1, wall: 1 }, orientation: { mode: 'cube' }, pitch_mm: 2, budget_seconds: 60, seed: '0', thread_count: 1, budget_scope: 'total_start' };
+// No thread_count: until one is chosen, Start uses the shell's default_thread_count.
+export const defaultSettings: Desktop.Settings = { desktop_version: 1, box_dimensions_mm: [100, 100, 100], box_tolerance_mm: 0.1, clearance_mm: { pair: 1, wall: 1 }, orientation: { mode: 'cube' }, pitch_mm: 2, budget_seconds: 60, seed: '0', budget_scope: 'total_start' };
+// Field-by-field equality; the shell returns settings with its keys sorted.
+const sortedKeys = (_: string, value: unknown) => value && typeof value === 'object' && !Array.isArray(value) ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a < b ? -1 : 1)) : value;
+export function sameSettings(a: Desktop.Settings, b: Desktop.Settings): boolean { return JSON.stringify(a, sortedKeys) === JSON.stringify(b, sortedKeys); }
 // Nova Post boxes, width x depth x height in millimetres. Only the 10 kg interior is
 // measured; the others are the carrier's published sizes.
 export const boxPresets: readonly { name: string; dimensions_mm: readonly [number, number, number] }[] = [

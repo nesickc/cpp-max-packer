@@ -117,6 +117,33 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
     await waitFor(()=>expect(native.start).toHaveBeenCalledOnce());
     expect(native.start.mock.calls[0][0].settings.host_memory_limit_bytes).toBe('134217728');
   });
+  it('SOL-08 starts with the shell default thread count, and Open keeps the recorded one', async () => {
+    const fixture = fixtures.find(f => f.kind === 'results' && f.schema_valid && f.semantic_valid)!;
+    const document = structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];
+    const fresh: Desktop.State = {desktop_version:1, session_id:'threads', revision:1, object:null,
+      draft_settings:null, result:null, operation:null, last_error:null};
+    native.state.mockResolvedValue(fresh);
+    render(<App/>);
+    // Before an object is prepared the shell has not reported its range yet.
+    await waitFor(()=>expect((screen.getByLabelText('CPU threads') as HTMLSelectElement).value).toBe(''));
+    expect(screen.getByLabelText('CPU threads').hasAttribute('disabled')).toBe(true);
+    const imported: Desktop.State = {...fresh, revision:2,
+      object:{id:'object', display_name:'Cube.stl', report:document.assets.object, preview:null},
+      cpu_runtime:{version:1, supported_min:1, supported_max:8, default_thread_count:4}};
+    native.state.mockResolvedValue(imported);
+    await waitFor(()=>expect((screen.getByLabelText('CPU threads') as HTMLSelectElement).value).toBe('4'));
+    expect(screen.getByText('CPU · 4 threads')).toBeDefined();
+    native.start.mockResolvedValue({operation_id:'default-threads'});
+    fireEvent.click(screen.getByRole('button',{name:'▶ Start packing'}));
+    await waitFor(()=>expect(native.start).toHaveBeenCalledOnce());
+    expect(native.start.mock.calls[0][0].settings.thread_count).toBe(4);
+    native.open.mockImplementation(async () => {
+      native.state.mockResolvedValue({...imported, revision:3, draft_settings:{...defaultSettings, thread_count:2},
+        operation:{id:'open-1',kind:'open',phase:'finished',started_at:'2026-11-14T00:00:00Z',finished_at:'2026-11-14T00:00:01Z',result_id:null,detail:null}});
+    });
+    fireEvent.click(screen.getByRole('button',{name:'Open project'}));
+    await waitFor(()=>expect((screen.getByLabelText('CPU threads') as HTMLSelectElement).value).toBe('2'));
+  });
   it('UI-02 T015 shows the native live packing while Save and export stay unavailable', async () => {
     const fixture = fixtures.find(f => f.kind === 'results' && f.schema_valid && f.semantic_valid)!;
     const document = structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];
