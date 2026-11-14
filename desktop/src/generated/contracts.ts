@@ -5871,6 +5871,10 @@ export interface Error {
 }
 export interface ResourceStatus {
   admitted_host_cap_bytes: string;
+  /**
+   * The engine's estimate of the search's dominant working set (fields, FFT buffers, resident owners) at the resolved pitch and thread count, made before they are allocated. Absent until estimated.
+   */
+  estimated_working_bytes?: string;
   actual_threads: number;
   recovery_count: string;
   last_cause: string;

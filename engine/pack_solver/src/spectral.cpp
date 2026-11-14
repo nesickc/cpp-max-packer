@@ -445,11 +445,12 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
     SpectralOutcome outcome;
     outcome.resource_recovery.actual_final_threads = limits.cpu_thread_count;
     outcome.admitted_host_cap_bytes = limits.max_working_bytes;
+    std::uint64_t estimated_working_bytes {};
     const auto resource_status = [&] {
         outcome.admitted_host_cap_bytes = limits.max_working_bytes;
         if (limits.resource_status_sink) {
             limits.resource_status_sink(limits.resource_status_context, limits.max_working_bytes,
-                                        outcome.resource_recovery);
+                                        estimated_working_bytes, outcome.resource_recovery);
         }
     };
     const auto record_recovery = [&](std::string_view cause, std::string_view phase, std::string_view action,
@@ -588,7 +589,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
     }
 
     std::optional<RunFailureDetails> admission_failure;
-    admission_failure = detail::spectral_admission(context, lattice, limits, initial, &catalog);
+    admission_failure = detail::spectral_admission(context, lattice, limits, initial, &catalog, &estimated_working_bytes);
+    // Report the estimate before any large field is allocated.
+    resource_status();
     // Baseline is deliberately silent: the central incumbent owns every visible revision.
     // Its phase cap remains independent, while the wrapper cap/reserve applies
     // to every phase that the wrapper retains.

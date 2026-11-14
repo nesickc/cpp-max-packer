@@ -1178,7 +1178,8 @@ TEST_CASE("AT-16 T015 timed handoff bootstraps only a native-valid empty layout 
         } interrupt;
         interrupt.deadline = deadline;
         limits.resource_status_context = &interrupt;
-        limits.resource_status_sink = [](void* raw, std::uint64_t, const solver::ResourceRecovery& recovery) noexcept {
+        limits.resource_status_sink = [](void* raw, std::uint64_t, std::uint64_t,
+                                         const solver::ResourceRecovery& recovery) noexcept {
             if (recovery.deferred) {
                 auto& state = *static_cast<Interrupt*>(raw);
                 if (state.deadline) {
