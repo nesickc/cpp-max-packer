@@ -1046,6 +1046,7 @@ BaselineOutcome run_aabb_baseline_impl(
         // neighbours have room to move aside. It takes the rest of the time.
         if (control.deadline && accepted->copies().size() < capacity && boundary(control) == Boundary::none) {
             auto layout = accepted->copies();
+            bool unpublished = false;
             detail::insert_copies(*context, layout, seeds, capacity, limits.gap_fill_threads, control,
                                   [&](const std::vector<geometry::CopyPose>& proposal) {
                 if (boundary(control) != Boundary::none ||
@@ -1064,19 +1065,24 @@ BaselineOutcome run_aabb_baseline_impl(
                 check.max_working_bytes = std::min(check.max_working_bytes, remaining(limits.max_working_bytes, live));
                 // A settled layout is rare enough to check under the run's own deadline.
                 const auto checked = geometry::validate_incremental(accepted, *candidate, check, control);
-                if (!record_validation(out.stats, checked.report, live, limits) ||
-                    boundary(control) != Boundary::none) {
+                if (!record_validation(out.stats, checked.report, live, limits)) {
                     return detail::CompactionVerdict::stop;
                 }
                 if (checked.validated_solution) {
+                    // Insertion can run to the deadline, so each copy is published as it is found.
                     accepted = checked.validated_solution;
-                    return detail::CompactionVerdict::accepted;
+                    unpublished = !offer(accepted, live);
+                    return unpublished || boundary(control) != Boundary::none ? detail::CompactionVerdict::stop
+                                                                              : detail::CompactionVerdict::accepted;
+                }
+                if (boundary(control) != Boundary::none) {
+                    return detail::CompactionVerdict::stop;
                 }
                 ++(checked.report.validity == geometry::Validity::invalid ? out.stats.invalid_candidates
                                                                           : out.stats.indeterminate_candidates);
                 return detail::CompactionVerdict::rejected;
             });
-            if (accepted != incumbent.best()->solution && !offer(accepted, live)) {
+            if (unpublished) {
                 return out;
             }
         }

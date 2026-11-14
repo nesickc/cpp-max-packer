@@ -285,7 +285,10 @@ come near, and an attempt that moves more than 64 copies is given up: one copy
 is made room for nearby. Every eighth point carries the growth and all of them
 finish the layout. When the overlap stops shrinking for 60 rounds the layout is
 jammed and the next seed is tried. Attempts do not depend on each other and run
-on all threads.
+on all threads. When one settles the others give way, so its layout reaches the
+validator at once instead of after attempts that can take seconds each; if it is
+rejected, the attempts cut short are tried again first. Each copy the validator
+accepts is published at once, since insertion takes the rest of the time.
 
 Growing in matters. A full-size copy dropped into a dense spot overlaps deeply,
 and the nearest way out of a neighbour is often the wrong one: with five tiles
