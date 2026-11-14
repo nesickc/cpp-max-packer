@@ -953,9 +953,9 @@ TEST_CASE("Zero-wall height stagger keeps far-wall columns inside the box", "[so
     REQUIRE(baseline.best);
     sol::RunControl control;
     control.deadline = control.now() + std::chrono::seconds(5);
-    const auto result = sol::detail::run_interlocking_stagger_with_seeds(context, {}, control,
-                                                                        { geo::Quaternion { 0, 0, 0, 1 } }, {},
-                                                                        baseline.best);
+    const auto result =
+        sol::detail::run_physical_phase(sol::detail::PhysicalPhase::interlocking, context, {}, control,
+                                        { geo::Quaternion { 0, 0, 0, 1 } }, {}, baseline.best);
     REQUIRE(result.best);
     INFO("baseline=" << baseline.best->score.count << " result=" << result.best->score.count);
     CHECK(result.best->score.count > baseline.best->score.count);

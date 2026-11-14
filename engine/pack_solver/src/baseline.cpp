@@ -497,15 +497,18 @@ std::optional<std::uint64_t> proposed_pose_bytes(const std::vector<geometry::Cop
 
 }  // namespace
 
+using detail::PhysicalPhase;
+
 BaselineOutcome run_aabb_baseline_impl(
     std::shared_ptr<const geometry::ValidationContext> context,
     const BaselineLimits& limits, const RunControl& control, SnapshotSink sink,
     std::shared_ptr<const geometry::ValidatedSolution> initial,
-    const std::vector<geometry::Quaternion>* exact_seeds, StaggerSummary* stagger = nullptr,
-    SnapshotHandle entry = {}, bool blocks = false, bool interlocking = false, bool mixed = false,
-    bool compaction = false, bool slab_lattice = false) {
+    const std::vector<geometry::Quaternion>* exact_seeds, PhysicalPhase phase = PhysicalPhase::grid,
+    SnapshotHandle entry = {}, StaggerSummary* stagger = nullptr) {
+  const bool resumes = phase != PhysicalPhase::grid;
+  const bool mixed = phase == PhysicalPhase::mixed_interlocking;
   BaselineOutcome out;
-  if ((stagger || blocks || interlocking || compaction) && entry && entry->solution &&
+  if (resumes && entry && entry->solution &&
       entry->solution->context() == context &&
       entry->score.count == entry->solution->copies().size()) {
     out.best = entry;
@@ -552,8 +555,7 @@ BaselineOutcome run_aabb_baseline_impl(
     std::uint64_t incumbent_bytes = detail::kIncumbentFixedOwnerBytes;
     std::shared_ptr<const geometry::ValidatedSolution> admitted_solution;
     if (entry) {
-      if ((!stagger && !blocks && !interlocking && !compaction) ||
-          !detail::IncumbentResumeAccess::resume(incumbent, entry)) {
+      if (!resumes || !detail::IncumbentResumeAccess::resume(incumbent, entry)) {
         out.diagnostic_code = "STAGGER_ENTRY_INVALID";
         return out;
       }
@@ -718,7 +720,7 @@ BaselineOutcome run_aabb_baseline_impl(
 
     const auto& policy = context->constraints().orientations;
     const auto raw_seed_count = maximum_seed_count(policy);
-    if (!stagger && raw_seed_count > limits.max_orientations) {
+    if (phase != PhysicalPhase::stagger && raw_seed_count > limits.max_orientations) {
       retain_best();
       out.termination_reason = TerminationReason::budget_exhausted;
       out.diagnostic_code = "PHYSICAL_ORIENTATION_LIMIT";
@@ -739,14 +741,14 @@ BaselineOutcome run_aabb_baseline_impl(
     }
     if (!exact_seeds) detail::allocation_point();
     auto seeds = exact_seeds ? *exact_seeds : orientation_seeds(policy);
-    if (!stagger && seeds.size() > limits.max_orientations) {
+    if (phase != PhysicalPhase::stagger && seeds.size() > limits.max_orientations) {
       retain_best();
       out.termination_reason = TerminationReason::budget_exhausted;
       out.diagnostic_code = "PHYSICAL_ORIENTATION_LIMIT";
       return out;
     }
 
-    if (compaction) {
+    if (phase == PhysicalPhase::compaction || phase == PhysicalPhase::slab_lattice) {
         const auto finish = [&](std::string_view code, TerminationReason reason) {
             retain_best();
             out.diagnostic_code = code;
@@ -781,7 +783,7 @@ BaselineOutcome run_aabb_baseline_impl(
         }
         // Layered double lattices of a rotation and its twin can nest features
         // that rows of one rotation leave apart; a valid one replaces the entry.
-        if (slab_lattice) {
+        if (phase == PhysicalPhase::slab_lattice) {
             detail::SlabLatticeRequest request;
             request.threads = limits.gap_fill_threads;
             request.max_working_bytes = remaining(limits.max_working_bytes, live);
@@ -1067,7 +1069,7 @@ BaselineOutcome run_aabb_baseline_impl(
                        : finish("COMPACTION_EXHAUSTED", TerminationReason::search_stalled);
     }
 
-    if (interlocking) {
+    if (phase == PhysicalPhase::interlocking || mixed) {
         if (!std::holds_alternative<geometry::BoxDimensions>(context->container())) {
             retain_best();
             out.termination_reason = TerminationReason::search_stalled;
@@ -1312,7 +1314,7 @@ BaselineOutcome run_aabb_baseline_impl(
         return finish("INTERLOCKING_STAGGER_EXHAUSTED", TerminationReason::search_stalled);
     }
 
-    if (blocks) {
+    if (phase == PhysicalPhase::blocks) {
         if (!std::holds_alternative<geometry::BoxDimensions>(context->container())) {
             retain_best();
             out.termination_reason = TerminationReason::search_stalled;
@@ -1459,7 +1461,7 @@ BaselineOutcome run_aabb_baseline_impl(
         return out;
     }
 
-    if (stagger) {
+    if (phase == PhysicalPhase::stagger) {
         struct Proposal {
             std::array<double, 3> origin {}, pitch {};
             std::array<std::uint64_t, 2> columns {};
@@ -2115,34 +2117,14 @@ BaselineOutcome run_aabb_baseline(
 }
 
 namespace detail {
-BaselineOutcome run_compaction_with_seeds(std::shared_ptr<const geometry::ValidationContext> context,
-                                          const BaselineLimits& limits, const RunControl& control,
-                                          const std::vector<geometry::Quaternion>& seeds, SnapshotSink sink,
-                                          SnapshotHandle initial, bool slab_lattice)
+BaselineOutcome run_physical_phase(PhysicalPhase phase, std::shared_ptr<const geometry::ValidationContext> context,
+                                   const BaselineLimits& limits, const RunControl& control,
+                                   const std::vector<geometry::Quaternion>& seeds, SnapshotSink sink,
+                                   SnapshotHandle entry)
 {
-    const auto solution = initial ? initial->solution : nullptr;
-    return run_aabb_baseline_impl(std::move(context), limits, control, std::move(sink), solution, &seeds, nullptr,
-                                  std::move(initial), false, false, false, true, slab_lattice);
-}
-
-BaselineOutcome run_interlocking_stagger_with_seeds(std::shared_ptr<const geometry::ValidationContext> context,
-                                                    const BaselineLimits& limits, const RunControl& control,
-                                                    const std::vector<geometry::Quaternion>& seeds, SnapshotSink sink,
-                                                    SnapshotHandle initial, bool mixed)
-{
-    const auto solution = initial ? initial->solution : nullptr;
-    return run_aabb_baseline_impl(std::move(context), limits, control, std::move(sink), solution, &seeds, nullptr,
-                                  std::move(initial), false, true, mixed);
-}
-
-BaselineOutcome run_block_layout_with_seeds(std::shared_ptr<const geometry::ValidationContext> context,
-                                            const BaselineLimits& limits, const RunControl& control,
-                                            const std::vector<geometry::Quaternion>& seeds, SnapshotSink sink,
-                                            SnapshotHandle initial)
-{
-    const auto solution = initial ? initial->solution : nullptr;
-    return run_aabb_baseline_impl(std::move(context), limits, control, std::move(sink), solution, &seeds, nullptr,
-                                  std::move(initial), true);
+    const auto solution = entry ? entry->solution : nullptr;
+    return run_aabb_baseline_impl(std::move(context), limits, control, std::move(sink), solution, &seeds, phase,
+                                  std::move(entry));
 }
 
 BaselineOutcome run_stagger_seed_with_seeds(std::shared_ptr<const geometry::ValidationContext> context,
@@ -2156,7 +2138,7 @@ BaselineOutcome run_stagger_seed_with_seeds(std::shared_ptr<const geometry::Vali
     summary.completion_reason = "error";
     const auto solution = initial ? initial->solution : nullptr;
     auto out = run_aabb_baseline_impl(std::move(context), limits, control, std::move(sink), solution, &seeds,
-                                      &summary, std::move(initial));
+                                      PhysicalPhase::stagger, std::move(initial), &summary);
     summary.work = out.stats;
     const auto retained = out.best ? out.best->solution : out.retained_solution;
     summary.best_count_after = retained ? retained->copies().size() : summary.best_count_before;
