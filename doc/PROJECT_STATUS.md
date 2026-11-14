@@ -15,8 +15,9 @@ Updated 2026-11-14. Details belong in PRs and `.local/` logs.
   against the retained source. Original, Envelope and Overlay views share poses,
   clipping and selection; STL export writes the source and re-verifies enclosure
   after float32 quantization. Exact-valid solids stay available through the CLI.
-- **Practical counts** (400 x 340 x 285 mm, 0/0 mm clearance, `best_found`): simplified
-  Pryanik 336 in 120 s, Bulba 30 in 90 s at 2 mm pitch, bracket 60. Logs: `.local/`.
+- **Practical counts** (0/0 mm clearance, `best_found`): simplified Pryanik 336 in 120 s
+  (400 x 340 x 285 mm) and Bulba 27 in 90 s (410 x 350 x 285 mm), both at 2 mm pitch;
+  bracket 60 (400 x 340 x 285 mm). Logs: `.local/`.
 
 ## Scoreboard
 
@@ -39,6 +40,7 @@ Release, eight threads; 10-second analytic and 60-second STL budgets; Pryanik in
 | tile5-0, tile10-0 (45° turns, 0/0.1 mm) | **5**, 9 | 5, 9 | 5, 10 |
 | yasya-0, -1, -wall0 (envelope, 400 x 240 x 200 mm) | **74**, 74, 74 | 74 | 74 |
 | bunny (envelope, 400 x 340 x 285 mm, local model) | **47** | 46 | 47 |
+| benchy (envelope, 240 x 170 x 90 mm, local model) | **47** | 46 | 47 |
 
 ## Current goal: Core v1.0
 
