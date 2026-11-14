@@ -407,6 +407,12 @@ impl Core {
         if let Some(settings) = settings {
             inner.state.draft_settings = Some(settings);
         }
+        if kind == "solve" {
+            // The new search reports its own threads and memory estimate.
+            if let Some(cpu) = inner.state.cpu_runtime.as_mut().and_then(Value::as_object_mut) {
+                cpu.remove("resource_status");
+            }
+        }
         inner.state.last_error = None;
         inner.state.revision += 1;
         Ok((Receipt { operation_id }, directory, captured))
@@ -1907,6 +1913,22 @@ mod tests {
         core.export_to(root.path(), "stl").unwrap();
         let exported = complete(&core);
         assert!(exported.last_error.is_none(), "{exported:?}");
+    }
+    #[test]
+    fn start_reports_its_threads_and_memory_estimate() {
+        let (_root, core) = fixture();
+        import_fixture(&core);
+        let threads = core.state().cpu_runtime.unwrap()["default_thread_count"].clone();
+        let mut requested = settings();
+        requested["thread_count"] = threads.clone();
+        core.start(requested).unwrap();
+        let solved = complete(&core);
+        assert!(solved.last_error.is_none(), "{solved:?}");
+        let status = &solved.cpu_runtime.as_ref().unwrap()["resource_status"];
+        assert_eq!(status["actual_threads"], threads);
+        let bytes = |key: &str| status[key].as_str().and_then(|text| text.parse::<u64>().ok()).unwrap_or(0);
+        assert!(bytes("estimated_working_bytes") > 0, "{status}");
+        assert!(bytes("estimated_working_bytes") <= bytes("admitted_host_cap_bytes"), "{status}");
     }
     #[test]
     fn child_death_allows_new_and_verified_reimport_without_releasing_foreign_epoch() {
