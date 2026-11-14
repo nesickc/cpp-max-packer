@@ -5,7 +5,7 @@ everything here is **tunable**: change weights, page sizes, catalogs, schedules 
 recovery behaviour freely when `python tools/scoreboard.py` shows an improvement and
 the validity rules in spec §5.3 and §6 still hold. Update this file with the change;
 no decision record is needed. This file began with spec v0.2 §6 and is updated
-through 2026-11-12. Historical rationale lives in
+through 2026-11-14. Historical rationale lives in
 `spec/decisions/` and `doc/T-*.md` (frozen).
 
 ## Desktop 45-degree orientations
@@ -47,7 +47,10 @@ permitted by the remaining pass budget, charging before oriented queries. Additi
 command `diagnostics.stagger` records actual work and completion within that prefix,
 independently of later FFT failure; persistent result schemas are unchanged.
 Detailed bounded ownership and accounting follow [ADR 0018](../spec/decisions/0018-cardinal-support-stagger.md).
-Its practical targets and remaining gates are recorded in [T-015](T-015.md).
+Its practical targets and remaining gates are recorded in [T-015](../doc/T-015.md).
+In timed runs later phases always supersede this seed (measured 2026-11-14: no
+case loses a copy without it); it remains for fixed-work runs and the
+`diagnostics.stagger` record, which would have to go with it.
 
 Zero-clearance validation uses the same authoritative bounds as positive clearance.
 For cardinal poses, exact dyadic comparisons keep source extrema and translations
@@ -79,6 +82,8 @@ The unchanged 60-second benchmark improves the positive-clearance Pryanik result
 from 340 to 343 at both 2 and 4 mm manual pitch. Both saved layouts pass fresh
 native validation. The zero-clearance floor remains 360; the 388-copy bounding-box
 reference is still only a reference, not a native-validated solver result.
+Later phases now supersede that, but residual blocks are still the only phase
+that reaches 74 Yasya copies (70 to 72 without them).
 
 Timed runs then search interlocking rows using the accepted mesh. For each of up
 to 24 permitted orientations, choose the shortest AABB axis for layers and the
@@ -103,7 +108,10 @@ same tiny inward margin as mixed layouts whenever an axis has room for it, so
 rounding cannot push the far-wall column outside the box; an exact single fit is
 unchanged.
 The search uses no asset names, saved poses or altered physical constraints, and
-does not change manual voxel pitch or the fixed-work path.
+does not change manual voxel pitch or the fixed-work path. Mixed rows (below) now
+reach every count these rows reached in the scoreboard and practical cases; each
+of the two single-orientation planners is kept because it alone packs its own
+test fixture (wings across layers; diamonds in one fixed rotation).
 
 After retaining those uniform layouts, timed search tries mixed orientations.
 Pairs come from the permitted catalog and differ by a half-turn around a world
@@ -196,21 +204,24 @@ Before each axis slide, bounded whole-layout trials contract the distances
 between copy bounds by up to ten percent. Only translations change; each solid's
 dimensions and catalog rotation stay fixed. Eight bisection trials retain only
 native-valid improvements. This can recover diagonal slack even when the coarse
-column envelopes overlap at the valid starting positions.
+column envelopes overlap at the valid starting positions. The bunny's 47 and the
+bracket's 62 copies came from layouts contracted this way (46 and 60 without).
 
 Mixed-orientation seeding also tries a relative headroom proposal when ordinary
 screening finds no improvement. It adds one sixteenth of oriented object height
 to the proposal range, then maps copy positions back into the actual box before
 validation. The validation context, physical container, geometry and clearances
 never change. This fallback addresses false rejection by filled transverse bins;
-it is not evidence that a proposal fits until native validation accepts it.
+it is not evidence that a proposal fits until native validation accepts it. It is
+what reaches 27 Bulba copies in 410 x 350 x 285 mm in 90 s (24 without it).
 
 After each axis, try refilling at retained transverse positions, wall alignments,
 and quarter/half-extent offsets. New copies use permitted catalog orientations
 with the retained AABB extents. Drops can search disconnected free intervals;
 this is final-placement packing, not a collision-free insertion-path simulation.
 No asset names, saved layouts, geometry scaling or model-specific distances enter
-this search.
+this search. The second copy of both positive-clearance L-prism cases comes from
+this refill (one copy without it).
 
 Every changed arrangement and every insertion passes native validation.
 Compaction, refill and the growing AABB grid validate incrementally against the
@@ -241,8 +252,7 @@ A^T B, and at most 24 small correlations serve every pair. Gap-fill checks are
 bounded per check, not by the phase allowance that whole-layout trials consume.
 Fields are conservative proposals: the native validator decides every insertion.
 
-The positive-clearance L-prism scoreboard case improves from one copy to two.
-The exact-contact L-prism case remains separate: its unresolved contact verdicts
+The exact-contact L-prism case stays at one copy: its unresolved contact verdicts
 are not bypassed by compaction.
 
 Slides and the refill that follows take at most half of the phase's time, also
