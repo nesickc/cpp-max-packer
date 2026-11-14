@@ -445,9 +445,11 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
     SpectralOutcome outcome;
     outcome.resource_recovery.actual_final_threads = limits.cpu_thread_count;
     outcome.admitted_host_cap_bytes = limits.max_working_bytes;
-    std::uint64_t estimated_working_bytes {};
+    // The estimate always belongs to the thread team and layout in effect.
+    std::uint64_t estimated_working_bytes {}, published_estimate {};
     const auto resource_status = [&] {
         outcome.admitted_host_cap_bytes = limits.max_working_bytes;
+        published_estimate = estimated_working_bytes;
         if (limits.resource_status_sink) {
             limits.resource_status_sink(limits.resource_status_context, limits.max_working_bytes,
                                         estimated_working_bytes, outcome.resource_recovery);
@@ -589,7 +591,8 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
     }
 
     std::optional<RunFailureDetails> admission_failure;
-    admission_failure = detail::spectral_admission(context, lattice, limits, initial, &catalog, &estimated_working_bytes);
+    admission_failure =
+        detail::spectral_admission(context, lattice, limits, initial, &catalog, &estimated_working_bytes);
     // Report the estimate before any large field is allocated.
     resource_status();
     // Baseline is deliberately silent: the central incumbent owns every visible revision.
@@ -746,7 +749,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
     }
 
     if (!admission_failure || timed) {
-        admission_failure = detail::spectral_admission(context, lattice, limits, retained, &catalog);
+        estimated_working_bytes = 0;  // Unknown unless this layout's estimate completes.
+        admission_failure =
+            detail::spectral_admission(context, lattice, limits, retained, &catalog, &estimated_working_bytes);
     }
     if (timed && admission_failure && admission_failure->cause_code() == "SPECTRAL_MEMORY_LIMIT" &&
         admission_failure->resource && admission_failure->resource->resource == "working_bytes") {
@@ -757,7 +762,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 return outcome;
             }
             --smaller.cpu_thread_count;
-            if (!detail::spectral_admission(context, lattice, smaller, retained, &catalog)) {
+            std::uint64_t estimate {};
+            if (!detail::spectral_admission(context, lattice, smaller, retained, &catalog, &estimate)) {
+                estimated_working_bytes = estimate;
                 const auto before = limits.cpu_thread_count;
                 limits.cpu_thread_count = smaller.cpu_thread_count;
                 outcome.resource_recovery.actual_final_threads = limits.cpu_thread_count;
@@ -768,6 +775,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 break;
             }
         }
+    }
+    if (estimated_working_bytes != published_estimate) {
+        resource_status();
     }
     if (admission_failure) {
         // The first trial is empty. Resident baseline copies do not impose a
@@ -1289,7 +1299,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                     reduced = true;
                     auto smaller = limits;
                     for (--smaller.cpu_thread_count; smaller.cpu_thread_count > 0; --smaller.cpu_thread_count) {
-                        if (!detail::spectral_admission(context, lattice, smaller, working, &catalog)) {
+                        std::uint64_t estimate {};
+                        if (!detail::spectral_admission(context, lattice, smaller, working, &catalog, &estimate)) {
+                            estimated_working_bytes = estimate;
                             static_cast<void>(workspace.release_disposable());
                             const auto before = limits.cpu_thread_count;
                             limits.cpu_thread_count = smaller.cpu_thread_count;

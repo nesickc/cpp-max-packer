@@ -1268,6 +1268,15 @@ TEST_CASE("AT-16 T015 review startup memory admission selects an affordable thre
     limits.max_working_bytes = (large->resource->required + small->resource->required) / 2;
     limits.baseline.max_working_bytes = 1;
     limits.spectral.max_copies = 2;
+    struct Reported {
+        std::uint32_t threads {};
+        std::uint64_t cap {}, estimate {};
+    } reported;
+    limits.resource_status_context = &reported;
+    limits.resource_status_sink = [](void* raw, std::uint64_t cap, std::uint64_t estimate,
+                                     const solver::ResourceRecovery& recovery) noexcept {
+        *static_cast<Reported*>(raw) = { recovery.actual_final_threads, cap, estimate };
+    };
     for (const auto mode : { solver::ResourceMode::fixed_work, solver::ResourceMode::timed }) {
         limits.resource_mode = mode;
         solver::RunControl control;
@@ -1276,6 +1285,10 @@ TEST_CASE("AT-16 T015 review startup memory admission selects an affordable thre
         CAPTURE(outcome.run.diagnostic_code);
         if (mode == solver::ResourceMode::timed) {
             CHECK(outcome.resource_recovery.actual_final_threads < limits.cpu_thread_count);
+            // SOL-05: the last status reports the reduced team with an estimate it can afford.
+            CHECK(reported.threads == outcome.resource_recovery.actual_final_threads);
+            CHECK(reported.estimate > 0);
+            CHECK(reported.estimate <= reported.cap);
             CHECK(outcome.resource_recovery.fft_candidate_evaluations > 0);
             CHECK(outcome.resource_recovery.native_validations > 0);
             REQUIRE(outcome.run.best);
