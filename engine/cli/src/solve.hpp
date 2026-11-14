@@ -49,7 +49,7 @@ struct SolveRuntime {
     bool preserve_previous_on_empty { true };
     std::uint64_t adapter_reserve_bytes {};
     bool initialize_valid_empty {};
-    void (*resource_status_sink)(void*, std::uint64_t, const solver::ResourceRecovery&) noexcept {};
+    void (*resource_status_sink)(void*, std::uint64_t, std::uint64_t, const solver::ResourceRecovery&) noexcept {};
     void* resource_status_context {};
     std::uint64_t* admitted_host_cap_bytes {};
     // Adapters own monitor lifetime. CLI may join here; session samples its

@@ -150,7 +150,7 @@ struct Session {
     HANDLE write_thread {};
     struct PhasePacket {
         struct ResourceStatus {
-            std::uint64_t cap {}, recoveries {};
+            std::uint64_t cap {}, estimated {}, recoveries {};
             std::uint32_t threads {};
             std::array<char, 96> cause {}, action {};
         };
@@ -306,6 +306,9 @@ struct Session {
                                 { "last_cause",              status.cause.data()               },
                                 { "last_action",             status.action.data()              }
                             };
+                            if (status.estimated) {
+                                record["resource_status"]["estimated_working_bytes"] = std::to_string(status.estimated);
+                            }
                         }
                         bytes = cli::encode_runtime_record(record, true, 2048);
                     }
@@ -496,11 +499,13 @@ struct PhaseContext {
         packet.seconds = std::chrono::duration<double>(runtime::Clock::now() - context.start).count();
         context.session.phase(packet);
     }
-    static void resource_status(void* raw, std::uint64_t cap, const solver::ResourceRecovery& recovery) noexcept
+    static void resource_status(void* raw, std::uint64_t cap, std::uint64_t estimated,
+                                const solver::ResourceRecovery& recovery) noexcept
     {
         auto& context = *static_cast<PhaseContext*>(raw);
         Session::PhasePacket::ResourceStatus status;
         status.cap = cap;
+        status.estimated = estimated;
         status.threads = recovery.actual_final_threads;
         status.recoveries = recovery.recoveries + recovery.grants;
         if (recovery.transition_count) {

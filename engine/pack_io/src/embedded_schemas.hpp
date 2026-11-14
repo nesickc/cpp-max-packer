@@ -3389,6 +3389,11 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
           "type": "string",
           "pattern": "^[1-9][0-9]{0,19}$"
         },
+        "estimated_working_bytes": {
+          "description": "The engine's estimate of the search's dominant working set (fields, FFT buffers, resident owners) at the resolved pitch and thread count, made before they are allocated. Absent until estimated.",
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,19}$"
+        },
         "actual_threads": {
           "type": "integer",
           "minimum": 1,
@@ -3918,6 +3923,9 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "native_elapsed_seconds": {
           "type": "number",
           "minimum": 0
+        },
+        "resource_status": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/desktop.schema.json#/definitions/ResourceStatus"
         }
       },
       "additionalProperties": false

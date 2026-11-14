@@ -697,7 +697,8 @@ bool SpectralWorkspace::release_disposable(bool retain_raster, bool retain_fft) 
 std::optional<RunFailureDetails> spectral_admission(const std::shared_ptr<const geometry::ValidationContext>& context,
                                                     geometry::GridLattice lattice, const SpectralLimits& limits,
                                                     const std::shared_ptr<const geometry::ValidatedSolution>& retained,
-                                                    const OrientationCatalog* actual_catalog)
+                                                    const OrientationCatalog* actual_catalog,
+                                                    std::uint64_t* working_bytes)
 {
     const auto reject = [](std::string_view code, std::string_view name, std::uint64_t required, std::uint64_t limit) {
         return RunFailureDetails {
@@ -873,6 +874,9 @@ std::optional<RunFailureDetails> spectral_admission(const std::shared_ptr<const 
         !add(*bytes, proximity_scratch_bytes(environment->shape)) || !add(*bytes, fft.working_bytes) ||
         !add_optional(*bytes, product(fft.padded_cells, sizeof(double)))) {
         return reject_unknown("SPECTRAL_MEMORY_OVERFLOW");
+    }
+    if (working_bytes) {
+        *working_bytes = *bytes;
     }
     if (*bytes > cap) {
         return reject("SPECTRAL_MEMORY_LIMIT", "working_bytes", *bytes, cap);

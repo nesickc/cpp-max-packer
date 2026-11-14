@@ -119,6 +119,11 @@ class RuntimeTests(unittest.TestCase):
                     statuses = [phase['resource_status'] for phase in phases if 'resource_status' in phase]
                     self.assertTrue(statuses)
                     self.assertEqual(int(statuses[0]['admitted_host_cap_bytes']), cap)
+                    # UI-03/SOL-05: the search reports its memory estimate before allocating fields.
+                    estimates = [int(status['estimated_working_bytes']) for status in statuses
+                                 if 'estimated_working_bytes' in status]
+                    self.assertTrue(estimates, statuses)
+                    self.assertTrue(all(0 < estimate <= cap for estimate in estimates), estimates)
                     self.assertEqual(terminal['admitted_host_cap_bytes'], cap)
                     self.assertLessEqual(terminal['retained_native_bytes'], cap)
                     self.assertEqual(result['validation']['status'], 'valid')
