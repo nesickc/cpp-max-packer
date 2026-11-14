@@ -642,6 +642,30 @@ BaselineOutcome run_aabb_baseline_impl(
       }
       return handle_offer_issue(admitted);
     };
+    // Phase exits: keep the incumbent and report why the phase ended. A Stop
+    // or deadline that has arrived takes precedence in `finish` and `honor`.
+    const auto fail = [&](std::string_view code, TerminationReason reason = TerminationReason::resource_limit) {
+      retain_best();
+      out.diagnostic_code = code;
+      out.termination_reason = reason;
+      return out;
+    };
+    const auto finish = [&](std::string_view code, TerminationReason reason) {
+      fail(code, reason);
+      if (const auto stop = boundary(control); stop != Boundary::none) {
+        apply_boundary(out, stop);
+      }
+      return out;
+    };
+    const auto honor = [&] {
+      const auto stop = boundary(control);
+      if (stop == Boundary::none) {
+        return true;
+      }
+      retain_best();
+      apply_boundary(out, stop);
+      return false;
+    };
 
     if (out.retained_solution) {
       std::uint64_t initial_live = base_with_incumbent;
@@ -749,15 +773,6 @@ BaselineOutcome run_aabb_baseline_impl(
     }
 
     if (phase == PhysicalPhase::compaction || phase == PhysicalPhase::slab_lattice) {
-        const auto finish = [&](std::string_view code, TerminationReason reason) {
-            retain_best();
-            out.diagnostic_code = code;
-            out.termination_reason = reason;
-            if (const auto stop = boundary(control); stop != Boundary::none) {
-                apply_boundary(out, stop);
-            }
-            return out;
-        };
         if (!entry || entry->solution->copies().empty() ||
             !std::holds_alternative<geometry::BoxDimensions>(context->container())) {
             return finish("COMPACTION_UNAVAILABLE", TerminationReason::search_stalled);
@@ -1075,16 +1090,6 @@ BaselineOutcome run_aabb_baseline_impl(
             out.termination_reason = TerminationReason::search_stalled;
             return out;
         }
-        const auto finish = [&](std::string_view code, TerminationReason reason) {
-            retain_best();
-            out.diagnostic_code = code;
-            out.termination_reason = reason;
-            const auto stop = boundary(control);
-            if (stop != Boundary::none) {
-                apply_boundary(out, stop);
-            }
-            return out;
-        };
         std::uint64_t persistent = *base;
         if (!add_optional(persistent, checked_product(seeds.capacity(), sizeof(geometry::Quaternion))) ||
             !add_optional(persistent, solution_bytes(entry ? entry->solution : nullptr)) ||
@@ -1320,21 +1325,6 @@ BaselineOutcome run_aabb_baseline_impl(
             out.termination_reason = TerminationReason::search_stalled;
             return out;
         }
-        const auto honor = [&] {
-            const auto stop = boundary(control);
-            if (stop == Boundary::none) {
-                return true;
-            }
-            retain_best();
-            apply_boundary(out, stop);
-            return false;
-        };
-        const auto fail = [&](std::string_view code) {
-            retain_best();
-            out.termination_reason = TerminationReason::resource_limit;
-            out.diagnostic_code = code;
-            return out;
-        };
         std::vector<geometry::Bounds> shapes;
         std::vector<geometry::Quaternion> rotations;
         std::uint64_t live = *base;
@@ -1467,21 +1457,6 @@ BaselineOutcome run_aabb_baseline_impl(
             std::array<std::uint64_t, 2> columns {};
             std::uint64_t rows {}, layers {}, count {};
             std::size_t seed {}, parity {}, column {}, row {}, layer {};
-        };
-        const auto fail = [&](std::string_view code, TerminationReason reason = TerminationReason::resource_limit) {
-            out.diagnostic_code = code;
-            out.termination_reason = reason;
-            retain_best();
-            return out;
-        };
-        const auto honor = [&] {
-            const auto current = boundary(control);
-            if (current == Boundary::none) {
-                return true;
-            }
-            retain_best();
-            apply_boundary(out, current);
-            return false;
         };
         // Fixed descriptors and arithmetic/sort scratch coexist with the baseline
         // incumbent. The table contains no mesh or complete candidate layouts.
