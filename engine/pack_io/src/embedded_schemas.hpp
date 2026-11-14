@@ -3923,6 +3923,9 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "native_elapsed_seconds": {
           "type": "number",
           "minimum": 0
+        },
+        "resource_status": {
+          "$ref": "https://spectrapack.invalid/schemas/v1/desktop.schema.json#/definitions/ResourceStatus"
         }
       },
       "additionalProperties": false
