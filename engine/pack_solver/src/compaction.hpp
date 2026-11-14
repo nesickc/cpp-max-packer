@@ -128,7 +128,7 @@ geometry::PhysicalQueryStats compact_axis(geometry::MeshView mesh, const geometr
                 const auto other = orientation(copies[j]);
                 double escape = direction * position[axis];
                 const auto contact = envelopes[i].lower_contact(envelopes[other], position, copies[j].translation_mm,
-                                                                lower, search_gap, &escape, direction);
+                                                                lower, search_gap, escape, direction);
                 if (!contact) {
                     if (!relocate || escape >= direction * position[axis] || remaining_work == 0) {
                         return {};
