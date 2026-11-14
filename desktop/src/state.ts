@@ -56,6 +56,24 @@ export function effectiveDimensions(settings: Desktop.Settings): [number, number
   const tolerance = Number.isFinite(settings.box_tolerance_mm) && settings.box_tolerance_mm! > 0 ? settings.box_tolerance_mm! : 0;
   return settings.box_dimensions_mm.map(v => v + tolerance) as [number, number, number];
 }
+export interface SearchFacts { pitch_mm: number; coarsened_to_mm?: number; threads: number; estimated_bytes?: string; host_cap_bytes?: string; remaining_seconds?: number; since_improvement_seconds?: number }
+// What the search panel shows. A running solve, or one that ended without a result,
+// is described by its Start settings, the engine's live resource status and the
+// desktop's clock (`improvedAt`: operation seconds when the count last rose). A
+// result is described by its own document: resolved pitch and threads, budget
+// left at its end and time since its best count.
+export function searchFacts(state: Desktop.State | null, elapsed: number, improvedAt?: number): SearchFacts | null {
+  const operation = state?.operation, result = state?.result, sent = state?.draft_settings, resource = state?.cpu_runtime?.resource_status;
+  const memory = { estimated_bytes: resource?.estimated_working_bytes, host_cap_bytes: resource?.admitted_host_cap_bytes };
+  if (operation?.kind === 'solve' && sent && (!operation.finished_at || !result))
+    return { pitch_mm: sent.pitch_mm, threads: resource?.actual_threads ?? sent.thread_count ?? 1, ...memory, remaining_seconds: Math.max(0, sent.budget_seconds - elapsed), since_improvement_seconds: improvedAt === undefined ? undefined : Math.max(0, elapsed - improvedAt) };
+  if (!result) return null;
+  const search = result.document.search, resolved = search.resolved_settings.resolved, budget = search.resolved_settings.search.budget_seconds;
+  const coarsest = Math.max(...search.pitch_levels_mm);
+  return { pitch_mm: resolved.pitch_mm, ...(coarsest > resolved.pitch_mm ? { coarsened_to_mm: coarsest } : {}), threads: search.diagnostics?.resource_recovery?.actual_final_threads ?? resolved.thread_count, ...memory,
+    remaining_seconds: budget === undefined ? undefined : Math.max(0, budget - (search.runtime?.total_elapsed_seconds ?? search.elapsed_seconds)),
+    since_improvement_seconds: Math.max(0, search.elapsed_seconds - result.document.metrics.time_to_best_seconds) };
+}
 export function snapshotSettings(result: Desktop.ResultSnapshot): Desktop.Settings {
   const s = result.document.search.resolved_settings;
   return { desktop_version: 1, box_dimensions_mm: s.container.kind === 'box' ? [...s.container.dimensions_mm] : [100,100,100], ...(s.container.kind === 'box' && s.container.tolerance_mm !== undefined ? { box_tolerance_mm: s.container.tolerance_mm } : {}), clearance_mm: { ...s.clearance_mm }, orientation: s.orientation.mode === 'custom' && s.resolved.orientation_catalog_sha256 === cube45CatalogHash ? { mode: 'cube45' } : s.orientation.mode === 'cube' ? { mode: 'cube' } : { mode: 'fixed', quaternion_xyzw: s.orientation.mode === 'fixed' ? [...s.orientation.quaternion_xyzw] : [0,0,0,1] }, pitch_mm: s.resolved.pitch_mm, budget_seconds: s.search.budget_seconds ?? 60, seed: s.search.seed, thread_count: s.resolved.thread_count, budget_scope: s.search.budget_scope ?? 'search_only', ...(s.compute.host_memory_limit_bytes ? {host_memory_limit_bytes:s.compute.host_memory_limit_bytes} : {}) };

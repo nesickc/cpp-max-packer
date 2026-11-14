@@ -99,16 +99,16 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
     const document = structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];
     const initial: Desktop.State = {desktop_version:1, session_id:'resource-live', revision:1,
       object:{id:'object', display_name:'Cube.stl', report:document.assets.object, preview:null},
-      draft_settings:{...defaultSettings, host_memory_limit_bytes:'134217728'}, result:null, operation:null, last_error:null,
+      draft_settings:{...defaultSettings, host_memory_limit_bytes:'134217728'},
+      result:{id:'result', document, preview:null, origin:'solve'}, operation:null, last_error:null,
       cpu_runtime:{version:1, supported_min:1, supported_max:8, default_thread_count:8,
         resource_status:{admitted_host_cap_bytes:'5368709120', actual_threads:4, recovery_count:'3',
           last_cause:'VALIDATION_KERNEL_WORK_LIMIT', last_action:'grant_work'}}};
     native.state.mockResolvedValue(initial);
     native.start.mockResolvedValue({operation_id:'next-start'});
     render(<App/>);
-    await waitFor(()=>expect(screen.getByLabelText('Resource status').textContent).toContain('Actual threads 4'));
-    expect(screen.getByLabelText('Resource status').textContent).toContain('5.00 GiB');
-    expect(screen.getByLabelText('Resource status').textContent).toContain('Recoveries 3');
+    await waitFor(()=>expect(screen.getByLabelText('Search status').textContent).toContain('Host ceiling5.00 GiB'));
+    expect(screen.getByLabelText('Search status').textContent).toContain('Recoveries3, last grant work (VALIDATION_KERNEL_WORK_LIMIT)');
     const ceiling = screen.getByLabelText('Host memory ceiling') as HTMLInputElement;
     fireEvent.change(ceiling, {target:{value:'0'}});
     expect(screen.getByRole('button',{name:'▶ Start packing'}).hasAttribute('disabled')).toBe(true);
@@ -143,6 +143,54 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
     });
     fireEvent.click(screen.getByRole('button',{name:'Open project'}));
     await waitFor(()=>expect((screen.getByLabelText('CPU threads') as HTMLSelectElement).value).toBe('2'));
+  });
+  it('UI-03 search panel shows pitch, threads, RAM, budget and improvement during and after a solve', async () => {
+    vi.useFakeTimers({toFake:['Date']});
+    try {
+      const fixture = fixtures.find(f => f.kind === 'results' && f.schema_valid && f.semantic_valid)!;
+      const document = structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];
+      vi.setSystemTime(new Date('2026-11-14T10:00:30Z'));
+      const sent: Desktop.Settings = {...defaultSettings, pitch_mm:3, budget_seconds:120, thread_count:6};
+      // The shell echoes the run's settings with sorted keys; equal settings are not pending.
+      const echoed = Object.fromEntries(Object.entries(sent).sort(([a],[b]) => a < b ? -1 : 1)) as unknown as Desktop.Settings;
+      const live = (count: number, revision: number): Desktop.LiveResult => ({ publication_version:1, session_id:'search-panel',
+        native_epoch:'native-1', operation_id:'solve-1', settings_id:'settings-1', solution_revision:revision, sequence:revision, count,
+        validation_status:'valid', settings:echoed, preview:null,
+        placements:Array.from({length:count},(_,i)=>({...document.placements[0],copy_id:`copy-${i}`})) as Desktop.LiveResult['placements'] });
+      const operation: Desktop.Operation = {id:'solve-1', kind:'solve', phase:'improving', started_at:'2026-11-14T10:00:00Z',
+        finished_at:null, result_id:null, detail:null};
+      const running: Desktop.State = {desktop_version:1, session_id:'search-panel', revision:1,
+        object:{id:'object', display_name:'Cube.stl', report:document.assets.object, preview:null},
+        draft_settings:sent, result:null, live_result:live(24, 1), operation, last_error:null,
+        cpu_runtime:{version:1, supported_min:1, supported_max:8, default_thread_count:4,
+          resource_status:{admitted_host_cap_bytes:'8589934592', estimated_working_bytes:'966367641', actual_threads:6,
+            recovery_count:'0', last_cause:'', last_action:''}}};
+      native.state.mockResolvedValue(running);
+      render(<App/>);
+      const panel = () => screen.getByLabelText('Search status').textContent;
+      await waitFor(()=>expect(panel()).toContain('Remaining budget90.0 s'));
+      for (const fact of ['Pitch3 mm', 'Threads6', 'Estimated RAM0.90 GiB', 'Host ceiling8.00 GiB', 'Since improvement0.0 s'])
+        expect(panel()).toContain(fact);
+      expect(screen.queryByText(/Pending settings for the next run/)).toBeNull();
+      vi.setSystemTime(new Date('2026-11-14T10:00:35Z'));
+      await waitFor(()=>expect(panel()).toContain('Since improvement5.0 s'));
+      expect(panel()).toContain('Remaining budget85.0 s');
+      native.state.mockResolvedValue({...running, revision:2, live_result:live(25, 2)});
+      await waitFor(()=>expect(panel()).toContain('Since improvement0.0 s'));
+
+      document.search.resolved_settings.resolved = {...document.search.resolved_settings.resolved, pitch_mm:3, thread_count:6};
+      document.search.resolved_settings.resolution = {mode:'manual', pitch_mm:3};
+      document.search.resolved_settings.search.budget_seconds = 120;
+      document.search.pitch_levels_mm = [3, 6];
+      document.search.elapsed_seconds = 50;
+      document.metrics.time_to_best_seconds = 38;
+      native.state.mockResolvedValue({...running, revision:3, live_result:live(25, 2),
+        result:{id:'result-1', document, preview:null, origin:'solve'},
+        operation:{...operation, phase:'finished', finished_at:'2026-11-14T10:00:52Z', result_id:'result-1', completion_elapsed_seconds:52}});
+      await waitFor(()=>expect(panel()).toContain('Since improvement12.0 s'));
+      for (const fact of ['Pitch3 mm, coarsened to 6 mm', 'Threads6', 'Estimated RAM0.90 GiB', 'Remaining budget70.0 s'])
+        expect(panel()).toContain(fact);
+    } finally { vi.useRealTimers(); }
   });
   it('UI-02 T015 shows the native live packing while Save and export stay unavailable', async () => {
     const fixture = fixtures.find(f => f.kind === 'results' && f.schema_valid && f.semantic_valid)!;
