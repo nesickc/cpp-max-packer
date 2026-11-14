@@ -934,8 +934,7 @@ BaselineOutcome run_aabb_baseline_impl(
         // own rather than by the phase allowance that whole-layout trials consume.
         bool fill_failed = false;
         detail::GapFillCache fields;
-        const auto fill = [&](std::shared_ptr<const geometry::ValidatedSolution> base, const RunControl& within,
-                              std::array<int, 3> priority = { 2, 1, 0 }) {
+        const auto fill = [&](std::shared_ptr<const geometry::ValidatedSolution> base, const RunControl& within) {
             if (!(limits.gap_fill_pitch_mm > 0) || boundary(control) != Boundary::none) {
                 return base;
             }
@@ -944,7 +943,6 @@ BaselineOutcome run_aabb_baseline_impl(
             request.threads = limits.gap_fill_threads;
             request.max_working_bytes = remaining(limits.max_working_bytes, live);
             request.capacity = capacity;
-            request.priority = priority;
             // `base` advances with each insertion; keep the layout the filler reads alive.
             const auto start = base;
             const auto filled = detail::fill_gaps(
@@ -1019,9 +1017,7 @@ BaselineOutcome run_aabb_baseline_impl(
             }
         }
         // Slides open space at the walls they moved away from, including sweeps
-        // cut short by the validation allowance. Then an FFT greedy layout from
-        // the empty box may beat the seeded patterns when their free space is
-        // fragmented; it replaces them only with more native-valid copies.
+        // cut short by the validation allowance.
         accepted = fill(accepted, sliding);
         if (fill_failed) {
             return finish("COMPACTION_MEMORY_LIMIT", TerminationReason::resource_limit);
@@ -1030,12 +1026,10 @@ BaselineOutcome run_aabb_baseline_impl(
             return out;
         }
         // With no free place left, one more copy can still fit where its
-        // neighbours have room to move aside. Half of the remaining time.
+        // neighbours have room to move aside. It takes the rest of the time.
         if (control.deadline && accepted->copies().size() < capacity && boundary(control) == Boundary::none) {
-            auto share = control;
-            share.deadline = control.now() + (*control.deadline - control.now()) / 2;
             auto layout = accepted->copies();
-            detail::insert_copies(*context, layout, seeds, capacity, limits.gap_fill_threads, share,
+            detail::insert_copies(*context, layout, seeds, capacity, limits.gap_fill_threads, control,
                                   [&](const std::vector<geometry::CopyPose>& proposal) {
                 if (boundary(control) != Boundary::none ||
                     out.stats.candidate_evaluations >= limits.max_candidate_evaluations) {
@@ -1067,33 +1061,6 @@ BaselineOutcome run_aabb_baseline_impl(
             });
             if (accepted != incumbent.best()->solution && !offer(accepted, live)) {
                 return out;
-            }
-        }
-        if (limits.gap_fill_pitch_mm > 0 && accepted->copies().size() < capacity &&
-            boundary(control) == Boundary::none) {
-            const auto made = geometry::make_candidate(context, {});
-            const auto* candidate = std::get_if<std::shared_ptr<const geometry::Candidate>>(&made);
-            const auto empty = candidate ? geometry::validate(context, *candidate).validated_solution : nullptr;
-            // Each axis order gives a different greedy layout; the deadline bounds how many
-            // run. With only a few copies in the box the order hardly matters.
-            auto best = accepted;
-            bool first = true;
-            for (const auto priority : { std::array { 2, 1, 0 }, std::array { 2, 0, 1 }, std::array { 1, 2, 0 },
-                                         std::array { 0, 2, 1 }, std::array { 1, 0, 2 }, std::array { 0, 1, 2 } }) {
-                if (!empty || boundary(control) != Boundary::none || (!first && best->copies().size() < 8)) {
-                    break;
-                }
-                first = false;
-                const auto greedy = fill(empty, control, priority);
-                if (fill_failed) {
-                    return finish("COMPACTION_MEMORY_LIMIT", TerminationReason::resource_limit);
-                }
-                if (greedy->copies().size() > best->copies().size()) {
-                    best = greedy;
-                    if (!offer(best, live)) {
-                        return out;
-                    }
-                }
             }
         }
         return stopped ? finish("COMPACTION_VALIDATION_LIMIT", TerminationReason::resource_limit)

@@ -239,18 +239,16 @@ depend only on the two rotations: for cube rotations the lattice maps onto itsel
 so the offsets for rotations A and B are A applied to those for the identity and
 A^T B, and at most 24 small correlations serve every pair. Gap-fill checks are
 bounded per check, not by the phase allowance that whole-layout trials consume.
-The same filler then packs an empty box; that layout replaces the compacted one
-only when it holds more native-valid copies. Fields are conservative proposals:
-the native validator decides every insertion.
+Fields are conservative proposals: the native validator decides every insertion.
 
 The positive-clearance L-prism scoreboard case improves from one copy to two.
 The exact-contact L-prism case remains separate: its unresolved contact verdicts
 are not bypassed by compaction.
 
 Slides and the refill that follows take at most half of the phase's time, also
-inside a whole-layout validation; inserting copies (next section) takes half of
-what is left and the greedy layouts the rest. Before, slides on a dense layout
-could use the whole budget: 660 spheres spent 30 s in them without a change.
+inside a whole-layout validation; inserting copies (next section) takes the rest.
+Before, slides on a dense layout could use the whole budget: 660 spheres spent
+30 s in them without a change.
 
 ## One more copy
 
@@ -418,9 +416,8 @@ retain the validated uniform-grid baseline and staggered proposal
 for timed runs, validate improving layered double lattices
 for timed runs, validate improving residual-block proposals (depths 1–3)
 for timed runs, validate improving mesh-envelope stagger proposals
-for timed runs, compact, FFT-gap-fill, grow in one more copy while one fits,
-    then FFT-greedy-pack the empty box in each axis order while time remains
-    (layouts with fewer than 8 copies try one)
+for timed runs, compact, FFT-gap-fill, then grow in one more copy while one
+    fits and time remains
 if fixed-work, or no seeded phase placed a copy, and FFT admission is affordable:
     greedily insert from an empty layout using cached spectral pages
     on stall, try bounded physical face alignments and low-overlap candidates

@@ -720,8 +720,8 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             return outcome;
         }
     }
-    // Timed runs in a box end with compaction's FFT gap filling and greedy
-    // layouts. The per-insertion box-correlation phase below remains for
+    // Timed runs in a box end with compaction's FFT gap filling and one-more-copy
+    // insertion. The per-insertion box-correlation phase below remains for
     // fixed-work runs, STL containers (where compaction is unavailable) and
     // timed runs whose seeded phases found no copy at all.
     if (timed && std::holds_alternative<geometry::BoxDimensions>(context->container()) && outcome.run.best &&

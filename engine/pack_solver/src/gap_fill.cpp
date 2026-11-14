@@ -458,9 +458,9 @@ GapFillStats fill_gaps(const geometry::ValidationContext& context, std::span<con
             stats.outcome = "GAP_FILL_INTERRUPTED";
             return stats;
         }
-        // Lowest free translation first, by the kernel's bottom cell along the
-        // priority axes. Each cursor walks its mask in that order.
-        const auto& order = request.priority;
+        // Lowest free translation first, by the kernel's bottom cell along Z,
+        // then Y, then X. Each cursor walks its mask in that order.
+        constexpr std::array order { 2, 1, 0 };
         Rotation* best = nullptr;
         std::tuple<std::int64_t, std::int64_t, std::int64_t> best_key {};
         CellIndex best_translation {};
