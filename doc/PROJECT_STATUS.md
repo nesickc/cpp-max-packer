@@ -1,6 +1,6 @@
 # Project status
 
-Updated 2026-11-13. Details belong in PRs and `.local/` logs.
+Updated 2026-11-14. Details belong in PRs and `.local/` logs.
 
 ## What works
 

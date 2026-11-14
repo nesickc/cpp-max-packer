@@ -897,7 +897,7 @@ BaselineOutcome run_aabb_baseline_impl(
         auto accepted = entry->solution;
         bool stopped = false;
         // Slides and the refill that follows take at most half of the time
-        // left; inserting copies and greedy layouts keep the rest.
+        // left; inserting copies keeps the rest.
         auto sliding = control;
         if (control.deadline) {
             sliding.deadline = control.now() + (*control.deadline - control.now()) / 2;
