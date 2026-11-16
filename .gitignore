@@ -14,6 +14,7 @@ __pycache__/
 /.pnpm-store/
 
 # Desktop build products and staged native sidecar.
+/bin/
 /desktop/node_modules/
 /desktop/dist/
 /desktop/src-tauri/target/

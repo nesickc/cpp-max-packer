@@ -82,11 +82,11 @@ With the Release engine built and frontend dependencies installed, run:
 ```
 
 The wrapper stages the engine and its dependency notices, builds the frontend
-and shell, then places the fixed engine beside
-`desktop/src-tauri/target/release/spectrapack-desktop.exe`. Launch that executable
-with its sibling engine and `engine-resources` directory present. It verifies
+and shell, then leaves `bin/release/spectrapack-desktop.exe` beside the fixed
+engine and its `engine-resources` directory. Launch it from there. It verifies
 the engine's build-time hash; replacing that binary requires rebuilding the
-shell. WebView2 must be installed. This is a local build, not a qualified installer.
+shell. WebView2 must be installed. `-Mode Installer` also builds the versioned
+setup in `bin/installer/`; see [building the desktop app](BUILDING.md#desktop-app-and-installer).
 
 License notices are generated during staging under `engine-resources/third-party/`.
 The index links packages to complete license/NOTICE files, with identical texts
@@ -102,5 +102,5 @@ this adds no runtime network access.
 `-Mode Dev` starts the Tauri development window after staging. Test mode with
 `-Mode Test -TestStlPath <file>` runs the Rust core integration suite against an actual
 10 mm analytic cube and native engine. `-EngineBuildDirectory` selects an
-existing native build; `-DebugBuild` selects a Debug shell. Measured acceptance
+existing native build; `-DebugBuild` builds a Debug shell in `bin/debug/`. Measured acceptance
 evidence and remaining qualification are recorded in [the ticket](../doc/T-008.md).

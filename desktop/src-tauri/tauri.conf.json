@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SpectraPack",
-  "version": "0.0.0",
   "identifier": "io.spectrapack.desktop",
   "build": {
     "beforeDevCommand": { "script": "pnpm desktop:dev", "cwd": "../.." },
@@ -23,6 +22,6 @@
     "icon": ["icons/icon.ico"],
     "externalBin": ["binaries/spectrapack-engine"],
     "resources": ["engine-resources"],
-    "windows": { "webviewInstallMode": { "type": "skip" } }
+    "windows": { "webviewInstallMode": { "type": "offlineInstaller" } }
   }
 }
