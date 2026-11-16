@@ -59,14 +59,16 @@ CUBE45_CASES = {'tile5', 'tile10', 'tile5-0', 'tile10-0'}
 # Cases packed as the desktop packs them: the automatic packing envelope, 2 mm pitch.
 # A looser clearance must not find fewer copies, so every count here reaches 74.
 # The models are local only; the cases are skipped where they are absent.
-# The bunny is an irregular part with no known best layout: its target is the best found.
+# The bunny and Benchy are irregular parts with no known best layout: their targets are the best found.
+# Benchy's copies take seconds each to settle in one-more-copy insertion.
 CASES.update({
     'yasya-0':     ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 0.0, 0.0, 2.0, 60, 74, 74),
     'yasya-1':     ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 1.0, 1.0, 2.0, 60, 74, 74),
     'yasya-wall0': ('rc/items/Yasya-250_V6.stl', (400, 240, 200), 1.0, 0.0, 2.0, 60, 74, 74),
     'bunny':       ('rc/items/bunny.stl', (400, 340, 285), 0.0, 0.0, 2.0, 60, 46, 47),
+    'benchy':      ('rc/items/3DBenchy.stl', (240, 170, 90), 0.0, 0.0, 2.0, 60, 46, 47),
 })
-ENVELOPE_CASES = {'yasya-0', 'yasya-1', 'yasya-wall0', 'bunny'}
+ENVELOPE_CASES = {'yasya-0', 'yasya-1', 'yasya-wall0', 'bunny', 'benchy'}
 
 
 def write_binary_stl(path, triangles):

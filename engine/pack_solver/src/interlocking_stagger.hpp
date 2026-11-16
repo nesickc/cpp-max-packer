@@ -298,12 +298,14 @@ public:
     std::uint64_t work() const { return work_; }
     std::uint64_t vertices() const { return vertices_; }
 
-    // First contact while translating toward the negative column axis. These
-    // clipped interval envelopes only propose motion; native validation remains
-    // authoritative. An uncertain starting overlap cannot authorize a slide.
+    // First contact while translating down the column axis (up it for a
+    // negative `direction`). These clipped interval envelopes only propose
+    // motion; native validation remains authoritative. An uncertain starting
+    // overlap cannot authorize a slide; `escape` then receives the nearest
+    // position below it.
     std::optional<double> lower_contact(const BasicStaggerEnvelope& other, const geometry::Vec3& translation,
-                                        const geometry::Vec3& stationary, double lower, double gap,
-                                        double* escape = nullptr, double direction = 1)
+                                        const geometry::Vec3& stationary, double lower, double gap, double& escape,
+                                        double direction)
     {
         const double start = direction * translation[column_];
         const double fixed_origin = direction * stationary[column_];
@@ -378,9 +380,7 @@ public:
                                             (direction > 0 ? fixed.high - moving.low : moving.high - fixed.low) +
                                             padding + margin;
                         if (start > low && start < high) {
-                            if (escape) {
-                                *escape = std::nextafter(low, -std::numeric_limits<double>::infinity());
-                            }
+                            escape = std::nextafter(low, -std::numeric_limits<double>::infinity());
                             return {};
                         }
                         if (high <= start) {

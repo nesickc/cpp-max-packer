@@ -577,6 +577,9 @@ InsertStats insert_copies(const geometry::ValidationContext& context, std::vecto
     const double radius =
         std::max({ bounds.max[0] - bounds.min[0], bounds.max[1] - bounds.min[1], bounds.max[2] - bounds.min[2] }) / 2;
     constexpr double growth = 0.02;
+    // Set when one attempt has settled: the others give way so that its layout
+    // goes to the validator at once.
+    std::atomic<bool> settled { false };
     const auto relax = [&](std::vector<Copy>& copies, double spare) {
         const double target = pair + spare;
         const std::size_t n = copies.size();
@@ -593,7 +596,7 @@ InsertStats insert_copies(const geometry::ValidationContext& context, std::vecto
         double best = infinity;
         std::size_t stride = 8;
         for (int round = 0, stale = 0; round != 4000; ++round) {
-            if (control.poll() != runtime::StopCause::none) {
+            if (control.poll() != runtime::StopCause::none || settled.load()) {
                 return false;
             }
             double worst = 0, energy = 0;
@@ -752,19 +755,24 @@ InsertStats insert_copies(const geometry::ValidationContext& context, std::vecto
         }
         const std::size_t workers = std::max<std::size_t>(1, threads);
         std::atomic<std::size_t> next { 0 }, attempts { 0 };
+        // Attempts cut short when another settled; they go first next time.
+        std::vector<std::size_t> again;
         bool inserted = false;
-        while (!inserted && next.load() < jobs.size()) {
+        while (!inserted && (!again.empty() || next.load() < jobs.size())) {
             if (control.poll() != runtime::StopCause::none) {
                 stats.attempts += attempts.load();
                 stats.outcome = "INSERT_INTERRUPTED";
                 return stats;
             }
             // Threads take seeds until one of them has a layout to offer.
-            std::atomic<bool> settled { false };
+            settled.store(false);
+            std::atomic<std::size_t> retried { 0 };
             std::vector<std::vector<Copy>> found(workers);
+            std::vector<std::size_t> cut(workers, jobs.size());
             const auto work = [&](std::size_t worker) {
                 while (!settled.load()) {
-                    const auto job = next.fetch_add(1);
+                    const auto retry = retried.fetch_add(1);
+                    const auto job = retry < again.size() ? again[retry] : next.fetch_add(1);
                     if (job >= jobs.size()) {
                         return;
                     }
@@ -779,6 +787,9 @@ InsertStats insert_copies(const geometry::ValidationContext& context, std::vecto
                             return;
                         }
                     }
+                    if (settled.load()) {
+                        cut[worker] = job;
+                    }
                 }
             };
             std::vector<std::thread> others;
@@ -789,6 +800,13 @@ InsertStats insert_copies(const geometry::ValidationContext& context, std::vecto
             for (auto& other : others) {
                 other.join();
             }
+            again.erase(again.begin(), again.begin() + std::min(retried.load(), again.size()));
+            for (const auto job : cut) {
+                if (job < jobs.size()) {
+                    again.push_back(job);
+                }
+            }
+            std::sort(again.begin(), again.end());
             for (auto& copies : found) {
                 if (copies.empty() || inserted) {
                     continue;

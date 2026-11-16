@@ -682,7 +682,9 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
     auto preparation_stats = outcome.stagger.work;
     // Layered double lattices first, within a share of the remaining time, so
     // later phases start from them and compaction refills whichever layout wins.
-    for (unsigned layout = 0; layout != 5; ++layout) {
+    using detail::PhysicalPhase;
+    for (const auto phase : { PhysicalPhase::slab_lattice, PhysicalPhase::blocks, PhysicalPhase::interlocking,
+                              PhysicalPhase::mixed_interlocking, PhysicalPhase::compaction }) {
         if (!timed || !outcome.run.best || boundary(control) != Boundary::none) {
             break;
         }
@@ -693,15 +695,8 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         block_limits.max_candidate_evaluations =
             remaining(limits.spectral.max_candidate_evaluations, preparation_stats.candidate_evaluations);
         const auto previous = outcome.run;
-        auto blocked =
-            layout == 0 || layout == 4
-                ? detail::run_compaction_with_seeds(context, block_limits, control, catalog.quaternions, sink,
-                                                    outcome.run.best, layout == 0)
-            : layout > 1 ? detail::run_interlocking_stagger_with_seeds(context, block_limits, control,
-                                                                       catalog.quaternions, sink, outcome.run.best,
-                                                                       layout == 3)
-                         : detail::run_block_layout_with_seeds(context, block_limits, control, catalog.quaternions,
-                                                               sink, outcome.run.best);
+        auto blocked = detail::run_physical_phase(phase, context, block_limits, control, catalog.quaternions, sink,
+                                                  outcome.run.best);
         auto total = outcome.run.stats;
         const bool counted = add_run_stats(total, blocked.stats) && add_run_stats(preparation_stats, blocked.stats);
         if (!blocked.best) {
@@ -726,8 +721,8 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             return outcome;
         }
     }
-    // Timed runs in a box end with compaction's FFT gap filling and greedy
-    // layouts. The per-insertion box-correlation phase below remains for
+    // Timed runs in a box end with compaction's FFT gap filling and one-more-copy
+    // insertion. The per-insertion box-correlation phase below remains for
     // fixed-work runs, STL containers (where compaction is unavailable) and
     // timed runs whose seeded phases found no copy at all.
     if (timed && std::holds_alternative<geometry::BoxDimensions>(context->container()) && outcome.run.best &&

@@ -10,12 +10,24 @@ struct StaggerSummary;
 
 namespace spectrapack::solver::detail {
 
-// Slab lattice mode only proposes layered double lattices (slab_lattice.hpp)
-// and returns; otherwise slides, contracts and FFT-refills the entry layout.
-[[nodiscard]] BaselineOutcome run_compaction_with_seeds(std::shared_ptr<const geometry::ValidationContext>,
-                                                        const BaselineLimits&, const RunControl&,
-                                                        const std::vector<geometry::Quaternion>&, SnapshotSink,
-                                                        SnapshotHandle, bool slab_lattice = false);
+// The physical seeding and compaction phases, in the order timed runs use
+// them. All but the grid resume a prior phase's validated incumbent and replace
+// it only with a natively valid layout that ranks higher.
+enum class PhysicalPhase {
+    grid,                // AABB grid per orientation; also the public baseline
+    stagger,             // half-column rows (run_stagger_seed_with_seeds)
+    slab_lattice,        // layered double lattices (slab_lattice.hpp)
+    blocks,              // residual block layouts (block_layout.hpp)
+    interlocking,        // height-staggered, then coplanar rows of one rotation
+    mixed_interlocking,  // rows of a rotation and its half-turned partner
+    compaction,          // slides, contraction, refill, gap filling, one more copy
+};
+
+// Runs one of the phases from slab_lattice on, resuming `entry`.
+[[nodiscard]] BaselineOutcome run_physical_phase(PhysicalPhase, std::shared_ptr<const geometry::ValidationContext>,
+                                                 const BaselineLimits&, const RunControl&,
+                                                 const std::vector<geometry::Quaternion>&, SnapshotSink,
+                                                 SnapshotHandle entry);
 
 // Physical refinement phases resume a prior phase's exact validated snapshot.
 struct IncumbentResumeAccess {
@@ -34,15 +46,5 @@ struct IncumbentResumeAccess {
                                                           const BaselineLimits&, const RunControl&,
                                                           const std::vector<geometry::Quaternion>&, StaggerSummary&,
                                                           SnapshotSink, SnapshotHandle initial);
-
-[[nodiscard]] BaselineOutcome run_block_layout_with_seeds(std::shared_ptr<const geometry::ValidationContext>,
-                                                          const BaselineLimits&, const RunControl&,
-                                                          const std::vector<geometry::Quaternion>&, SnapshotSink,
-                                                          SnapshotHandle);
-
-[[nodiscard]] BaselineOutcome run_interlocking_stagger_with_seeds(std::shared_ptr<const geometry::ValidationContext>,
-                                                                  const BaselineLimits&, const RunControl&,
-                                                                  const std::vector<geometry::Quaternion>&,
-                                                                  SnapshotSink, SnapshotHandle, bool mixed = false);
 
 }  // namespace spectrapack::solver::detail

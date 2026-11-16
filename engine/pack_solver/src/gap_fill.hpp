@@ -26,8 +26,6 @@ struct GapFillRequest {
     std::uint64_t max_working_bytes {};
     std::uint64_t max_padded_cells { 16'777'216 };
     std::uint64_t capacity {};
-    // World axes compared first to last when choosing the lowest free translation.
-    std::array<int, 3> priority { 2, 1, 0 };
 };
 
 struct GapFillStats {
