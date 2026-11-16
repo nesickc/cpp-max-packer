@@ -5,7 +5,7 @@ everything here is **tunable**: change weights, page sizes, catalogs, schedules 
 recovery behaviour freely when `python tools/scoreboard.py` shows an improvement and
 the validity rules in spec §5.3 and §6 still hold. Update this file with the change;
 no decision record is needed. This file began with spec v0.2 §6 and is updated
-through 2026-11-14. Historical rationale lives in
+through 2026-11-16. Historical rationale lives in
 `spec/decisions/` and `doc/T-*.md` (frozen).
 
 ## Desktop 45-degree orientations
@@ -22,7 +22,7 @@ memory budgets, so a larger catalog does not guarantee a higher count in every
 bounded run. The 24-orientation cube mode remains the desktop default. All
 placements still require full-resolution validation.
 
-## Baseline and staggered seed
+## Baseline
 
 For a box, generate a grid of oriented object AABBs for each allowed baseline orientation. For dimensions `b_x,b_y,b_z`, pair gap `c_p`, and wall gap `c_w`, the candidate count along axis `j` is:
 
@@ -37,20 +37,9 @@ thousand times the work and consumed the baseline's whole allowance on the plain
 containment is proved from a copy's bounds at zero wall clearance as well, so a copy's mesh
 is expanded only when another check needs it.
 
-The bounded T015-P1 package additionally investigates a physical staggered-row
-seed within the existing permitted rotations and work budget. It preserves the
-AABB incumbent and sends complete proposals to authoritative solid validation;
-it does not silently alter manual pitch, clearance, dimensions or rotation policy.
-Its seed and subsequent FFT work share the existing spectral-phase allowances;
-the baseline keeps its existing separate allowance. Admit only the catalog prefix
-permitted by the remaining pass budget, charging before oriented queries. Additive
-command `diagnostics.stagger` records actual work and completion within that prefix,
-independently of later FFT failure; persistent result schemas are unchanged.
-Detailed bounded ownership and accounting follow [ADR 0018](../spec/decisions/0018-cardinal-support-stagger.md).
-Its practical targets and remaining gates are recorded in [T-015](../doc/T-015.md).
-In timed runs later phases always supersede this seed (measured 2026-11-14: no
-case loses a copy without it); it remains for fixed-work runs and the
-`diagnostics.stagger` record, which would have to go with it.
+A staggered-row seed from T015-P1 used to follow the grid. Later phases always superseded it in timed runs, so it was
+removed on 2026-11-16 with its `diagnostics.stagger` record; fixed-work runs now go
+from the grid straight to the spectral greedy search.
 
 Zero-clearance validation uses the same authoritative bounds as positive clearance.
 For cardinal poses, exact dyadic comparisons keep source extrema and translations
@@ -63,8 +52,8 @@ STL export applies the same exact bounds proof to the independently imported
 quantized vertices, so original-model bounds cannot authorize a staged mesh.
 
 This raises the zero-clearance Pryanik-2 result from 1 to 360 valid copies at both
-2 and 4 mm manual pitch under the existing 60-second settings. The existing grid
-produces 330 and the generated staggered proposal improves it to 360; no saved
+2 and 4 mm manual pitch under the 60-second settings of the time. The grid
+produced 330 and the since-removed staggered seed 360; no saved
 item-specific poses are used. That validation fix alone left the positive-clearance
 result at 340.
 
@@ -425,7 +414,7 @@ Refine promising layouts by translation steps `h/2`, `h/4`, `h/8`, and, for free
 The current implementation is narrower than the original design:
 
 ```text
-retain the validated uniform-grid baseline and staggered proposal
+retain the validated uniform-grid baseline
 for timed runs, validate improving layered double lattices
 for timed runs, validate improving residual-block proposals (depths 1–3)
 for timed runs, validate improving mesh-envelope stagger proposals

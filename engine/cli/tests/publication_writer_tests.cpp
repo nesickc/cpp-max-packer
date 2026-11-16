@@ -248,7 +248,7 @@ TEST_CASE("AT-14 T015 serialization refusal retains previous delivered DTO and r
     }
 }
 TEST_CASE("AT-16 T015 failed final packing flush retains completed solver diagnostics without artifact eligibility",
-          "[publication][writer][T015][stagger-diagnostics]")
+          "[publication][writer][T015]")
 {
     const auto root =
         std::filesystem::temp_directory_path() /
@@ -315,9 +315,7 @@ TEST_CASE("AT-16 T015 failed final packing flush retains completed solver diagno
     CHECK(failed.at("error").at("code") == "PUBLICATION_RESOURCE_LIMIT");
     const auto& details = failed.at("error").at("details");
     CHECK_FALSE(details.contains("result_path"));
-    const auto& stagger = details.at("diagnostics").at("stagger");
-    CHECK(stagger.at("state") == "completed");
-    CHECK(stagger.at("best_count_after") == 1);
+    CHECK(details.at("diagnostics").at("work").at("candidate_evaluations") >= 1);
     REQUIRE(fixture.session.retained_solution);
     CHECK(fixture.session.retained_solution->copies().size() == 1);
     CHECK(geo::revalidate(fixture.session.retained_solution).validated_solution);
