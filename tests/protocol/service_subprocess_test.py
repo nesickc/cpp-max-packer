@@ -28,6 +28,21 @@ with tempfile.TemporaryDirectory() as outside_checkout:
             raise AssertionError("timed out waiting for service response")
         response = json.loads(response_line)
         assert response == {"protocol_version": 1, "request_id": "subprocess-1", "ok": True, "result": capability_value}
+        if sys.platform == "win32":
+            # Windows slows a process whose app is not in the foreground; the engine must have opted out.
+            import ctypes
+
+            class Throttling(ctypes.Structure):
+                _fields_ = [("Version", ctypes.c_ulong), ("ControlMask", ctypes.c_ulong), ("StateMask", ctypes.c_ulong)]
+
+            kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel.GetProcessInformation.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_ulong]
+            throttling = Throttling(1, 0, 0)
+            assert kernel.GetProcessInformation(int(process._handle), 4, ctypes.byref(throttling),
+                                                ctypes.sizeof(throttling)), ctypes.get_last_error()
+            # Execution speed is under the engine's control (bit 0 of ControlMask) and not throttled (StateMask).
+            assert throttling.ControlMask & 1 == 1 and throttling.StateMask & 1 == 0, (
+                throttling.ControlMask, throttling.StateMask)
         process.stdin.close()
         assert process.wait(timeout=5) == 0
         assert process.stderr is not None
