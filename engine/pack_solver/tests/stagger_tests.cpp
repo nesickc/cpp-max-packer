@@ -65,8 +65,10 @@ TEST_CASE("Timed stagger fits wings beneath neighboring bodies", "[solver][inter
     sol::SpectralLimits limits;
     limits.resource_mode = sol::ResourceMode::timed;
     std::vector<std::uint64_t> counts;
+    std::vector<sol::SnapshotHandle> published;
     const auto run = sol::run_cpu_spectral(context, { {}, .001 }, limits, control, [&](sol::SnapshotHandle snapshot) {
         counts.push_back(snapshot->score.count);
+        published.push_back(snapshot);
         if (stop_after_improvement && snapshot->score.count >= 3) {
             stop.request_stop();
         }
@@ -75,6 +77,11 @@ TEST_CASE("Timed stagger fits wings beneath neighboring bodies", "[solver][inter
     CHECK(run.run.best->score.count >= 3);
     CHECK(geo::revalidate(run.run.best->solution).validated_solution);
     CHECK(std::is_sorted(counts.begin(), counts.end()));
+    // Each phase resumes the incumbent without publishing it again.
+    for (std::size_t index = 1; index < published.size(); ++index) {
+        CHECK(published[index]->revision == published[index - 1]->revision + 1);
+    }
+    CHECK(run.run.best == published.back());
     CHECK(run.run.best->solution->context() == context);
     if (stop_after_improvement) {
         CHECK(run.run.termination_reason == sol::TerminationReason::user_stopped);

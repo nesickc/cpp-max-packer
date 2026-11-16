@@ -554,7 +554,7 @@ class RuntimeTests(unittest.TestCase):
                 if monitor_failure:
                     self.assertFalse(reply['ok'],reply)
                     self.assertEqual(reply['error']['code'],'STOP_MONITOR_FAILED')
-                    self.assertIn('work',reply['error']['details']['diagnostics'])
+                    self.assertGreater(reply['error']['details']['diagnostics']['work']['candidate_evaluations'],0)
                 else:
                     self.assertTrue(reply['ok'],reply)
                     # Search may already have ended when Stop races the final certified commit.

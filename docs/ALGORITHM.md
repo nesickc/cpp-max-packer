@@ -37,8 +37,7 @@ thousand times the work and consumed the baseline's whole allowance on the plain
 containment is proved from a copy's bounds at zero wall clearance as well, so a copy's mesh
 is expanded only when another check needs it.
 
-A staggered-row seed (T015-P1, [ADR 0018](../spec/decisions/0018-cardinal-support-stagger.md))
-used to follow the grid. Later phases always superseded it in timed runs, so it was
+A staggered-row seed from T015-P1 used to follow the grid. Later phases always superseded it in timed runs, so it was
 removed on 2026-11-16 with its `diagnostics.stagger` record; fixed-work runs now go
 from the grid straight to the spectral greedy search.
 

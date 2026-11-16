@@ -315,7 +315,7 @@ TEST_CASE("AT-16 T015 failed final packing flush retains completed solver diagno
     CHECK(failed.at("error").at("code") == "PUBLICATION_RESOURCE_LIMIT");
     const auto& details = failed.at("error").at("details");
     CHECK_FALSE(details.contains("result_path"));
-    CHECK(details.at("diagnostics").contains("work"));
+    CHECK(details.at("diagnostics").at("work").at("candidate_evaluations") >= 1);
     REQUIRE(fixture.session.retained_solution);
     CHECK(fixture.session.retained_solution->copies().size() == 1);
     CHECK(geo::revalidate(fixture.session.retained_solution).validated_solution);

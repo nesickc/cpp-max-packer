@@ -575,7 +575,7 @@ Json command_diagnostics(const solver::SpectralOutcome& outcome, const solver::S
             { "validation_aabb_pair_tests", outcome.run.stats.validation_aabb_pair_tests },
             { "spectral_correlations", outcome.spectral_stats.correlations },
             { "spectral_pages_examined", outcome.spectral_stats.pages_examined } }                      },
-        { "time_to_best_basis",        std::string(time_to_best_basis)                                 },
+        { "time_to_best_basis",         std::string(time_to_best_basis)                                 },
         { "caller_reserved_bytes",      caller_reserved                                                 },
         { "tracked_working_bytes_peak", outcome.run.stats.tracked_working_bytes_peak                    },
         { "diagnostic_code",            std::string(outcome.run.diagnostic_code)                        }
