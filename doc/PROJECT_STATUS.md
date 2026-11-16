@@ -1,6 +1,6 @@
 # Project status
 
-Updated 2026-11-14. Details belong in PRs and `.local/` logs.
+Updated 2026-11-16. Details belong in PRs and `.local/` logs.
 
 ## What works
 
@@ -68,8 +68,8 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
 5. [x] **Solver cleanup** (first slice of item 8). Simplify seeding and compaction in
    `pack_solver` (11,300 lines) before extending them; scoreboard unchanged.
    Each phase was knocked out in turn: only compaction's greedy empty-box layouts
-   never helped and are gone. The other older phases still win a case or a test
-   fixture, except the stagger seed, kept with `diagnostics.stagger` (ALGORITHM.md).
+   never helped and are gone, and so is the stagger seed with `diagnostics.stagger`,
+   which never decided a timed result. The other older phases still win a case or a test fixture.
 6. [x] **Denser search**, tried in this order, each kept only if the scoreboard moves.
    (a) Repeating patterns: search the three repeat vectors of one copy, or of a copy
    and its twin, on the existing pair no-fit maps, then the placement in the box that

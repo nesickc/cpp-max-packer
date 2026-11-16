@@ -4,10 +4,6 @@
 
 #include "spectrapack/solver/baseline.hpp"
 
-namespace spectrapack::solver {
-struct StaggerSummary;
-}
-
 namespace spectrapack::solver::detail {
 
 // The physical seeding and compaction phases, in the order timed runs use
@@ -15,7 +11,6 @@ namespace spectrapack::solver::detail {
 // it only with a natively valid layout that ranks higher.
 enum class PhysicalPhase {
     grid,                // AABB grid per orientation; also the public baseline
-    stagger,             // half-column rows (run_stagger_seed_with_seeds)
     slab_lattice,        // layered double lattices (slab_lattice.hpp)
     blocks,              // residual block layouts (block_layout.hpp)
     interlocking,        // height-staggered, then coplanar rows of one rotation
@@ -40,11 +35,5 @@ struct IncumbentResumeAccess {
     std::shared_ptr<const geometry::ValidationContext>, const BaselineLimits&, const RunControl&,
     const std::vector<geometry::Quaternion>&, SnapshotSink = {},
     std::shared_ptr<const geometry::ValidatedSolution> initial = {});
-
-// Explicit private whole-layout mode; public baseline ordering/limits are unchanged.
-[[nodiscard]] BaselineOutcome run_stagger_seed_with_seeds(std::shared_ptr<const geometry::ValidationContext>,
-                                                          const BaselineLimits&, const RunControl&,
-                                                          const std::vector<geometry::Quaternion>&, StaggerSummary&,
-                                                          SnapshotSink, SnapshotHandle initial);
 
 }  // namespace spectrapack::solver::detail

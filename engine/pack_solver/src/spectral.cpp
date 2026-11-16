@@ -475,7 +475,6 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                                       "PHYSICAL_VERTEX_LIMIT",
                                       "PHYSICAL_PASS_LIMIT",
                                       "PHYSICAL_CANDIDATE_LIMIT",
-                                      "STAGGER_CANDIDATE_LIMIT",
                                       "VALIDATION_KERNEL_WORK_LIMIT",
                                       "VALIDATION_COPY_ID_WORK_LIMIT",
                                       "VALIDATION_ORIENTATION_WORK_LIMIT",
@@ -626,54 +625,21 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         defer_phase("baseline");
     }
 
-    outcome.stagger.best_count_before = outcome.stagger.best_count_after = retained ? retained->copies().size() : 0;
     if (limits.spectral.max_candidate_evaluations == 0 || limits.spectral.max_search_passes == 0) {
         return outcome;
     }
-    auto seed_limits = limits.spectral;
-    seed_limits.max_working_bytes = std::min(seed_limits.max_working_bytes, limits.max_working_bytes);
-    if (!add(seed_limits.reserved_bytes, limits.reserved_bytes) ||
-        !add(seed_limits.reserved_bytes, kSpectralMetadataBytes) ||
+    auto phase_limits = limits.spectral;
+    phase_limits.max_working_bytes = std::min(phase_limits.max_working_bytes, limits.max_working_bytes);
+    if (!add(phase_limits.reserved_bytes, limits.reserved_bytes) ||
+        !add(phase_limits.reserved_bytes, kSpectralMetadataBytes) ||
         (outcome.run.best &&
-         !add(seed_limits.reserved_bytes, sizeof(NativeSnapshot) + 2 * detail::kSharedOwnerControlBytes))) {
-        outcome.stagger.state = StaggerState::interrupted;
-        outcome.stagger.completion_reason = "resource_limit";
+         !add(phase_limits.reserved_bytes, sizeof(NativeSnapshot) + 2 * detail::kSharedOwnerControlBytes))) {
         outcome.run.termination_reason = TerminationReason::resource_limit;
-        outcome.run.diagnostic_code = "STAGGER_RESOURCE_LIMIT";
+        outcome.run.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
         return outcome;
     }
-    auto aggregate = outcome.run.stats;
-    if (outcome.run.best || !timed) {
-        const auto prior_best = outcome.run.best;
-        const auto prior_raw = retained;
-        auto seeded = detail::run_stagger_seed_with_seeds(context, seed_limits, control, catalog.quaternions,
-                                                          outcome.stagger, sink, outcome.run.best);
-        const bool counters_ok = add_run_stats(aggregate, seeded.stats);
-        outcome.run = std::move(seeded);
-        outcome.run.stats = aggregate;
-        if (!outcome.run.best) {
-            outcome.run.best = prior_best;
-        }
-        if (!outcome.run.retained_solution) {
-            outcome.run.retained_solution = prior_raw;
-        }
-        retained = outcome.run.best ? outcome.run.best->solution : outcome.run.retained_solution;
-        if (!counters_ok) {
-            outcome.run.termination_reason = TerminationReason::resource_limit;
-            outcome.run.diagnostic_code = "STAGGER_COUNTER_LIMIT";
-            return outcome;
-        }
-        if (outcome.stagger.state == StaggerState::interrupted) {
-            if (const auto stop = boundary(control); stop != Boundary::none) {
-                apply_boundary(outcome.run, stop);
-                return outcome;
-            }
-            if (!defer_phase("stagger")) {
-                return outcome;
-            }
-        }
-    }
-    auto preparation_stats = outcome.stagger.work;
+    // Work spent after the baseline, charged to the spectral phase's allowances.
+    RunStats preparation_stats;
     // Layered double lattices first, within a share of the remaining time, so
     // later phases start from them and compaction refills whichever layout wins.
     using detail::PhysicalPhase;
@@ -682,7 +648,7 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         if (!timed || !outcome.run.best || boundary(control) != Boundary::none) {
             break;
         }
-        auto block_limits = seed_limits;
+        auto block_limits = phase_limits;
         block_limits.gap_fill_pitch_mm = lattice.pitch_mm;
         block_limits.gap_fill_threads = limits.cpu_thread_count;
         block_limits.max_search_passes = remaining(limits.spectral.max_search_passes, preparation_stats.search_passes);
