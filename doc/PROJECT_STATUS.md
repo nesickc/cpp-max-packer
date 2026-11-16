@@ -131,6 +131,8 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
 6. Projects saved before the diagonal/2000 envelope offset need re-import.
 7. Timed searches still depend on machine load: the same settings can return a
    different count on a busy machine (the 40.6 mm sphere cube gave 66 once, 64 since).
+   The engine asks Windows not to throttle it while its app is in the background, but
+   most of a search still runs on one core, so other busy programs slow it.
 8. The desktop cannot show a packing of about 3,900 copies or more: a live packing is
    one record capped at 1 MiB, and a larger one ends the search with a publication error.
 

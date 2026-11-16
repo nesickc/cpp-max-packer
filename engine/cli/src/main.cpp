@@ -146,6 +146,14 @@ int run_engine(int argc, Character** argv) {
 #ifdef _WIN32
   _setmode(_fileno(stdin), _O_BINARY);
   _setmode(_fileno(stdout), _O_BINARY);
+  // Windows throttles a process whose app is not in the foreground and runs it
+  // on efficiency cores, so the same timed search finds fewer copies. Every
+  // engine command is work the user is waiting for: ask for full speed.
+  PROCESS_POWER_THROTTLING_STATE throttling {};
+  throttling.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+  throttling.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+  throttling.StateMask = 0;
+  SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &throttling, sizeof(throttling));
 #endif
 
   try {
