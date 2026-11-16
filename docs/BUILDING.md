@@ -81,6 +81,35 @@ plus process tests of source-preserving inspection and repair acceptance. FCL
 supplies the import broadphase; exact predicates check candidate pairs. Manifold's
 construction status alone does not authorize an imported solid.
 
+## Desktop app and installer
+
+With the Release engine built (above) and `pnpm install` done, from the repository root:
+
+```powershell
+./tools/desktop/Invoke-Desktop.ps1 -Mode Build               # bin/release/spectrapack-desktop.exe
+./tools/desktop/Invoke-Desktop.ps1 -Mode Build -DebugBuild   # bin/debug/spectrapack-desktop.exe
+./tools/desktop/Invoke-Desktop.ps1 -Mode Installer           # bin/installer/SpectraPack_<version>_x64-setup.exe
+```
+
+Each `bin/<profile>` folder runs where it is: the shell, `spectrapack-engine.exe` and
+`engine-resources/` (notices, the engine hash and capabilities), the layout the setup
+installs. The shell starts only with the engine it was built with. Both shells take the
+Release engine, because a Debug engine packs far slower; pass
+`-EngineBuildDirectory out/build/windows-ninja-debug` to use one. The Debug shell also
+opens a console. `-SkipFrontend` reuses `desktop/dist`; `-PnpmPath` names pnpm when it
+is not on `PATH`.
+
+`-Mode Installer` builds `bin/release`, then the Tauri bundler packs it into an unsigned
+NSIS setup that embeds the offline WebView2 installer, so installing does not download
+WebView2. The setup installs for the current user into `%LOCALAPPDATA%\SpectraPack`.
+On first use the bundler downloads NSIS and the WebView2 installer (about 215 MB) into
+`%LOCALAPPDATA%\tauri`; the setup is about 212 MiB. CI uploads it as the
+`spectrapack-setup` artifact.
+
+The product version is `project(SpectraPack VERSION ...)` in `CMakeLists.txt`. The engine
+reports it in `capabilities --json`; the desktop build gives the staged engine's version
+to the shell and the setup. Rebuild the engine after changing it.
+
 ## Stage and inspect the diagnostic
 
 After the Release wrapper succeeds:
@@ -116,8 +145,8 @@ python tests/protocol/import_subprocess_test.py "$packageRoot/bin/spectrapack-en
 
 The process test runs the engine outside the checkout and checks that it responds
 before stdin closes. The executable embeds its contract catalog. The auxiliary
-`solve` command exposes the T-007 CPU packing slice; service jobs and an installer
-remain later integration work. CI also runs the staged inspection and solve tests
+`solve` command exposes the T-007 CPU packing slice; service jobs remain later
+integration work. CI also runs the staged inspection and solve tests
 with developer directories removed from `PATH`.
 
 ## Inspect an STL

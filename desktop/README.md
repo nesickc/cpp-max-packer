@@ -4,8 +4,8 @@ This React/Three.js application uses only the narrow Rust commands in
 ADR 0010. Run `pnpm desktop:dev` from the repository root for the browser
 preview at `http://127.0.0.1:1420`. Native import, solve and file actions
 require the Tauri application; the browser preview never fabricates results.
-Run `pnpm desktop:native dev` or `pnpm desktop:native build` after the native
-engine staging steps are complete.
+Build, run and package the native app with `tools/desktop/Invoke-Desktop.ps1`
+(`-Mode Build`, `-Mode Installer` or `-Mode Dev`); see `docs/BUILDING.md`.
 
 Checks: `pnpm desktop:test`, `pnpm desktop:check`, `pnpm desktop:build`, and
 `pnpm contracts:check`. On the sandbox host, use `$env:CI='true'` and

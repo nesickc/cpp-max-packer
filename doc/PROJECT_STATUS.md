@@ -57,10 +57,11 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    Nova Post, mm: 0.5 kg 170x120x90, 1 kg 240x170x90, 2 kg 340x240x90, 3 kg 240x240x200,
    5 kg 400x240x200, 10 kg 400x340x285, 15 kg 600x350x280, 20 kg 470x400x420,
    30 kg 700x400x420. Only the 10 kg interior is measured; the rest are published sizes.
-3. [ ] **Build output and installer** (SYS-01/02, §4.3). Binaries sit deep in `out/` and
-   `desktop/src-tauri/target/`; no installer is built. *Done when* one command leaves
-   `bin/release/spectrapack-desktop.exe` with its engine (`bin/debug/` likewise) and
-   another builds a versioned NSIS setup with the offline WebView2 installer, in CI too.
+3. [x] **Build output and installer** (SYS-01/02, §4.3). `Invoke-Desktop.ps1 -Mode Build`
+   leaves `bin/release/spectrapack-desktop.exe` with its engine and notices (`-DebugBuild`:
+   `bin/debug/`); `-Mode Installer` adds an unsigned `bin/installer/SpectraPack_0.1.0_x64-setup.exe`
+   (212 MiB) with the offline WebView2 installer, which CI uploads. The CMake project
+   version (0.1.0) is the product version.
 
 **Denser packing**
 

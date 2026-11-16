@@ -26,14 +26,15 @@ sha2 = "=0.10.9"
 time = { version = "=0.3.44", features = ["formatting", "parsing"] }
 uuid = { version = "=1.18.1", features = ["v4"] }
 zip = { version = "=8.3.1", default-features = false, features = ["deflate"] }
-tauri = { version = "=2.12.0", optional = true }
+# The explicit empty Tauri feature lists keep `tauri bundle` from rewriting this file.
+tauri = { version = "=2.12.0", optional = true, features = [] }
 rfd = { version = "=0.17.2", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Performance", "Win32_System_IO", "Win32_System_SystemInformation", "Win32_Security"] }
 
 [build-dependencies]
-tauri-build = { version = "=2.7.0", optional = true }
+tauri-build = { version = "=2.7.0", optional = true, features = [] }
 
 [dev-dependencies]
 tempfile = "=3.23.0"
