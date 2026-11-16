@@ -507,5 +507,63 @@
       "budget_scope": "total_start",
       "thread_count": 9
     }
+  },
+  {
+    "name": "resource status with an estimated working set",
+    "definition": "State",
+    "valid": true,
+    "value": {
+      "desktop_version": 1,
+      "session_id": "session-test",
+      "revision": 3,
+      "object": null,
+      "draft_settings": null,
+      "result": null,
+      "operation": null,
+      "last_error": null,
+      "cpu_runtime": {
+        "version": 1,
+        "supported_min": 1,
+        "supported_max": 8,
+        "default_thread_count": 4,
+        "resource_status": {
+          "admitted_host_cap_bytes": "8589934592",
+          "estimated_working_bytes": "905969664",
+          "actual_threads": 4,
+          "recovery_count": "0",
+          "last_cause": "",
+          "last_action": ""
+        }
+      }
+    }
+  },
+  {
+    "name": "resource status with a zero working-set estimate",
+    "definition": "State",
+    "valid": false,
+    "value": {
+      "desktop_version": 1,
+      "session_id": "session-test",
+      "revision": 3,
+      "object": null,
+      "draft_settings": null,
+      "result": null,
+      "operation": null,
+      "last_error": null,
+      "cpu_runtime": {
+        "version": 1,
+        "supported_min": 1,
+        "supported_max": 8,
+        "default_thread_count": 4,
+        "resource_status": {
+          "admitted_host_cap_bytes": "8589934592",
+          "estimated_working_bytes": "0",
+          "actual_threads": 4,
+          "recovery_count": "0",
+          "last_cause": "",
+          "last_action": ""
+        }
+      }
+    }
   }
 ]

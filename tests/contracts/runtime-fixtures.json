@@ -95,6 +95,27 @@
     }
   },
   {
+    "name": "native phase with resource status",
+    "valid": true,
+    "value": {
+      "runtime_version": 1,
+      "request_id": "run-1",
+      "operation_id": "operation-1",
+      "kind": "phase",
+      "sequence": 2,
+      "phase": "placing",
+      "native_elapsed_seconds": 0.1,
+      "resource_status": {
+        "admitted_host_cap_bytes": "5558185984",
+        "actual_threads": 4,
+        "recovery_count": "0",
+        "last_cause": "",
+        "last_action": "",
+        "estimated_working_bytes": "704657162"
+      }
+    }
+  },
+  {
     "name": "missing operation identity",
     "valid": false,
     "value": {

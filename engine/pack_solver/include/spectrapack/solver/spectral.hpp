@@ -31,7 +31,9 @@ struct SpectralLimits {
     ResourceMode resource_mode { ResourceMode::legacy };
     std::optional<std::uint64_t> (*available_ram)(void*) noexcept {};
     void* resource_context {};
-    void (*resource_status_sink)(void*, std::uint64_t, const ResourceRecovery&) noexcept {};
+    // Receives the admitted host cap, the estimated dominant working set (0 until
+    // estimated) and the recovery record at the start and after each recovery.
+    void (*resource_status_sink)(void*, std::uint64_t, std::uint64_t, const ResourceRecovery&) noexcept {};
     void* resource_status_context {};
 };
 

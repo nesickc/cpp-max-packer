@@ -99,9 +99,12 @@ private:
                                                              const OrientationCatalog&, const CandidatePageQuery&,
                                                              BinaryObservationSink = nullptr, const RunControl& = {});
 
+// `working_bytes`, when given, receives the estimated dominant working set (fields,
+// FFT buffers and resident owners) whenever the estimate is complete, admitted or not.
 [[nodiscard]] std::optional<RunFailureDetails> spectral_admission(
     const std::shared_ptr<const geometry::ValidationContext>&, geometry::GridLattice, const SpectralLimits&,
-    const std::shared_ptr<const geometry::ValidatedSolution>& = {}, const OrientationCatalog* actual_catalog = nullptr);
+    const std::shared_ptr<const geometry::ValidatedSolution>& = {}, const OrientationCatalog* actual_catalog = nullptr,
+    std::uint64_t* working_bytes = nullptr);
 
 // Fixed-size, allocation-free union of the public ownership snapshots.  The
 // tokens borrow their owners, which the pipeline keeps alive through a call.
