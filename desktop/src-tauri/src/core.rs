@@ -4,13 +4,19 @@ use std::{
     collections::HashMap,
     ffi::OsString,
     fs,
-    io::Read,
+    io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     sync::{Arc, Mutex},
     thread,
+    time::{Duration, Instant},
 };
 
+// Kinds of operation Stop can end. A solve stops and keeps its best packing;
+// the others are cancelled and leave the state as it was before them.
+const STOPPABLE: [&str; 4] = ["solve", "import", "repair", "export"];
+// A one-shot engine command still running this long after Stop is terminated.
+const STOP_GRACE: Duration = Duration::from_secs(2);
 const RECORD_LIMIT: u64 = 1 << 20;
 const REPORT_LIMIT: u64 = 16 << 20;
 const RESULT_LIMIT: u64 = 64 << 20;
@@ -34,6 +40,11 @@ impl ChildGuard {
     fn wait(&mut self) -> std::io::Result<ExitStatus> {
         let status = self.child.wait()?;
         self.reaped = true;
+        Ok(status)
+    }
+    fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
+        let status = self.child.try_wait()?;
+        self.reaped = status.is_some();
         Ok(status)
     }
 }
@@ -103,6 +114,8 @@ struct Inner {
     result: Option<ResultFiles>,
     previews: HashMap<String, PreviewFile>,
     stop_file: Option<PathBuf>,
+    // When Stop was accepted for the active operation.
+    stop_requested: Option<Instant>,
     protected_sources: Vec<PathBuf>,
     operation_started: Option<std::time::Instant>,
     transitioning: bool,
@@ -296,6 +309,73 @@ fn drain(mut stream: impl Read, limit: u64) -> Outcome<Vec<u8>> {
         Ok(out)
     }
 }
+// Reads a command's stdout to its end. With a sink, each well-formed progress
+// record goes to it as it arrives; every other line belongs to the terminal
+// record. Lines, the terminal record and the whole output are bounded.
+fn read_records(stream: impl Read, mut sink: Option<impl FnMut(Progress)>) -> Outcome<Vec<u8>> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Record {
+        progress: Progress,
+    }
+    let mut reader = BufReader::new(stream);
+    let (mut terminal, mut total, mut overflow) = (Vec::new(), 0_u64, false);
+    loop {
+        let mut line = Vec::new();
+        let size = reader
+            .by_ref()
+            .take(RECORD_LIMIT + 1)
+            .read_until(b'\n', &mut line)
+            .map_err(|e| error("ENGINE_TRANSPORT", e.to_string()))? as u64;
+        if size == 0 {
+            break;
+        }
+        total += size;
+        if overflow || size > RECORD_LIMIT || total > REPORT_LIMIT {
+            // Keep draining so the engine never blocks on a full pipe.
+            overflow = true;
+            continue;
+        }
+        if let Some(sink) = sink.as_mut() {
+            if let Ok(Record { progress }) = serde_json::from_slice::<Record>(&line) {
+                if progress.is_valid() {
+                    sink(progress);
+                    continue;
+                }
+            }
+        }
+        if terminal.len() as u64 + size > RECORD_LIMIT {
+            overflow = true;
+            continue;
+        }
+        terminal.extend_from_slice(&line);
+    }
+    if overflow {
+        Err(error(
+            "MEMORY_LIMIT",
+            "Native output exceeded the desktop transport limit.",
+        ))
+    } else {
+        Ok(terminal)
+    }
+}
+fn cancelled_error() -> DesktopError {
+    error("OPERATION_CANCELLED", "Cancelled; nothing was changed.")
+}
+// Removes an export folder this desktop created, retrying for about a second
+// while a just-terminated engine or a scanner still holds one of its files.
+fn remove_export(folder: &Path) -> std::io::Result<()> {
+    for attempt in 0.. {
+        match fs::remove_dir_all(folder) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound && attempt < 10 => {
+                thread::sleep(Duration::from_millis(100))
+            }
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+            _ => return Ok(()),
+        }
+    }
+    Ok(())
+}
 
 impl Core {
     pub fn new(engine: PathBuf, root: PathBuf) -> Outcome<Self> {
@@ -340,6 +420,7 @@ impl Core {
                 result: None,
                 previews: HashMap::new(),
                 stop_file: None,
+                stop_requested: None,
                 protected_sources: Vec::new(),
                 operation_started: None,
                 transitioning: false,
@@ -386,11 +467,10 @@ impl Core {
         let operation_id = id("operation");
         let directory = self.root.join(&operation_id);
         fs::create_dir(&directory).map_err(|e| error("FILE_ACCESS", e.to_string()))?;
-        inner.stop_file = if kind == "solve" {
-            Some(directory.join("stop.marker"))
-        } else {
-            None
-        };
+        inner.stop_file = STOPPABLE
+            .contains(&kind)
+            .then(|| directory.join("stop.marker"));
+        inner.stop_requested = None;
         inner.operation_started = Some(operation_started);
         inner.state.operation = Some(Operation {
             id: operation_id.clone(),
@@ -403,6 +483,7 @@ impl Core {
             sequence: None,
             completion_elapsed_seconds: None,
             native_completion_elapsed_seconds: None,
+            progress: None,
         });
         if let Some(settings) = settings {
             inner.state.draft_settings = Some(settings);
@@ -424,6 +505,30 @@ impl Core {
                 op.phase = phase.into();
                 inner.state.revision += 1;
             }
+        }
+    }
+    fn progress(&self, operation_id: &str, progress: Progress) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(op) = &mut inner.state.operation {
+            if op.id == operation_id
+                && op.finished_at.is_none()
+                && op.phase != "stopping"
+                && op.progress.as_ref() != Some(&progress)
+            {
+                op.progress = Some(progress);
+                inner.state.revision += 1;
+            }
+        }
+    }
+    // A stage the shell itself runs, with no known size.
+    fn stage(&self, operation_id: &str, stage: &str) {
+        self.progress(operation_id, Progress { stage: stage.into(), done: None, total: None });
+    }
+    // Between the steps of a cancellable operation: stop before the next one.
+    fn cancelled(&self) -> Outcome<()> {
+        match self.inner.lock().unwrap().stop_requested {
+            Some(_) => Err(cancelled_error()),
+            None => Ok(()),
         }
     }
     fn spawn(
@@ -450,8 +555,14 @@ impl Core {
                 .as_ref()
                 .is_some_and(|op| op.id == operation_id)
             {
+                // A cancel the user asked for is not an error. A solve keeps its
+                // own Stop & keep outcome.
+                let cancelled = inner.stop_requested.is_some()
+                    && inner.state.operation.as_ref().unwrap().kind != "solve"
+                    && outcome.as_ref().is_err_and(|e| e.code == "OPERATION_CANCELLED");
                 let (phase, failure) = match outcome {
                     Ok(()) => ("finished", None),
+                    Err(e) if cancelled => ("cancelled", Some(e)),
                     Err(e) => ("failed", Some(e)),
                 };
                 let completion = inner
@@ -461,19 +572,35 @@ impl Core {
                 op.completion_elapsed_seconds = completion;
                 op.phase = phase.into();
                 op.finished_at = Some(now());
+                op.progress = None;
                 if let Some(e) = &failure {
-                    op.detail = Some(e.message.clone());
+                    op.detail = Some(if cancelled { cancelled_error().message } else { e.message.clone() });
                 }
-                inner.state.last_error = failure;
+                inner.state.last_error = failure.filter(|_| !cancelled);
                 inner.state.revision += 1;
                 inner.stop_file = None;
+                inner.stop_requested = None;
             }
         });
     }
     fn run(&self, args: &[OsString], cwd: &Path) -> Outcome<Value> {
+        self.run_with(args, cwd, None)
+    }
+    // `live` names the operation a long command belongs to: its progress records
+    // update that operation, it watches the operation's stop marker, and it is
+    // terminated if it is still running STOP_GRACE after Stop.
+    fn run_with(&self, args: &[OsString], cwd: &Path, live: Option<&str>) -> Outcome<Value> {
         security::directory(cwd)?;
         security::regular_file(&self.engine)?;
         let mut bounded_args = args.to_vec();
+        if live.is_some() {
+            self.cancelled()?;
+            let marker = self.inner.lock().unwrap().stop_file.clone().ok_or_else(|| {
+                error("INTERNAL_ERROR", "A cancellable command has no stop marker.")
+            })?;
+            pair(&mut bounded_args, "--stop-file", &marker);
+            bounded_args.push("--progress".into());
+        }
         if args.first().is_some_and(|command| {
             ["inspect", "desktop-prepare", "desktop-restore"]
                 .iter()
@@ -525,17 +652,42 @@ impl Core {
         }
         let stdout = child.child.stdout.take().unwrap();
         let stderr = child.child.stderr.take().unwrap();
+        let reporter = live.map(|operation| (self.clone(), operation.to_owned()));
         let out_reader = thread::Builder::new()
             .name("native-stdout".into())
-            .spawn(move || drain(stdout, RECORD_LIMIT))
+            .spawn(move || {
+                read_records(stdout, reporter.map(|(core, operation)| move |progress| core.progress(&operation, progress)))
+            })
             .map_err(|e| error("ENGINE_TRANSPORT", e.to_string()))?;
         let err_reader = thread::Builder::new()
             .name("native-stderr".into())
             .spawn(move || drain(stderr, RECORD_LIMIT))
             .map_err(|e| error("ENGINE_TRANSPORT", e.to_string()))?;
-        let status = child
-            .wait()
-            .map_err(|e| error("ENGINE_TRANSPORT", e.to_string()))?;
+        let transport = |e: std::io::Error| error("ENGINE_TRANSPORT", e.to_string());
+        let status = if live.is_none() {
+            child.wait().map_err(transport)?
+        } else {
+            loop {
+                if let Some(status) = child.try_wait().map_err(transport)? {
+                    break status;
+                }
+                let overdue = self
+                    .inner
+                    .lock()
+                    .unwrap()
+                    .stop_requested
+                    .is_some_and(|at| at.elapsed() >= STOP_GRACE);
+                if overdue {
+                    // Whatever it left is staged or private to this operation.
+                    let _ = child.child.kill();
+                    child.wait().map_err(transport)?;
+                    let _ = out_reader.join();
+                    let _ = err_reader.join();
+                    return Err(cancelled_error());
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        };
         let out = out_reader
             .join()
             .map_err(|_| error("ENGINE_TRANSPORT", "Native stdout reader failed."))??;
@@ -808,21 +960,23 @@ impl Core {
     ) -> Outcome<(PathBuf, Option<Value>)> {
         let output = root.join("prepared");
         fs::create_dir(&output).map_err(|e| error("FILE_ACCESS", e.to_string()))?;
-        let operation = self
-            .inner
-            .lock()
-            .unwrap()
-            .state
-            .operation
-            .as_ref()
-            .map(|op| op.id.clone())
-            .ok_or_else(|| error("INTERNAL_ERROR", "Preparation has no operation."))?;
-        let response = self.native_request(
-            "prepare",
-            Some(&operation),
-            json!({"object_report":object.report,"output_directory":output}),
-            true,
-        )?;
+        let (operation, marker) = {
+            let inner = self.inner.lock().unwrap();
+            let operation = inner
+                .state
+                .operation
+                .as_ref()
+                .map(|op| op.id.clone())
+                .ok_or_else(|| error("INTERNAL_ERROR", "Preparation has no operation."))?;
+            (operation, inner.stop_file.clone())
+        };
+        let mut params = json!({"object_report":object.report,"output_directory":output});
+        if let Some(marker) = marker {
+            // The retained session stops at the marker; it is never terminated,
+            // since it holds the current object.
+            params["stop_file"] = json!(marker);
+        }
+        let response = self.native_request("prepare", Some(&operation), params, true)?;
         object.native_token = Some(
             response["asset_token"]
                 .as_str()
@@ -902,15 +1056,18 @@ impl Core {
             pair(&mut args, "--stl", &copy); pair(&mut args, "--report", &report_path);
             args.extend(arguments(&["--packing-envelope", "auto", "--accept-repair", "auto"]));
             if let Some(scale) = request.scale_mm { args.extend(["--scale-mm".into(), scale.to_string().into()]); }
-            core.run(&args, &root)?;
+            core.run_with(&args, &root, Some(&op))?;
             let report = security::json(&report_path, REPORT_LIMIT)?; let object_id = id("object");
             let mut object = ObjectFiles { id: object_id.clone(), report: report_path, preview: None, envelope_preview: None, native_token: None, native_epoch: None, cpu_runtime: None };
             if report["state"] == "accepted" && report["diagnostics"]["status"] == "valid" {
+                core.stage(&op, "Preparing the geometry for packing");
                 let (_, preview) = core.prepare(&mut object, &root)?; object.preview = preview;
             } else {
                 object.preview = core.import_preview(&root, &report["preview"], report["diagnostics"]["import"]["triangle_count"].as_u64().unwrap_or(0))?;
             }
             let mut prepared_guard=PreparedRollback {core:core.clone(),token:object.native_token.clone(),epoch:object.native_epoch.clone(),preview_ids:[object.preview.as_ref(),object.envelope_preview.as_ref()].into_iter().flatten().filter_map(|p|p["preview_id"].as_str().map(str::to_owned)).collect(),committed:false};
+            // A cancel up to here keeps the previous object: the guard releases the new one.
+            core.cancelled()?;
             let old_object=core.inner.lock().unwrap().object.clone();
             if let Some(old)=old_object {core.release_native(old.native_token,old.native_epoch.as_deref())?;}
             let mut inner = core.inner.lock().unwrap(); inner.state.cpu_runtime=object.cpu_runtime.clone(); inner.object = Some(object.clone());
@@ -993,12 +1150,13 @@ impl Core {
             if algorithm=="envelope" { args.extend(["--packing-envelope".into(),"auto".into()]); } else {
             args.extend([if algorithm=="weld" {"--weld-tolerance-mm"} else {"--reconstruct-resolution-mm"}.into(),tolerance.to_string().into()]); }
             if let Some(token)=&token {args.extend(["--accept-repair".into(),token.into()]);}
-            core.run(&args,&root).map_err(|mut failure| {
+            core.run_with(&args,&root,Some(&op)).map_err(|mut failure| {
                 if failure.code == "MEMORY_LIMIT" {
                     failure.message.push_str(" Free some RAM and retry; a larger reconstruction resolution may also fit, but can lose small features.");
                 }
                 failure
             })?;
+            core.cancelled()?;
             let report=security::json(&report_path,REPORT_LIMIT)?;
             if token.is_none() {
                 let proposal=&report["repair_proposal"];
@@ -1020,9 +1178,11 @@ impl Core {
                 inner.state.revision+=1;drop(inner);core.prune_previews();return Ok(());
             }
             let mut object=ObjectFiles{id:id("object"),report:report_path,preview:None,envelope_preview:None,native_token:None,native_epoch:None,cpu_runtime:None};
+            core.stage(&op,"Preparing the geometry for packing");
             let (_,preview)=core.prepare(&mut object,&root)?;object.preview=preview;
             let mut guard=PreparedRollback{core:core.clone(),token:object.native_token.clone(),epoch:object.native_epoch.clone(),
                 preview_ids:[object.preview.as_ref(),object.envelope_preview.as_ref()].into_iter().flatten().filter_map(|p|p["preview_id"].as_str().map(str::to_owned)).collect(),committed:false};
+            core.cancelled()?;
             core.release_native(old.native_token,old.native_epoch.as_deref())?;
             let mut inner=core.inner.lock().unwrap();
             inner.state.cpu_runtime=object.cpu_runtime.clone();
@@ -1149,17 +1309,20 @@ impl Core {
         Ok(receipt)
     }
 
+    // Stop & keep for a solve; cancel for an import, repair or export. Either is
+    // published as `stopping` at once; the engine sees the marker within about
+    // 20 ms, and a one-shot engine command is terminated after STOP_GRACE.
     pub fn stop(&self, operation_id: &str) -> Outcome<StopResponse> {
         let mut inner = self.inner.lock().unwrap();
         let op = inner
             .state
             .operation
             .as_ref()
-            .ok_or_else(|| error("OPERATION_STALE", "No solve operation is active."))?;
-        if op.id != operation_id || op.kind != "solve" || op.finished_at.is_some() {
+            .ok_or_else(|| error("OPERATION_STALE", "No operation is active."))?;
+        if op.id != operation_id || !STOPPABLE.contains(&op.kind.as_str()) || op.finished_at.is_some() {
             return Err(error(
                 "OPERATION_STALE",
-                "Stop ID does not identify the active solve.",
+                "Stop ID does not identify an active solve, import, repair or export.",
             ));
         }
         let marker = inner
@@ -1183,6 +1346,7 @@ impl Core {
             inner.state.operation.as_mut().unwrap().phase = "stopping".into();
             inner.state.revision += 1;
         }
+        inner.stop_requested.get_or_insert_with(Instant::now);
         Ok(StopResponse {
             operation_id: operation_id.into(),
             accepted: true,
@@ -1244,6 +1408,7 @@ impl Core {
         inner.result = None;
         inner.previews.clear();
         inner.stop_file = None;
+        inner.stop_requested = None;
         inner.state.object = None;
         inner.state.result = None;
         inner.state.live_result = None;
@@ -1383,7 +1548,17 @@ impl Core {
             if format == "stl" {
                 pair(&mut args, "--stl", &output.join("packed.stl"));
             }
-            let outcome = core.run(&args, &root);
+            if let Err(failure) = core.run_with(&args, &root, Some(&op)) {
+                // A failed or cancelled export leaves nothing behind: the folder
+                // is this export's own.
+                return Err(match remove_export(&output) {
+                    Ok(()) => failure,
+                    Err(cause) => error(
+                        "OUTPUT_WRITE_FAILED",
+                        format!("{} The incomplete export folder {} could not be removed: {cause}", failure.message, output.display()),
+                    ),
+                });
+            }
             core.inner
                 .lock()
                 .unwrap()
@@ -1392,7 +1567,7 @@ impl Core {
                 .as_mut()
                 .unwrap()
                 .detail = Some(format!("Output: {}", output.display()));
-            outcome.map(|_| ())
+            Ok(())
         });
         Ok(receipt)
     }
@@ -1654,6 +1829,7 @@ mod tests {
                 sequence: None,
                 completion_elapsed_seconds: None,
                 native_completion_elapsed_seconds: None,
+                progress: None,
             }),
         };
         let mut inner = Inner {
@@ -1671,6 +1847,7 @@ mod tests {
             result: None,
             previews: HashMap::new(),
             stop_file: None,
+            stop_requested: None,
             protected_sources: Vec::new(),
             operation_started: None,
             transitioning: false,
@@ -2014,6 +2191,208 @@ mod tests {
         fs::remove_dir(&marker).unwrap();
         assert!(core.stop(&receipt.operation_id).unwrap().accepted);
         assert_eq!(core.state().operation.unwrap().phase, "stopping");
+    }
+    // A packed fixture whose object, result and files later checks compare.
+    fn solved(core: &Core) -> State {
+        import_fixture(core);
+        core.start(settings()).unwrap();
+        let solved = complete(core);
+        assert!(solved.last_error.is_none(), "{solved:?}");
+        solved
+    }
+    fn result_files(core: &Core) -> Vec<(PathBuf, Vec<u8>)> {
+        let root = core.inner.lock().unwrap().result.as_ref().unwrap().root.clone();
+        let mut files = Vec::new();
+        let mut pending = vec![root];
+        while let Some(path) = pending.pop() {
+            if path.is_dir() {
+                pending.extend(fs::read_dir(&path).unwrap().map(|entry| entry.unwrap().path()));
+            } else {
+                files.push((path.clone(), fs::read(&path).unwrap()));
+            }
+        }
+        files.sort();
+        files
+    }
+    fn exports(target: &Path) -> usize {
+        fs::read_dir(target).unwrap().filter(|entry| {
+            entry.as_ref().unwrap().file_name().to_string_lossy().starts_with("SpectraPack-export")
+        }).count()
+    }
+    // A closed UV sphere of 39,600 triangles whose envelope takes about a second.
+    fn sphere_stl(path: &Path) {
+        use std::f64::consts::PI;
+        let (stacks, slices, radius) = (100_u32, 200_u32, 20.0_f64);
+        let point = |stack: u32, slice: u32| {
+            let (theta, phi) = (PI * f64::from(stack) / f64::from(stacks), 2.0 * PI * f64::from(slice) / f64::from(slices));
+            [radius * theta.sin() * phi.cos(), radius * theta.sin() * phi.sin(), radius * theta.cos()]
+        };
+        let mut faces = Vec::new();
+        for stack in 0..stacks {
+            for slice in 0..slices {
+                let (a, b) = (point(stack, slice), point(stack + 1, slice));
+                let (c, d) = (point(stack + 1, slice + 1), point(stack, slice + 1));
+                if stack != 0 {
+                    faces.push([a, b, d]);
+                }
+                if stack != stacks - 1 {
+                    faces.push([b, c, d]);
+                }
+            }
+        }
+        let mut bytes = vec![0_u8; 80];
+        bytes.extend((faces.len() as u32).to_le_bytes());
+        for face in faces {
+            bytes.extend([0_u8; 12]);
+            for value in face.iter().flatten() {
+                bytes.extend((*value as f32).to_le_bytes());
+            }
+            bytes.extend([0_u8; 2]);
+        }
+        fs::write(path, bytes).unwrap();
+    }
+    // Waits until the active operation reports `stage` (any stage for None).
+    fn wait_for_stage(core: &Core, stage: Option<&str>) {
+        let until = Instant::now() + Duration::from_secs(30);
+        loop {
+            let state = core.state();
+            let operation = state.operation.as_ref().unwrap();
+            assert!(operation.finished_at.is_none(), "finished before {stage:?}: {state:?}");
+            if operation.progress.as_ref().is_some_and(|p| stage.is_none_or(|stage| p.stage == stage)) {
+                return;
+            }
+            assert!(Instant::now() < until, "{stage:?} not reported: {state:?}");
+            thread::sleep(Duration::from_millis(2));
+        }
+    }
+    // AT-16: Stop is published at once; the operation ends soon after as cancelled,
+    // with no error, and the state from before it is kept.
+    fn cancel(core: &Core, operation_id: &str, before: &State) -> State {
+        let started = Instant::now();
+        assert!(core.stop(operation_id).unwrap().accepted);
+        assert!(started.elapsed() < Duration::from_millis(250));
+        assert_eq!(core.state().operation.unwrap().phase, "stopping");
+        let state = complete(core);
+        eprintln!("cancel {operation_id}: ended {:?} after Stop", started.elapsed());
+        assert!(started.elapsed() < STOP_GRACE + Duration::from_secs(1));
+        let operation = state.operation.as_ref().unwrap();
+        assert_eq!(operation.phase, "cancelled", "{state:?}");
+        assert!(operation.progress.is_none());
+        assert!(state.last_error.is_none(), "{state:?}");
+        assert_eq!(state.object, before.object);
+        assert_eq!(state.result, before.result);
+        assert_eq!(state.repair, before.repair);
+        state
+    }
+    #[test]
+    fn cancelled_import_keeps_the_previous_object_result_and_previews() {
+        let (root, core) = fixture();
+        let before = solved(&core);
+        let files = result_files(&core);
+        let sphere = root.path().join("sphere.stl");
+        sphere_stl(&sphere);
+        // While the engine wraps the envelope, then while the retained session
+        // prepares it: the session stops at the marker and keeps the old object.
+        for stage in ["Wrapping the packing envelope", "Preparing the geometry for packing"] {
+            let receipt = core.import_path(&sphere, ImportRequest { units: "mm".into(), scale_mm: None }).unwrap();
+            wait_for_stage(&core, Some(stage));
+            cancel(&core, &receipt.operation_id, &before);
+            let object = before.object.as_ref().unwrap();
+            for preview in [&object["preview"], &object["envelope_preview"], &before.result.as_ref().unwrap()["preview"]] {
+                assert!(core.read_preview(preview["preview_id"].as_str().unwrap()).is_ok(), "{stage}");
+            }
+            assert_eq!(result_files(&core), files);
+        }
+        // The kept object still packs, and the project still saves.
+        core.start(settings()).unwrap();
+        let packed = complete(&core);
+        assert!(packed.last_error.is_none(), "{packed:?}");
+        assert_eq!(packed.object, before.object);
+        core.save_to(&root.path().join("kept.spectrapack"), settings()).unwrap();
+        assert!(complete(&core).last_error.is_none());
+    }
+    #[test]
+    fn stl_export_reports_progress_and_a_cancel_leaves_no_folder() {
+        let (root, core) = fixture();
+        let before = solved(&core);
+        let files = result_files(&core);
+        let count = before.result.as_ref().unwrap()["document"]["count"].as_u64().unwrap();
+        let target = root.path().join("exports");
+        fs::create_dir(&target).unwrap();
+        core.export_to(&target, "stl").unwrap();
+        let mut seen: Vec<Progress> = Vec::new();
+        let exported = loop {
+            let state = core.state();
+            let operation = state.operation.clone().unwrap();
+            if let Some(progress) = operation.progress {
+                if seen.last() != Some(&progress) {
+                    seen.push(progress);
+                }
+            }
+            if operation.finished_at.is_some() {
+                break state;
+            }
+            thread::sleep(Duration::from_millis(2));
+        };
+        assert!(exported.last_error.is_none(), "{exported:?}");
+        assert!(exported.operation.as_ref().unwrap().progress.is_none());
+        assert!(seen.iter().any(|p| p.total == Some(count) && p.done.is_some_and(|done| done <= count)), "{seen:?}");
+        assert!(seen.iter().all(Progress::is_valid), "{seen:?}");
+
+        let receipt = core.export_to(&target, "stl").unwrap();
+        wait_for_stage(&core, None);
+        cancel(&core, &receipt.operation_id, &before);
+        assert_eq!(exports(&target), 1, "only the finished export remains");
+        assert_eq!(result_files(&core), files);
+        core.export_to(&target, "json").unwrap();
+        assert!(complete(&core).last_error.is_none());
+        assert_eq!(exports(&target), 2);
+    }
+    #[cfg(windows)]
+    #[test]
+    fn failed_export_keeps_the_result_project_and_session_files() {
+        use windows_sys::Win32::{Foundation::CloseHandle, System::Threading::*};
+        let (root, core) = fixture();
+        let before = solved(&core);
+        let files = result_files(&core);
+        let target = root.path().join("exports");
+        fs::create_dir(&target).unwrap();
+        // The engine dies before it writes anything coherent.
+        *core.after_spawn.lock().unwrap() = Some(Box::new(|pid| unsafe {
+            let process = OpenProcess(PROCESS_TERMINATE, 0, pid);
+            assert!(!process.is_null());
+            TerminateProcess(process, 1);
+            CloseHandle(process);
+        }));
+        core.export_to(&target, "stl").unwrap();
+        let failed = complete(&core);
+        assert_eq!(failed.operation.as_ref().unwrap().phase, "failed");
+        assert!(failed.last_error.is_some());
+        assert_eq!((failed.object, failed.result), (before.object, before.result));
+        assert_eq!(exports(&target), 0);
+        assert_eq!(result_files(&core), files);
+        core.save_to(&root.path().join("kept.spectrapack"), settings()).unwrap();
+        assert!(complete(&core).last_error.is_none());
+        core.export_to(&target, "stl").unwrap();
+        assert!(complete(&core).last_error.is_none());
+        assert_eq!(exports(&target), 1);
+    }
+    #[cfg(windows)]
+    #[test]
+    fn stop_terminates_an_unresponsive_export_after_its_grace() {
+        let (root, core) = fixture();
+        let before = solved(&core);
+        let target = root.path().join("exports");
+        fs::create_dir(&target).unwrap();
+        // Left suspended, the engine never sees its stop marker.
+        let (spawned, created) = std::sync::mpsc::channel();
+        *core.after_spawn.lock().unwrap() = Some(Box::new(move |pid| spawned.send(pid).unwrap()));
+        let receipt = core.export_to(&target, "stl").unwrap();
+        created.recv_timeout(Duration::from_secs(5)).unwrap();
+        let started = Instant::now();
+        cancel(&core, &receipt.operation_id, &before);
+        assert!(started.elapsed() >= STOP_GRACE);
+        assert_eq!(exports(&target), 0);
     }
     #[test]
     fn new_between_request_and_registration_cannot_use_a_stale_snapshot() {

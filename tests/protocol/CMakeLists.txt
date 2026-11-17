@@ -11,7 +11,8 @@ set_tests_properties(spectrapack_import_subprocess PROPERTIES TIMEOUT 180)
 add_test(NAME spectrapack_desktop_subprocess
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/desktop_subprocess_test.py"
     "$<TARGET_FILE:spectrapack-engine>")
-set_tests_properties(spectrapack_desktop_subprocess PROPERTIES TIMEOUT 300)
+# About 180 s with a Debug engine on a developer laptop; a hosted runner is slower.
+set_tests_properties(spectrapack_desktop_subprocess PROPERTIES TIMEOUT 600)
 add_test(NAME spectrapack_desktop_runtime_subprocess
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/desktop_runtime_subprocess_test.py"
     "$<TARGET_FILE:spectrapack-engine>")

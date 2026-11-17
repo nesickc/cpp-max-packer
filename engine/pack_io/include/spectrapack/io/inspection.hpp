@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <optional>
 #include <spectrapack/io/contracts.hpp>
+#include <spectrapack/runtime/operation_control.hpp>
 #include <string>
 #include <variant>
 
@@ -36,6 +37,9 @@ struct InspectSuccess {
   std::optional<std::string> proposal_sha256;
 };
 
-[[nodiscard]] std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectRequest& request);
+// A stop request ends inspection before anything is published, with
+// OPERATION_CANCELLED; the control's progress sink sees each stage.
+[[nodiscard]] std::variant<InspectSuccess, InspectFailure> inspect_stl_file(
+    const InspectRequest& request, const runtime::OperationControl& control = {});
 
 }  // namespace spectrapack::io

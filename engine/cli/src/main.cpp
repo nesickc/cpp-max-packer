@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "desktop.hpp"
+#include "operation_channel.hpp"
 #include "solve.hpp"
 
 #ifdef _WIN32
@@ -39,14 +40,14 @@ const spectrapack::service::BuildInfo kBuild{
 void usage(std::ostream& stream) {
     stream << "Usage: spectrapack-engine capabilities --json\n"
               "       spectrapack-engine inspect --stl <path> --units mm|inch|custom "
-              "--report <path> [options]\n"
+              "--report <path> [options] [--stop-file <path>] [--progress]\n"
               "       spectrapack-engine serve --stdio\n"
               "       spectrapack-engine desktop-session\n"
               "       spectrapack-engine solve --settings <path> --object-report <path> --result <path> "
               "[--container-report <path>] [--stl <path>] [--stop-file <path>]\n"
               "       spectrapack-engine desktop-prepare --object-report <path> --request <path> --output <directory>\n"
               "       spectrapack-engine desktop-restore --object-report <path> --result <path> --output <directory> "
-              "[--stl <path>]\n";
+              "[--stl <path>] [--stop-file <path>] [--progress]\n";
 }
 
 int machine_error(std::string_view code, std::string_view message, int exit_code,
@@ -129,6 +130,8 @@ struct SeenOptions {
   bool weld{};
   bool accept{};
   bool available {};
+  bool stop {};
+  bool progress {};
 };
 
 template<class Character>
@@ -170,13 +173,20 @@ int run_engine(int argc, Character** argv) {
       spectrapack::io::InspectRequest request;
       request.diagnostic_limits = { 16, 256 };
       SeenOptions seen;
+      std::optional<std::filesystem::path> stop_file;
       for (int index = 2; index < argc; ++index) {
         const View flag(argv[index]);
+        if (equals_ascii(flag, "--progress")) {
+          if (seen.progress) return machine_error("INVALID_REQUEST", "Duplicate inspection option.", 2);
+          seen.progress = true;
+          continue;
+        }
         const bool known = equals_ascii(flag, "--stl") || equals_ascii(flag, "--units") ||
                            equals_ascii(flag, "--report") || equals_ascii(flag, "--role") ||
                            equals_ascii(flag, "--scale-mm") || equals_ascii(flag, "--weld-tolerance-mm") ||
                            equals_ascii(flag, "--reconstruct-resolution-mm") || equals_ascii(flag, "--accept-repair") ||
-                           equals_ascii(flag, "--available-host-bytes") || equals_ascii(flag, "--packing-envelope");
+                           equals_ascii(flag, "--available-host-bytes") || equals_ascii(flag, "--packing-envelope") ||
+                           equals_ascii(flag, "--stop-file");
         if (!known || index + 1 >= argc) {
           return machine_error("INVALID_REQUEST", "Inspection options are invalid.", 2);
         }
@@ -190,6 +200,10 @@ int run_engine(int argc, Character** argv) {
           if (seen.report) return machine_error("INVALID_REQUEST", "Duplicate inspection option.", 2);
           request.report_path = std::filesystem::path(value);
           seen.report = true;
+        } else if (equals_ascii(flag, "--stop-file")) {
+          if (seen.stop) return machine_error("INVALID_REQUEST", "Duplicate inspection option.", 2);
+          stop_file = std::filesystem::path(value);
+          seen.stop = true;
         } else {
           const auto converted = utf8(value);
           if (!converted) {
@@ -261,8 +275,20 @@ int run_engine(int argc, Character** argv) {
             "INVALID_REQUEST", "inspect requires --stl, --units, and --report.", 2);
       }
 
-      const auto outcome = spectrapack::io::inspect_stl_file(request);
+      const auto stop = std::make_shared<std::stop_source>();
+      spectrapack::cli::StopMarkerWatcher watcher(stop_file, stop);
+      spectrapack::runtime::OperationControl control { stop->get_token() };
+      spectrapack::cli::ProgressPrinter printer;
+      if (seen.progress) printer.attach(control);
+      const auto outcome = spectrapack::io::inspect_stl_file(request, control);
+      const auto monitor = watcher.finish();
       if (std::holds_alternative<spectrapack::io::InspectFailure>(outcome)) {
+        if (monitor != 0) {
+          return machine_error("STOP_MONITOR_FAILED", "Operation-scoped Stop transport failed.", 3);
+        }
+        if (stop->stop_requested()) {
+          return machine_error("OPERATION_CANCELLED", "Inspection was cancelled; nothing was published.", 3);
+        }
         const auto& error = std::get<spectrapack::io::InspectFailure>(outcome);
         return machine_error(error.code, error.message, error.exit_code, error.details);
       }

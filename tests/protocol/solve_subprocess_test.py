@@ -69,6 +69,29 @@ def write_cube_stl(path, low=(0.0, 0.0, 0.0), extent=10.0):
     return vertices
 
 
+def write_sphere_stl(path, stacks=8, slices=16, radius=20.0):
+    """A closed UV sphere of 224 triangles. Its packing envelope wraps in about 0.2 s in a
+    Release engine, long enough to stop mid-way, and builds in about 10 s in a Debug one."""
+    def point(stack, slice_):
+        theta, phi = math.pi * stack / stacks, 2 * math.pi * slice_ / slices
+        return (radius * math.sin(theta) * math.cos(phi), radius * math.sin(theta) * math.sin(phi),
+                radius * math.cos(theta))
+    faces = []
+    for stack in range(stacks):
+        for slice_ in range(slices):
+            a, b = point(stack, slice_), point(stack + 1, slice_)
+            c, d = point(stack + 1, slice_ + 1), point(stack, slice_ + 1)
+            if stack != 0:
+                faces.append((a, b, d))
+            if stack != stacks - 1:
+                faces.append((b, c, d))
+    data = bytearray(80) + struct.pack("<I", len(faces))
+    for face in faces:
+        data += struct.pack("<12fH", 0.0, 0.0, 0.0, *(value for corner in face for value in corner), 0)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+
+
 def parse_ply(path):
     data = path.read_bytes()
     marker = b"end_header\n"

@@ -73,6 +73,30 @@ pub struct Operation {
     pub completion_elapsed_seconds: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub native_completion_elapsed_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub progress: Option<Progress>,
+}
+
+// The stage a long import, repair or export is in, and done of total when the
+// stage has a known size. Engine progress records carry exactly this object.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Progress {
+    pub stage: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub done: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub total: Option<u64>,
+}
+impl Progress {
+    pub fn is_valid(&self) -> bool {
+        (1..=200).contains(&self.stage.chars().count())
+            && match (self.done, self.total) {
+                (None, None) => true,
+                (Some(done), Some(total)) => (1..=(1 << 53) - 1).contains(&total) && done <= total,
+                _ => false,
+            }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

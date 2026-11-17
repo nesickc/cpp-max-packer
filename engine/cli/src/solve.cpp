@@ -6,6 +6,7 @@
 
 #include "count_publication.hpp"
 #include "host_admission.hpp"
+#include "operation_channel.hpp"
 #include "resource_policy.hpp"
 #include "result_publication.hpp"
 #include "settings_reader.hpp"
@@ -246,68 +247,6 @@ public:
 private:
     std::shared_ptr<std::stop_source> source_;
     bool installed_ {};
-};
-
-class StopFileWatcher final {
-public:
-    explicit StopFileWatcher(const std::optional<std::filesystem::path>& path, std::shared_ptr<std::stop_source> source)
-    {
-        if (!path) {
-            return;
-        }
-        const auto observe = [this, file = *path, source] {
-            std::error_code error;
-            const auto parent = std::filesystem::status(file.parent_path().empty() ? "." : file.parent_path(), error);
-            if (!error && !std::filesystem::is_directory(parent)) {
-                error = std::make_error_code(std::errc::not_a_directory);
-            }
-            bool marked = false;
-            if (!error) {
-                const auto status = std::filesystem::symlink_status(file, error);
-                if (error == std::errc::no_such_file_or_directory) {
-                    error.clear();
-                }
-                else if (!error && std::filesystem::exists(status)) {
-                    if (!std::filesystem::is_regular_file(status)) {
-                        error = std::make_error_code(std::errc::invalid_argument);
-                    }
-                    else {
-                        marked = true;
-                    }
-                }
-            }
-            if (error) {
-                monitor_error_.store(error.value());
-            }
-            if (marked || error) {
-                source->request_stop();
-            }
-            return marked || bool(error);
-        };
-        if (observe()) {
-            return;
-        }
-        watcher_ = std::jthread([observe, source](std::stop_token done) {
-            while (!done.stop_requested() && !source->stop_requested()) {
-                if (observe()) {
-                    return;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            }
-        });
-    }
-    [[nodiscard]] int finish()
-    {
-        watcher_.request_stop();
-        if (watcher_.joinable()) {
-            watcher_.join();
-        }
-        return monitor_error_.load();
-    }
-
-private:
-    std::atomic_int monitor_error_ {};
-    std::jthread watcher_;
 };
 
 std::optional<std::chrono::steady_clock::time_point> deadline_from_seconds(double seconds,
@@ -1309,9 +1248,9 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
                           (container_report && aliases(*stop_file, *container_report)))) {
             return fail("INVALID_REQUEST", "Stop marker aliases an input or output.", 2);
         }
-        StopFileWatcher stop_watcher(stop_file, console_controls.source());
+        spectrapack::cli::StopMarkerWatcher stop_watcher(stop_file, console_controls.source());
         runtime.stop_monitor_status = [](void* raw) {
-            const auto cause = static_cast<StopFileWatcher*>(raw)->finish();
+            const auto cause = static_cast<spectrapack::cli::StopMarkerWatcher*>(raw)->finish();
             return spectrapack::cli::StopMonitorResult { cause != 0, cause ? std::optional<int>(cause) : std::nullopt };
         };
         runtime.stop_monitor_context = &stop_watcher;

@@ -121,6 +121,11 @@ export function App() {
   const threads = settings.thread_count ?? state?.cpu_runtime?.default_thread_count;
   const pending = !!resultSettings && !sameSettings({ ...settings, thread_count: threads }, resultSettings);
   const operation = state?.operation;
+  // Stop keeps a solve's best packing and cancels an import, repair or export.
+  const stoppable = busy && !!operation && ['solve', 'import', 'repair', 'export'].includes(operation.kind);
+  const cancels = busy && operation?.kind !== 'solve';
+  const progress = busy ? operation?.progress : undefined;
+  const fraction = progress?.total ? (progress.done ?? 0) / progress.total : undefined;
   const elapsed = operation?.completion_elapsed_seconds ?? (operation ? Math.max(0, ((operation.finished_at ? Date.parse(operation.finished_at) : now) - Date.parse(operation.started_at)) / 1000) : 0);
   const supportedThreads = state?.cpu_runtime?.supported_max ?? 1;
   const facts = searchFacts(state, elapsed, operation && improved.current?.operation === operation.id ? improved.current.seconds : undefined, solvedResult.current);
@@ -207,9 +212,9 @@ export function App() {
           {pending && <p className="pending-note">Pending settings for the next run. The viewer retains the result's original settings.</p>}
 
         </section>
-      </div><div className="search-actions"><button className="primary" disabled={disabled || !!repair || !accepted || !!validationError} onClick={() => void startPacking()}>▶ Start packing</button><button className="stop" disabled={!native || commandPending || !busy || operation?.kind !== 'solve' || operation.phase === 'stopping'} onClick={() => void run(() => bridge.stop({ operation_id: operation!.id }))}>{operation?.phase === 'stopping' ? 'Stopping…' : 'Stop & keep'}</button></div></aside>
+      </div><div className="search-actions"><button className="primary" disabled={disabled || !!repair || !accepted || !!validationError} onClick={() => void startPacking()}>▶ Start packing</button><button className="stop" disabled={!native || commandPending || !stoppable || operation?.phase === 'stopping'} onClick={() => void run(() => bridge.stop({ operation_id: operation!.id }))}>{operation?.phase === 'stopping' ? (cancels ? 'Cancelling…' : 'Stopping…') : cancels ? 'Cancel' : 'Stop & keep'}</button></div></aside>
       <div className="center-panel"><Viewer mode={!repair && (live || result) ? 'result' : 'object'} preview={preview} envelopePreview={envelopePreview} placements={displayPoses} dimensions={displayedDimensions} hidden={hidden} selected={selected} onSelect={setSelected} />
-        <section className="run-panel" aria-label="Operation status"><div><span className="eyebrow">{busy ? 'NATIVE OPERATION' : 'READY WHEN YOU ARE'}</span><h3>{operation ? `${operation.kind} · ${operation.phase}` : 'Start with an object and a box'}</h3><p>{operation?.detail ?? 'Import an STL, check its dimensions, then start packing.'}</p></div>{facts && <dl className="search-facts" aria-label="Search status">
+        <section className="run-panel" aria-label="Operation status"><div><span className="eyebrow">{busy ? 'NATIVE OPERATION' : 'READY WHEN YOU ARE'}</span><h3>{operation ? `${operation.kind} · ${operation.phase}` : 'Start with an object and a box'}</h3><p>{progress ? `${progress.stage}${fraction === undefined ? '' : ` · ${Math.floor(fraction * 100)}%`}` : operation?.detail ?? 'Import an STL, check its dimensions, then start packing.'}</p></div>{facts && <dl className="search-facts" aria-label="Search status">
           <div><dt>Pitch</dt><dd>{facts.pitch_mm} mm{facts.coarsened_to_mm !== undefined && <>, coarsened to {facts.coarsened_to_mm} mm</>}</dd></div>
           <div><dt>Threads</dt><dd>{facts.threads}</dd></div>
           <div><dt>Estimated RAM</dt><dd>{facts.estimated_bytes ? memoryText(facts.estimated_bytes) : '—'}</dd></div>
@@ -217,7 +222,7 @@ export function App() {
           <div><dt>Remaining budget</dt><dd>{facts.remaining_seconds === undefined ? '—' : `${facts.remaining_seconds.toFixed(1)} s`}</dd></div>
           <div><dt>Since improvement</dt><dd>{facts.since_improvement_seconds === undefined ? 'No packing yet' : `${facts.since_improvement_seconds.toFixed(1)} s`}</dd></div>
           {facts.recoveries && <div><dt>Recoveries</dt><dd>{facts.recoveries}</dd></div>}
-        </dl>}<div className="elapsed"><strong>{elapsed.toFixed(1)}<small>s</small></strong><span>Total operation elapsed</span></div>{busy && <div className="activity-bar" />}</section>
+        </dl>}<div className="elapsed"><strong>{elapsed.toFixed(1)}<small>s</small></strong><span>Total operation elapsed</span></div>{busy && (fraction === undefined ? <div className="activity-bar" /> : <div className="progress-bar" role="progressbar" aria-label="Operation progress" aria-valuemin={0} aria-valuemax={progress!.total} aria-valuenow={progress!.done ?? 0}><span style={{ width: `${fraction * 100}%` }} /></div>)}</section>
       </div>
       <aside className="results-panel" aria-label="Packing results"><span className="eyebrow">RESULTS</span><h2>Best found</h2><div className="result-count">{live ? live.count.toLocaleString() : result ? result.document.count.toLocaleString() : '—'}<span>validated copies</span></div>
         <div className="result-status">{live || result ? <><span className="status-dot" /> Native validation: {live?.validation_status ?? result!.document.validation.status}</> : 'No completed result yet'}</div>

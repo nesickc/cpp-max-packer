@@ -2,6 +2,7 @@
 #include <spectrapack/solver/spectral.hpp>
 
 #include "desktop.hpp"
+#include "operation_channel.hpp"
 #include "packing_wire.hpp"
 #include "resource_policy.hpp"
 #include "runtime_record_bound.hpp"
@@ -573,62 +574,6 @@ std::optional<std::uint64_t> retained_other_bytes(const Session& session, const 
     }
     return total;
 }
-class MarkerWatcher {
-public:
-    MarkerWatcher(std::optional<std::filesystem::path> path, std::shared_ptr<std::stop_source> source)
-    {
-        if (!path) {
-            return;
-        }
-        const auto poll = [this, path = *path, source] {
-            std::error_code cause;
-            const auto parent = path.has_parent_path() ? path.parent_path() : std::filesystem::path(".");
-            if (!std::filesystem::is_directory(parent, cause) || cause) {
-                failed_.store(true);
-                source->request_stop();
-                return true;
-            }
-            const auto status = std::filesystem::symlink_status(path, cause);
-            if (cause == std::errc::no_such_file_or_directory) {
-                cause.clear();
-            }
-            if (cause || (std::filesystem::exists(status) && !std::filesystem::is_regular_file(status))) {
-                failed_.store(true);
-                source->request_stop();
-                return true;
-            }
-            if (std::filesystem::is_regular_file(status)) {
-                source->request_stop();
-                return true;
-            }
-            return false;
-        };
-        if (poll()) {
-            return;
-        }
-        thread_ = std::jthread([poll, source](std::stop_token done) {
-            while (!done.stop_requested() && !source->stop_requested()) {
-                if (poll()) {
-                    return;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            }
-        });
-    }
-    bool failed() const noexcept { return failed_.load(); }
-    bool finish()
-    {
-        thread_.request_stop();
-        if (thread_.joinable()) {
-            thread_.join();
-        }
-        return failed_.load();
-    }
-
-private:
-    std::atomic_bool failed_ {};
-    std::jthread thread_;
-};
 std::variant<Json, io::Error> create_preview(PreparedAsset& prepared, const std::filesystem::path& output,
                                              const runtime::OperationControl& control, std::uint64_t other_reserve,
                                              bool already_charged, std::uint64_t host_cap)
@@ -783,7 +728,7 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
     if (params.contains("stop_file")) {
         marker = std::filesystem::u8path(params.at("stop_file").get<std::string>());
     }
-    MarkerWatcher watcher(marker, source);
+    cli::StopMarkerWatcher watcher(marker, source);
     struct PreparationRollback {
         Session& session;
         bool staged {}, committed {};
@@ -949,7 +894,7 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
             runtime_run.resource_status_context = control.phase_context;
             runtime_run.admitted_host_cap_bytes = &session.host_cap;
             runtime_run.stop_monitor_status = [](void* raw) {
-                return cli::StopMonitorResult { static_cast<MarkerWatcher*>(raw)->failed(), std::nullopt };
+                return cli::StopMonitorResult { static_cast<cli::StopMarkerWatcher*>(raw)->error() != 0, std::nullopt };
             };
             runtime_run.stop_monitor_context = &watcher;
             runtime_run.last_validated = &session.retained_solution;
@@ -1061,7 +1006,7 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
             result["native_completion_elapsed_seconds"] =
                 std::chrono::duration<double>(runtime::Clock::now() - clock.native_start).count();
         }
-        if (watcher.finish()) {
+        if (watcher.finish() != 0) {
             return response(
                 request, false,
                 completed_failure(error("STOP_MONITOR_FAILED", "Operation-scoped Stop transport failed."), result));
