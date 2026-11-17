@@ -19,8 +19,9 @@ ENGINE = None
 
 
 def run(*arguments):
+    # A Debug engine needs 10 to 13 s to build or replay the sphere's packing envelope.
     return subprocess.run([str(ENGINE), *map(str, arguments)], capture_output=True,
-                          text=True, encoding="utf-8", timeout=25)
+                          text=True, encoding="utf-8", timeout=60)
 
 
 class DesktopTests(unittest.TestCase):
@@ -362,6 +363,79 @@ class DesktopTests(unittest.TestCase):
             self.assertTrue(failure["details"]["runtime"]["no_nonempty_incumbent"])
             self.assertEqual(result.read_bytes(), previous)
             self.assertFalse(fresh.exists())
+
+    def test_export_progress_changes_no_output_byte_and_a_stop_marker_writes_nothing(self):
+        """UI-03/AT-16: --progress adds stage lines before the terminal record and changes
+        no output byte; a stop marker present at the start cancels before any output."""
+        result_path, result = self.solved()
+        plain, plain_output = self.restore(result_path, "plain", stl=True)
+        self.assertEqual(plain.returncode, 0, plain.stdout + plain.stderr)
+        self.assertEqual(len(plain.stdout.splitlines()), 1)
+        marker = self.root / "stop.marker"
+        output = self.root / "progress"
+        output.mkdir()
+        reported = run("desktop-restore", "--object-report", self.report, "--result", result_path,
+                       "--output", output, "--stl", output / "packed.stl", "--progress", "--stop-file", marker)
+        self.assertEqual(reported.returncode, 0, reported.stdout + reported.stderr)
+        *lines, terminal = reported.stdout.splitlines()
+        self.assertEqual(json.loads(terminal)["result"]["count"], result["count"])
+        progress = [json.loads(line)["progress"] for line in lines]
+        written = [record for record in progress if record["stage"] == "Writing the STL"]
+        self.assertEqual(written[0]["total"], result["count"])
+        for record in progress:
+            self.assertEqual("done" in record, "total" in record, record)
+            self.assertLessEqual(record.get("done", 0), record.get("total", 0), record)
+        for name in ("result.json", "packed.stl", "packed.stl.json"):
+            self.assertEqual((output / name).read_bytes(), (plain_output / name).read_bytes(), name)
+        marker.touch()
+        stopped = self.root / "stopped"
+        stopped.mkdir()
+        cancelled = run("desktop-restore", "--object-report", self.report, "--result", result_path,
+                        "--output", stopped, "--stl", stopped / "packed.stl", "--stop-file", marker)
+        self.assertEqual(cancelled.returncode, 3, cancelled.stdout)
+        self.assertEqual(json.loads(cancelled.stdout)["error"]["code"], "OPERATION_CANCELLED")
+        self.assertEqual(list(stopped.iterdir()), [])
+
+    def test_stop_during_a_checked_envelope_export_leaves_no_stl(self):
+        """AT-16: the stop marker ends a running export, while it rebuilds the envelope
+        or checks copies, before it completes and without a packed STL or a stage file."""
+        fixtures.write_sphere_stl(self.source)
+        allowance = ("--available-host-bytes", str(2 << 30))
+        imported = run("inspect", "--stl", self.source, "--units", "mm", "--report", self.report,
+                       "--packing-envelope", "auto", "--accept-repair", "auto", *allowance)
+        self.assertEqual(imported.returncode, 0, imported.stdout + imported.stderr)
+        self.request.update(box_dimensions_mm=[130, 130, 90], pitch_mm=5, budget_seconds=2)
+        result_path, result = self.solved()
+        self.assertGreater(result["count"], 4)
+        for stage in ("Wrapping the packing envelope", "Checking the exported copies"):
+            with self.subTest(stage=stage):
+                name = stage.split()[0]
+                output, marker = self.root / name, self.root / f"{name}.stop"
+                output.mkdir()
+                process = subprocess.Popen(
+                    [str(ENGINE), "desktop-restore", "--object-report", str(self.report), "--result",
+                     str(result_path), "--output", str(output), "--stl", str(output / "packed.stl"), *allowance,
+                     "--progress", "--stop-file", str(marker)],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+                stopped = False
+                try:
+                    for line in process.stdout:
+                        if stage in line:
+                            marker.touch()
+                            stopped = True
+                            break
+                    # The engine stops at its next check: within half a second in Release,
+                    # after the copies being checked in Debug.
+                    rest, _ = process.communicate(timeout=60)
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait()
+                self.assertTrue(stopped, rest)
+                self.assertEqual(process.returncode, 3, rest)
+                self.assertEqual(json.loads(rest.splitlines()[-1])["error"]["code"], "OPERATION_CANCELLED")
+                self.assertFalse((output / "packed.stl").exists())
+                self.assertEqual([path for path in output.rglob("*") if ".stage-" in path.name], [])
 
     def test_restore_stl_quantization_failure_retains_valid_json_and_source(self):
         original_path, _ = self.solved()

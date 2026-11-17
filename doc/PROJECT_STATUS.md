@@ -1,6 +1,6 @@
 # Project status
 
-Updated 2026-11-16. Details belong in PRs and `.local/` logs.
+Updated 2026-11-17. Details belong in PRs and `.local/` logs.
 
 ## What works
 
@@ -115,9 +115,11 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
 11. [ ] **Project and export actions** (§7.1, §8.5). *Done when* Save reuses the current
     path, Save As asks, Export PNG writes the view, and a save or export can reveal
     its folder.
-12. [ ] **Long operations** (UI-03, AT-16). Envelope builds (~24 s) and STL export (~95 s
-    for 429 Pryanik copies) show no progress and cannot be stopped. *Done when* both
-    report progress and cancel cleanly, and a failed write leaves result and project intact.
+12. [x] **Long operations** (UI-03, AT-16). Import, envelope and export show their stage
+    under the viewer, with a bar where its size is known (STL writing, per-copy checks and
+    hashing: 94% of a 429-copy export). Cancel ends them within about a second (the engine
+    is terminated after 2 s), keeping the previous object, result and project; a cancelled
+    or failed export removes the folder it created.
 13. [ ] **Guide and messages** (§2.2, §8.5). *Done when* `docs/DESKTOP.md` is a short user
     guide opened from the app, the results panel states the geometric-only scope, and a
     failed STL export says to raise clearance and that the JSON stays valid.

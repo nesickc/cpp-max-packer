@@ -5843,6 +5843,7 @@ export interface Operation {
     | "saving"
     | "finished"
     | "failed"
+    | "cancelled"
     | "loading"
     | "voxelizing"
     | "planning_fft"
@@ -5860,6 +5861,15 @@ export interface Operation {
   sequence?: number;
   completion_elapsed_seconds?: number;
   native_completion_elapsed_seconds?: number;
+  progress?: {
+    stage: string;
+    /**
+     * This interface was referenced by `HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson`'s JSON-Schema
+     * via the `definition` "c".
+     */
+    done?: number;
+    total?: number;
+  };
 }
 export interface Error {
   code: string;

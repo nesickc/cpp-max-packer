@@ -810,6 +810,7 @@ ValidationReport detail::validate_quantized_export_with_workers(std::shared_ptr<
                       "Source accepted-solid and candidate residency exceeds export memory.", budget);
     }
 
+    control.progress("Validating the packing");
     auto fresh_limits = limits.validation;
     fresh_limits.max_working_bytes = std::min(fresh_limits.max_working_bytes, limits.max_working_bytes - source_bytes);
     std::uint64_t fresh_peak {};
@@ -955,6 +956,7 @@ ValidationReport detail::validate_quantized_export_with_workers(std::shared_ptr<
     // memory for pairing, so the report is always the serial one. Copy 0 runs
     // here first and sizes the slices.
     const auto copy_count = solution->copies().size();
+    control.progress("Checking the exported copies", 0, copy_count);
     std::uint64_t copy_peak {};
     std::unique_ptr<AheadBatch> running;
     cache->set_last_resort(
@@ -1033,6 +1035,7 @@ ValidationReport detail::validate_quantized_export_with_workers(std::shared_ptr<
                 copy_peak = budget.kernel.bytes_peak() - before;
             }
             ++current;
+            control.progress("Checking the exported copies", current, copy_count);
             continue;
         }
 
@@ -1077,6 +1080,7 @@ ValidationReport detail::validate_quantized_export_with_workers(std::shared_ptr<
             if (auto failed = pair_with_priors(check.index, std::get<CheckedCopy>(std::move(*checked)))) {
                 return *failed;
             }
+            control.progress("Checking the exported copies", check.index + 1, copy_count);
         }
         current = next;
     }

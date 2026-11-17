@@ -9,7 +9,10 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
+
+import solve_subprocess_test as fixtures
 
 
 ENGINE = pathlib.Path(sys.argv.pop(1)).resolve()
@@ -68,6 +71,59 @@ class InspectionCommandTests(unittest.TestCase):
         # Automatic acceptance is restricted to certified enclosures.
         rejected = self.inspect("--weld-tolerance-mm", "0.1", "--accept-repair", "auto")
         self.assertEqual(response_error(rejected), "ASSET_MISMATCH")
+
+    def test_envelope_progress_precedes_the_same_report_and_a_stop_publishes_nothing(self):
+        """UI-03/AT-16: --progress adds stage lines only; the stop marker ends a running
+        envelope build promptly, with nothing published."""
+        fixtures.write_sphere_stl(self.source)
+        sphere = self.source.read_bytes()
+        envelope = ("--packing-envelope", "auto", "--accept-repair", "auto", "--available-host-bytes", str(2 << 30))
+        plain = self.inspect(*envelope, timeout=60)
+        self.assertEqual(plain.returncode, 0, (plain.stdout, plain.stderr))
+        self.assertEqual(len(plain.stdout.splitlines()), 1)
+        marker = self.root / "stop.marker"
+        report = self.root / "progress" / "inspection.json"
+        reported = self.inspect(*envelope, "--progress", "--stop-file", marker, report=report, timeout=60)
+        self.assertEqual(reported.returncode, 0, (reported.stdout, reported.stderr))
+        *progress, terminal = reported.stdout.splitlines()
+        self.assertEqual({key: value for key, value in json.loads(terminal).items() if key != "report_path"},
+                         {key: value for key, value in json.loads(plain.stdout).items() if key != "report_path"})
+        self.assertEqual(report.read_bytes(), self.report.read_bytes())
+        stages = [json.loads(line)["progress"]["stage"] for line in progress]
+        self.assertIn("Wrapping the packing envelope", stages)
+        self.assertIn("Checking that the envelope encloses the model", stages)
+
+        cancelled = self.root / "cancelled" / "inspection.json"
+        process = subprocess.Popen(
+            [str(ENGINE), "inspect", "--stl", str(self.source), "--units", "mm", "--report", str(cancelled),
+             *envelope, "--progress", "--stop-file", str(marker)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
+        stopped = None
+        try:
+            for line in process.stdout:
+                if "Wrapping the packing envelope" in line:
+                    marker.touch()
+                    stopped = time.monotonic()
+                    break
+            rest, _ = process.communicate(timeout=15)
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+        ended = time.monotonic()
+        self.assertIsNotNone(stopped, rest)
+        self.assertEqual(process.returncode, 3, rest)
+        self.assertEqual(json.loads(rest.splitlines()[-1])["error"]["code"], "OPERATION_CANCELLED")
+        # Tens of milliseconds on a quiet machine; the bound allows a busy CI runner.
+        self.assertLess(ended - stopped, 5.0)
+        self.assertFalse(cancelled.parent.exists())
+
+        # A marker present at the start cancels before any work.
+        early = self.inspect(*envelope, "--stop-file", marker, report=cancelled)
+        self.assertEqual(early.returncode, 3, early.stdout)
+        self.assertEqual(response_error(early), "OPERATION_CANCELLED")
+        self.assertFalse(cancelled.parent.exists())
+        self.assertEqual(self.source.read_bytes(), sphere)
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()

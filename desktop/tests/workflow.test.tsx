@@ -4,7 +4,7 @@ import type { Desktop } from '../src/generated/contracts';
 import fixtures from '../../tests/contracts/schema-fixtures.json';
 import { cube45CatalogHash, defaultSettings, snapshotSettings } from '../src/state';
 
-const native = vi.hoisted(() => ({ state: vi.fn(), save: vi.fn(), start: vi.fn(), newProject: vi.fn(), importObject: vi.fn(), open: vi.fn(), repair: vi.fn(),
+const native = vi.hoisted(() => ({ state: vi.fn(), save: vi.fn(), start: vi.fn(), stop: vi.fn(), newProject: vi.fn(), importObject: vi.fn(), open: vi.fn(), repair: vi.fn(),
   importDropped: vi.fn(), drop: () => {}, onDrop: vi.fn((handler: () => void) => { native.drop = handler; return Promise.resolve(() => {}); }) }));
 vi.mock('../src/bridge', () => ({ nativeAvailable: () => true, bridge: native }));
 vi.mock('../src/Viewer', () => ({ Viewer: (props: { dimensions: number[]; preview: { preview_id: string } | null }) => <div data-testid="viewer">{props.dimensions.join(',')} / {props.preview?.preview_id}</div> }));
@@ -338,6 +338,39 @@ it('imports a dropped STL with the chosen units, and refuses a drop while an ope
   act(() => native.drop());
   expect((await screen.findByRole('alert')).textContent).toContain('Wait for the current operation to finish');
   expect(native.importDropped).not.toHaveBeenCalled();
+});
+
+it('UI-03 shows a long export\'s progress and cancels it without an error', async () => {
+  const fixture = fixtures.find(f => f.kind === 'results' && f.schema_valid && f.semantic_valid)!;
+  const document = structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];
+  const exporting: Desktop.Operation = {id:'export-1', kind:'export', phase:'validating', started_at:'2026-11-17T10:00:00Z',
+    finished_at:null, result_id:'result', detail:null, progress:{stage:'Checking the exported copies', done:212, total:429}};
+  const importing: Desktop.State = {desktop_version:1, session_id:'long-export', revision:1,
+    object:{id:'object', display_name:'Cube.stl', report:document.assets.object, preview:null},
+    draft_settings:structuredClone(defaultSettings), result:{id:'result', document, preview:null, origin:'solve'},
+    operation:{...exporting, kind:'import', phase:'preparing', progress:{stage:'Wrapping the packing envelope'}}, last_error:null};
+  native.state.mockResolvedValue(importing);
+  render(<App/>);
+  // A stage with no known size keeps the indeterminate bar.
+  await waitFor(() => expect(screen.getByText('Wrapping the packing envelope')).toBeDefined());
+  expect(screen.queryByRole('progressbar')).toBeNull();
+  native.state.mockResolvedValue({...importing, revision:2, operation:exporting});
+  await waitFor(() => expect(screen.getByText('Checking the exported copies · 49%')).toBeDefined());
+  const bar = screen.getByRole('progressbar', {name:'Operation progress'});
+  expect([bar.getAttribute('aria-valuenow'), bar.getAttribute('aria-valuemax')]).toEqual(['212', '429']);
+  native.stop.mockResolvedValue({operation_id:'export-1', accepted:true});
+  fireEvent.click(screen.getByRole('button', {name:'Cancel'}));
+  await waitFor(() => expect(native.stop).toHaveBeenCalledWith({operation_id:'export-1'}));
+  native.state.mockResolvedValue({...importing, revision:3, operation:{...exporting, phase:'stopping'}});
+  await waitFor(() => expect(screen.getByRole('button', {name:'Cancelling…'}).hasAttribute('disabled')).toBe(true));
+  const { progress: _, ...ended } = exporting;
+  native.state.mockResolvedValue({...importing, revision:4, operation:{...ended, phase:'cancelled', finished_at:'2026-11-17T10:00:05Z',
+    detail:'Cancelled; nothing was changed.'}});
+  await waitFor(() => expect(screen.getByText('export · cancelled')).toBeDefined());
+  expect(screen.getByText('Cancelled; nothing was changed.')).toBeDefined();
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.getByRole('button', {name:/Export packed STL/}).hasAttribute('disabled')).toBe(false);
+  expect(screen.getByRole('button', {name:'Stop & keep'}).hasAttribute('disabled')).toBe(true);
 });
 
 it('fills the box from a preset and keeps the dimensions editable', async () => {

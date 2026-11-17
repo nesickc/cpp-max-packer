@@ -59,7 +59,8 @@ InspectFailure import_failure(const ImportFailure& source) {
   if (source.code == "NOT_IMPLEMENTED") {
     return failure("METHOD_UNSUPPORTED", source.message, 3);
   }
-  auto result = failure(source.code, source.message, source.code == "MEMORY_LIMIT" ? 3 : 2);
+  auto result = failure(source.code, source.message,
+                        source.code == "MEMORY_LIMIT" || source.code == "OPERATION_CANCELLED" ? 3 : 2);
   result.details = {
       { "reason", source.reason }
   };
@@ -770,7 +771,8 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
     }
 }
 
-std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectRequest& request) {
+std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectRequest& request,
+                                                              const runtime::OperationControl& control) {
     try {
         if (static_cast<int>(request.weld_tolerance_mm.has_value()) +
                 static_cast<int>(request.reconstruct_resolution_mm.has_value()) + request.packing_envelope >
@@ -853,7 +855,8 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
 
         geometry::ImportOptions import_options(role, units, request.scale_mm.value_or(1.0), limits);
         import_options.envelope_source_only = request.packing_envelope;
-        auto draft_result = geometry::inspect_stl(source_bytes, import_options);
+        control.progress("Reading the STL");
+        auto draft_result = geometry::inspect_stl(source_bytes, import_options, control);
         if (std::holds_alternative<ImportFailure>(draft_result)) {
             return import_failure(std::get<ImportFailure>(draft_result));
         }
@@ -895,12 +898,12 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
             if (request.packing_envelope) {
                 weld_options.algorithm = geometry::RepairAlgorithm::packing_envelope;
             }
-            const auto weld_admission = geometry::estimate_repair_admission(*draft, weld_options);
+            const auto weld_admission = geometry::estimate_repair_admission(*draft, weld_options, control);
             if (const auto* problem = std::get_if<ImportFailure>(&weld_admission)) {
                 return import_failure(*problem);
             }
             budget.charge(std::get<geometry::ImportAdmission>(weld_admission).working_bytes_upper_bound);
-            auto proposal_result = geometry::propose_repair(draft, weld_options);
+            auto proposal_result = geometry::propose_repair(draft, weld_options, control);
             if (std::holds_alternative<ImportFailure>(proposal_result)) {
                 return import_failure(std::get<ImportFailure>(proposal_result));
             }
@@ -1045,6 +1048,11 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
             return failure("INTERNAL_ERROR", "Inspection report failed contract validation.", 4);
         }
 
+        // Nothing is published once a stop has been requested.
+        if (control.stop.stop_requested()) {
+            return failure("OPERATION_CANCELLED", "Inspection was cancelled before publication.", 3);
+        }
+        control.progress("Saving the inspection");
         std::error_code error;
         std::filesystem::create_directories(assets_directory, error);
         if (error) {

@@ -2884,6 +2884,7 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
             "saving",
             "finished",
             "failed",
+            "cancelled",
             "loading",
             "voxelizing",
             "planning_fft",
@@ -2938,6 +2939,29 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "native_completion_elapsed_seconds": {
           "type": "number",
           "minimum": 0
+        },
+        "progress": {
+          "$comment": "Current stage of a long import, repair or export; done of total only when the stage has a known size.",
+          "type": "object",
+          "required": [
+            "stage"
+          ],
+          "properties": {
+            "stage": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "done": {
+              "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/counter"
+            },
+            "total": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false

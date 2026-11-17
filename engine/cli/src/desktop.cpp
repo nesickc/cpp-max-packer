@@ -6,6 +6,7 @@
 #include <spectrapack/solver/spectral.hpp>
 
 #include "host_admission.hpp"
+#include "operation_channel.hpp"
 #include "resource_policy.hpp"
 
 #ifndef NOMINMAX
@@ -52,8 +53,20 @@ std::optional<io::Error> unsupported_threads(const Json& request)
     return {};
 }
 
+// Set while a desktop command watches a stop marker: a failure after a stop
+// request is reported as the cancellation, or the marker failure, behind it.
+const std::stop_source* active_stop {};
+const spectrapack::cli::StopMarkerWatcher* active_watcher {};
+
 int fail(std::string code, std::string message, int status = 2, Json details = Json::object())
 {
+    if (active_stop && active_stop->stop_requested()) {
+        const bool monitor = active_watcher->error() != 0;
+        code = monitor ? "STOP_MONITOR_FAILED" : "OPERATION_CANCELLED";
+        message = monitor ? "Operation-scoped Stop transport failed." : "The operation was cancelled before it completed.";
+        status = 3;
+        details = Json::object();
+    }
     std::cout << Json{{"protocol_version", 1}, {"request_id", nullptr}, {"ok", false},
                      {"error", {{"code", code}, {"message", message}, {"details", details}, {"recoverable", true}}}}
                      .dump() << '\n' << std::flush;
@@ -245,7 +258,8 @@ int prepare(const std::map<std::string, std::filesystem::path>& options, const A
     return std::cout ? 0 : 4;
 }
 
-int restore(const std::map<std::string, std::filesystem::path>& options, const Asset& asset, HostAdmission& budget)
+int restore(const std::map<std::string, std::filesystem::path>& options, const Asset& asset, HostAdmission& budget,
+            const spectrapack::runtime::OperationControl& control)
 {
     auto stored = read_json(options.at("--result"), 64ULL << 20, io::ContractKind::results, budget);
     if (!stored) {
@@ -299,7 +313,9 @@ int restore(const std::map<std::string, std::filesystem::path>& options, const A
     }
     geo::ValidationLimits validation_limits;
     validation_limits.max_working_bytes = budget.remaining();
-    auto fresh = geo::validate(ctx, std::get<std::shared_ptr<const geo::Candidate>>(candidate), validation_limits);
+    control.progress("Validating the packing");
+    auto fresh =
+        geo::validate(ctx, std::get<std::shared_ptr<const geo::Candidate>>(candidate), validation_limits, control);
     if (!fresh.validated_solution || fresh.report.validity != geo::Validity::valid) {
         return fail("RESULT_VALIDATION_FAILED", "Fresh native validation rejected the stored placements.", 5);
     }
@@ -310,10 +326,9 @@ int restore(const std::map<std::string, std::filesystem::path>& options, const A
     for (const auto* key : { "time_to_best_seconds", "peak_host_bytes", "peak_device_bytes", "termination_reason" }) {
         metadata["metrics"][key] = stored->at("metrics").at(key);
     }
-    auto rebuilt = io::build_result({
-        fresh.validated_solution, asset, {},
-          catalog, metadata, validation_limits, { 16, 256 }
-    });
+    auto rebuilt = io::build_result({ fresh.validated_solution, asset, {}, catalog, metadata, validation_limits,
+                                      { 16, 256 } },
+                                    control);
     if (const auto* error = std::get_if<io::Error>(&rebuilt)) {
         return fail(error->code, error->message, 3, error->details);
     }
@@ -343,7 +358,7 @@ int restore(const std::map<std::string, std::filesystem::path>& options, const A
                                        {},
                                        budget.remaining() };
     export_request.diagnostic_limits = { 16, 256 };
-    auto published = io::export_result(export_request);
+    auto published = io::export_result(export_request, control);
     if (const auto* error = std::get_if<io::Error>(&published)) {
         return fail(error->code, error->message, 3, error->details);
     }
@@ -361,15 +376,21 @@ int run_desktop_command(const std::string& command, const std::vector<std::strin
 {
     try {
         std::map<std::string, std::filesystem::path> options;
-        for (size_t i = 0; i < arguments.size(); i += 2) {
+        const bool restoring = command == "desktop-restore";
+        bool progress = false;
+        for (size_t i = 0; i < arguments.size(); ++i) {
             const auto& flag = arguments[i];
+            if (restoring && flag == "--progress" && !progress) {
+                progress = true;
+                continue;
+            }
             if (i + 1 == arguments.size() || options.contains(flag) ||
                 (flag != "--object-report" && flag != "--output" &&
                  flag != (command == "desktop-prepare" ? "--request" : "--result") &&
-                 !(command == "desktop-restore" && flag == "--stl") && flag != "--available-host-bytes")) {
+                 !(restoring && (flag == "--stl" || flag == "--stop-file")) && flag != "--available-host-bytes")) {
                 return fail("INVALID_REQUEST", "Desktop command options are invalid.");
             }
-            options[flag] = std::filesystem::u8path(arguments[i + 1]);
+            options[flag] = std::filesystem::u8path(arguments[++i]);
         }
         std::uint64_t available = 512ULL << 20;
         if (options.contains("--available-host-bytes")) {
@@ -408,10 +429,28 @@ int run_desktop_command(const std::string& command, const std::vector<std::strin
         }
         HostAdmission budget(available);
         budget.charge(request_budget.used() - (16ULL << 20));
-        auto loaded = io::load_accepted_asset(options.at("--object-report"),
-                                              {
-        },
-                                              { budget.remaining(), { 16, 256 } });
+        const auto stop = std::make_shared<std::stop_source>();
+        spectrapack::cli::StopMarkerWatcher watcher(
+            options.contains("--stop-file") ? std::optional(options.at("--stop-file")) : std::nullopt, stop);
+        struct ActiveStop {
+            ActiveStop(const std::stop_source& source, const spectrapack::cli::StopMarkerWatcher& marker)
+            {
+                active_stop = &source;
+                active_watcher = &marker;
+            }
+            ~ActiveStop()
+            {
+                active_stop = nullptr;
+                active_watcher = nullptr;
+            }
+        } active { *stop, watcher };
+        spectrapack::runtime::OperationControl control { stop->get_token() };
+        spectrapack::cli::ProgressPrinter printer;
+        if (progress) {
+            printer.attach(control);
+        }
+        control.progress("Loading the packing geometry");
+        auto loaded = io::load_accepted_asset(options.at("--object-report"), control, { budget.remaining(), { 16, 256 } });
         if (const auto* problem = std::get_if<io::Error>(&loaded)) {
             return fail(problem->code, problem->message, 3, problem->details);
         }
@@ -426,7 +465,7 @@ int run_desktop_command(const std::string& command, const std::vector<std::strin
             return fail("ASSET_MISMATCH", "Desktop object report has the wrong role.");
         }
         return command == "desktop-prepare" ? prepare(options, asset, budget, available, *request, *sampled_ram)
-                                            : restore(options, asset, budget);
+                                            : restore(options, asset, budget, control);
     }
     catch (const spectrapack::cli::HostMemoryLimit&) {
         return fail("MEMORY_LIMIT",

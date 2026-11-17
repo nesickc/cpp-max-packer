@@ -57,6 +57,12 @@ with copy identities and triangle ranges. The engine checks the actual rounded
 STL coordinates. If rounding violates the geometry constraints, STL export
 fails while valid JSON remains available; changing the view cannot fix it.
 
+Import, envelope creation and export show their current stage under the viewer,
+with a progress bar where the stage has a known size (writing the STL, checking
+each exported copy, hashing). Cancel ends them within about a second: an import
+or repair keeps the previous object and result, and a cancelled or failed export
+removes the `SpectraPack-export-…` folder it created, keeping the result and project.
+
 ## Current boundaries
 
 This journey uses box containers, fixed/cube rotations, explicit pitch and CPU

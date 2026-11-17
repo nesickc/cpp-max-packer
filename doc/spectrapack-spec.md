@@ -342,7 +342,14 @@ these auxiliary CLI operations, as specified in
 [ADR 0010](../spec/decisions/0010-desktop-workflow.md). Its additive
 `desktop-prepare` and `desktop-restore` commands resolve supported CPU settings
 and independently validate restored results; `solve --stop-file FILE` requests
-safe-boundary stop. The desktop DTO/project manifest is a separate versioned
+safe-boundary stop. `inspect` and `desktop-restore` accept the same
+`--stop-file FILE`, which cancels them with `OPERATION_CANCELLED` (exit 3) before
+any further publication, and `--progress`, which writes
+`{"progress":{"stage":…,"done":…,"total":…}}` lines (each new stage, then at most
+four a second; `done`/`total` only for a stage of known size) before the unchanged
+terminal record. The desktop shows them and cancels an import, repair or export without
+changing its state; a cancelled or failed export removes the output folder it
+created. The desktop DTO/project manifest is a separate versioned
 schema. The desktop `cube45` preset resolves natively to an explicit version-1
 custom quaternion catalog; results retain that catalog and its hash. Existing
 cube and fixed results retain their recorded permissions. This bounded

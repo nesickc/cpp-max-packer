@@ -912,6 +912,7 @@ ImportOutcome<RepairProposal> propose_repair(std::shared_ptr<const AssetDraft> o
         exact::WorkBudget predicate_budget(original->storage_->limits.max_predicate_work, control);
         double max_displacement = 0.0;
         if (options.algorithm == RepairAlgorithm::packing_envelope) {
+            control.progress("Wrapping the packing envelope");
             auto enclosed = detail::build_packing_envelope(mesh, *original->report().mesh_bounds_mm, control);
             if (const auto* failure = std::get_if<ImportFailure>(&enclosed)) {
                 return *failure;
@@ -928,6 +929,7 @@ ImportOutcome<RepairProposal> propose_repair(std::shared_ptr<const AssetDraft> o
                                        "repair missing faces externally.",
                                        {} };
             }
+            control.progress("Reconstructing the surface");
             auto reconstructed = detail::reconstruct_closed_surface(mesh, *original->report().mesh_bounds_mm,
                                                                     options.tolerance_mm, control);
             if (const auto* failure = std::get_if<ImportFailure>(&reconstructed)) {
@@ -939,6 +941,7 @@ ImportOutcome<RepairProposal> propose_repair(std::shared_ptr<const AssetDraft> o
             detail::operation_checkpoint(control);
         }
         else {
+            control.progress("Welding vertices");
             std::vector<std::uint32_t> representatives;
             representatives.reserve(mesh.vertices.size());
             std::vector<std::uint32_t> selected(mesh.vertices.size());
@@ -1060,6 +1063,7 @@ ImportOutcome<RepairProposal> propose_repair(std::shared_ptr<const AssetDraft> o
             decltype(seen) {}.swap(seen);
             decltype(spatial) {}.swap(spatial);
         }
+        control.progress("Checking the candidate solid");
         auto analysis = detail::analyze_solid({ candidate_storage->vertices, candidate_storage->triangles },
                                               candidate_storage->limits, predicate_budget);
         detail::operation_checkpoint(control);
@@ -1084,6 +1088,7 @@ ImportOutcome<RepairProposal> propose_repair(std::shared_ptr<const AssetDraft> o
             const bool cavity = std::ranges::any_of(candidate_storage->report.shells, [](const auto& shell) {
                 return !shell.depth || *shell.depth % 2 != 0;
             });
+            control.progress("Checking that the envelope encloses the model");
             const auto enclosing = cavity ? Validity::invalid
                                           : detail::certify_surface_enclosure(
                                                 { candidate_storage->vertices, candidate_storage->triangles }, mesh,

@@ -354,6 +354,7 @@ std::variant<std::string, Error> sha256_file(const std::filesystem::path& path, 
         std::uint64_t total {};
         while (status >= 0 && input) {
             detail::poll_operation();
+            detail::operation_control().progress("Hashing the STL", total, expected_size);
             input.read(reinterpret_cast<char*>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
             const auto count = input.gcount();
             if (count < 0 || static_cast<std::uint64_t>(count) > expected_size - total) {
@@ -1145,6 +1146,8 @@ std::optional<Error> validate_closed_stl_stage(const std::filesystem::path& path
     std::array<std::byte, 50> record {};
     std::uint64_t ordinal {};
     for (std::size_t copy_index = 0; copy_index != solution->copies().size(); ++copy_index) {
+        detail::poll_operation();
+        detail::operation_control().progress("Rereading the written STL", copy_index, solution->copies().size());
         const auto [first, count] = ranges[copy_index];
         if (first != ordinal || count != mesh.triangles.size()) {
             return failure("EXPORT_CHECK_FAILED", "Closed STL stage copy ranges are not contiguous.");
@@ -2198,6 +2201,7 @@ ExportOutcome ResultPublisher::publish(const ExportRequest& request, const runti
             std::uint64_t first {};
             for (const auto& copy : request.solution->copies()) {
                 detail::poll_operation();
+                control.progress("Writing the STL", ranges.size(), request.solution->copies().size());
                 const auto transform = geometry::RigidTransform::make(copy.rotation_xyzw, copy.translation_mm);
                 if (!transform) {
                     return post_primary_error(
