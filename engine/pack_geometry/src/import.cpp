@@ -822,8 +822,10 @@ ImportAdmissionOutcome estimate_repair_admission(const AssetDraft& original, con
             return resource_failure("WELD_WORKING_BYTES", "Native repair admission accounting overflowed.");
         }
         if (options.algorithm == RepairAlgorithm::packing_envelope) {
-            if (original.role() != AssetRole::object || !original.report().mesh_bounds_mm ||
-                !detail::envelope_parameters(*original.report().mesh_bounds_mm)) {
+            const auto parameters = original.role() == AssetRole::object && original.report().mesh_bounds_mm
+                                        ? detail::envelope_parameters(*original.report().mesh_bounds_mm)
+                                        : std::nullopt;
+            if (!parameters) {
                 return settings_failure("ENVELOPE_BOUNDS", "Only finite object geometry supports packing envelopes.");
             }
             const auto output =
@@ -831,7 +833,19 @@ ImportAdmissionOutcome estimate_repair_admission(const AssetDraft& original, con
             if (!output || mesh.triangles.size() > UINT64_MAX / 1024) {
                 return resource_failure("ENVELOPE_MEMORY", "Envelope memory estimate overflowed.");
             }
-            const auto scratch = std::max(*output, (512ULL << 20) + mesh.triangles.size() * 1024);
+            // The wrap's search trees hold about 280 bytes per piece (measured, Release),
+            // on top of 256 MiB for the bounded refinement. Counting stops at the
+            // pieces the allowance could not hold, or at 2^32 where there is none.
+            constexpr std::uint64_t piece_bytes = 320;
+            const auto allowance = std::min(original.storage_->limits.max_working_bytes, options.max_working_bytes);
+            const auto pieces = detail::envelope_search_pieces(
+                mesh, parameters->alpha_mm, std::min<std::uint64_t>(allowance / piece_bytes, 1ULL << 32), control);
+            if (!pieces) {
+                return resource_failure("ENVELOPE_MEMORY",
+                                        "The model's large triangles need more memory than a packing envelope may use.");
+            }
+            const auto scratch = std::max({ *output, (512ULL << 20) + mesh.triangles.size() * 1024,
+                                            (256ULL << 20) + *pieces * piece_bytes });
             if (*retained > UINT64_MAX - scratch) {
                 return resource_failure("ENVELOPE_MEMORY", "Envelope memory estimate overflowed.");
             }

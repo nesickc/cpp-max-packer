@@ -37,6 +37,20 @@ if(SPECTRAPACK_ENABLE_VULKAN)
     "SPECTRAPACK_ENABLE_VULKAN=ON is unsupported: the Vulkan compute backend is not implemented.")
 endif()
 
+# The windows-ninja-fuzz preset: the engine libraries and the libFuzzer targets in
+# tests/fuzz are compiled with AddressSanitizer and coverage instrumentation.
+option(SPECTRAPACK_FUZZING "Build the fuzz targets under AddressSanitizer" OFF)
+if(SPECTRAPACK_FUZZING)
+  if(NOT MSVC)
+    message(FATAL_ERROR "SPECTRAPACK_FUZZING needs MSVC's /fsanitize=address and /fsanitize=fuzzer.")
+  endif()
+  add_compile_options(/fsanitize=address /fsanitize=fuzzer /Zi)
+  # The vcpkg libraries are not instrumented, so the standard library must not
+  # expect their containers to carry AddressSanitizer annotations.
+  add_compile_definitions(_DISABLE_STL_ANNOTATION)
+  add_link_options(/DEBUG /INCREMENTAL:NO)
+endif()
+
 find_package(Catch2 3.11.0 CONFIG REQUIRED)
 find_package(nlohmann_json_schema_validator 2.3.0 CONFIG REQUIRED)
 find_package(Python3 3.12 COMPONENTS Interpreter REQUIRED)
@@ -71,6 +85,9 @@ add_subdirectory(engine/service)
 add_subdirectory(engine/cli)
 add_subdirectory(tests)
 add_subdirectory(benchmarks)
+if(SPECTRAPACK_FUZZING)
+  add_subdirectory(tests/fuzz)
+endif()
 
 set_target_properties(pack_geometry pack_compute pack_solver pack_io pack_service
   PROPERTIES FOLDER "Libs")

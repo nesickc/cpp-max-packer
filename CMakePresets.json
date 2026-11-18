@@ -28,11 +28,21 @@
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "SPECTRAPACK_ENABLE_VULKAN": "OFF"
       }
+    },
+    {
+      "name": "windows-ninja-fuzz",
+      "displayName": "Windows Ninja Release with AddressSanitizer and libFuzzer",
+      "inherits": "windows-ninja-release",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "SPECTRAPACK_FUZZING": "ON"
+      }
     }
   ],
   "buildPresets": [
     { "name": "windows-ninja-debug", "configurePreset": "windows-ninja-debug" },
-    { "name": "windows-ninja-release", "configurePreset": "windows-ninja-release" }
+    { "name": "windows-ninja-release", "configurePreset": "windows-ninja-release" },
+    { "name": "windows-ninja-fuzz", "configurePreset": "windows-ninja-fuzz", "targets": ["spectrapack_fuzzers"] }
   ],
   "testPresets": [
     {
@@ -44,6 +54,12 @@
       "name": "windows-ninja-release",
       "configurePreset": "windows-ninja-release",
       "output": { "outputOnFailure": true }
+    },
+    {
+      "name": "windows-ninja-fuzz",
+      "configurePreset": "windows-ninja-fuzz",
+      "output": { "outputOnFailure": true },
+      "filter": { "include": { "name": "^fuzz_" } }
     }
   ]
 }

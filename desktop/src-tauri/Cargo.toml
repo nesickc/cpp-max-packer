@@ -14,6 +14,12 @@ name = "spectrapack-desktop"
 path = "src/main.rs"
 required-features = ["app"]
 
+# The fuzz entry point for archive::open; tests/fuzz links it under libFuzzer.
+[[example]]
+name = "fuzz_project_archive"
+path = "fuzz/project_archive.rs"
+crate-type = ["staticlib"]
+
 [features]
 default = ["app"]
 app = ["dep:tauri", "dep:rfd", "dep:tauri-build"]

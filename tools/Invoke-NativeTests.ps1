@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('windows-ninja-debug', 'windows-ninja-release')]
+    [ValidateSet('windows-ninja-debug', 'windows-ninja-release', 'windows-ninja-fuzz')]
     [string]$Preset = 'windows-ninja-debug',
     [string]$VcpkgRoot = $env:VCPKG_ROOT,
     [string]$VsWherePath = (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'),
