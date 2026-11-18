@@ -16,7 +16,8 @@ set_tests_properties(spectrapack_desktop_subprocess PROPERTIES TIMEOUT 600)
 add_test(NAME spectrapack_desktop_runtime_subprocess
   COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/desktop_runtime_subprocess_test.py"
     "$<TARGET_FILE:spectrapack-engine>")
-set_tests_properties(spectrapack_desktop_runtime_subprocess PROPERTIES TIMEOUT 60)
+# About 42 s with a Debug engine on a developer laptop; a hosted runner is slower.
+set_tests_properties(spectrapack_desktop_runtime_subprocess PROPERTIES TIMEOUT 120)
 
 if(BUILD_TESTING)
   add_executable(spectrapack_result_contract_check result_contract_check.cpp)
@@ -32,7 +33,9 @@ if(BUILD_TESTING)
     solve_unicode_relocation
     solve_transforms
     solve_resolved_catalog
-    solve_rejections)
+    solve_rejections
+    solve_continue
+    solve_continue_rejections)
     add_test(NAME spectrapack_${solve_case}_subprocess
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/solve_subprocess_test.py"
         "$<TARGET_FILE:spectrapack-engine>"
@@ -40,6 +43,8 @@ if(BUILD_TESTING)
         --case "${solve_case}")
     set_tests_properties(spectrapack_${solve_case}_subprocess PROPERTIES TIMEOUT 30)
   endforeach()
+  # A dozen refusals: about 18 s with a Debug engine on a developer laptop.
+  set_tests_properties(spectrapack_solve_continue_rejections_subprocess PROPERTIES TIMEOUT 90)
 endif()
 
 if(BUILD_TESTING)

@@ -44,6 +44,10 @@ fn desktop_start(core: Managed<'_, Core>, request: StartRequest) -> Outcome<Rece
     core.start(request.settings)
 }
 #[tauri::command]
+fn desktop_continue(core: Managed<'_, Core>, request: StartRequest) -> Outcome<Receipt> {
+    core.continue_search(request.settings)
+}
+#[tauri::command]
 fn desktop_stop(core: Managed<'_, Core>, request: StopRequest) -> Outcome<StopResponse> {
     core.stop(&request.operation_id)
 }
@@ -171,6 +175,7 @@ fn main() {
             desktop_import_dropped,
             desktop_repair,
             desktop_start,
+            desktop_continue,
             desktop_stop,
             desktop_save_project,
             desktop_open_project,

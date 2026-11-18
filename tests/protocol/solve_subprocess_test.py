@@ -928,6 +928,138 @@ class SolveSubprocessTests(unittest.TestCase):
                 expected_codes={"INVALID_SETTINGS", "UNSUPPORTED_SETTINGS"})
         self.assertEqual(self.source_path.read_bytes(), self.source_bytes)
 
+    def continue_solve(self, name, settings, parent_path, object_report=None):
+        settings_path, result_path, stl_path = self.write_case_settings(self.root / name, settings)
+        snapshot = self.input_snapshot(settings_path, parent_path, object_report=object_report)
+        # No packed STL: its per-copy checks are not what these cases are about.
+        completed = run_engine(
+            "solve", "--settings", settings_path, "--object-report", object_report or self.object_report_path,
+            "--result", result_path, "--continue", parent_path)
+        return completed, result_path, stl_path, snapshot
+
+    def short_parent(self):
+        """Some of the 64 cubes a 40 mm box holds: the work budget ends the search early."""
+        completed, _, parent_path, _ = self.solve(self.settings(candidates=16), self.root / "parent")
+        self.assertEqual(completed.returncode, 0, (completed.stdout, completed.stderr))
+        parent = json.loads(parent_path.read_text(encoding="utf-8"))
+        self.assertTrue(1 < parent["count"] < 64, parent["count"])
+        return parent_path, parent
+
+    def test_continue(self):
+        """SOL-06, section 8.2: more budget searches on from the parent's re-checked poses."""
+        parent_path, parent = self.short_parent()
+
+        completed, result_path, _, _ = self.continue_solve("more", self.settings(), parent_path)
+        self.assertEqual(completed.returncode, 0, (completed.stdout, completed.stderr))
+        self.assert_result_contract(result_path)
+        result = json.loads(result_path.read_text(encoding="utf-8"))
+        self.assertEqual((result["count"], result["validation"]["status"]), (64, "valid"))
+        self.assertEqual(result["job_id"], parent["job_id"])
+        self.assertGreater(result["solution_revision"], parent["solution_revision"])
+        search = result["search"]
+        first, second = search["run_segments"]
+        self.assertEqual(first, parent["search"]["run_segments"][0])
+        self.assertNotEqual(second["segment_id"], first["segment_id"])
+        self.assertEqual(second["parent_solution_revision"], parent["solution_revision"])
+        self.assertIs(second["search_state_reset"], True)
+        self.assertEqual(second["resolved_settings"], search["resolved_settings"])
+        self.assertEqual(search["work_counts"]["candidate_evaluations"],
+                         first["work_counts"]["candidate_evaluations"] +
+                         second["work_counts"]["candidate_evaluations"])
+        # The count rose in the second segment, after all of the parent's search time.
+        self.assertGreaterEqual(result["metrics"]["time_to_best_seconds"],
+                                parent["search"]["elapsed_seconds"])
+
+        # No budget to speak of: the parent's poses come back, never fewer.
+        completed, kept_path, _, _ = self.continue_solve(
+            "kept", self.settings(candidates=1, passes=1), parent_path)
+        self.assertEqual(completed.returncode, 0, (completed.stdout, completed.stderr))
+        self.assert_result_contract(kept_path)
+        kept = json.loads(kept_path.read_text(encoding="utf-8"))
+        self.assertEqual(kept["placements"], parent["placements"])
+        self.assertGreater(kept["solution_revision"], parent["solution_revision"])
+        self.assertEqual(kept["metrics"]["time_to_best_seconds"],
+                         parent["metrics"]["time_to_best_seconds"])
+        self.assertEqual(len(kept["search"]["run_segments"]), 2)
+
+        # A continued result continues again; its segments accumulate.
+        completed, third_path, _, _ = self.continue_solve("third", self.settings(), result_path)
+        self.assertEqual(completed.returncode, 0, (completed.stdout, completed.stderr))
+        self.assert_result_contract(third_path)
+        third = json.loads(third_path.read_text(encoding="utf-8"))
+        self.assertEqual(third["count"], 64)
+        segments = third["search"]["run_segments"]
+        self.assertEqual(segments[:2], search["run_segments"])
+        self.assertEqual(segments[2]["parent_solution_revision"], result["solution_revision"])
+        self.assertEqual(len({segment["segment_id"] for segment in segments}), 3)
+        self.assertEqual(self.source_path.read_bytes(), self.source_bytes)
+
+    def test_continue_rejections(self):
+        """Poses that fail revalidation or settings that differ are refused, never trusted."""
+        parent_path, parent = self.short_parent()
+
+        def refuse(name, expected_codes, document=None, settings=None, object_report=None, raw=None):
+            source = parent_path
+            if document is not None or raw is not None:
+                source = self.root / f"{name}-parent.json"
+                source.write_text(raw if raw is not None else json.dumps(document), encoding="utf-8")
+            completed, result_path, stl_path, snapshot = self.continue_solve(
+                name, settings or self.settings(), source, object_report)
+            self.assertEqual(completed.returncode, 2, completed.stdout)
+            return self.assert_rejected(completed, result_path, stl_path, snapshot, expected_codes)
+
+        def moved(index, translation):
+            document = copy.deepcopy(parent)
+            placement = document["placements"][index]
+            placement["translation_mm"] = list(translation)
+            placement["local_to_world"] = quaternion_matrix(placement["quaternion_xyzw"], translation)
+            return document
+
+        # Two copies in one place, and a copy outside the box: the contract accepts
+        # both documents, the validator does not.
+        refuse("overlap", {"CONTINUE_POSES_REJECTED"},
+               moved(1, parent["placements"][0]["translation_mm"]))
+        refuse("outside", {"CONTINUE_POSES_REJECTED"}, moved(0, (100.0, 5.0, 5.0)))
+        turned = copy.deepcopy(parent)
+        turned["placements"][0]["quaternion_xyzw"] = [0.0, 0.0, math.sqrt(0.5), math.sqrt(0.5)]
+        turned["placements"][0]["local_to_world"] = quaternion_matrix(
+            turned["placements"][0]["quaternion_xyzw"], turned["placements"][0]["translation_mm"])
+        refuse("disallowed-rotation", {"CONTINUE_RESULT_INVALID", "CONTINUE_POSES_REJECTED"}, turned)
+
+        refuse("not-a-result", {"CONTINUE_RESULT_INVALID"}, raw="{bad")
+        truncated = copy.deepcopy(parent)
+        del truncated["validation"]
+        refuse("incomplete-result", {"CONTINUE_RESULT_INVALID"}, truncated)
+        completed, result_path, stl_path, snapshot = self.continue_solve(
+            "absent", self.settings(), self.root / "absent.json")
+        self.assert_rejected(completed, result_path, stl_path, snapshot, {"CONTINUE_RESULT_INVALID"})
+
+        # Box, clearances, rotations and the object are locked.
+        refuse("box", {"CONTINUE_SETTINGS_MISMATCH"}, settings=self.settings((50.0, 40.0, 40.0)))
+        tolerant = self.settings()
+        tolerant["container"]["tolerance_mm"] = 0.1
+        refuse("tolerance", {"CONTINUE_SETTINGS_MISMATCH"}, settings=tolerant)
+        spaced = self.settings()
+        spaced["clearance_mm"]["pair"] = 0.5
+        refuse("clearance", {"CONTINUE_SETTINGS_MISMATCH"}, settings=spaced)
+        cube = self.settings()
+        cube["orientation"] = {"mode": "cube"}
+        cube["resolved"]["orientation_catalog_sha256"] = (
+            "fe7ba7524cabd7dbb20a4c1acc053d1ca518df6c6c5f2949f78f9b3a0ac1b95a")
+        refuse("rotations", {"CONTINUE_SETTINGS_MISMATCH"}, settings=cube)
+
+        other_source = self.root / "other" / "cube.stl"
+        write_cube_stl(other_source, extent=9.0)
+        other_report = other_source.parent / "object.json"
+        inspected = run_engine("inspect", "--stl", other_source, "--units", "mm", "--role", "object",
+                               "--report", other_report)
+        self.assertEqual(inspected.returncode, 0, (inspected.stdout, inspected.stderr))
+        original_report, self.object_report_path = self.object_report_path, other_report
+        other_settings = self.settings()
+        self.object_report_path = original_report
+        refuse("object", {"CONTINUE_SETTINGS_MISMATCH"}, settings=other_settings,
+               object_report=other_report)
+
 
 CASES = {
     "solve_timed_memory_cap": "test_timed_solve_without_policy_honors_explicit_memory_cap",
@@ -939,6 +1071,8 @@ CASES = {
     "solve_transforms": "test_transforms",
     "solve_resolved_catalog": "test_resolved_catalog",
     "solve_rejections": "test_rejections",
+    "solve_continue": "test_continue",
+    "solve_continue_rejections": "test_continue_rejections",
 }
 
 

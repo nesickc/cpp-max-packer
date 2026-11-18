@@ -92,6 +92,26 @@ struct ResultFiles {
     root: PathBuf,
     object: ObjectFiles,
 }
+// The result a continued run started from. However that run ends, if it left no
+// finalized result this one is displayed again: a live packing without files
+// could be neither saved nor exported.
+struct KeptResult {
+    core: Core,
+    parent: Option<(ResultFiles, Value)>,
+}
+impl Drop for KeptResult {
+    fn drop(&mut self) {
+        let (Some((files, snapshot)), Ok(mut inner)) = (self.parent.take(), self.core.inner.lock()) else {
+            return;
+        };
+        if inner.result.is_none() {
+            inner.result = Some(files);
+            inner.state.result = Some(snapshot);
+            inner.state.live_result = None;
+            inner.state.revision += 1;
+        }
+    }
+}
 #[derive(Clone)]
 struct PreviewFile {
     root: PathBuf,
@@ -203,7 +223,13 @@ fn physical_orientation_equal(a: &Value, b: &Value) -> bool {
     })
 }
 
-fn public_artifact_matches(live: &Value, document: &Value, settings: &Value, object_report: &Value) -> Outcome<()> {
+// What makes two object reports the same accepted object.
+const OBJECT_IDENTITY: [&str; 6] =
+    ["source", "accepted_solid", "frame", "dimensions_mm", "repair_record", "packing_envelope"];
+
+// Whether a result's box, tolerance, clearances and rotations are those of the
+// desktop `settings`: a displayed packing matches them, and Continue keeps them.
+fn physical_settings_match(document: &Value, settings: &Value) -> bool {
     let resolved = &document["search"]["resolved_settings"];
     let orientation_matches = if settings["orientation"]["mode"] == "cube45" {
         resolved["orientation"]["mode"] == "custom"
@@ -212,13 +238,20 @@ fn public_artifact_matches(live: &Value, document: &Value, settings: &Value, obj
     } else {
         physical_orientation_equal(&resolved["orientation"], &settings["orientation"])
     };
+    // No tolerance is a tolerance of zero.
+    let tolerance = |value: &Value| value.as_f64().unwrap_or(0.0);
+    orientation_matches
+        && physical_value_equal(&resolved["container"]["dimensions_mm"], &settings["box_dimensions_mm"])
+        && tolerance(&resolved["container"]["tolerance_mm"]) == tolerance(&settings["box_tolerance_mm"])
+        && physical_value_equal(&resolved["clearance_mm"], &settings["clearance_mm"])
+}
+
+fn public_artifact_matches(live: &Value, document: &Value, settings: &Value, object_report: &Value) -> Outcome<()> {
+    let resolved = &document["search"]["resolved_settings"];
     if document["count"] != live["count"]
         || document["placements"] != live["placements"]
         || document["solution_revision"] != live["solution_revision"]
-        || !physical_value_equal(&resolved["container"]["dimensions_mm"], &settings["box_dimensions_mm"])
-        || !physical_value_equal(&resolved["container"]["tolerance_mm"], &settings["box_tolerance_mm"])
-        || !physical_value_equal(&resolved["clearance_mm"], &settings["clearance_mm"])
-        || !orientation_matches
+        || !physical_settings_match(document, settings)
         || !physical_value_equal(&resolved["resolved"]["pitch_mm"], &settings["pitch_mm"])
         || resolved["search"]["seed"] != settings["seed"]
     {
@@ -227,7 +260,7 @@ fn public_artifact_matches(live: &Value, document: &Value, settings: &Value, obj
             "Terminal artifact differs from the displayed public packing or captured settings.",
         ));
     }
-    for key in ["source", "accepted_solid", "frame", "dimensions_mm", "repair_record", "packing_envelope"] {
+    for key in OBJECT_IDENTITY {
         if document["assets"]["object"][key] != object_report[key] {
             return Err(error(
                 "PUBLICATION_MISMATCH",
@@ -1194,10 +1227,20 @@ impl Core {
         Ok(receipt)
     }
 
-    pub fn start(&self, mut settings: Value) -> Outcome<Receipt> {
+    pub fn start(&self, settings: Value) -> Outcome<Receipt> {
+        self.solve(settings, false)
+    }
+    // Continue (SOL-06, spec 8.2): a further run segment of the displayed result with
+    // the budget in `settings`. The engine re-checks that result's poses and searches
+    // on from them, so the count cannot fall; box, tolerance, clearances and
+    // rotations stay the result's, and so does its object.
+    pub fn continue_search(&self, settings: Value) -> Outcome<Receipt> {
+        self.solve(settings, true)
+    }
+    fn solve(&self, mut settings: Value, continued: bool) -> Outcome<Receipt> {
         settings["budget_scope"] = json!("total_start");
         validate_settings(&settings)?;
-        let (receipt, root, (object,clock)) =
+        let (receipt, root, (object,clock,parent)) =
             self.begin_with("solve", Some(settings.clone()), |inner| {
                 if inner.repair.is_some() {
                     return Err(error("REPAIR_PENDING", "Accept or reject the repair preview before packing."));
@@ -1224,9 +1267,30 @@ impl Core {
                         return Err(failure);
                     }
                 }
-                Ok((object,crate::native_session::qpc()?))
+                let parent = if continued {
+                    let missing = || error("RESULT_REQUIRED", "Continue needs a finished result; Start a search first.");
+                    let files = inner.result.clone().ok_or_else(missing)?;
+                    let snapshot = inner.state.result.clone().ok_or_else(missing)?;
+                    if snapshot["document"]["count"].as_u64().unwrap_or(0) == 0 {
+                        return Err(error("RESULT_REQUIRED", "The result holds no copies to continue from; Start a new search."));
+                    }
+                    let original = security::json(&files.object.report, REPORT_LIMIT)?;
+                    if OBJECT_IDENTITY.iter().any(|key| original[key] != record["report"][key]) {
+                        return Err(error("ASSET_MISMATCH", "The result belongs to a different object; Start a new search."));
+                    }
+                    if !physical_settings_match(&snapshot["document"], &settings) {
+                        return Err(error("CONTINUE_SETTINGS_MISMATCH",
+                            "Continue keeps the result's box, tolerance, clearances and rotations. Restore them, or Start a new search."));
+                    }
+                    Some((files, snapshot))
+                } else {
+                    None
+                };
+                Ok((object,crate::native_session::qpc()?,parent))
             })?;
         self.spawn(&receipt, move |core, op| {
+            let continue_from = parent.as_ref().map(|(files, _)| files.root.join("result.json"));
+            let _kept = KeptResult { core: core.clone(), parent };
             let preview=object.preview.clone();
             let marker=root.join("stop.marker");
             let output=root.join("solution");
@@ -1235,8 +1299,10 @@ impl Core {
             if object.native_epoch!=current_epoch { return Err(error("ENGINE_SESSION_LOST","Prepared token belongs to an expired native epoch.")); }
             let publication=json!({"version":1,"session_id":core.inner.lock().unwrap().state.session_id,
                 "native_epoch":current_epoch,"settings_id":id("settings")});
-            let solve_outcome=core.native_request("run",Some(&op),json!({"asset_token":object.native_token,"settings":settings,"publication":publication,
-                "result_path":output.join("result.json"),"stop_file":marker,"start_qpc_ticks":clock.0.to_string(),"qpc_frequency_hz":clock.1.to_string()}),false);
+            let mut params=json!({"asset_token":object.native_token,"settings":settings,"publication":publication,
+                "result_path":output.join("result.json"),"stop_file":marker,"start_qpc_ticks":clock.0.to_string(),"qpc_frequency_hz":clock.1.to_string()});
+            if let Some(path)=&continue_from {params["continue_from"]=json!(path);}
+            let solve_outcome=core.native_request("run",Some(&op),params,false);
             if let Err(failure)=&solve_outcome {
                 let mut inner=core.inner.lock().unwrap();
                 if let Some(operation)=&mut inner.state.operation {
@@ -1248,7 +1314,9 @@ impl Core {
                 if let Some(operation)=&mut inner.state.operation {
                     if operation.id==op {
                         operation.native_completion_elapsed_seconds=response["native_completion_elapsed_seconds"].as_f64();
-                        if response["no_nonempty_incumbent"]==true {operation.detail=Some("No nonempty incumbent.".into());}
+                        if response["no_nonempty_incumbent"]==true {
+                            operation.detail=Some(if continue_from.is_some() {"The search ended before the result's poses were re-checked; the result is kept."} else {"No nonempty incumbent."}.into());
+                        }
                     }
                 }
                 if let Some(runtime)=inner.state.cpu_runtime.as_mut() {runtime["requested_thread_count"]=settings.get("thread_count").cloned().unwrap_or(json!(1));runtime["resolved_thread_count"]=response["resolved_thread_count"].clone();}
@@ -1593,7 +1661,7 @@ impl Core {
             if let Some(result) = &result {
                 let original = security::json(&result.object.report, REPORT_LIMIT)?;
                 let current = &inner.state.object.as_ref().unwrap()["report"];
-                for key in ["source", "accepted_solid", "frame", "dimensions_mm", "repair_record", "packing_envelope"] {
+                for key in OBJECT_IDENTITY {
                     if original[key] != current[key] {
                         return Err(error("ASSET_MISMATCH", "Displayed result belongs to a different object; use New before saving the replacement."));
                     }
@@ -2090,6 +2158,93 @@ mod tests {
         core.export_to(root.path(), "stl").unwrap();
         let exported = complete(&core);
         assert!(exported.last_error.is_none(), "{exported:?}");
+    }
+    // SOL-06, spec 8.2: Continue adds a run segment to the displayed result, never
+    // loses copies, and refuses changed constraints or poses the validator rejects.
+    #[test]
+    fn continue_adds_a_run_segment_and_refusals_keep_the_result() {
+        let (root, core) = fixture();
+        import_fixture(&core);
+        assert_eq!(core.continue_search(settings()).unwrap_err().code, "RESULT_REQUIRED");
+        // The result to continue is one the user stopped: Stop & keep on the first packing.
+        let mut long = settings();
+        long["budget_seconds"] = json!(60);
+        let receipt = core.start(long).unwrap();
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        while core.state().live_result.as_ref().is_none_or(|live| live["operation_id"] != receipt.operation_id.as_str()) {
+            assert!(std::time::Instant::now() < until, "no packing was published");
+            thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(core.stop(&receipt.operation_id).unwrap().accepted);
+        let solved = complete(&core);
+        assert!(solved.last_error.is_none(), "{solved:?}");
+        let parent = solved.result.as_ref().unwrap()["document"].clone();
+        assert_eq!(parent["metrics"]["termination_reason"], "user_stopped");
+        let count = parent["count"].as_u64().unwrap();
+        assert!(count > 0);
+
+        // Another box, clearance or rotation set is a new job, not a continuation.
+        for (key, value) in [
+            ("box_dimensions_mm", json!([50, 40, 40])),
+            ("box_tolerance_mm", json!(0.1)),
+            ("clearance_mm", json!({"pair":1,"wall":0})),
+            ("orientation", json!({"mode":"cube"})),
+        ] {
+            let mut changed = settings();
+            changed[key] = value;
+            assert_eq!(core.continue_search(changed).unwrap_err().code, "CONTINUE_SETTINGS_MISMATCH", "{key}");
+        }
+        assert_eq!(core.state().revision, solved.revision);
+
+        // Budget, pitch and seed may change.
+        let mut more = settings();
+        more["budget_seconds"] = json!(2);
+        more["pitch_mm"] = json!(5);
+        more["seed"] = json!("7");
+        core.continue_search(more.clone()).unwrap();
+        let continued = complete(&core);
+        assert!(continued.last_error.is_none(), "{continued:?}");
+        let document = continued.result.as_ref().unwrap()["document"].clone();
+        assert!(document["count"].as_u64().unwrap() >= count);
+        assert_eq!(document["validation"]["status"], "valid");
+        assert!(document["solution_revision"].as_u64() > parent["solution_revision"].as_u64());
+        let segments = document["search"]["run_segments"].as_array().unwrap();
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0], parent["search"]["run_segments"][0]);
+        assert_eq!(segments[1]["parent_solution_revision"], parent["solution_revision"]);
+        assert_eq!(segments[1]["search_state_reset"], true);
+        assert_eq!(segments[1]["resolved_settings"]["resolved"]["pitch_mm"], 5.0);
+
+        // A saved and reopened result continues too.
+        let project = root.path().join("continued.spectrapack");
+        core.save_to(&project, more.clone()).unwrap();
+        assert!(complete(&core).last_error.is_none());
+        core.new_project().unwrap();
+        core.open_path(&project).unwrap();
+        let opened = complete(&core);
+        assert!(opened.last_error.is_none(), "{opened:?}");
+        core.continue_search(more.clone()).unwrap();
+        let reopened = complete(&core);
+        assert!(reopened.last_error.is_none(), "{reopened:?}");
+        let third = &reopened.result.as_ref().unwrap()["document"];
+        assert!(third["count"].as_u64().unwrap() >= count);
+        assert_eq!(third["search"]["run_segments"].as_array().unwrap().len(), 3);
+        assert_eq!(third["search"]["run_segments"][2]["parent_solution_revision"], document["solution_revision"]);
+
+        // Two copies moved into one place: the engine refuses the file, and the
+        // result it was continuing stays as it was.
+        let file = core.inner.lock().unwrap().result.as_ref().unwrap().root.join("result.json");
+        let mut tampered = security::json(&file, RESULT_LIMIT).unwrap();
+        assert!(tampered["placements"].as_array().unwrap().len() > 1);
+        let first = tampered["placements"][0].clone();
+        tampered["placements"][1]["translation_mm"] = first["translation_mm"].clone();
+        tampered["placements"][1]["local_to_world"] = first["local_to_world"].clone();
+        fs::write(&file, serde_json::to_vec(&tampered).unwrap()).unwrap();
+        core.continue_search(more).unwrap();
+        let refused = complete(&core);
+        assert_eq!(refused.last_error.as_ref().unwrap().code, "CONTINUE_POSES_REJECTED", "{refused:?}");
+        assert_eq!(refused.result, reopened.result);
+        assert_eq!(refused.operation.as_ref().unwrap().result_id, None);
     }
     #[test]
     fn start_reports_its_threads_and_memory_estimate() {

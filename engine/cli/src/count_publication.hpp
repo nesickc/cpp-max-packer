@@ -24,6 +24,8 @@ inline constexpr std::uint64_t publication_slot_bytes = 1ULL << 20;
 inline constexpr std::uint64_t publication_reserve_bytes = 4ULL * publication_slot_bytes + 4096;
 class CountPublication final {
 public:
+    // A continued run numbers its snapshots after the result it continues.
+    explicit CountPublication(std::uint64_t base_revision = 0) noexcept : revision_(base_revision) {}
     bool offer(solver::SnapshotHandle native, double seconds) noexcept
     {
         try {

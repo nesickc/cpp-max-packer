@@ -22,6 +22,10 @@ struct SolveRequest {
     std::optional<std::filesystem::path> container_report, stl_path;
     std::shared_ptr<const io::VerifiedAsset> object;
     std::string engine_version, engine_commit;
+    // Continue (SOL-06, spec 8.2): a result of the same object, container, clearances
+    // and rotations. Its poses start the search once the validator has re-checked
+    // them, and the new result keeps its run segments.
+    std::optional<std::filesystem::path> continue_from;
 };
 struct SolveOutcome {
     int exit_code;

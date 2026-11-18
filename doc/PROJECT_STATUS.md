@@ -1,6 +1,6 @@
 # Project status
 
-Updated 2026-11-17. Details belong in PRs and `.local/` logs.
+Updated 2026-11-18. Details belong in PRs and `.local/` logs.
 
 ## What works
 
@@ -8,9 +8,9 @@ Updated 2026-11-17. Details belong in PRs and `.local/` logs.
   clearance validation (validator v8), mixed-orientation packing, CPU FFT search,
   interlocking twin layers, whole-arrangement compaction and checked export.
 - **Desktop:** units and diagnostics, box with size tolerance (default 0.1 mm, ADR
-  0022), clearances, 24 cube rotations or 96 with 45° turns, Start/Stop, live validated
-  packing with a search panel, portable Save/Open, JSON and checked STL export. Results
-  keep their settings.
+  0022), clearances, 24 cube rotations or 96 with 45° turns, Start/Stop, Continue from
+  a result's revalidated poses, live validated packing with a search panel, portable
+  Save/Open, JSON and checked STL export. Results keep their settings and run segments.
 - **Packing envelopes** ([ADR 0021](../spec/decisions/0021-packing-envelopes.md)): every
   desktop import builds a cavity-free CGAL envelope that native validation checks
   against the retained source. Original, Envelope and Overlay views share poses,
@@ -109,9 +109,13 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    (at most four) and Open keeps a project's count. Under the viewer, during a search
    and after it: resolved pitch, threads, the engine's RAM estimate against the host
    ceiling, remaining budget and time since the count last rose.
-10. [ ] **Continue** (SOL-06, §8.2, AT-13). Every Start is a fresh job. *Done when*
-    Continue adds budget to a stopped, finished or reopened result from its revalidated
-    poses, with geometry, box, clearances and rotations locked, and never lowers the count.
+10. [x] **Continue** (SOL-06, §8.2, AT-13). Continue adds budget to a stopped, finished
+    or reopened result: the validator re-checks its poses, the search starts from them
+    and the count cannot fall. Object, box, tolerance, clearances and rotations stay
+    locked; pitch, budget, threads and seed may change. The result keeps every run
+    segment. It is a warm start (`search_state_reset`): the seeded phases run again, so
+    extra budget helps where compaction, gap filling or one more copy had time left to
+    use. Tampered or mismatched poses are refused and the displayed result stays.
 11. [ ] **Project and export actions** (§7.1, §8.5). *Done when* Save reuses the current
     path, Save As asks, Export PNG writes the view, and a save or export can reveal
     its folder.

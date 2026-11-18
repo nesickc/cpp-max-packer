@@ -203,6 +203,80 @@ class RuntimeTests(unittest.TestCase):
                 legacy.close()
             self.assertIn('solve: validated count=', ''.join(legacy.stderr))
 
+    def test_continued_run_starts_from_the_rechecked_result(self):
+        """SOL-06, section 8.2: every packing a continued run publishes holds at least the
+        parent's copies; poses the validator rejects publish nothing."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = pathlib.Path(temporary)
+            source, report = root/'cube.stl', root/'object.report.json'
+            fixtures.write_cube_stl(source, extent=2)
+            imported = subprocess.run([str(ENGINE), 'inspect', '--stl', str(source), '--units', 'mm',
+                                      '--report', str(report)], capture_output=True, text=True, timeout=15)
+            self.assertEqual(imported.returncode, 0, imported.stdout+imported.stderr)
+            fixture = fixtures.SolveSubprocessTests(); fixture.object_report_path = report
+            session = Session()
+            try:
+                preview = root/'preview'; preview.mkdir()
+                prepared, _ = session.request({'runtime_version':1,'request_id':'prepare-continue',
+                    'operation_id':'prepare-continue-op','method':'prepare','params':{
+                        'object_report':str(report),'output_directory':str(preview)}})
+                self.assertTrue(prepared['ok'], prepared)
+
+                def run(name, settings, parent=None):
+                    ticks, frequency = qpc()
+                    params = {'asset_token':prepared['result']['asset_token'],'settings':settings,
+                        'result_path':str(root/f'{name}.json'),'stop_file':str(root/f'{name}.stop'),
+                        'start_qpc_ticks':ticks,'qpc_frequency_hz':frequency,
+                        'publication':{'version':1,'session_id':'session-continue','native_epoch':'native-continue',
+                                       'settings_id':'settings-'+name}}
+                    if parent:
+                        params['continue_from'] = str(parent)
+                    request = {'runtime_version':1,'request_id':'run-'+name,'operation_id':'run-'+name+'-op',
+                               'method':'run','params':params}
+                    session.child.stdin.write(json.dumps(request)+'\n'); session.child.stdin.flush()
+                    packings = []
+                    while True:
+                        record = session.records.get(timeout=15)
+                        self.assertIsNotNone(record, ''.join(session.stderr))
+                        if record['kind'] == 'packing':
+                            packings.append(record['packing'])
+                        elif record['kind'] == 'response':
+                            return record, packings
+
+                # 36 cubes of 2 mm fit; a small work budget stops well short of that.
+                reply, _ = run('parent', fixture.settings(dimensions=(12, 6, 4), candidates=8, passes=1))
+                self.assertTrue(reply['ok'], reply)
+                parent = json.loads((root/'parent.json').read_text())
+                self.assertTrue(0 < parent['count'] < 36, parent['count'])
+
+                more = fixture.settings(dimensions=(12, 6, 4), candidates=128, passes=2)
+                reply, packings = run('continued', more, root/'parent.json')
+                self.assertTrue(reply['ok'], reply)
+                continued = json.loads((root/'continued.json').read_text())
+                self.assertGreater(continued['count'], parent['count'])
+                self.assertEqual(continued['validation']['status'], 'valid')
+                self.assertTrue(packings)
+                for packing in packings:
+                    self.assertGreaterEqual(packing['count'], parent['count'])
+                    self.assertGreater(packing['solution_revision'], parent['solution_revision'])
+                self.assertEqual(continued['placements'], packings[-1]['placements'])
+                self.assertEqual(continued['solution_revision'], packings[-1]['solution_revision'])
+                self.assertEqual([segment['parent_solution_revision'] for segment in continued['search']['run_segments']],
+                                 [None, parent['solution_revision']])
+
+                tampered = copy.deepcopy(parent)
+                first, second = tampered['placements'][:2]
+                second['translation_mm'] = first['translation_mm']
+                second['local_to_world'] = first['local_to_world']
+                (root/'tampered-parent.json').write_text(json.dumps(tampered))
+                reply, packings = run('tampered', more, root/'tampered-parent.json')
+                self.assertFalse(reply['ok'], reply)
+                self.assertEqual(reply['error']['code'], 'CONTINUE_POSES_REJECTED', reply)
+                self.assertEqual(packings, [])
+                self.assertFalse((root/'tampered.json').exists())
+            finally:
+                session.close()
+
     def test_finalization_deadline_preserves_nonempty_authority_and_previous_result(self):
         """T011-A4 / SOL-06: resource refusal then cleanup expiry preserves authority and both causes."""
         if MEMORY_HELPER is None:

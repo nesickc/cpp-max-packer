@@ -354,7 +354,22 @@ schema. The desktop `cube45` preset resolves natively to an explicit version-1
 custom quaternion catalog; results retain that catalog and its hash. Existing
 cube and fixed results retain their recorded permissions. This bounded
 box-container journey does not replace the required stdio
-job lifecycle, Continue, or periodic checkpoint acceptance gates below.
+job lifecycle or periodic checkpoint acceptance gates below.
+
+Continue (§8.2) is `solve --continue RESULT` and the session `run` parameter
+`continue_from`. The named result must satisfy the result contract and have the
+run's object, validated container interior, clearances and rotations
+(`CONTINUE_SETTINGS_MISMATCH` otherwise; `CONTINUE_RESULT_INVALID` for an unreadable,
+non-conforming or empty result). Its poses are validated in full against the run's
+own context before anything is published; poses that are not confirmed valid are
+refused with `CONTINUE_POSES_REJECTED` and never start a search. These three
+refusals are bad input (exit 2) and write no output. The validated
+packing is the first incumbent, so no published or final packing has fewer copies.
+The new result keeps the job ID and the earlier run segments, numbers its
+revisions after the parent's, and adds a segment with `parent_solution_revision`
+set to the parent's revision and `search_state_reset: true`; search totals cover
+all segments and `time_to_best_seconds` is measured across them. This is a warm
+start: no search state, RNG state or cache is carried over.
 
 Headless `pack` and UI `job.start` use the same settings schema, solver, and output contract. CLI Ctrl+C maps to stop-and-keep. Exit codes: `0` for a valid terminal result, including zero copies, budget exhaustion, or a requested stop; `2` for bad input/settings; `3` for unsupported capabilities/resource preflight; `4` for internal failure; `5` for failed or indeterminate validation in the standalone validator. A fatal error may also preserve a prior valid incumbent; the nonzero exit and error record remain.
 

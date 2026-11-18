@@ -6027,6 +6027,7 @@ export interface Run {
     settings: Settings | Resolved;
     result_path: string;
     stl_path?: string;
+    continue_from?: string;
     stop_file: string;
     start_qpc_ticks: string;
     qpc_frequency_hz: string;

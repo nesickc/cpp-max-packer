@@ -7,7 +7,9 @@
 #include "host_admission.hpp"
 
 namespace spectrapack::cli {
-inline std::optional<std::string> read_settings_file(const std::filesystem::path& path, HostAdmission& admission)
+// Reads a settings file, or with a larger `limit` a result to continue from.
+inline std::optional<std::string> read_settings_file(const std::filesystem::path& path, HostAdmission& admission,
+                                                     std::uint64_t limit = 16ULL << 20)
 {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
@@ -15,7 +17,7 @@ inline std::optional<std::string> read_settings_file(const std::filesystem::path
     }
     input.seekg(0, std::ios::end);
     const auto size = input.tellg();
-    if (size < 0 || size > static_cast<std::streamoff>(16ULL << 20)) {
+    if (size < 0 || static_cast<std::uint64_t>(size) > limit) {
         return {};
     }
     // The pinned MSVC string constructor has at most fifteen bytes of rounding

@@ -912,13 +912,21 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
             if (params.contains("stl_path")) {
                 stl_path = std::filesystem::u8path(params.at("stl_path").get<std::string>());
             }
-            if (marker &&
-                (cli::solve_paths_alias(*marker, prepared->report) || cli::solve_paths_alias(*marker, output) ||
-                 (stl_path && cli::solve_paths_alias(*marker, *stl_path)))) {
+            std::optional<std::filesystem::path> continue_from;
+            if (params.contains("continue_from")) {
+                continue_from = std::filesystem::u8path(params.at("continue_from").get<std::string>());
+            }
+            if ((marker &&
+                 (cli::solve_paths_alias(*marker, prepared->report) || cli::solve_paths_alias(*marker, output) ||
+                  (stl_path && cli::solve_paths_alias(*marker, *stl_path)) ||
+                  (continue_from && cli::solve_paths_alias(*marker, *continue_from)))) ||
+                (continue_from && (cli::solve_paths_alias(*continue_from, output) ||
+                                   (stl_path && cli::solve_paths_alias(*continue_from, *stl_path))))) {
                 cli::Timeline timeline(clock.native_start, clock.earlier_seconds, control);
                 cli::Timeline::phase_sink(&timeline, runtime::Phase::cleanup);
                 const auto measured = timeline.record("search_only", 0, true, true, "before_terminal_response");
-                auto failure = error("INVALID_REQUEST", "Stop marker aliases an input or output.");
+                auto failure =
+                    error("INVALID_REQUEST", "Stop marker or continued result aliases an input or output.");
                 failure.details = {
                     { "runtime",                           measured                              },
                     { "no_nonempty_incumbent",             true                                  },
@@ -956,7 +964,8 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
                                        std::move(stl_path),
                                        prepared->verified,
                                        session.engine_version,
-                                       session.engine_commit },
+                                       session.engine_commit,
+                                       std::move(continue_from) },
                                      runtime_run);
             runtime_run.publication_sink = nullptr;
             const auto* completed_error = std::get_if<io::Error>(&native.terminal);
