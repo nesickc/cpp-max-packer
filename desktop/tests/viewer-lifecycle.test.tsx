@@ -194,6 +194,41 @@ describe('UI-02/UI-03 / AT-15 persistent viewer (device adapter, real PLY and co
   });
 });
 
+it('exports the current view from a frame rendered for it, on an opaque background', async () => {
+  const snapshot = { current: (): Uint8Array | null => null };
+  const view = render(<Viewer mode="result" preview={preview} placements={[pose]} dimensions={[40,40,40]} hidden={new Set()} selected={null} onSelect={() => {}} snapshot={snapshot} />);
+  await settle(); drain();
+  // A shown WebGL frame clears its drawing buffer: the canvas reads back blank
+  // unless a frame is rendered in the same task as the read.
+  let drawn = false, background: unknown = null;
+  device.render.mockImplementationOnce((scene: Scene) => { drawn = true; background = scene.background; });
+  const canvas = document.querySelector('canvas')!;
+  canvas.toDataURL = () => `data:image/png;base64,${drawn ? btoa('\x89PNG\r\n\x1a\nframe') : ''}`;
+  const png = snapshot.current()!;
+  expect(String.fromCharCode(...png)).toBe('\x89PNG\r\n\x1a\nframe');
+  expect((background as Color).getHexString()).toBe('101c27');
+  expect((device.render.mock.lastCall![0] as Scene).background).toBeNull();
+  view.unmount();
+  expect(snapshot.current()).toBeNull();
+});
+
+it('has no view to export until the displayed meshes have loaded', async () => {
+  // The original preview arrives at once; the packing envelope is still on its way.
+  let envelope!: (data: ArrayBuffer) => void;
+  native.preview.mockImplementation(({ preview_id }: { preview_id: string }) =>
+    preview_id === 'envelope' ? new Promise<ArrayBuffer>(resolve => { envelope = resolve; }) : Promise.resolve(bytes));
+  const snapshot = { current: (): Uint8Array | null => null };
+  const props = { mode: 'result' as const, placements: [pose], dimensions: [20,20,20] as [number,number,number], hidden: new Set<string>(), selected: null, onSelect: () => {}, snapshot };
+  const view = render(<Viewer {...props} preview={null} />); await settle(); drain();
+  document.querySelector('canvas')!.toDataURL = () => `data:image/png;base64,${btoa('\x89PNG\r\n\x1a\nframe')}`;
+  // An empty box is not the packing.
+  expect(snapshot.current()).toBeNull();
+  view.rerender(<Viewer {...props} preview={preview} envelopePreview={{ ...preview, preview_id: 'envelope' }} />); await settle(); drain();
+  expect(snapshot.current()).toBeNull();
+  await act(async () => { envelope(bytes); }); drain();
+  expect(snapshot.current()).not.toBeNull();
+});
+
 it('switches original, envelope and overlay with identical packed-copy transforms', async () => {
   render(<Viewer mode="result" preview={preview} envelopePreview={{...preview,preview_id:'envelope'}} placements={[pose]} dimensions={[20,20,20]} hidden={new Set()} selected={null} onSelect={()=>{}}/>);
   await settle(); frame();
