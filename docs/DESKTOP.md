@@ -31,6 +31,16 @@ packing, placement validation and export; the desktop presents those results.
    beside the result its own search produced.
 5. Inspect the complete result in the viewer. Selection, hiding and clipping
    affect the view only. The displayed count always belongs to the full result.
+6. Continue gives a stopped, finished or reopened result more budget. The engine
+   re-checks that result's poses with the validator and searches on from them,
+   so the count can rise but never fall. The object, box, size tolerance,
+   clearances and rotations stay those of the result; pitch, budget, threads,
+   seed and memory ceiling may change. Change a locked setting and only Start is
+   available, which begins a new job. The result lists its run segments. A
+   continued segment is a warm start: the earlier search state is not kept, so
+   the search phases run again from the re-checked packing. Poses that fail the
+   re-check, or a result of another object or box, are refused with a message
+   and the displayed result stays.
 
 New drafts measure the budget from Start, including runtime preparation and
 search; initial import, Open and export are separate operations. Restored results
@@ -67,7 +77,7 @@ removes the `SpectraPack-export-…` folder it created, keeping the result and p
 
 This journey uses box containers, fixed/cube rotations, explicit pitch and CPU
 execution. STL containers, repair-acceptance controls, free/upright search,
-Continue, live incumbent updates, periodic checkpoints, viewport screenshots
+bit-for-bit continuation, live incumbent updates, periodic checkpoints, viewport screenshots
 and full-resolution inspection controls remain tracked follow-up work.
 Saving a complete project is distinct from recovering an interrupted search.
 

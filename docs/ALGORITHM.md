@@ -441,6 +441,19 @@ can renew cumulative work allowances; per-operation safety bounds, finite retry
 ladders, memory admission and cancellation remain enforced. Publication exposes
 only strictly higher counts through the existing count-publication adapter.
 
+### Continued runs
+
+Continue (spec §8.2) is a warm start, not a resumed search. The parent result's
+poses are validated in full against the new run's context and offered to the
+incumbent before the first phase, so every later phase starts from at least that
+count. The controller above then runs unchanged: the grid, lattice, block and
+interlocking phases rebuild their own layouts and replace the incumbent only with
+one that ranks higher, and compaction, gap filling and one-more-copy insertion
+work on whichever layout is the incumbent, normally the parent's. A continued run
+therefore spends part of its budget repeating seeded phases; what it adds over the
+parent is more time for the phases that work on the incumbent, or a finer pitch.
+Nothing else is carried over: no fields, FFT plans, candidate pages or RNG state.
+
 ## Resource handling
 
 Spec §6.6 governs: estimate the dominant live buffers, fit available memory, keep

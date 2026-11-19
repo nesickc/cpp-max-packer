@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -356,7 +357,7 @@ std::optional<uint64_t> request_resident_bytes(const spectrapack::cli::SolveRequ
         !add_bytes(total, request.engine_commit.capacity())) {
         return {};
     }
-    for (const auto* path : { &request.container_report, &request.stl_path }) {
+    for (const auto* path : { &request.container_report, &request.stl_path, &request.continue_from }) {
         if (*path && !add_path_bytes(total, **path)) {
             return {};
         }
@@ -536,6 +537,156 @@ Json failure_details(const solver::RunFailureDetails& failure)
         value["suggested_pitch_mm"] = *failure.suggested_pitch_mm;
     }
     return value;
+}
+
+// The result a run continues from (SOL-06, spec 8.2). Nothing in the file is trusted:
+// its poses become the incumbent only after the validator has re-checked them against
+// this run's own object, container and constraints.
+struct Continuation {
+    std::shared_ptr<const geo::ValidatedSolution> solution;
+    Json segments, job_id;
+    uint64_t revision {};
+    double time_to_best_seconds {};
+};
+
+io::Error continuation_error(std::string code, std::string message, Json details = Json::object())
+{
+    return { std::move(code), std::move(message), std::move(details), true };
+}
+
+// The object, container, clearances and rotations a continued run may not change,
+// compared as the result contract compares them across run segments.
+Json changed_locked_settings(const Json& previous, const Json& settings)
+{
+    Json changed = Json::array();
+    if (previous.at("object_asset") != settings.at("object_asset")) {
+        changed.push_back("object");
+    }
+    const auto& before = previous.at("container");
+    const auto& after = settings.at("container");
+    bool same_container = before.at("kind") == after.at("kind");
+    if (same_container && after.at("kind") == "box") {
+        const auto first = io::box_container(before), second = io::box_container(after);
+        same_container = first.width_mm == second.width_mm && first.depth_mm == second.depth_mm &&
+                         first.height_mm == second.height_mm;
+    }
+    else if (same_container) {
+        same_container = before == after;
+    }
+    if (!same_container) {
+        changed.push_back("container");
+    }
+    if (previous.at("clearance_mm") != settings.at("clearance_mm")) {
+        changed.push_back("clearance");
+    }
+    if (previous.at("orientation") != settings.at("orientation") ||
+        previous.at("resolved").at("orientation_catalog_sha256") !=
+            settings.at("resolved").at("orientation_catalog_sha256") ||
+        previous.at("resolved").at("orientation_catalog_version") !=
+            settings.at("resolved").at("orientation_catalog_version")) {
+        changed.push_back("rotations");
+    }
+    return changed;
+}
+
+std::variant<Continuation, io::Error> load_continuation(const std::filesystem::path& path, const Json& settings,
+                                                        const std::shared_ptr<const geo::ValidationContext>& context,
+                                                        const solver::OrientationCatalog& catalog,
+                                                        const geo::ValidationLimits& limits,
+                                                        const io::ContractDiagnosticLimits& diagnostic_limits,
+                                                        const spectrapack::runtime::OperationControl& control)
+{
+    std::optional<io::ValidatedDocument> document;
+    try {
+        spectrapack::cli::HostAdmission admission(limits.max_working_bytes);
+        const auto source = spectrapack::cli::read_settings_file(path, admission, 64ULL << 20);
+        spectrapack::cli::HostJsonAdmission syntax_admission(admission);
+        if (!source || !Json::sax_parse(*source, &syntax_admission)) {
+            return continuation_error("CONTINUE_RESULT_INVALID", "The result to continue from cannot be read.");
+        }
+        io::ContractValidator validator(io::ContractKind::results);
+        auto decoded = validator.parse(io::ContractKind::results, *source, diagnostic_limits);
+        if (!std::holds_alternative<io::ValidatedDocument>(decoded)) {
+            return continuation_error("CONTINUE_RESULT_INVALID",
+                                      "The result to continue from does not satisfy the result contract.");
+        }
+        document.emplace(std::get<io::ValidatedDocument>(std::move(decoded)));
+    }
+    catch (const spectrapack::cli::HostMemoryLimit&) {
+        return continuation_error("MEMORY_LIMIT", "The result to continue from exceeds the remaining host allowance.");
+    }
+    const auto& parent = document->value();
+    if (auto changed = changed_locked_settings(parent.at("search").at("resolved_settings"), settings);
+        !changed.empty()) {
+        return continuation_error("CONTINUE_SETTINGS_MISMATCH",
+                                  "Continue keeps the result's object, container, clearances and rotations; "
+                                  "Start a new search to change them.",
+                                  {
+                                      { "changed", std::move(changed) }
+        });
+    }
+    const auto& placements = parent.at("placements");
+    if (placements.empty()) {
+        return continuation_error("CONTINUE_RESULT_INVALID",
+                                  "The result holds no copies to continue from; Start a new search.");
+    }
+    std::vector<geo::CopyPose> poses;
+    poses.reserve(placements.size());
+    for (const auto& placement : placements) {
+        geo::CopyPose pose { placement.at("copy_id").get<std::string>(),
+                             placement.at("translation_mm").get<geo::Vec3>(),
+                             placement.at("quaternion_xyzw").get<geo::Quaternion>() };
+        // The search proposes only the catalog's exact representatives.
+        const bool allowed =
+            std::any_of(catalog.quaternions.begin(), catalog.quaternions.end(), [&](const geo::Quaternion& entry) {
+                return std::equal(entry.begin(), entry.end(), pose.rotation_xyzw.begin(), [](double a, double b) {
+                    return std::bit_cast<uint64_t>(a) == std::bit_cast<uint64_t>(b);
+                });
+            });
+        if (!allowed) {
+            return continuation_error("CONTINUE_POSES_REJECTED",
+                                      "A copy's rotation is not one of this search's allowed rotations.",
+                                      {
+                                          { "copy_id", pose.copy_id }
+            });
+        }
+        poses.push_back(std::move(pose));
+    }
+    auto candidate = geo::make_candidate(context, std::move(poses));
+    if (const auto* failure = std::get_if<geo::ValidationInputFailure>(&candidate)) {
+        return continuation_error("CONTINUE_POSES_REJECTED", "The result's poses are not usable placements.",
+                                  {
+                                      { "validation_code", failure->code }
+        });
+    }
+    const auto checked =
+        geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(candidate), limits, control);
+    if (!checked.validated_solution || checked.report.validity != geo::Validity::valid) {
+        if (const auto cause = control.poll(); cause != spectrapack::runtime::StopCause::none) {
+            return continuation_error(cause == spectrapack::runtime::StopCause::user_stopped ? "OPERATION_CANCELLED"
+                                                                                             : "DEADLINE_EXCEEDED",
+                                      "The search ended before the result's poses were re-checked; nothing was "
+                                      "continued.");
+        }
+        Json details {
+            { "validation_code", checked.report.code },
+            { "validity", checked.report.validity == geo::Validity::invalid ? "invalid" : "indeterminate" }
+        };
+        details["affected_copy_ids"] = Json::array();
+        for (const auto& id : checked.report.affected_copy_ids) {
+            if (details["affected_copy_ids"].size() == 16) {
+                break;
+            }
+            details["affected_copy_ids"].push_back(id);
+        }
+        return continuation_error("CONTINUE_POSES_REJECTED",
+                                  "The validator did not confirm the result's poses for this object, container and "
+                                  "clearances; nothing was continued.",
+                                  std::move(details));
+    }
+    return Continuation { checked.validated_solution, parent.at("search").at("run_segments"), parent.at("job_id"),
+                          parent.at("solution_revision").get<uint64_t>(),
+                          parent.at("metrics").at("time_to_best_seconds").get<double>() };
 }
 }  // namespace
 
@@ -818,15 +969,36 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         return fail("MEMORY_LIMIT", "Retained session residency overflows.", 3);
     }
     limits.reserved_bytes = caller_reserve;
-    CountPublication publication;
+    std::shared_ptr<const geo::ValidatedSolution> initial;
+    std::optional<Continuation> continued;
+    if (request.continue_from) {
+        control.phase(spectrapack::runtime::Phase::validating);
+        auto start_limits = limits.spectral.per_validation;
+        start_limits.max_working_bytes =
+            std::min(start_limits.max_working_bytes,
+                     limits.max_working_bytes - std::min(limits.max_working_bytes, caller_reserve));
+        auto loaded = load_continuation(*request.continue_from, settings,
+                                        std::get<std::shared_ptr<const geo::ValidationContext>>(context_value),
+                                        *native_catalog, start_limits, run_runtime.diagnostic_limits, control);
+        if (const auto* error = std::get_if<io::Error>(&loaded)) {
+            return fail(error->code, error->message, error->code.starts_with("CONTINUE_") ? 2 : 3, error->details);
+        }
+        continued.emplace(std::get<Continuation>(std::move(loaded)));
+        initial = continued->solution;
+        // The earlier run segments stay resident until the result is written.
+        if (!json_payload_bytes(continued->segments, caller_reserve)) {
+            return fail("MEMORY_LIMIT", "Continued run segments cannot be represented.", 3);
+        }
+        limits.reserved_bytes = caller_reserve;
+    }
+    CountPublication publication(continued ? continued->revision : 0);
     if (run_runtime.publication_sink && run_runtime.publication_reserved_bytes < publication_reserve_bytes) {
         return fail("PUBLICATION_RESOURCE_LIMIT", "Count publication reservation is insufficient.", 3);
     }
     solver::SnapshotHandle last_snapshot;
     std::optional<double> last_snapshot_seconds;
     std::atomic_bool reported_snapshot {};
-    std::shared_ptr<const geo::ValidatedSolution> initial;
-    if (run_runtime.initialize_valid_empty) {
+    if (!initial && run_runtime.initialize_valid_empty) {
         const auto empty =
             geo::make_candidate(std::get<std::shared_ptr<const geo::ValidationContext>>(context_value), {});
         if (!std::holds_alternative<std::shared_ptr<const geo::Candidate>>(empty)) {
@@ -930,10 +1102,27 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         });
     }
     const bool final_snapshot = last_snapshot && last_snapshot->solution == outcome.run.retained_solution;
-    const auto time_to_best = final_snapshot ? *last_snapshot_seconds : elapsed;
+    // Totals of the run segments a continued result already has, summed as the
+    // result contract sums them.
+    double earlier_elapsed {};
+    uint64_t earlier_candidates {}, earlier_passes {};
+    if (continued) {
+        for (const auto& segment : continued->segments) {
+            earlier_elapsed += segment.at("elapsed_seconds").get<double>();
+            earlier_candidates += segment.at("work_counts").at("candidate_evaluations").get<uint64_t>();
+            earlier_passes += segment.at("work_counts").at("search_passes").get<uint64_t>();
+        }
+    }
+    // A continued run that adds no copy keeps the time its count was first reached.
+    const auto time_to_best =
+        continued && outcome.run.retained_solution->copies().size() == continued->solution->copies().size()
+            ? continued->time_to_best_seconds
+            : earlier_elapsed + (final_snapshot ? *last_snapshot_seconds : elapsed);
+    // A continued result is a later revision than its parent even with no new snapshot.
+    const uint64_t native_revision = final_snapshot ? last_snapshot->revision : 0;
     const auto revision = publication.latest() ? publication.latest()->revision
-                          : final_snapshot     ? last_snapshot->revision
-                                               : 0;
+                          : continued          ? continued->revision + std::max<uint64_t>(native_revision, 1)
+                                               : native_revision;
     const auto time_to_best_basis = final_snapshot ? "snapshot" : "retained_return";
     const auto diagnostics = command_diagnostics(outcome, limits, caller_reserve, time_to_best_basis);
     const auto termination_reason =
@@ -971,12 +1160,40 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     last_snapshot.reset();
     last_snapshot_seconds.reset();
     outcome = {};
+    if (continued) {
+        continued->solution.reset();
+    }
     io::ResultCatalog output_catalog { native_catalog->version, std::move(native_catalog->quaternions),
                                        io::ResultCatalogBinding::resolved_policy };
     native_catalog.reset();
+    // A fresh run is the job's first segment. A continued run adds one after its
+    // parent's: a warm start from the parent's revision, with no earlier search state.
+    Json segments = continued ? std::move(continued->segments) : Json::array();
+    std::string segment_id;
+    for (auto index = segments.size();; ++index) {
+        segment_id = "segment-" + std::to_string(index);
+        if (std::none_of(segments.begin(), segments.end(), [&](const Json& segment) {
+                return segment.at("segment_id") == segment_id;
+            })) {
+            break;
+        }
+    }
+    segments.push_back({
+        { "segment_id",               std::move(segment_id)                                                         },
+        { "parent_solution_revision", continued ? Json(continued->revision) : Json(nullptr)                         },
+        { "seed",                     search["seed"]                                                                },
+        { "backend",                  "cpu"                                                                         },
+        { "elapsed_seconds",          elapsed                                                                       },
+        { "work_counts",
+         { { "candidate_evaluations", run_stats.candidate_evaluations },
+            { "search_passes", run_stats.search_passes } }                                                          },
+        { "search_state_reset",       continued.has_value()                                                         },
+        { "rng",                      { { "algorithm", "none" }, { "state", "unused" } }                            },
+        { "resolved_settings",        settings                                                                      }
+    });
     Json metadata {
         { "schema_version",    1                                                                                    },
-        { "job_id",            "cli-solve"                                                                          },
+        { "job_id",            continued ? std::move(continued->job_id) : Json("cli-solve")                         },
         { "solution_revision", revision                                                                             },
         { "created_at",        utc_timestamp()                                                                      },
         { "engine",            { { "version", std::move(engine_version) }, { "commit", std::move(engine_commit) } } },
@@ -985,21 +1202,11 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
             { "pitch_levels_mm", Json::array({ settings["resolved"]["pitch_mm"] }) },
             { "seed", search["seed"] },
             { "work_counts",
-              { { "candidate_evaluations", run_stats.candidate_evaluations },
-                { "search_passes", run_stats.search_passes } } },
-            { "run_segments", Json::array({ { { "segment_id", "segment-0" },
-                                              { "parent_solution_revision", nullptr },
-                                              { "seed", search["seed"] },
-                                              { "backend", "cpu" },
-                                              { "elapsed_seconds", elapsed },
-                                              { "work_counts",
-                                                { { "candidate_evaluations", run_stats.candidate_evaluations },
-                                                  { "search_passes", run_stats.search_passes } } },
-                                              { "search_state_reset", false },
-                                              { "rng", { { "algorithm", "none" }, { "state", "unused" } } },
-                                              { "resolved_settings", settings } } }) },
+              { { "candidate_evaluations", earlier_candidates + run_stats.candidate_evaluations },
+                { "search_passes", earlier_passes + run_stats.search_passes } } },
+            { "run_segments", std::move(segments) },
             { "backend_transitions", Json::array() },
-            { "elapsed_seconds", elapsed } }                                                                        },
+            { "elapsed_seconds", earlier_elapsed + elapsed } }                                                      },
         { "metrics",
          { { "time_to_best_seconds", time_to_best },
             { "peak_host_bytes", *host },
@@ -1007,11 +1214,11 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
             { "termination_reason", reason(termination_reason) } }                                                  }
     };
     metadata["search"]["diagnostics"] = retained_diagnostics;
-    metadata["search"]["run_segments"][0]["diagnostics"] = retained_diagnostics;
+    metadata["search"]["run_segments"].back()["diagnostics"] = retained_diagnostics;
     const auto time_budget = deterministic ? 0 : search["budget_seconds"].get<double>();
     metadata["search"]["runtime"] =
         timeline.record(budget_scope, time_budget, run_runtime.preparation_reused, retained_solution->copies().empty());
-    metadata["search"]["run_segments"][0]["runtime"] = metadata["search"]["runtime"];
+    metadata["search"]["run_segments"].back()["runtime"] = metadata["search"]["runtime"];
     std::string().swap(engine_version);
     std::string().swap(engine_commit);
     uint64_t build_metadata_bytes {};
@@ -1189,7 +1396,7 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     control.phase_context = &timeline;
     const auto execute = [&]() -> spectrapack::cli::SolveOutcome {
         std::optional<std::filesystem::path> settings_path, object_report, container_report, result_path, stl_path,
-            stop_file;
+            stop_file, continue_from;
         for (size_t index = 0; index < arguments.size(); ++index) {
             if (index + 1 == arguments.size()) {
                 return fail("INVALID_REQUEST", "solve options are invalid.", 2);
@@ -1233,6 +1440,11 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
                     return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
                 }
             }
+            else if (option == "--continue") {
+                if (!set(continue_from)) {
+                    return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
+                }
+            }
             else {
                 return fail("INVALID_REQUEST", "solve options are invalid.", 2);
             }
@@ -1243,9 +1455,13 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
         if (aliases(*settings_path, *result_path)) {
             return fail("INVALID_REQUEST", "Result path aliases the settings input.", 2);
         }
+        if (continue_from && (aliases(*continue_from, *result_path) || (stl_path && aliases(*continue_from, *stl_path)))) {
+            return fail("INVALID_REQUEST", "An output path aliases the result to continue from.", 2);
+        }
         if (stop_file && (aliases(*stop_file, *settings_path) || aliases(*stop_file, *object_report) ||
                           aliases(*stop_file, *result_path) || (stl_path && aliases(*stop_file, *stl_path)) ||
-                          (container_report && aliases(*stop_file, *container_report)))) {
+                          (container_report && aliases(*stop_file, *container_report)) ||
+                          (continue_from && aliases(*stop_file, *continue_from)))) {
             return fail("INVALID_REQUEST", "Stop marker aliases an input or output.", 2);
         }
         spectrapack::cli::StopMarkerWatcher stop_watcher(stop_file, console_controls.source());
@@ -1311,7 +1527,8 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
                                          std::move(stl_path),
                                          {},
                                          std::move(engine_version),
-                                         std::move(engine_commit) },
+                                         std::move(engine_commit),
+                                         std::move(continue_from) },
                                        runtime);
     };
     auto outcome = execute();

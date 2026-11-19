@@ -3734,6 +3734,12 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
               "minLength": 1,
               "maxLength": 32768
             },
+            "continue_from": {
+              "$comment": "SOL-06: a result of the same object, box, clearances and rotations. The run starts from its poses once the validator has re-checked them and records a further run segment.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32768
+            },
             "stop_file": {
               "type": "string",
               "minLength": 1,

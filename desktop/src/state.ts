@@ -51,6 +51,15 @@ export function settingsError(settings: Desktop.Settings): string | null {
   return null;
 }
 export function activeOperation(state: Desktop.State | null): boolean { return !!state?.operation && !state.operation.finished_at; }
+// Why Continue cannot run for `result` with these settings, or null when it can.
+// Continue adds budget to a result: its object, box, tolerance, clearances and
+// rotations are locked, while pitch, budget, threads, seed and memory may change.
+export function continueBlocker(settings: Desktop.Settings, result: Desktop.ResultSnapshot | null, object: Desktop.ImportedObject | null | undefined): string | null {
+  if (!result || result.document.count === 0) return 'Continue needs a result with at least one copy.';
+  if (result.document.assets.object.accepted_solid?.sha256 !== object?.report.accepted_solid?.sha256) return 'The result belongs to a different object; Start begins a new search.';
+  const locked = (s: Desktop.Settings) => JSON.stringify([s.box_dimensions_mm, s.box_tolerance_mm ?? 0, s.clearance_mm.pair, s.clearance_mm.wall, s.orientation]);
+  return locked(settings) === locked(snapshotSettings(result)) ? null : 'Continue keeps the result\'s box, tolerance, clearances and rotations. Restore them to continue, or Start a new search.';
+}
 // The validated interior: each nominal dimension plus the allowed tolerance.
 export function effectiveDimensions(settings: Desktop.Settings): [number, number, number] {
   const tolerance = Number.isFinite(settings.box_tolerance_mm) && settings.box_tolerance_mm! > 0 ? settings.box_tolerance_mm! : 0;

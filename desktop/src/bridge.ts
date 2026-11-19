@@ -11,6 +11,8 @@ export const bridge = {
   importDropped: (request: Desktop.ImportRequest) => invoke<Desktop.OperationReceipt>('desktop_import_dropped', { request }),
   repair: (request: Desktop.RepairRequest) => invoke<Desktop.OperationReceipt>('desktop_repair', { request }),
   start: (request: Desktop.StartRequest) => invoke<Desktop.OperationReceipt>('desktop_start', { request }),
+  // More budget for the displayed result: the engine re-checks its poses and searches on from them.
+  continue: (request: Desktop.StartRequest) => invoke<Desktop.OperationReceipt>('desktop_continue', { request }),
   stop: (request: Desktop.StopRequest) => invoke<Desktop.StopResponse>('desktop_stop', { request }),
   save: (request: Desktop.SaveRequest) => invoke<Desktop.OperationReceipt | null>('desktop_save_project', { request }),
   open: () => invoke<Desktop.OperationReceipt | null>('desktop_open_project'),

@@ -4,7 +4,7 @@ import type { Desktop } from '../src/generated/contracts';
 import fixtures from '../../tests/contracts/schema-fixtures.json';
 import { cube45CatalogHash, defaultSettings, snapshotSettings } from '../src/state';
 
-const native = vi.hoisted(() => ({ state: vi.fn(), save: vi.fn(), start: vi.fn(), stop: vi.fn(), newProject: vi.fn(), importObject: vi.fn(), open: vi.fn(), repair: vi.fn(),
+const native = vi.hoisted(() => ({ state: vi.fn(), save: vi.fn(), start: vi.fn(), continue: vi.fn(), stop: vi.fn(), newProject: vi.fn(), importObject: vi.fn(), open: vi.fn(), repair: vi.fn(),
   importDropped: vi.fn(), drop: () => {}, onDrop: vi.fn((handler: () => void) => { native.drop = handler; return Promise.resolve(() => {}); }) }));
 vi.mock('../src/bridge', () => ({ nativeAvailable: () => true, bridge: native }));
 vi.mock('../src/Viewer', () => ({ Viewer: (props: { dimensions: number[]; preview: { preview_id: string } | null }) => <div data-testid="viewer">{props.dimensions.join(',')} / {props.preview?.preview_id}</div> }));
@@ -118,6 +118,47 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
     fireEvent.click(screen.getByRole('button',{name:'▶ Start packing'}));
     await waitFor(()=>expect(native.start).toHaveBeenCalledOnce());
     expect(native.start.mock.calls[0][0].settings.host_memory_limit_bytes).toBe('134217728');
+  });
+  it('SOL-06 Continue adds budget to the displayed result and keeps its box, clearances and rotations', async () => {
+    const fixture = fixtures.find(f => f.kind === 'results' && f.schema_valid && f.semantic_valid)!;
+    const document = structuredClone(fixture.value) as unknown as Desktop.ResultSnapshot['document'];
+    document.search.resolved_settings.orientation = {mode:'cube'};
+    document.count = 1;
+    document.placements = [{copy_id:'copy-0', translation_mm:[5,5,5], quaternion_xyzw:[0,0,0,1],
+      local_to_world:[[1,0,0,5],[0,1,0,5],[0,0,1,5],[0,0,0,1]]}];
+    // A result that was already continued once records both run segments.
+    document.search.run_segments.push({...structuredClone(document.search.run_segments[0]), segment_id:'segment-1',
+      parent_solution_revision:7, search_state_reset:true});
+    const result: Desktop.ResultSnapshot = {id:'result', document, preview:null, origin:'solve'};
+    native.state.mockResolvedValue({desktop_version:1, session_id:'continue', revision:1,
+      object:{id:'object', display_name:'Cube.stl', report:document.assets.object, preview:null},
+      draft_settings:snapshotSettings(result), result, last_error:null,
+      operation:{id:'solve-0', kind:'solve', phase:'finished', started_at:'2026-11-18T00:00:00Z',
+        finished_at:'2026-11-18T00:01:00Z', result_id:'result', detail:null},
+      cpu_runtime:{version:1, supported_min:1, supported_max:8, default_thread_count:4}} satisfies Desktop.State);
+    native.continue.mockResolvedValue({operation_id:'continued'});
+    render(<App/>);
+    const button = () => screen.getByRole('button', {name:'Continue'});
+    await waitFor(() => expect(button().hasAttribute('disabled')).toBe(false));
+    expect(screen.getByText(/Continued from revision 7/)).toBeDefined();
+    // Budget, pitch and seed are free to change.
+    fireEvent.change(screen.getByLabelText('Search budget'), {target:{value:'240'}});
+    fireEvent.change(screen.getByLabelText('Voxel pitch'), {target:{value:'3'}});
+    expect(button().hasAttribute('disabled')).toBe(false);
+    // The box is locked: another size leaves only Start, which begins a new job.
+    const width = screen.getByLabelText('Width') as HTMLInputElement, original = width.value;
+    fireEvent.change(width, {target:{value:String(Number(original) + 1)}});
+    expect(button().hasAttribute('disabled')).toBe(true);
+    expect(screen.getByText(/Continue keeps the result's box, tolerance, clearances and rotations/)).toBeDefined();
+    expect(screen.getByRole('button', {name:'▶ Start packing'}).hasAttribute('disabled')).toBe(false);
+    fireEvent.change(width, {target:{value:original}});
+    fireEvent.click(screen.getByRole('checkbox', {name:'Include 45° turns'}));
+    expect(button().hasAttribute('disabled')).toBe(true);
+    fireEvent.click(screen.getByRole('checkbox', {name:'Include 45° turns'}));
+    fireEvent.click(button());
+    await waitFor(() => expect(native.continue).toHaveBeenCalledOnce());
+    expect(native.continue.mock.calls[0][0].settings).toMatchObject({budget_seconds:240, pitch_mm:3, budget_scope:'total_start'});
+    expect(native.start).not.toHaveBeenCalled();
   });
   it('SOL-08 starts with the shell default thread count, and Open keeps the recorded one', async () => {
     const fixture = fixtures.find(f => f.kind === 'results' && f.schema_valid && f.semantic_valid)!;
