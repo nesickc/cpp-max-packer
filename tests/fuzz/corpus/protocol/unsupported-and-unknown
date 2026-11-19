@@ -1,0 +1,2 @@
+{"protocol_version":1,"request_id":"b","method":"job.start","params":{"x":[1,2.5,null]}}
+{"protocol_version":1,"request_id":"c","method":"nothing.here","params":{}}

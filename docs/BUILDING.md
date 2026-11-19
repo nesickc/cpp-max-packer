@@ -256,6 +256,35 @@ retains per-process diagnostics and reports informational median/p95 inspection
 times. `--discover` retains unqualified observations for review and cannot approve
 its own baseline. See T-003 for outstanding gates.
 
+## Fuzzing hostile files
+
+The `windows-ninja-fuzz` preset builds the engine libraries with AddressSanitizer and
+MSVC's libFuzzer, and one target per reader of untrusted input (`tests/fuzz`):
+
+| Target | Reads |
+| --- | --- |
+| `fuzz_stl_import` | STL import: admission, parsing, cleanup, solid analysis, welding |
+| `fuzz_envelope` | STL bytes through the packing envelope to an accepted solid |
+| `fuzz_contracts` | every JSON contract kind (`ContractValidator::parse`) |
+| `fuzz_protocol` | the stdio service's record framing, limits and replies |
+| `fuzz_project_archive` | `.spectrapack` open (the Rust reader in `desktop/src-tauri`) |
+
+```powershell
+.\tools\Invoke-NativeTests.ps1 -Preset windows-ninja-fuzz -ToolchainProfile local-windows-2026 -VcpkgRoot D:\path\to\vcpkg
+```
+
+builds them and runs each under CTest for 60 seconds on its seed corpus
+(`tests/fuzz/corpus/<target>`) with a per-input timeout and a 2 GiB memory cap; CI runs
+the same command in its `windows-fuzz` job. `cargo` of the pinned Rust toolchain must be
+on `PATH`: it builds the archive target with coverage counters, and AddressSanitizer
+covers that target's heap and Windows calls rather than its safe Rust code.
+
+A crash, a hang or a breach of the memory cap fails the test and leaves the input as
+`out/build/windows-ninja-fuzz/fuzz/<target>/crash-*` (or `timeout-*`, `oom-*`).
+Replay it with `out/build/windows-ninja-fuzz/bin/fuzz_<target>.exe <file>`; to fuzz longer,
+run the executable with `-max_total_time=<seconds> <work directory> tests/fuzz/corpus/<target>`.
+A finding is fixed with a test in the module's ordinary suite, and its input joins the corpus.
+
 ## Packing envelopes
 
 `Create packing envelope` prepares defective object STLs without numeric repair settings. The CGAL 6.0.1 source archive is hash-pinned in `cmake/CGAL.cmake`; Boost.Multiprecision avoids a system GMP dependency. The first configure fetches that archive. CGAL/Boost notices are included in staged engine packages (see ADR 0021 for licensing).

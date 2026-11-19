@@ -11,6 +11,7 @@
 #include <string_view>
 #include <vector>
 
+#include "../src/envelope.hpp"
 #include "../src/solid_analysis.hpp"
 #include "spectrapack/geometry/import.hpp"
 
@@ -441,4 +442,71 @@ TEST_CASE("Envelope source preparation cannot authorize even a closed cube", "[i
     CHECK(std::holds_alternative<geo::ImportFailure>(geo::accept_asset(source)));
     options.role = geo::AssetRole::container;
     CHECK(std::holds_alternative<geo::ImportFailure>(geo::inspect_stl(cube_ascii(), options)));
+}
+
+TEST_CASE("Packing envelope refuses box-spanning triangles its allowance cannot hold", "[import][envelope]")
+{
+    // The wrap covers each of these triangles with about 450 search pieces before
+    // any refinement limit or stop request applies. These 8,000, a 400 KB file,
+    // need over 1 GiB there; admission used to count triangles only and let them in.
+    constexpr std::uint32_t count = 8'000;
+    std::vector<std::byte> stl(84 + 50 * std::size_t { count });
+    put32(stl, 80, count);
+    for (std::uint32_t face = 0; face != count; ++face) {
+        const float shift = static_cast<float>(face) * 1e-4F;
+        const float corners[9] = { shift, 0, 0, 100, 100 - shift, 0, 0, 100, 100 - shift };
+        for (int value = 0; value != 9; ++value) {
+            putf(stl, 84 + 50 * std::size_t { face } + 12 + 4 * value, corners[value]);
+        }
+    }
+    geo::ImportOptions import_options { geo::AssetRole::object, geo::Units::mm };
+    import_options.envelope_source_only = true;
+    const auto inspected = geo::inspect_stl(stl, import_options);
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::AssetDraft>>(inspected));
+    const auto source = std::get<std::shared_ptr<const geo::AssetDraft>>(inspected);
+    REQUIRE(source->mesh().triangles.size() == count);
+
+    geo::RepairOptions options;
+    options.algorithm = geo::RepairAlgorithm::packing_envelope;
+    options.max_working_bytes = 1ULL << 30;
+    const auto proposed = geo::propose_repair(source, options);
+    const auto* refused = std::get_if<geo::ImportFailure>(&proposed);
+    REQUIRE(refused);
+    CHECK(refused->code == "MEMORY_LIMIT");
+}
+
+TEST_CASE("Packing envelope searches stop at their work budget", "[import][envelope]")
+{
+    // Forty near-copies of one box-spanning triangle: every search of the wrap
+    // visits all of them. Two thousand kept one build busy for most of a minute,
+    // and nothing but the number of searches was bounded.
+    std::vector<geo::Vec3> vertices;
+    std::vector<geo::Triangle> faces;
+    for (std::uint32_t copy = 0; copy != 40; ++copy) {
+        const double shift = copy * 1e-3;
+        vertices.insert(vertices.end(), { { -50 + shift, -50, -50 }, { 50, 50 - shift, -50 }, { -50, 50, 50 - shift } });
+        faces.push_back({ 3 * copy, 3 * copy + 1, 3 * copy + 2 });
+    }
+    const geo::Bounds bounds { { -50, -50, -50 }, { 50, 50, 50 } };
+    const auto built = geo::detail::build_packing_envelope({ vertices, faces }, bounds, {}, 20'000);
+    const auto* refused = std::get_if<geo::ImportFailure>(&built);
+    REQUIRE(refused);
+    CHECK(refused->code == "MEMORY_LIMIT");
+    CHECK(refused->reason == "ENVELOPE_LIMIT");
+}
+
+TEST_CASE("Envelope piece counting matches the wrap's bisection and always ends", "[import][envelope]")
+{
+    const std::vector<geo::Triangle> face { { 0, 1, 2 } };
+    // Bisecting the longest edge of a right isosceles triangle halves it into two
+    // similar ones: legs of 64 reach edges of at most three after ten rounds.
+    const std::vector<geo::Vec3> right { { 0, 0, 0 }, { 64, 0, 0 }, { 0, 64, 0 } };
+    CHECK(geo::detail::envelope_search_pieces({ right, face }, 1.0, 1024, {}) == 1024);
+    CHECK_FALSE(geo::detail::envelope_search_pieces({ right, face }, 1.0, 1023, {}).has_value());
+    CHECK(geo::detail::envelope_search_pieces({ right, face }, 100.0, 1, {}) == 1);
+
+    // Neighbouring doubles have no midpoint: such an edge can never be shortened.
+    const double far = 1e30;
+    const std::vector<geo::Vec3> stalled { { far, 0, 0 }, { std::nextafter(far, 2 * far), 0, 0 }, { far, 0, 0 } };
+    CHECK_FALSE(geo::detail::envelope_search_pieces({ stalled, face }, 1.0, 1'000'000, {}).has_value());
 }

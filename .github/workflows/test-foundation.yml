@@ -217,3 +217,57 @@ jobs:
             out/build/windows-ninja-*/Testing/Temporary/LastTest.log
           if-no-files-found: warn
           retention-days: 14
+
+  # Spec 10.1: the readers of untrusted files run under libFuzzer and
+  # AddressSanitizer, each with a time budget, a per-input timeout and a memory cap.
+  windows-fuzz:
+    runs-on: windows-2025-vs2026
+    timeout-minutes: 90
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/.local/vcpkg-binary-cache
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.12'
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: .local/vcpkg-binary-cache
+          key: windows-cpu-v1-${{ hashFiles('vcpkg.json', 'cmake/dependencies.lock.json', 'cmake/toolchains.lock.json', 'CMakePresets.json') }}
+          restore-keys: windows-cpu-v1-
+      - name: Prepare pinned vcpkg
+        run: |
+          New-Item -ItemType Directory -Force $env:VCPKG_DEFAULT_BINARY_CACHE | Out-Null
+          $baseline = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
+          git clone https://github.com/microsoft/vcpkg.git .local/vcpkg
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git -C .local/vcpkg checkout --detach $baseline
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .local/vcpkg/bootstrap-vcpkg.bat -disableMetrics
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build and run the fuzz targets
+        run: |
+          New-Item -ItemType Directory -Force .local/ci | Out-Null
+          rustup toolchain install 1.98.1 --profile minimal
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $profiles = (Get-Content cmake/toolchains.lock.json -Raw | ConvertFrom-Json).profiles.PSObject.Properties
+          $matchedProfiles = @($profiles | Where-Object { $_.Value.runner_image -eq $env:ImageOS -and $_.Value.runner_image_version -eq $env:ImageVersion })
+          if ($matchedProfiles.Count -ne 1) { throw "No unique locked profile for hosted image $env:ImageOS $env:ImageVersion" }
+          & ./tools/Invoke-NativeTests.ps1 -Preset windows-ninja-fuzz -VcpkgRoot "$PWD/.local/vcpkg" -ToolchainProfile $matchedProfiles[0].Name -PythonPath python -Fresh 2>&1 | Tee-Object -FilePath .local/ci/fuzz.log
+          exit $LASTEXITCODE
+      - name: Retain fuzz findings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-fuzz-evidence
+          path: |
+            .local/ci/fuzz.log
+            out/build/windows-ninja-fuzz/fuzz/*/crash-*
+            out/build/windows-ninja-fuzz/fuzz/*/timeout-*
+            out/build/windows-ninja-fuzz/fuzz/*/oom-*
+            out/build/windows-ninja-fuzz/Testing/Temporary/LastTest.log
+          if-no-files-found: warn
+          retention-days: 14

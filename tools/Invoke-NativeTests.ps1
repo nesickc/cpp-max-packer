@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('windows-ninja-debug', 'windows-ninja-release')]
+    [ValidateSet('windows-ninja-debug', 'windows-ninja-release', 'windows-ninja-fuzz')]
     [string]$Preset = 'windows-ninja-debug',
     [string]$VcpkgRoot = $env:VCPKG_ROOT,
     [string]$VsWherePath = (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'),
@@ -8,7 +8,7 @@ param(
     [string]$CtestPath = 'ctest',
     [string]$PythonPath = 'python',
     [string]$ToolchainLock = (Join-Path $PSScriptRoot '..\cmake\toolchains.lock.json'),
-    [ValidateSet('local-windows-2026', 'local-windows-2026-20260921', 'hosted-windows-2025', 'hosted-windows-2025-20260907', 'hosted-windows-2025-20260922', 'hosted-windows-2025-20260925', 'hosted-windows-2025-20261007', 'hosted-windows-2025-20261021')]
+    [ValidateSet('local-windows-2026', 'local-windows-2026-20260921', 'hosted-windows-2025', 'hosted-windows-2025-20260907', 'hosted-windows-2025-20260922', 'hosted-windows-2025-20260925', 'hosted-windows-2025-20261007', 'hosted-windows-2025-20261021', 'hosted-windows-2025-20261103')]
     [string]$ToolchainProfile,
     [string]$BuildTarget,
     [string]$TestRegex,

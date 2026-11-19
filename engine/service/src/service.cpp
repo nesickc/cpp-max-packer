@@ -83,7 +83,8 @@ static int run_stdio_impl(std::istream& input, std::ostream& protocol_output, st
   std::size_t cache_bytes = 0;
   std::string record;
   char character = 0;
-  io::ContractValidator validator;
+  // The service reads and writes protocol records only.
+  io::ContractValidator validator(io::ContractKind::protocol);
   while (input.get(character)) {
     if (character != '\n') {
       if (record.size() == limits.max_record_bytes) {

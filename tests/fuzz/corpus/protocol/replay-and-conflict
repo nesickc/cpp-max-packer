@@ -1,0 +1,3 @@
+{"protocol_version":1,"request_id":"a","method":"capabilities.get","params":{}}
+{"protocol_version":1,"request_id":"a","method":"capabilities.get","params":{}}
+{"protocol_version":1,"request_id":"a","method":"job.status","params":{}}
