@@ -194,6 +194,24 @@ describe('UI-02/UI-03 / AT-15 persistent viewer (device adapter, real PLY and co
   });
 });
 
+it('exports the current view from a frame rendered for it, on an opaque background', async () => {
+  const snapshot = { current: (): Uint8Array | null => null };
+  const view = render(<Viewer mode="result" preview={preview} placements={[pose]} dimensions={[40,40,40]} hidden={new Set()} selected={null} onSelect={() => {}} snapshot={snapshot} />);
+  await settle(); drain();
+  // A shown WebGL frame clears its drawing buffer: the canvas reads back blank
+  // unless a frame is rendered in the same task as the read.
+  let drawn = false, background: unknown = null;
+  device.render.mockImplementationOnce((scene: Scene) => { drawn = true; background = scene.background; });
+  const canvas = document.querySelector('canvas')!;
+  canvas.toDataURL = () => `data:image/png;base64,${drawn ? btoa('\x89PNG\r\n\x1a\nframe') : ''}`;
+  const png = snapshot.current()!;
+  expect(String.fromCharCode(...png)).toBe('\x89PNG\r\n\x1a\nframe');
+  expect((background as Color).getHexString()).toBe('101c27');
+  expect((device.render.mock.lastCall![0] as Scene).background).toBeNull();
+  view.unmount();
+  expect(snapshot.current()).toBeNull();
+});
+
 it('switches original, envelope and overlay with identical packed-copy transforms', async () => {
   render(<Viewer mode="result" preview={preview} envelopePreview={{...preview,preview_id:'envelope'}} placements={[pose]} dimensions={[20,20,20]} hidden={new Set()} selected={null} onSelect={()=>{}}/>);
   await settle(); frame();

@@ -51,6 +51,10 @@ optimality or that a larger packing is impossible.
 
 ## Preserve and export a result
 
+Save project writes the current project file without asking; Save as… always
+asks, and so does Save when there is no current file yet. A successful Save as…
+or Open makes that file the current project, and New forgets it.
+
 Save writes a portable `.spectrapack` archive containing source and accepted
 geometry, import decisions, settings and the complete result when present.
 Pending settings are saved separately from the settings that produced the
@@ -67,6 +71,12 @@ with copy identities and triangle ranges. The engine checks the actual rounded
 STL coordinates. If rounding violates the geometry constraints, STL export
 fails while valid JSON remains available; changing the view cannot fix it.
 
+Export view PNG writes the viewer as it is shown, hidden copies and clipping
+included, to a PNG file you choose. Beside it, `<name>.png.json` records the
+result's count, validation status, solution revision and settings in
+millimetres. After a save or an export finishes, Show in folder under the viewer
+opens Explorer with the written file selected.
+
 Import, envelope creation and export show their current stage under the viewer,
 with a progress bar where the stage has a known size (writing the STL, checking
 each exported copy, hashing). Cancel ends them within about a second: an import
@@ -77,8 +87,8 @@ removes the `SpectraPack-export-…` folder it created, keeping the result and p
 
 This journey uses box containers, fixed/cube rotations, explicit pitch and CPU
 execution. STL containers, repair-acceptance controls, free/upright search,
-bit-for-bit continuation, live incumbent updates, periodic checkpoints, viewport screenshots
-and full-resolution inspection controls remain tracked follow-up work.
+bit-for-bit continuation, live incumbent updates, periodic checkpoints and
+full-resolution inspection controls remain tracked follow-up work.
 Saving a complete project is distinct from recovering an interrupted search.
 
 Desktop admission limits are 256 MiB per imported STL, 64 MiB for a result or

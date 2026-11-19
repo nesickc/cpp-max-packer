@@ -17,3 +17,4 @@
 
 .rotation-option { display: flex; align-items: center; gap: 8px; margin-top: 14px; color: #9ab0c0; font-size: 11px; }
 .rotation-option input { accent-color: #63ccbd; }
+.run-panel .reveal { margin-top: 10px; font-size: 10px; padding: 6px 10px; }

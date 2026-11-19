@@ -51,17 +51,39 @@ fn desktop_continue(core: Managed<'_, Core>, request: StartRequest) -> Outcome<R
 fn desktop_stop(core: Managed<'_, Core>, request: StopRequest) -> Outcome<StopResponse> {
     core.stop(&request.operation_id)
 }
+// Save writes the current project without asking; with none it asks as Save As.
 #[tauri::command]
 async fn desktop_save_project(
     core: Managed<'_, Core>,
     request: SaveRequest,
 ) -> Outcome<Option<Receipt>> {
     validate_settings(&request.settings)?;
-    let path = rfd::AsyncFileDialog::new()
+    match core.save(request.settings.clone())? {
+        Some(receipt) => Ok(Some(receipt)),
+        None => save_as(&core, request).await,
+    }
+}
+#[tauri::command]
+async fn desktop_save_project_as(
+    core: Managed<'_, Core>,
+    request: SaveRequest,
+) -> Outcome<Option<Receipt>> {
+    validate_settings(&request.settings)?;
+    save_as(&core, request).await
+}
+async fn save_as(core: &Core, request: SaveRequest) -> Outcome<Option<Receipt>> {
+    let current = core.project_path();
+    let name = current
+        .as_ref()
+        .and_then(|path| path.file_name())
+        .map_or("project.spectrapack".into(), |name| name.to_string_lossy());
+    let mut dialog = rfd::AsyncFileDialog::new()
         .add_filter("SpectraPack project", &["spectrapack"])
-        .set_file_name("project.spectrapack")
-        .save_file()
-        .await;
+        .set_file_name(name);
+    if let Some(folder) = current.as_ref().and_then(|path| path.parent()) {
+        dialog = dialog.set_directory(folder);
+    }
+    let path = dialog.save_file().await;
     path.map(|file| core.save_to(file.path(), request.settings))
         .transpose()
 }
@@ -87,6 +109,61 @@ async fn desktop_export(
         .await;
     path.map(|file| core.export_to(file.path(), &request.format))
         .transpose()
+}
+/// The viewer's image arrives as the raw request body with the displayed result's
+/// id in a header; the shell asks where to write it.
+#[tauri::command]
+async fn desktop_export_png(
+    core: Managed<'_, Core>,
+    request: tauri::ipc::Request<'_>,
+) -> Outcome<Option<Receipt>> {
+    let tauri::ipc::InvokeBody::Raw(png) = request.body() else {
+        return Err(error("INVALID_REQUEST", "Export PNG expects the image bytes."));
+    };
+    let result_id = request
+        .headers()
+        .get("spectrapack-result")
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| error("INVALID_REQUEST", "Export PNG names no result."))?
+        .to_owned();
+    spectrapack_desktop::core::check_png(png)?;
+    let png = png.clone();
+    let path = rfd::AsyncFileDialog::new()
+        .add_filter("PNG image", &["png"])
+        .set_file_name("packing.png")
+        .save_file()
+        .await;
+    path.map(|file| core.export_png(file.path(), &result_id, png))
+        .transpose()
+}
+/// Shows the last saved or exported file in Explorer. The request names no path:
+/// the shell selects the file it recorded itself.
+#[tauri::command]
+fn desktop_reveal(core: Managed<'_, Core>) -> Outcome<()> {
+    use std::os::windows::process::CommandExt;
+    let file = core.last_output()?;
+    let mut buffer = [0_u16; 260];
+    let length = unsafe {
+        windows_sys::Win32::System::SystemInformation::GetWindowsDirectoryW(
+            buffer.as_mut_ptr(),
+            buffer.len() as u32,
+        )
+    } as usize;
+    if length == 0 || length >= buffer.len() {
+        return Err(error("FILE_ACCESS", "The Windows folder is unavailable."));
+    }
+    let explorer = std::path::PathBuf::from(String::from_utf16_lossy(&buffer[..length]))
+        .join("explorer.exe");
+    // Explorer parses its own command line: one quoted path after /select, (a
+    // Windows path cannot contain a quote).
+    let mut argument = std::ffi::OsString::from("/select,\"");
+    argument.push(file.as_os_str());
+    argument.push("\"");
+    std::process::Command::new(explorer)
+        .raw_arg(argument)
+        .spawn()
+        .map(drop)
+        .map_err(|e| error("FILE_ACCESS", format!("Explorer could not start: {e}")))
 }
 #[tauri::command]
 fn desktop_new(core: Managed<'_, Core>) -> Outcome<State> {
@@ -178,8 +255,11 @@ fn main() {
             desktop_continue,
             desktop_stop,
             desktop_save_project,
+            desktop_save_project_as,
             desktop_open_project,
             desktop_export,
+            desktop_export_png,
+            desktop_reveal,
             desktop_new,
             desktop_read_preview
         ])

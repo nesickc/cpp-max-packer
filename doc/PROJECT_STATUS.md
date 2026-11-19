@@ -1,6 +1,6 @@
 # Project status
 
-Updated 2026-11-18. Details belong in PRs and `.local/` logs.
+Updated 2026-11-19. Details belong in PRs and `.local/` logs.
 
 ## What works
 
@@ -10,7 +10,8 @@ Updated 2026-11-18. Details belong in PRs and `.local/` logs.
 - **Desktop:** units and diagnostics, box with size tolerance (default 0.1 mm, ADR
   0022), clearances, 24 cube rotations or 96 with 45° turns, Start/Stop, Continue from
   a result's revalidated poses, live validated packing with a search panel, portable
-  Save/Open, JSON and checked STL export. Results keep their settings and run segments.
+  Save/Save As/Open, JSON, checked STL and view PNG export, Show in folder. Results keep
+  their settings and run segments.
 - **Packing envelopes** ([ADR 0021](../spec/decisions/0021-packing-envelopes.md)): every
   desktop import builds a cavity-free CGAL envelope that native validation checks
   against the retained source. Original, Envelope and Overlay views share poses,
@@ -123,9 +124,9 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
     segment. It is a warm start (`search_state_reset`): the seeded phases run again, so
     extra budget helps where compaction, gap filling or one more copy had time left to
     use. Tampered or mismatched poses are refused and the displayed result stays.
-11. [ ] **Project and export actions** (§7.1, §8.5). *Done when* Save reuses the current
-    path, Save As asks, Export PNG writes the view, and a save or export can reveal
-    its folder.
+11. [x] **Project and export actions** (§7.1, §8.5). Save reuses the project file set by
+    Save As or Open (New forgets it), Save As asks, Export view PNG writes the viewer with a
+    `.png.json` of the result's count and settings, and Show in folder selects what a save or export wrote.
 12. [x] **Long operations** (UI-03, AT-16). Import, envelope and export show their stage
     under the viewer, with a bar where its size is known (STL writing, per-copy checks and
     hashing: 94% of a 429-copy export). Cancel ends them within about a second (the engine

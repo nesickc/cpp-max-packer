@@ -4,10 +4,15 @@ import type { Desktop } from '../src/generated/contracts';
 import fixtures from '../../tests/contracts/schema-fixtures.json';
 import { cube45CatalogHash, defaultSettings, snapshotSettings } from '../src/state';
 
-const native = vi.hoisted(() => ({ state: vi.fn(), save: vi.fn(), start: vi.fn(), continue: vi.fn(), stop: vi.fn(), newProject: vi.fn(), importObject: vi.fn(), open: vi.fn(), repair: vi.fn(),
+const native = vi.hoisted(() => ({ state: vi.fn(), save: vi.fn(), saveAs: vi.fn(), start: vi.fn(), continue: vi.fn(), stop: vi.fn(), newProject: vi.fn(), importObject: vi.fn(), open: vi.fn(), repair: vi.fn(),
+  export: vi.fn(), exportPng: vi.fn(), reveal: vi.fn(), view: null as Uint8Array | null,
   importDropped: vi.fn(), drop: () => {}, onDrop: vi.fn((handler: () => void) => { native.drop = handler; return Promise.resolve(() => {}); }) }));
 vi.mock('../src/bridge', () => ({ nativeAvailable: () => true, bridge: native }));
-vi.mock('../src/Viewer', () => ({ Viewer: (props: { dimensions: number[]; preview: { preview_id: string } | null }) => <div data-testid="viewer">{props.dimensions.join(',')} / {props.preview?.preview_id}</div> }));
+// The viewer's image is whatever `native.view` holds; null means no 3D view.
+vi.mock('../src/Viewer', () => ({ Viewer: (props: { dimensions: number[]; preview: { preview_id: string } | null; snapshot?: { current: () => Uint8Array | null } }) => {
+  if (props.snapshot) props.snapshot.current = () => native.view;
+  return <div data-testid="viewer">{props.dimensions.join(',')} / {props.preview?.preview_id}</div>;
+} }));
 import { App } from '../src/App';
 
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
@@ -268,8 +273,8 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
     render(<App/>);
     await waitFor(()=>expect(screen.getByText('24')).toBeDefined());
     expect(screen.getByRole('option',{name:'copy-23'})).toBeDefined();
-    expect(screen.getByRole('button',{name:'Save project'}).hasAttribute('disabled')).toBe(true);
-    expect(screen.getByRole('button',{name:/Export result JSON/}).hasAttribute('disabled')).toBe(true);
+    for (const name of ['Save project', 'Save as…', /Export result JSON/, /Export view PNG/])
+      expect(screen.getByRole('button',{name}).hasAttribute('disabled')).toBe(true);
   });
   it('uses 45-degree rotations for the next Start while retaining a legacy fixed result', async () => {
     const fixture=fixtures.find(f=>f.kind==='results'&&f.schema_valid&&f.semantic_valid)!;
@@ -412,6 +417,67 @@ it('UI-03 shows a long export\'s progress and cancels it without an error', asyn
   expect(screen.queryByRole('alert')).toBeNull();
   expect(screen.getByRole('button', {name:/Export packed STL/}).hasAttribute('disabled')).toBe(false);
   expect(screen.getByRole('button', {name:'Stop & keep'}).hasAttribute('disabled')).toBe(true);
+});
+
+describe('§7.1 project and export actions', () => {
+  const fixture = () => fixtures.find(f => f.kind === 'results' && f.schema_valid && f.semantic_valid)!;
+  const finished = (kind: Desktop.Operation['kind'], phase: Desktop.Operation['phase'] = 'finished', detail: string | null = null): Desktop.Operation =>
+    ({id:`${kind}-1`, kind, phase, started_at:'2026-11-19T10:00:00Z', finished_at:'2026-11-19T10:00:01Z', result_id:'result', detail});
+  const solved = (): Desktop.State => {
+    const document = structuredClone(fixture().value) as unknown as Desktop.ResultSnapshot['document'];
+    return {desktop_version:1, session_id:'actions', revision:1,
+      object:{id:'object', display_name:'Cube.stl', report:document.assets.object, preview:null},
+      draft_settings:structuredClone(defaultSettings), result:{id:'result', document, preview:null, origin:'solve'},
+      operation:finished('solve'), last_error:null};
+  };
+  it('Save writes the current project and Save as always asks, with the same availability', async () => {
+    native.state.mockResolvedValue(solved());
+    native.save.mockResolvedValue({operation_id:'save-1'}); native.saveAs.mockResolvedValue(null);
+    render(<App/>);
+    await waitFor(() => expect(screen.getByRole('button', {name:'Save as…'}).hasAttribute('disabled')).toBe(false));
+    fireEvent.change(screen.getByLabelText('Search budget'), {target:{value:'90'}});
+    fireEvent.click(screen.getByRole('button', {name:'Save project'}));
+    await waitFor(() => expect(native.save).toHaveBeenCalledOnce());
+    fireEvent.click(screen.getByRole('button', {name:'Save as…'}));
+    await waitFor(() => expect(native.saveAs).toHaveBeenCalledOnce());
+    expect(native.saveAs.mock.calls[0][0].settings.budget_seconds).toBe(90);
+    expect(native.save.mock.calls[0][0]).toEqual(native.saveAs.mock.calls[0][0]);
+    // Invalid settings block both.
+    fireEvent.change(screen.getByLabelText('Search budget'), {target:{value:'0'}});
+    for (const name of ['Save project', 'Save as…']) expect(screen.getByRole('button', {name}).hasAttribute('disabled')).toBe(true);
+  });
+  it('Export view PNG sends the viewer image of the displayed result', async () => {
+    native.state.mockResolvedValue(solved());
+    native.view = Uint8Array.of(0x89, 0x50, 0x4e, 0x47);
+    native.exportPng.mockResolvedValue({operation_id:'export-png'});
+    render(<App/>);
+    const button = () => screen.getByRole('button', {name:/Export view PNG/});
+    await waitFor(() => expect(button().hasAttribute('disabled')).toBe(false));
+    fireEvent.click(button());
+    await waitFor(() => expect(native.exportPng).toHaveBeenCalledWith('result', native.view));
+    // Without a 3D view there is no image: a message, and nothing is sent.
+    native.view = null; native.exportPng.mockClear();
+    fireEvent.click(button());
+    expect((await screen.findByRole('alert')).textContent).toContain('The 3D view is unavailable');
+    expect(native.exportPng).not.toHaveBeenCalled();
+  });
+  it('a finished save or export can show its folder until the next operation', async () => {
+    const state = solved();
+    native.state.mockResolvedValue(state); native.reveal.mockResolvedValue(undefined);
+    render(<App/>);
+    await waitFor(() => expect(screen.getByRole('button', {name:/Export view PNG/}).hasAttribute('disabled')).toBe(false));
+    expect(screen.queryByRole('button', {name:'Show in folder'})).toBeNull();
+    native.state.mockResolvedValue({...state, revision:2, operation:finished('export', 'finished', 'Output: D:\\out\\view.png')});
+    fireEvent.click(await screen.findByRole('button', {name:'Show in folder'}));
+    await waitFor(() => expect(native.reveal).toHaveBeenCalledOnce());
+    expect(screen.getByText('Output: D:\\out\\view.png')).toBeDefined();
+    native.state.mockResolvedValue({...state, revision:3, operation:finished('export', 'failed', 'Export failed.')});
+    await waitFor(() => expect(screen.queryByRole('button', {name:'Show in folder'})).toBeNull());
+    native.state.mockResolvedValue({...state, revision:4, operation:finished('save', 'finished', 'Saved to D:\\p.spectrapack')});
+    expect(await screen.findByRole('button', {name:'Show in folder'})).toBeDefined();
+    native.state.mockResolvedValue({...state, revision:5, operation:{...finished('solve'), phase:'placing', finished_at:null}});
+    await waitFor(() => expect(screen.queryByRole('button', {name:'Show in folder'})).toBeNull());
+  });
 });
 
 it('fills the box from a preset and keeps the dimensions editable', async () => {

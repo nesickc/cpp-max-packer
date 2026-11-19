@@ -15,6 +15,8 @@ interface Props {
   hidden: ReadonlySet<string>;
   selected: string | null;
   onSelect: (id: string | null) => void;
+  // Set to a function returning the current view as PNG bytes, or null without a 3D view.
+  snapshot?: { current: () => Uint8Array | null };
 }
 
 interface ViewUpdates {
@@ -26,7 +28,7 @@ interface ViewUpdates {
   envelope: (descriptor: Props['preview']) => () => void;
 }
 
-export function Viewer({ mode, preview, envelopePreview, placements, dimensions, hidden, selected, onSelect }: Props) {
+export function Viewer({ mode, preview, envelopePreview, placements, dimensions, hidden, selected, onSelect, snapshot }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const fitAction = useRef<() => void>(() => {});
   const [error, setError] = useState<string | null>(null);
@@ -190,6 +192,18 @@ export function Viewer({ mode, preview, envelopePreview, placements, dimensions,
     };
     const observer = new ResizeObserver(resize); observer.observe(element);
     updateDimensions(); fitAction.current = fit; fit();
+    if (snapshot) snapshot.current = () => {
+      if (disposed || failed) return null;
+      // A shown WebGL frame clears its drawing buffer, so render one now and read it
+      // in the same task, on the viewer's dark background instead of transparency.
+      const background = scene.background;
+      scene.background = new THREE.Color('#101c27');
+      try {
+        renderer.render(scene, camera);
+        const url = renderer.domElement.toDataURL('image/png');
+        return Uint8Array.from(atob(url.slice(url.indexOf(',') + 1)), c => c.charCodeAt(0));
+      } finally { scene.background = background; invalidate(); }
+    };
     let down: [number, number] | null = null;
     const pointerDown = (event: PointerEvent) => { down = [event.clientX, event.clientY]; };
     const pointerUp = (event: PointerEvent) => {
@@ -204,7 +218,7 @@ export function Viewer({ mode, preview, envelopePreview, placements, dimensions,
     renderer.domElement.addEventListener('pointerdown', pointerDown); renderer.domElement.addEventListener('pointerup', pointerUp);
     return () => {
       disposed = true; if (frame !== null) cancelAnimationFrame(frame);
-      updates.current = null; fitAction.current = () => {};
+      updates.current = null; fitAction.current = () => {}; if (snapshot) snapshot.current = () => null;
       observer.disconnect(); controls.removeEventListener('change', invalidate); controls.dispose();
       renderer.domElement.removeEventListener('pointerdown', pointerDown); renderer.domElement.removeEventListener('pointerup', pointerUp);
       clearMesh(); geometry?.dispose(); envelopeGeometry?.dispose();
