@@ -80,6 +80,8 @@ export function Viewer({ mode, preview, envelopePreview, placements, dimensions,
     let envelopeGeometry: THREE.BufferGeometry | null = null;
     let envelopeMesh: THREE.InstancedMesh | null = null;
     let ids: string[] = [];
+    // Meshes asked for and not yet installed: until then the view is not the packing.
+    const waiting = { preview: false, envelope: false };
     let disposed = false;
     let failed = false;
     let frame: number | null = null;
@@ -161,14 +163,14 @@ export function Viewer({ mode, preview, envelopePreview, placements, dimensions,
       envelope: descriptor => {
         let cancelled=false;
         clearMesh(); envelopeGeometry?.dispose(); envelopeGeometry=null; instances();
-        setEnvelopeLoading(!!descriptor);
+        setEnvelopeLoading(!!descriptor); waiting.envelope = !!descriptor;
         if (descriptor) bridge.preview({preview_id:descriptor.preview_id}).then(bytes=>{
           if (disposed || cancelled) return;
           const data=bytes instanceof ArrayBuffer?bytes:new Uint8Array(bytes).buffer;
           if (data.byteLength!==descriptor.byte_length) throw new Error('Envelope preview length mismatch.');
           const parsed=new PLYLoader().parse(data);
           if (!parsed.index || parsed.index.count/3!==descriptor.triangle_count) {parsed.dispose();throw new Error('Envelope preview metadata mismatch.');}
-          parsed.computeVertexNormals(); envelopeGeometry=parsed; instances();
+          parsed.computeVertexNormals(); envelopeGeometry=parsed; instances(); waiting.envelope = false;
         }).catch(e=>{if(!disposed&&!cancelled)setError(`Envelope preview unavailable: ${String(e)}`);})
           .finally(()=>{if(!disposed&&!cancelled)setEnvelopeLoading(false);});
         return ()=>{cancelled=true;};
@@ -176,7 +178,7 @@ export function Viewer({ mode, preview, envelopePreview, placements, dimensions,
       preview: descriptor => {
         let cancelled = false;
         clearMesh(); geometry?.dispose(); geometry = null; instances();
-        if (!failed) setError(null); setLoading(!!descriptor);
+        if (!failed) setError(null); setLoading(!!descriptor); waiting.preview = !!descriptor;
         if (descriptor) bridge.preview({ preview_id: descriptor.preview_id }).then(bytes => {
           if (disposed || cancelled) return;
           const data = bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes).buffer;
@@ -184,7 +186,7 @@ export function Viewer({ mode, preview, envelopePreview, placements, dimensions,
           const parsed = new PLYLoader().parse(data);
           try {
             if (!parsed.index || parsed.index.count / 3 !== descriptor.triangle_count) throw new Error('Preview triangle/index metadata differs from its registered descriptor.');
-            parsed.computeVertexNormals(); geometry = parsed; instances();
+            parsed.computeVertexNormals(); geometry = parsed; instances(); waiting.preview = false;
           } catch (e) { clearMesh(); geometry = null; parsed.dispose(); throw e; }
         }).catch(e => { if (!disposed && !cancelled) setError(`Preview unavailable: ${String(e)}. Native export remains available.`); }).finally(() => { if (!disposed && !cancelled) setLoading(false); });
         return () => { cancelled = true; };
@@ -193,7 +195,8 @@ export function Viewer({ mode, preview, envelopePreview, placements, dimensions,
     const observer = new ResizeObserver(resize); observer.observe(element);
     updateDimensions(); fitAction.current = fit; fit();
     if (snapshot) snapshot.current = () => {
-      if (disposed || failed) return null;
+      // Nothing to export while a mesh is loading or failed to load, or without copies.
+      if (disposed || failed || waiting.preview || waiting.envelope || (!mesh && !envelopeMesh)) return null;
       // A shown WebGL frame clears its drawing buffer, so render one now and read it
       // in the same task, on the viewer's dark background instead of transparency.
       const background = scene.background;

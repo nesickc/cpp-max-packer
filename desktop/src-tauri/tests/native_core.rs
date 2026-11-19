@@ -392,6 +392,12 @@ fn save_reuses_the_path_of_save_as_and_open_and_new_forgets_it() {
     assert!(wait(&core).last_error.is_none());
     assert_eq!(opened_budget(&core, &second), 4.0);
     assert_eq!(opened_budget(&core, &first), 2.0);
+    // Replacing the object leaves the opened project: Save asks instead of
+    // writing another part into it.
+    let opened = std::fs::read(&first).unwrap();
+    import(&core, &source);
+    assert!(core.save(settings(5.0)).unwrap().is_none(), "an import forgets the project");
+    assert_eq!(std::fs::read(&first).unwrap(), opened);
 }
 
 #[test]
@@ -410,6 +416,13 @@ fn export_png_writes_the_view_with_its_count_and_settings_and_exports_can_be_sho
     assert!(core.export_png(&root.path().join("view.stl"), shown, png.clone()).is_err());
     assert_eq!(core.export_png(&target, "result-old", png.clone()).unwrap_err().code, "RESULT_REQUIRED");
     assert!(!target.exists());
+    // A JSON file of the companion's name that no image goes with is not replaced unasked.
+    let unrelated = root.path().join("chart.png.json");
+    std::fs::write(&unrelated, b"{\"mine\":true}").unwrap();
+    let refused = core.export_png(&root.path().join("chart.png"), shown, png.clone()).unwrap_err();
+    assert_eq!(refused.code, "PATH_INVALID");
+    assert!(refused.message.contains("chart.png.json"), "{refused:?}");
+    assert_eq!(std::fs::read(&unrelated).unwrap(), b"{\"mine\":true}");
     assert_eq!(core.last_output().unwrap_err().code, "OUTPUT_REQUIRED");
 
     core.export_png(&target, shown, png.clone()).unwrap();
@@ -422,6 +435,7 @@ fn export_png_writes_the_view_with_its_count_and_settings_and_exports_can_be_sho
     assert_eq!(companion["count"], document["count"]);
     assert_eq!(companion["settings"], document["search"]["resolved_settings"]);
     assert_eq!(companion["units"], "mm");
+    assert_eq!(companion["image_sha256"], spectrapack_desktop::security::hash(&png));
     assert_eq!(core.last_output().unwrap(), target);
     // A second export of the same name replaces both files.
     core.export_png(&target, shown, [png.as_slice(), b"again"].concat()).unwrap();
@@ -439,6 +453,52 @@ fn export_png_writes_the_view_with_its_count_and_settings_and_exports_can_be_sho
     assert_eq!(core.last_output().unwrap_err().code, "FILE_ACCESS");
     core.new_project().unwrap();
     assert_eq!(core.last_output().unwrap_err().code, "OUTPUT_REQUIRED");
+}
+
+#[test]
+fn a_png_export_that_cannot_replace_either_file_keeps_the_previous_pair() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let (root, core, source) = fixture();
+    import(&core, &source);
+    core.start(settings(0.2)).unwrap();
+    let solved = wait(&core);
+    assert!(solved.last_error.is_none(), "{solved:?}");
+    let shown = solved.result.as_ref().unwrap()["id"].as_str().unwrap().to_owned();
+    let target = root.path().join("view.png");
+    let companion = root.path().join("view.png.json");
+    let png = |text: &[u8]| [b"\x89PNG\r\n\x1a\n".as_slice(), text].concat();
+    core.export_png(&target, &shown, png(b"first")).unwrap();
+    assert!(wait(&core).last_error.is_none());
+    let hash = |file: &std::path::Path| spectrapack_desktop::security::hash(&std::fs::read(file).unwrap());
+    let pair = || (hash(&target), hash(&companion));
+    let before = pair();
+    // A viewer or editor holding either file open, sharing reads only, so it
+    // cannot be replaced.
+    for held in [&companion, &target] {
+        let lock = std::fs::OpenOptions::new().read(true).share_mode(1).open(held).unwrap();
+        core.export_png(&target, &shown, png(b"second")).unwrap();
+        let failed = wait(&core);
+        drop(lock);
+        assert!(failed.last_error.is_some(), "{held:?} {failed:?}");
+        assert_eq!(pair(), before, "the image and its companion still belong together");
+        let mut left = std::fs::read_dir(root.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect::<Vec<_>>();
+        left.sort();
+        assert_eq!(left, ["private-session", "view.png", "view.png.json"], "no temporary files stay");
+    }
+}
+
+#[test]
+fn show_in_folder_starts_explorer_selecting_the_recorded_file() {
+    let root = tempfile::tempdir().unwrap();
+    let file = root.path().join("перевірка with spaces").join("view.png");
+    let command = spectrapack_desktop::core::explorer_select(&file).unwrap();
+    let program = std::path::Path::new(command.get_program());
+    assert!(program.is_file(), "{program:?}");
+    assert!(program.file_name().unwrap().eq_ignore_ascii_case("explorer.exe"));
+    let mut expected = std::ffi::OsString::from("/select,\"");
+    expected.push(&file);
+    expected.push("\"");
+    assert_eq!(command.get_args().collect::<Vec<_>>(), [expected.as_os_str()]);
 }
 
 #[test]

@@ -72,10 +72,12 @@ STL coordinates. If rounding violates the geometry constraints, STL export
 fails while valid JSON remains available; changing the view cannot fix it.
 
 Export view PNG writes the viewer as it is shown, hidden copies and clipping
-included, to a PNG file you choose. Beside it, `<name>.png.json` records the
-result's count, validation status, solution revision and settings in
-millimetres. After a save or an export finishes, Show in folder under the viewer
-opens Explorer with the written file selected.
+included, to a PNG file you choose, once the copies have loaded. Beside it,
+`<name>.png.json` records the image's SHA-256 and the result's count, validation
+status, solution revision and settings in millimetres; an existing JSON of that
+name without its image is never replaced. After a save or an export finishes,
+Show in folder under the viewer opens Explorer with the written file selected.
+Importing another STL ends the current project: the next Save asks for a file.
 
 Import, envelope creation and export show their current stage under the viewer,
 with a progress bar where the stage has a known size (writing the STL, checking

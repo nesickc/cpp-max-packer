@@ -455,10 +455,10 @@ describe('§7.1 project and export actions', () => {
     await waitFor(() => expect(button().hasAttribute('disabled')).toBe(false));
     fireEvent.click(button());
     await waitFor(() => expect(native.exportPng).toHaveBeenCalledWith('result', native.view));
-    // Without a 3D view there is no image: a message, and nothing is sent.
+    // While the view is loading, or without one, there is no image: a message, and nothing is sent.
     native.view = null; native.exportPng.mockClear();
     fireEvent.click(button());
-    expect((await screen.findByRole('alert')).textContent).toContain('The 3D view is unavailable');
+    expect((await screen.findByRole('alert')).textContent).toContain('No image to export');
     expect(native.exportPng).not.toHaveBeenCalled();
   });
   it('a finished save or export can show its folder until the next operation', async () => {

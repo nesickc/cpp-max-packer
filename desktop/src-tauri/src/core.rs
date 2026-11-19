@@ -296,18 +296,67 @@ fn write_json(path: &Path, value: &Value) -> Outcome<()> {
         serde_json::to_vec_pretty(value).map_err(|e| error("INVALID_DOCUMENT", e.to_string()))?;
     write_new(path, &bytes)
 }
-// Writes `bytes` beside `target` first and then moves them over it, so a failed
-// write leaves an earlier file whole.
-fn replace_file(target: &Path, bytes: &[u8]) -> Outcome<()> {
-    let folder = target
+// Replaces an image and its companion as a pair. Both are written beside their
+// targets first; the previous companion is moved aside, the new one put in place,
+// and the image replaced last in one step. Any failure puts the previous companion
+// back beside the untouched image and removes every temporary file.
+fn replace_pair(image: &Path, image_bytes: &[u8], companion: &Path, companion_bytes: &[u8]) -> Outcome<()> {
+    let folder = image
         .parent()
         .ok_or_else(|| error("PATH_INVALID", "Output has no folder."))?;
-    let temporary = folder.join(format!(".{}.tmp", id("spectrapack")));
-    write_new(&temporary, bytes)?;
-    fs::rename(&temporary, target).map_err(|e| {
-        let _ = fs::remove_file(&temporary);
-        error("OUTPUT_WRITE_FAILED", e.to_string())
-    })
+    let temporary = || folder.join(format!(".{}.tmp", id("spectrapack")));
+    let (staged_image, staged_companion, previous) = (temporary(), temporary(), temporary());
+    let failed = |e: std::io::Error| error("OUTPUT_WRITE_FAILED", e.to_string());
+    let outcome = (|| {
+        write_new(&staged_image, image_bytes)?;
+        write_new(&staged_companion, companion_bytes)?;
+        let kept = companion.exists();
+        if kept {
+            fs::rename(companion, &previous).map_err(failed)?;
+        }
+        let placed = fs::rename(&staged_companion, companion).and_then(|()| fs::rename(&staged_image, image));
+        if let Err(cause) = placed {
+            let restored = if kept { fs::rename(&previous, companion) } else { fs::remove_file(companion) };
+            return Err(match restored {
+                Err(e) if kept || e.kind() != std::io::ErrorKind::NotFound => error(
+                    "OUTPUT_WRITE_FAILED",
+                    format!("{cause} The previous {} could not be put back ({e}); it is {}.", companion.display(), previous.display()),
+                ),
+                _ => failed(cause),
+            });
+        }
+        if kept {
+            let _ = fs::remove_file(&previous);
+        }
+        Ok(())
+    })();
+    // Placed files are gone from here; anything left is a partial or unused write.
+    for staged in [&staged_image, &staged_companion] {
+        let _ = fs::remove_file(staged);
+    }
+    outcome
+}
+// Show in folder: Explorer opening the file's folder with the file selected.
+// Explorer parses its own command line, so the path goes in quotes as one raw
+// argument (a Windows path cannot contain a quote). The system Windows folder is
+// asked for directly: under Remote Desktop the per-user Windows folder has no Explorer.
+#[cfg(windows)]
+pub fn explorer_select(file: &Path) -> Outcome<Command> {
+    use std::os::windows::{ffi::OsStringExt, process::CommandExt};
+    use windows_sys::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
+    let mut buffer = [0_u16; 260];
+    let length =
+        unsafe { GetSystemWindowsDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) } as usize;
+    if length == 0 || length >= buffer.len() {
+        return Err(error("FILE_ACCESS", "The Windows folder is unavailable."));
+    }
+    let windows = PathBuf::from(OsString::from_wide(&buffer[..length]));
+    let mut argument = OsString::from("/select,\"");
+    argument.push(file);
+    argument.push("\"");
+    let mut command = Command::new(windows.join("explorer.exe"));
+    command.raw_arg(argument);
+    Ok(command)
 }
 // The image Export PNG writes must be a PNG of bounded size.
 pub fn check_png(bytes: &[u8]) -> Outcome<()> {
@@ -1142,6 +1191,8 @@ impl Core {
             let mut inner = core.inner.lock().unwrap(); inner.state.cpu_runtime=object.cpu_runtime.clone(); inner.object = Some(object.clone());
             prepared_guard.committed=true;
             inner.protected_sources.push(source.clone());
+            // Another object is not the opened or saved project: Save asks again.
+            inner.project = None;
             inner.state.live_result=None;
             inner.repair=None; inner.state.repair=None;
             inner.result=None; inner.state.result=None;
@@ -1720,7 +1771,15 @@ impl Core {
                 security::regular_file(file)?;
             }
         }
-        let (receipt, _, document) = self.begin_with("export", None, |inner| {
+        // The save dialog confirms replacing the image only: a JSON file of the
+        // companion's name with no image beside it is someone else's.
+        if companion.exists() && !target.exists() {
+            return Err(error(
+                "PATH_INVALID",
+                format!("{} already exists without its image; choose another name or move that file.", companion.display()),
+            ));
+        }
+        let (receipt, _, facts) = self.begin_with("export", None, |inner| {
             for source in &inner.protected_sources {
                 for file in [target, &companion] {
                     if security::aliases(source, file)? {
@@ -1730,7 +1789,13 @@ impl Core {
             }
             match (&inner.result, &inner.state.result) {
                 (Some(files), Some(shown)) if files.id == result_id && shown["id"] == result_id => {
-                    Ok(shown["document"].clone())
+                    let document = &shown["document"];
+                    Ok(json!({
+                        "count": document["count"],
+                        "validation_status": document["validation"]["status"],
+                        "solution_revision": document["solution_revision"],
+                        "settings": document["search"]["resolved_settings"],
+                    }))
                 }
                 _ => Err(error(
                     "RESULT_REQUIRED",
@@ -1743,21 +1808,21 @@ impl Core {
         let target = target.to_path_buf();
         self.spawn(&receipt, move |core, op| {
             core.phase(&op, "saving");
-            let metadata = json!({
-                "format": "spectrapack-view",
-                "version": 1,
+            // Shaped like the STL export's companion: a schema version, units and
+            // the hash of the file it describes.
+            let mut metadata = json!({
+                "schema_version": 1,
                 "image": target.file_name().unwrap_or_default().to_string_lossy(),
+                "image_sha256": security::hash(&png),
                 "units": "mm",
-                "count": document["count"],
-                "validation_status": document["validation"]["status"],
-                "solution_revision": document["solution_revision"],
-                "settings": document["search"]["resolved_settings"],
                 "saved_at": now(),
             });
+            if let Value::Object(facts) = facts {
+                metadata.as_object_mut().unwrap().extend(facts);
+            }
             let metadata = serde_json::to_vec_pretty(&metadata)
                 .map_err(|e| error("INVALID_DOCUMENT", e.to_string()))?;
-            replace_file(&target, &png)?;
-            replace_file(&companion, &metadata)?;
+            replace_pair(&target, &png, &companion, &metadata)?;
             core.wrote(target.clone(), format!("Output: {}", target.display()));
             Ok(())
         });

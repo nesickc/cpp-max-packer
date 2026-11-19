@@ -140,27 +140,7 @@ async fn desktop_export_png(
 /// the shell selects the file it recorded itself.
 #[tauri::command]
 fn desktop_reveal(core: Managed<'_, Core>) -> Outcome<()> {
-    use std::os::windows::process::CommandExt;
-    let file = core.last_output()?;
-    let mut buffer = [0_u16; 260];
-    let length = unsafe {
-        windows_sys::Win32::System::SystemInformation::GetWindowsDirectoryW(
-            buffer.as_mut_ptr(),
-            buffer.len() as u32,
-        )
-    } as usize;
-    if length == 0 || length >= buffer.len() {
-        return Err(error("FILE_ACCESS", "The Windows folder is unavailable."));
-    }
-    let explorer = std::path::PathBuf::from(String::from_utf16_lossy(&buffer[..length]))
-        .join("explorer.exe");
-    // Explorer parses its own command line: one quoted path after /select, (a
-    // Windows path cannot contain a quote).
-    let mut argument = std::ffi::OsString::from("/select,\"");
-    argument.push(file.as_os_str());
-    argument.push("\"");
-    std::process::Command::new(explorer)
-        .raw_arg(argument)
+    spectrapack_desktop::core::explorer_select(&core.last_output()?)?
         .spawn()
         .map(drop)
         .map_err(|e| error("FILE_ACCESS", format!("Explorer could not start: {e}")))

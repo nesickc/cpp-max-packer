@@ -175,7 +175,7 @@ export function App() {
   // adds the displayed result's count and settings.
   const exportView = (shown: Desktop.ResultSnapshot) => run(async () => {
     const png = snapshot.current();
-    if (!png) throw { message: 'The 3D view is unavailable, so there is no image to export.' };
+    if (!png) throw { message: 'No image to export: the 3D view is still loading the copies, or it is unavailable.' };
     await bridge.exportPng(shown.id, png);
   });
   // Explorer can show what the last save or export wrote, until the next operation.
