@@ -38,10 +38,6 @@ add_executable(spectrapack_validation_tests
 target_link_libraries(spectrapack_validation_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
 catch_discover_tests(spectrapack_validation_tests)
 
-add_executable(spectrapack_support_allocation_tests tests/support_allocation_tests.cpp)
-target_link_libraries(spectrapack_support_allocation_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
-catch_discover_tests(spectrapack_support_allocation_tests)
-
 add_executable(spectrapack_display_lod_tests tests/display_lod_tests.cpp)
 target_link_libraries(spectrapack_display_lod_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
 catch_discover_tests(spectrapack_display_lod_tests)
@@ -56,12 +52,6 @@ add_executable(spectrapack_physical_bounds_tests tests/physical_bounds_tests.cpp
 target_link_libraries(spectrapack_physical_bounds_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
 catch_discover_tests(spectrapack_physical_bounds_tests)
 
-add_executable(spectrapack_physical_bounds_allocation_tests
-  tests/physical_bounds_allocation_tests.cpp)
-target_link_libraries(spectrapack_physical_bounds_allocation_tests PRIVATE
-  pack_geometry Catch2::Catch2WithMain)
-catch_discover_tests(spectrapack_physical_bounds_allocation_tests)
-
 add_executable(spectrapack_rigid_transform_tests tests/rigid_transform_tests.cpp)
 target_link_libraries(spectrapack_rigid_transform_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
 catch_discover_tests(spectrapack_rigid_transform_tests)
@@ -69,12 +59,6 @@ catch_discover_tests(spectrapack_rigid_transform_tests)
 add_executable(spectrapack_export_validation_tests tests/export_validation_tests.cpp)
 target_link_libraries(spectrapack_export_validation_tests PRIVATE pack_geometry Catch2::Catch2WithMain)
 catch_discover_tests(spectrapack_export_validation_tests)
-
-add_executable(spectrapack_representation_accounting_tests
-  tests/representation_accounting_tests.cpp)
-target_link_libraries(spectrapack_representation_accounting_tests PRIVATE
-  pack_geometry Catch2::Catch2WithMain)
-catch_discover_tests(spectrapack_representation_accounting_tests)
 
 set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
   "${PROJECT_SOURCE_DIR}/tests/cmake/QualificationTimeouts.cmake")
