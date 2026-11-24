@@ -1,6 +1,6 @@
 # Project status
 
-Updated 2026-11-19. Details belong in PRs and `.local/` logs.
+Updated 2026-11-24. Details belong in PRs and `.local/` logs.
 
 ## What works
 
@@ -95,9 +95,9 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
 
 **Robustness**
 
-7. [x] **Hostile files** (§10.1). The `windows-ninja-fuzz` preset builds five libFuzzer
-   targets under AddressSanitizer: STL import, the packing envelope, the JSON contracts,
-   the stdio service and `.spectrapack` open (see [BUILDING.md](../docs/BUILDING.md)).
+7. [x] **Hostile files** (§10.1). The `windows-ninja-fuzz` preset builds four libFuzzer
+   targets under AddressSanitizer: STL import, the packing envelope, the JSON contracts
+   and `.spectrapack` open (see [BUILDING.md](../docs/BUILDING.md)).
    CI's `windows-fuzz` job runs each for 60 s with a per-input timeout and a 2 GiB cap.
    They found no memory error. Adversarial meshes found the envelope build unbounded:
    8,000 box-spanning triangles (a 400 KB file) kept it busy for four minutes and took
@@ -106,10 +106,11 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    work budget (one billion piece visits, a few minutes; the largest local model needs
    nine million) that ends the build with an envelope-limit error. Envelopes of the
    nine local models are byte-identical.
-8. [ ] **Review and simplify**, one PR per module: `pack_io` (10,000 lines), CLI (4,600,
-   including the stub commands), geometry outside the validator, desktop shell (4,800).
-   *Done when* each PR removes more than it adds with tests and scoreboard unchanged.
-   Validator, clearance, transform and contract changes get an independent review.
+8. [ ] **Review and simplify**. Five stacked PRs (#59 to #63) remove 22,000 lines with tests
+   and scoreboard unchanged: the old benchmark harness, profile seams and `serve --stdio`; the
+   CLI's and `pack_io`'s byte ledgers and test hooks (the tested library is the shipped one);
+   export's file pins; geometry accounting tests; the shell's copy of the arithmetic. Waiting on
+   a decision: the 45 caps, resource modes, fixed-work mode and `ResourceRecovery`.
 
 **Finish the desktop**
 
@@ -156,9 +157,7 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    on 18 November the 24.6 mm cube gave 10 instead of 14 in one run of ten).
    The engine asks Windows not to throttle it while its app is in the background, but
    most of a search still runs on one core, so other busy programs slow it.
-8. The desktop cannot show a packing of about 3,900 copies or more: a live packing is
-   one record capped at 1 MiB, and a larger one ends the search with a publication error.
-9. The panel's RAM estimate is the engine's preflight for a box-wide correlation at the
+8. The panel's RAM estimate is the engine's preflight for a box-wide correlation at the
    run pitch, which timed box searches skip (Pryanik at 2 mm: 0.66 GiB estimated, 0.09 GiB
    peak). Lattice and gap-fill phases choose their own cells and do not report them.
 
