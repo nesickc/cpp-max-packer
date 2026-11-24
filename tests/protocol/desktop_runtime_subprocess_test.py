@@ -17,7 +17,6 @@ import solve_subprocess_test as fixtures
 
 ENGINE = None
 PRACTICAL_REPORT = None
-MEMORY_HELPER = None
 OVERLAP_EVIDENCE = None
 REUSE_EVIDENCE = None
 OLDER_ENGINE = None
@@ -277,66 +276,6 @@ class RuntimeTests(unittest.TestCase):
             finally:
                 session.close()
 
-    def test_finalization_deadline_preserves_nonempty_authority_and_previous_result(self):
-        """T011-A4 / SOL-06: resource refusal then cleanup expiry preserves authority and both causes."""
-        if MEMORY_HELPER is None:
-            self.skipTest('test-only finalization clock supplied by the native acceptance harness')
-        with tempfile.TemporaryDirectory() as temporary:
-            root = pathlib.Path(temporary)
-            source, report = root/'cube.stl', root/'object.report.json'
-            fixtures.write_cube_stl(source, extent=40)
-            imported = subprocess.run([str(ENGINE), 'inspect', '--stl', str(source), '--units', 'mm',
-                                       '--report', str(report)], capture_output=True, text=True, timeout=15)
-            self.assertEqual(imported.returncode, 0, imported.stdout+imported.stderr)
-            fixture = fixtures.SolveSubprocessTests(); fixture.object_report_path = report
-            settings = fixture.settings(dimensions=(64, 64, 64), candidates=1, passes=1)
-            session = Session([str(MEMORY_HELPER), 'session-resource-finalization-expiry', str(root)])
-            try:
-                preview = root/'preview'; preview.mkdir()
-                prepared, _ = session.request({'runtime_version': 1, 'request_id': 'prepare',
-                    'operation_id': 'prepare-op', 'method': 'prepare', 'params': {
-                        'object_report': str(report), 'output_directory': str(preview)}})
-                self.assertTrue(prepared['ok'], prepared)
-                output = root/'result.json'
-                def run(name):
-                    ticks, frequency = qpc()
-                    return session.request({'runtime_version': 1, 'request_id': name,
-                        'operation_id': name+'-op', 'method': 'run', 'params': {
-                            'asset_token': prepared['result']['asset_token'], 'settings': settings,
-                            'result_path': str(output), 'stop_file': str(root/'stop.marker'),
-                            'start_qpc_ticks': ticks, 'qpc_frequency_hz': frequency}})
-                before, _ = run('before')
-                self.assertTrue(before['ok'], before)
-                previous = output.read_bytes()
-                self.assertGreater(json.loads(previous)['count'], 0)
-                settings['container']['dimensions_mm'] = [128, 64, 64]
-                settings['search'] = {'preset': 'subprocess', 'seed': '0', 'deterministic': False,
-                                      'budget_scope': 'total_start', 'budget_seconds': 60}
-                (root/'expire-finalization').write_bytes(b'expire')
-                failed, phases = run('expired-finalization')
-                retained = json.loads((root/'retained.json').read_text())
-                self.assertTrue(retained['native_handle_retained'], retained)
-                self.assertGreater(retained['count'], 0)
-                self.assertEqual(output.read_bytes(), previous)
-                print(json.dumps({'case': 'finalization-deadline', 'reply': failed, 'phases': phases,
-                    'retained': retained, 'previous_result_sha256': hashlib.sha256(previous).hexdigest(),
-                    'previous_bytes_preserved': output.read_bytes() == previous}), flush=True)
-                self.assertFalse(failed['ok'], failed)
-                error = failed['error']
-                self.assertEqual(error['code'], 'DEADLINE_EXCEEDED', error)
-                self.assertFalse(error['details']['no_nonempty_incumbent'], error)
-                self.assertFalse(error['details']['runtime']['no_nonempty_incumbent'], error)
-                self.assertEqual(error['details']['phase'], 'result_publication', error)
-                details = error['details']
-                self.assertEqual(details['runtime']['budget_scope'], 'total_start', error)
-                self.assertEqual(details['runtime']['deadline_overrun_seconds'], 0, error)
-                self.assertEqual(details['deadline_scope'], 'result_cleanup', error)
-                self.assertEqual(details['cleanup_allowance_seconds'], 30, error)
-                self.assertEqual(details['search_budget_seconds'], 60, error)
-                self.assertEqual(details['retained_count'], retained['count'], error)
-            finally:
-                session.close()
-
     def test_loading_stop_preserves_previous_complete_result(self):
         """T011-A4: interrupt real cold loading before preparation, retain old authority."""
         if PRACTICAL_REPORT is None:
@@ -475,192 +414,6 @@ class RuntimeTests(unittest.TestCase):
             finally:
                 session.close()
 
-    def test_allocation_counted_publication_and_invalid_request_overlap(self):
-        if MEMORY_HELPER is None:
-            self.skipTest("Allocation overlap requires the existing CLI test helper")
-        with tempfile.TemporaryDirectory() as temporary:
-            root = OVERLAP_EVIDENCE or pathlib.Path(temporary)
-            root.mkdir(parents=True, exist_ok=True)
-            source, report = root/'cube.stl', root/'object.report.json'
-            fixtures.write_cube_stl(source)
-            imported = subprocess.run([str(ENGINE), 'inspect', '--stl', str(source), '--units', 'mm',
-                '--report', str(report)], capture_output=True, text=True, timeout=15)
-            self.assertEqual(imported.returncode, 0, imported.stdout+imported.stderr)
-            gate = root/'gate'; gate.mkdir()
-            stats_path = root/'allocations.json'
-            session = Session([str(MEMORY_HELPER), 'session-publication-barrier', str(gate), str(stats_path)])
-            prepared = []
-            try:
-                for letter in ('a', 'b'):
-                    preview = root/('preview-'+letter*12); preview.mkdir()
-                    reply, _ = session.request({'runtime_version': 1, 'request_id': 'prepare-'+letter,
-                        'operation_id': 'prepare-'+letter+'-op', 'method': 'prepare', 'params': {
-                            'object_report': str(report), 'output_directory': str(preview)}})
-                    self.assertTrue(reply['ok'], reply)
-                    prepared.append(reply)
-                self.assertNotEqual(prepared[0]['result']['asset_token'], prepared[1]['result']['asset_token'])
-                self.assertTrue(prepared[1]['result']['preparation_reused'], prepared[1])
-                fixture = fixtures.SolveSubprocessTests()
-                fixture.object_report_path = report
-                settings = fixture.settings(dimensions=(20, 20, 20), candidates=128)
-                settings['orientation'] = {'mode': 'custom', 'quaternions_xyzw': [
-                    [fixtures.NEAR_UNIT_COMPONENT]*4, [0.0, 0.0, 0.0, 1.0]]}
-                settings['resolved']['orientation_catalog_sha256'] = fixtures.NEAR_UNIT_CUSTOM_SHA256
-                output = root/('result-'+'r'*12); output.mkdir()
-                ticks, frequency = qpc()
-                invalid = {'runtime_version': 1, 'request_id': 'overlap-invalid',
-                    'operation_id': 'overlap-invalid-op', 'method': 'run',
-                    'params': {'payload': [{} for _ in range(2040)], 'text': ''}}
-                # Seven non-text nodes plus 2,040 empty objects and text = 2,048 value nodes.
-                decoded = sum(len(key) for key in invalid) + sum(len(key) for key in invalid['params'])
-                decoded += sum(len(value) for value in invalid.values() if isinstance(value, str))
-                invalid['params']['text'] = 'x'*(65536-decoded)
-                rejected = []
-                def overlap(phase):
-                    if phase['phase'] != 'saving':
-                        return
-                    try:
-                        until = time.monotonic()+2
-                        while not (gate/'ready').exists() and time.monotonic() < until:
-                            time.sleep(.01)
-                        self.assertTrue((gate/'ready').exists(), 'Publication barrier did not become ready')
-                        session.child.stdin.write(json.dumps(invalid)+'\n'); session.child.stdin.flush()
-                        while True:
-                            record = session.records.get(timeout=2)
-                            self.assertIsNotNone(record, ''.join(session.stderr))
-                            if record['request_id'] == invalid['request_id']:
-                                self.assertEqual(record['kind'], 'response', record)
-                                self.assertFalse(record['ok'], record)
-                                self.assertEqual(record['error']['code'], 'INVALID_DOCUMENT', record)
-                                rejected.append(record)
-                                break
-                            self.assertEqual(record['request_id'], 'overlap-run', record)
-                            self.assertEqual(record['kind'], 'phase', record)
-                    finally:
-                        (gate/'release').write_bytes(b'release')
-                reply, _ = session.request({'runtime_version': 1, 'request_id': 'overlap-run',
-                    'operation_id': 'overlap-run-op', 'method': 'run', 'params': {
-                        'asset_token': prepared[1]['result']['asset_token'], 'settings': settings,
-                        'result_path': str(output/'result.json'), 'stop_file': str(output/'stop.marker'),
-                        'start_qpc_ticks': ticks, 'qpc_frequency_hz': frequency}}, overlap)
-                self.assertEqual(len(rejected), 1, reply)
-                self.assertTrue(reply['ok'], reply)
-                saved = json.loads((output/'result.json').read_text())
-                self.assertEqual(saved['validation']['status'], 'valid')
-                self.assertEqual(saved['count'], len(saved['placements']))
-                shutdown, _ = session.request({'runtime_version': 1, 'request_id': 'overlap-shutdown',
-                    'method': 'shutdown', 'params': {}})
-                self.assertTrue(shutdown['ok'], shutdown)
-            finally:
-                (gate/'release').write_bytes(b'release')
-                session.close()
-            self.assertEqual(session.child.returncode, 0, ''.join(session.stderr))
-            stats = json.loads(stats_path.read_text())
-            self.assertGreater(stats['publication_baseline_cpp_bytes'], 0)
-            self.assertGreaterEqual(stats['publication_peak_cpp_bytes'], stats['publication_baseline_cpp_bytes'])
-            self.assertTrue(stats['publication_released_by_fixture'], stats)
-            observation = {'allocations': stats, 'prepared': prepared, 'run_reply': reply,
-                'invalid_reply': rejected[0], 'invalid_value_nodes': 2048, 'invalid_decoded_bytes': 65536,
-                'prepared_reported_heavy_payload_bytes': prepared[1]['retained_native_bytes'],
-                'saved_count': saved['count'], 'saved_result_sha256': hashlib.sha256(
-                    (output/'result.json').read_bytes()).hexdigest()}
-            (root/'observation.json').write_text(json.dumps(observation, indent=2))
-            print(json.dumps({'adapter_overlap': stats, 'saved_count': saved['count']}))
-
-    def test_stop_monitor_failure_during_publication(self):
-        self._publication_stop_observation(monitor_failure=True)
-
-    def test_user_stop_during_publication_keeps_valid_incumbent(self):
-        """T011-A4/A5: actual Stop at native commit; barrier dwell is recorded separately."""
-        self._publication_stop_observation(monitor_failure=False)
-
-    def _publication_stop_observation(self, monitor_failure):
-        if MEMORY_HELPER is None:
-            self.skipTest("Publication barrier requires the existing CLI test helper")
-        with tempfile.TemporaryDirectory() as temporary:
-            root = pathlib.Path(temporary)
-            source, report = root/'cube.stl', root/'object.report.json'
-            fixtures.write_cube_stl(source)
-            imported = subprocess.run([str(ENGINE),'inspect','--stl',str(source),'--units','mm',
-                                       '--report',str(report)],capture_output=True,text=True,timeout=15)
-            self.assertEqual(imported.returncode,0,imported.stdout+imported.stderr)
-            gate=root/'gate';gate.mkdir()
-            session=Session([str(MEMORY_HELPER),'session-publication-barrier',str(gate)])
-            try:
-                preview=root/'preview';preview.mkdir()
-                prepared,_=session.request({'runtime_version':1,'request_id':'prepare-publication',
-                    'operation_id':'prepare-publication-op','method':'prepare','params':{
-                        'object_report':str(report),'output_directory':str(preview)}})
-                self.assertTrue(prepared['ok'],prepared)
-                output=root/'run';output.mkdir();marker=output/'stop.marker'
-                ticks,frequency=qpc()
-                observed=[]; measured={}
-                def during_publication(phase):
-                    if phase['phase'] != 'saving' or observed:
-                        return
-                    try:
-                        until=time.monotonic()+2
-                        while not (gate/'ready').exists() and time.monotonic()<until:
-                            time.sleep(.01)
-                        self.assertTrue((gate/'ready').exists(),'Publication barrier did not become ready')
-                        measured['barrier_observed_at']=time.perf_counter()
-                        measured['marker_started_at']=time.perf_counter()
-                        if monitor_failure:
-                            marker.mkdir()
-                        else:
-                            marker.write_bytes(b'stop')
-                        measured['marker_write_seconds']=time.perf_counter()-measured['marker_started_at']
-                        until=time.monotonic()+2
-                        while not (gate/'observed').exists() and time.monotonic()<until:
-                            time.sleep(.01)
-                        observed.append((gate/'observed').exists())
-                    finally:
-                        (gate/'release').write_bytes(b'release')
-                        measured['barrier_released_at']=time.perf_counter()
-                reply,phases=session.request({'runtime_version':1,'request_id':'publication-run',
-                    'operation_id':'publication-run-op','method':'run','params':{
-                        'asset_token':prepared['result']['asset_token'],
-                        'settings':{'desktop_version':1,'box_dimensions_mm':[20,20,20],
-                            'clearance_mm':{'pair':0,'wall':0},'pitch_mm':10,
-                            'orientation':{'mode':'fixed','quaternion_xyzw':[0,0,0,1]},
-                            'budget_seconds':10,'seed':'42','thread_count':1,'budget_scope':'total_start'},
-                        'result_path':str(output/'result.json'),'stop_file':str(marker),
-                        'start_qpc_ticks':ticks,'qpc_frequency_hz':frequency}},during_publication)
-                finished=time.perf_counter()
-                self.assertEqual(observed,[True],f'Stop monitor stopped before publication: {reply}')
-                document=json.loads((output/'result.json').read_text())
-                self.assertEqual(document['validation']['status'],'valid')
-                if monitor_failure:
-                    self.assertFalse(reply['ok'],reply)
-                    self.assertEqual(reply['error']['code'],'STOP_MONITOR_FAILED')
-                    self.assertGreater(reply['error']['details']['diagnostics']['work']['candidate_evaluations'],0)
-                else:
-                    self.assertTrue(reply['ok'],reply)
-                    # Search may already have ended when Stop races the final certified commit.
-                    self.assertIn(reply['result']['termination_reason'],
-                                  ('user_stopped','budget_exhausted','search_stalled'))
-                    self.assertEqual(document['metrics']['termination_reason'],reply['result']['termination_reason'])
-                    self.assertGreater(document['count'],0)
-                    self.assertEqual(reply['result']['count'],document['count'])
-                    self.assertEqual(len(document['placements']),document['count'])
-                    self.assertLessEqual(measured['marker_write_seconds'],.250)
-                    self.assertLessEqual(finished-measured['marker_started_at'],5)
-                    print(json.dumps({'case':'native-publication-user-stop',
-                        'marker_write_seconds':measured['marker_write_seconds'],
-                        'artificial_barrier_hold_seconds':measured['barrier_released_at']-measured['barrier_observed_at'],
-                        'marker_to_terminal_seconds':finished-measured['marker_started_at'],
-                        'after_release_to_terminal_seconds':finished-measured['barrier_released_at'],
-                        'reply':reply,'phases':phases,'count':document['count'],
-                        'validation':document['validation'],'placements':document['placements'],
-                        'result_sha256':hashlib.sha256((output/'result.json').read_bytes()).hexdigest()}),flush=True)
-                    shutdown,_=session.request({'runtime_version':1,'request_id':'publication-shutdown',
-                                               'method':'shutdown','params':{}})
-                    self.assertTrue(shutdown['ok'],shutdown)
-                    self.assertEqual(session.child.wait(timeout=5),0)
-            finally:
-                (gate/'release').write_bytes(b'release')
-                session.close()
-
     def test_increasing_escaped_requests_cache_owned_failure_without_losing_epoch(self):
         session = Session()
         try:
@@ -683,13 +436,13 @@ class RuntimeTests(unittest.TestCase):
     def test_prelexer_rejections_keep_the_session_epoch_usable(self):
         session = Session()
         try:
-            records = [("invalid-request", "\t" * ((1 << 20) - 1) + "!", "INVALID_RUNTIME_RECORD")]
+            records = [("invalid-request", "\t" * ((1 << 20) - 1) + "!", "INVALID_DOCUMENT")]
             for length in (127, 128, 129):
                 name = f"numeric-spelling-{length}"
                 raw = ('{"runtime_version":1,"request_id":"' + name +
                        '","operation_id":"' + name + '-op","method":"run","params":{"value":1.' +
                        '0' * (length - 2) + '}}')
-                records.append((name, raw, "INVALID_DOCUMENT" if length <= 128 else "INVALID_RUNTIME_RECORD"))
+                records.append((name, raw, "INVALID_DOCUMENT"))
             for identity, raw, code in records:
                 session.child.stdin.write(raw + "\n")
                 session.child.stdin.flush()
@@ -855,7 +608,7 @@ class RuntimeTests(unittest.TestCase):
                 request={'runtime_version':1,'request_id':f'adversarial-{index}','method':'shutdown','params':params}
                 reply,_=session.request(request)
                 self.assertFalse(reply['ok'])
-                self.assertEqual(reply['error']['code'],'INVALID_RUNTIME_RECORD',reply)
+                self.assertEqual(reply['error']['code'],'INVALID_DOCUMENT',reply)
             reply,_=session.request({'runtime_version':1,'request_id':'after-adversarial','method':'shutdown','params':{}})
             self.assertTrue(reply['ok'],reply)
             self.assertEqual(session.child.wait(timeout=5),0)
@@ -1129,14 +882,12 @@ if __name__ == "__main__":
     parser.add_argument("engine", type=pathlib.Path)
     parser.add_argument("--case", default=None)
     parser.add_argument('--practical-report',type=pathlib.Path,default=None)
-    parser.add_argument('--memory-helper',type=pathlib.Path,default=None)
     parser.add_argument('--overlap-evidence',type=pathlib.Path,default=None)
     parser.add_argument('--reuse-evidence',type=pathlib.Path,default=None)
     parser.add_argument('--older-engine',type=pathlib.Path,default=None)
     arguments = parser.parse_args()
     ENGINE = arguments.engine.resolve()
     PRACTICAL_REPORT = arguments.practical_report.resolve() if arguments.practical_report else None
-    MEMORY_HELPER = arguments.memory_helper.resolve() if arguments.memory_helper else None
     OVERLAP_EVIDENCE = arguments.overlap_evidence.resolve() if arguments.overlap_evidence else None
     REUSE_EVIDENCE = arguments.reuse_evidence.resolve() if arguments.reuse_evidence else None
     OLDER_ENGINE = arguments.older_engine.resolve() if arguments.older_engine else None

@@ -111,7 +111,6 @@ jobs:
           $solveTest = Join-Path $PWD 'tests/protocol/solve_subprocess_test.py'
           $resultContractValidator = Join-Path $PWD 'out/build/windows-ninja-release/bin/spectrapack_result_contract_check.exe'
           $solveControlsTest = Join-Path $PWD 'tests/protocol/solve_controls_subprocess_test.py'
-          $cliMemoryHelper = Join-Path $PWD 'out/build/windows-ninja-release/bin/spectrapack_cli_memory_check.exe'
           $importLog = Join-Path $PWD '.local/ci/staged-import.log'
           $solveLog = Join-Path $PWD '.local/ci/staged-solve.log'
           $solveControlsLog = Join-Path $PWD '.local/ci/staged-solve-controls.log'
@@ -131,7 +130,7 @@ jobs:
               if ($LASTEXITCODE -ne 0) { Get-Content $importLog; exit $LASTEXITCODE }
               & $runtimePython $solveTest $engine --contract-validator $resultContractValidator *> $solveLog
               if ($LASTEXITCODE -ne 0) { Get-Content $solveLog; exit $LASTEXITCODE }
-              & $runtimePython $solveControlsTest $engine --memory-helper $cliMemoryHelper *> $solveControlsLog
+              & $runtimePython $solveControlsTest $engine *> $solveControlsLog
               if ($LASTEXITCODE -ne 0) { Get-Content $solveControlsLog; exit $LASTEXITCODE }
             } finally { Pop-Location }
           } finally { $env:PATH = $savedPath }

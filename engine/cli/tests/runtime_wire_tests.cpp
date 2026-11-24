@@ -39,7 +39,7 @@ TEST_CASE("T015 fixed resolution serializes effective partitions and replays eve
     });
 }
 
-TEST_CASE("T011 full legal runtime record keeps bounded capacity including delimiter", "[runtime][T-011]")
+TEST_CASE("T011 a runtime record of exactly the wire limit is encoded with its delimiter", "[runtime][T-011]")
 {
     namespace cli = spectrapack::cli;
     const auto prefix_bytes = spectrapack::io::Json({
@@ -53,8 +53,6 @@ TEST_CASE("T011 full legal runtime record keeps bounded capacity including delim
     const auto encoded = cli::encode_runtime_record(value);
     REQUIRE(encoded.size() == cli::runtime_wire_limit + 1);
     REQUIRE(encoded.back() == '\n');
-    // Includes the actual string capacity, not merely its visible wire length.
-    REQUIRE(encoded.capacity() <= cli::runtime_wire_limit + 64);
     REQUIRE(spectrapack::io::Json::parse(encoded) == value);
 }
 
@@ -68,26 +66,4 @@ TEST_CASE("T011 runtime encoding counts actual JSON escapes and rejects growth b
     REQUIRE(cli::encode_runtime_record(value, false, expected.size()) == expected);
     REQUIRE_THROWS_AS(cli::encode_runtime_record(value, true, expected.size() - 1), std::length_error);
     REQUIRE(cli::encode_runtime_record(value).back() == '\n');
-}
-
-TEST_CASE("T011 increasing escaped requests retain a bounded canonical cache", "[runtime][T-011]")
-{
-    namespace cli = spectrapack::cli;
-    cli::CanonicalRecord cached;
-    for (const auto length : { 30000, 32500 }) {
-        const auto request = spectrapack::io::Json {
-            { "runtime_version", 1                                    },
-            { "request_id",      "cache-increasing"                   },
-            { "operation_id",    "cache-increasing-op"                },
-            { "method",          "prepare"                            },
-            { "params",
-             { { "object_report", std::string(length, '\x01') },
-                { "output_directory", std::string(length, '\x01') } } }
-        };
-        auto canonical = cli::encode_runtime_record(request, false, 512 * 1024);
-        const auto expected = canonical;
-        cached.replace(std::move(canonical));
-        REQUIRE(cached.value() == expected);
-        REQUIRE(cached.capacity() <= 512 * 1024 + 64);
-    }
 }

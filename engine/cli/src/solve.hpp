@@ -42,16 +42,13 @@ struct PublishedSnapshot {
 };
 using PublishedSnapshotHandle = std::shared_ptr<const PublishedSnapshot>;
 struct SolveRuntime {
-    std::uint64_t publication_reserved_bytes {};
     void (*publication_sink)(void*, PublishedSnapshotHandle) noexcept {};
     void* publication_context {};
     runtime::OperationControl control;
     runtime::Clock::time_point native_start { runtime::Clock::now() };
     double elapsed_before_native_seconds {};
-    std::uint64_t retained_reserve_bytes {};
     bool preparation_reused {};
     bool preserve_previous_on_empty { true };
-    std::uint64_t adapter_reserve_bytes {};
     bool initialize_valid_empty {};
     void (*resource_status_sink)(void*, std::uint64_t, std::uint64_t, const solver::ResourceRecovery&) noexcept {};
     void* resource_status_context {};
@@ -65,22 +62,6 @@ struct SolveRuntime {
 };
 SolveOutcome solve(SolveRequest request, const SolveRuntime& runtime);
 bool solve_paths_alias(const std::filesystem::path& a, const std::filesystem::path& b);
-std::optional<std::uint64_t> retained_solution_bytes(
-    const geometry::ValidatedSolution&, std::span<const geometry::AcceptedSolid* const> already_charged = {});
 }  // namespace spectrapack::cli
 
 int run_solve_command(const std::vector<std::string>& arguments, std::string engine_version, std::string engine_commit);
-
-#ifdef SPECTRAPACK_CLI_TESTING
-namespace spectrapack::cli::test {
-using PublicationHook = void (*)(void*, std::stop_token);
-void set_publication_hook(PublicationHook hook, void* context) noexcept;
-using FinalizationHook = void (*)(void*, runtime::OperationControl&, const SolveRuntime&);
-void set_finalization_hook(FinalizationHook hook, void* context) noexcept;
-void set_result_build_max_working_bytes(std::uint64_t bytes) noexcept;
-void set_result_export_max_working_bytes(std::uint64_t bytes) noexcept;
-void set_baseline_validation_max_kernel_work(std::uint64_t work) noexcept;
-using AvailableRamHook = std::optional<std::uint64_t> (*)(void*) noexcept;
-void set_available_ram_hook(AvailableRamHook) noexcept;
-}  // namespace spectrapack::cli::test
-#endif

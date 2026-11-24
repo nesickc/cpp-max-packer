@@ -13,6 +13,8 @@ use std::{
 };
 
 const RECORD_LIMIT: usize = 1 << 20;
+// A packing record lists every copy (about 270 bytes each), so engine output lines may be longer.
+const OUTPUT_LIMIT: usize = 64 << 20;
 
 pub(crate) struct NativeSession {
     child: Child,
@@ -230,11 +232,11 @@ impl NativeSession {
                 let mut line = Vec::new();
                 let result = stream
                     .by_ref()
-                    .take((RECORD_LIMIT + 2) as u64)
+                    .take((OUTPUT_LIMIT + 2) as u64)
                     .read_until(b'\n', &mut line);
                 let record = match result {
                     Ok(0) => Err(error("ENGINE_TERMINATED", "Native session output ended.")),
-                    Ok(size) if size > RECORD_LIMIT + 1 || line.last() != Some(&b'\n') => {
+                    Ok(size) if size > OUTPUT_LIMIT + 1 || line.last() != Some(&b'\n') => {
                         Err(error(
                             "ENGINE_TRANSPORT",
                             "Native runtime record is oversized or truncated.",

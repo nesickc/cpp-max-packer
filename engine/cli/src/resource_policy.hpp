@@ -6,7 +6,7 @@
 #include <spectrapack/solver/spectral.hpp>
 #include <type_traits>
 
-#include "host_admission.hpp"
+#include <spectrapack/io/contracts.hpp>
 
 #ifndef NOMINMAX
 #define NOMINMAX
