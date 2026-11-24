@@ -35,7 +35,7 @@ function(spectrapack_fuzz_test name input_timeout memory_mb max_length)
   set_tests_properties(fuzz_${name} PROPERTIES TIMEOUT ${watchdog})
 endfunction()
 
-foreach(name IN ITEMS stl_import envelope contracts protocol)
+foreach(name IN ITEMS stl_import envelope contracts)
   add_executable(fuzz_${name} ${name}.cpp)
   target_compile_features(fuzz_${name} PRIVATE cxx_std_20)
 endforeach()
@@ -44,7 +44,6 @@ target_link_libraries(fuzz_envelope PRIVATE pack_geometry)
 # The envelope target also calls the build with its own search budget.
 target_include_directories(fuzz_envelope PRIVATE "${PROJECT_SOURCE_DIR}/engine/pack_geometry/src")
 target_link_libraries(fuzz_contracts PRIVATE pack_io)
-target_link_libraries(fuzz_protocol PRIVATE pack_service)
 
 # Project open is the desktop shell's Rust reader. Cargo builds its fuzz entry
 # (desktop/src-tauri/fuzz) as a static library with libFuzzer's coverage counters;
@@ -82,5 +81,4 @@ target_link_libraries(fuzz_project_archive PRIVATE
 spectrapack_fuzz_test(stl_import 20 2048 65536)
 spectrapack_fuzz_test(envelope 120 2048 4096)
 spectrapack_fuzz_test(contracts 20 2048 65536)
-spectrapack_fuzz_test(protocol 20 2048 8192)
 spectrapack_fuzz_test(project_archive 20 2048 16384)

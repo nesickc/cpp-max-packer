@@ -53,7 +53,7 @@ The solution is **geometric packing**. v1 does not certify gravity stability, su
 
 **Core (v1.0)** is every requirement marked Core in §3: a usable Windows desktop application and CLI that imports an STL, packs it into a box on the CPU with independently validated placements, shows the result, and saves/exports it. Packing quality is measured on the §9 scoreboard.
 
-**Later (v1.x)** covers requirements marked Later: Vulkan/AMD acceleration and its qualification, STL containers, upright/free-3D rotation search, checkpoint recovery after a crash, fault-injection suites, deterministic fixed-work replay, Windows 10 qualification, the Fast/Balanced/Thorough search presets (§7.2) and the `pack`/`validate`/`benchmark` commands with the stdio job and project methods (§8.1). Their text stays in this spec as the design target; they do not block v1.0.
+**Later (v1.x)** covers requirements marked Later: Vulkan/AMD acceleration and its qualification, STL containers, upright/free-3D rotation search, checkpoint recovery after a crash, fault-injection suites, deterministic fixed-work replay, Windows 10 qualification, the Fast/Balanced/Thorough search presets (§7.2) and the `pack`/`validate`/`benchmark` commands and `serve --stdio` with its methods (§8.1). Their text stays in this spec as the design target; they do not block v1.0.
 
 Beyond v1.x: multiple distinct object types, quantities or values per type, physical assembly constraints, distributed search, Linux/macOS installers, interactive manual placement editing and 3MF export.
 
@@ -316,7 +316,7 @@ preserves the displayed canonical poses and their Save/export association.
 
 ### 8.1 CLI and service
 
-Core ships `capabilities`, `inspect`, `solve` and the desktop session commands: the desktop application, the tests and the scoreboard use nothing else. `pack`, `validate`, `benchmark` and every stdio method below except `capabilities.get` are Later, and this section is their design target.
+Core ships `capabilities`, `inspect`, `solve` and the desktop session commands: the desktop application, the tests and the scoreboard use nothing else. `pack`, `validate`, `benchmark`, `serve --stdio` and every stdio method below are Later, and this section is their design target.
 
 Command surface, with detailed flags specified in the generated CLI help:
 

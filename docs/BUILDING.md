@@ -1,7 +1,7 @@
 # Windows CPU build
 
 [T-001](../doc/T-001.md) supplies the C++20 reference tests and CPU dependency diagnostic.
-[T-002](../doc/T-002.md) adds versioned contracts and the capability CLI/stdio service.
+[T-002](../doc/T-002.md) adds versioned contracts and the capability CLI.
 [T-003](../doc/T-003.md) adds STL inspection and immutable accepted geometry;
 packing and the desktop application follow in later tasks. See
 [ADR 0005](../spec/decisions/0005-stl-import-and-acceptance.md) for the import boundary
@@ -139,14 +139,12 @@ Stage the engine with its runtime-library notices separately:
 ```powershell
 cmake --install out/build/windows-ninja-release --prefix $packageRoot --component engine
 & "$packageRoot/bin/spectrapack-engine.exe" capabilities --json
-python tests/protocol/service_subprocess_test.py "$packageRoot/bin/spectrapack-engine.exe"
 python tests/protocol/import_subprocess_test.py "$packageRoot/bin/spectrapack-engine.exe"
 ```
 
-The process test runs the engine outside the checkout and checks that it responds
-before stdin closes. The executable embeds its contract catalog. The auxiliary
-`solve` command exposes the T-007 CPU packing slice; service jobs remain later
-integration work. CI also runs the staged inspection and solve tests
+The process test runs the engine outside the checkout. The executable embeds its
+contract catalog. The `solve` command exposes the CPU packing slice; the stdio
+service is Later (spec §8.1). CI also runs the staged inspection and solve tests
 with developer directories removed from `PATH`.
 
 ## Inspect an STL
@@ -231,16 +229,6 @@ engine package or built with `BUILD_TESTING=OFF`.
 `desktop-prepare` and `solve` and prints count, time and validity; `--record` appends
 a row to [SCOREBOARD.md](../benchmarks/SCOREBOARD.md).
 
-T-002 also measures bounded process-level capability replay:
-
-```powershell
-python tests/protocol/service_replay_perf.py out/build/windows-ninja-release/bin/spectrapack-engine.exe --samples 5 --requests 1000
-```
-
-One warmup precedes five fixed-work samples. The watchdog rejects a stalled run;
-times are informational and include process/transport overhead. This does not
-measure solver performance or qualify stop latency.
-
 ## Fuzzing hostile files
 
 The `windows-ninja-fuzz` preset builds the engine libraries with AddressSanitizer and
@@ -251,7 +239,6 @@ MSVC's libFuzzer, and one target per reader of untrusted input (`tests/fuzz`):
 | `fuzz_stl_import` | STL import: admission, parsing, cleanup, solid analysis, welding |
 | `fuzz_envelope` | STL bytes through the packing envelope to an accepted solid |
 | `fuzz_contracts` | every JSON contract kind (`ContractValidator::parse`) |
-| `fuzz_protocol` | the stdio service's record framing, limits and replies |
 | `fuzz_project_archive` | `.spectrapack` open (the Rust reader in `desktop/src-tauri`) |
 
 ```powershell

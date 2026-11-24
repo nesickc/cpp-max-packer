@@ -7,7 +7,7 @@ linear cross-correlation oracle, real dependency calls, versioned contracts,
 STL/frame parsing, exact geometric predicates, shell analysis, immutable repair
 acceptance, and independent layout validation over accepted solids. Placement
 tests cover overlap, contact, containment, cavities, clearance and bounded
-uncertainty. Process tests exercise the service handshake and source-preserving
+uncertainty. Process tests exercise the source-preserving
 inspection CLI. See [native build instructions](../docs/BUILDING.md) for the locked
 Debug and Release presets and staged package checks. Packing counts are
 measured with `python tools/scoreboard.py`.

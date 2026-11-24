@@ -5,7 +5,6 @@
 #include <limits>
 #include <optional>
 #include <spectrapack/io/inspection.hpp>
-#include <spectrapack/service/service.hpp>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -34,14 +33,34 @@ namespace {
 #define SPECTRAPACK_ENGINE_COMMIT "unavailable"
 #endif
 
-const spectrapack::service::BuildInfo kBuild{
-    SPECTRAPACK_ENGINE_VERSION, SPECTRAPACK_ENGINE_COMMIT};
+struct BuildInfo {
+    std::string engine_version;
+    std::string engine_commit;
+};
+const BuildInfo kBuild { SPECTRAPACK_ENGINE_VERSION, SPECTRAPACK_ENGINE_COMMIT };
+
+// The desktop shell runs this at startup and refuses an engine without these
+// contract versions and commands.
+spectrapack::io::Json capabilities()
+{
+    return {
+        { "engine",               { { "version", kBuild.engine_version }, { "commit", kBuild.engine_commit } } },
+        { "protocol_versions",    spectrapack::io::Json::array({ 1 }) },
+        { "schema_versions",
+         { { "settings", spectrapack::io::Json::array({ 1 }) },
+            { "assets", spectrapack::io::Json::array({ 1 }) },
+            { "results", spectrapack::io::Json::array({ 1 }) },
+            { "protocol", spectrapack::io::Json::array({ 1 }) } } },
+        { "implemented_commands", spectrapack::io::Json::array({ "capabilities", "inspect", "solve", "desktop-prepare",
+                                                                 "desktop-restore", "desktop-session" }) },
+        { "compute_backends",     spectrapack::io::Json::array() }
+    };
+}
 
 void usage(std::ostream& stream) {
     stream << "Usage: spectrapack-engine capabilities --json\n"
               "       spectrapack-engine inspect --stl <path> --units mm|inch|custom "
               "--report <path> [options] [--stop-file <path>] [--progress]\n"
-              "       spectrapack-engine serve --stdio\n"
               "       spectrapack-engine desktop-session\n"
               "       spectrapack-engine solve --settings <path> --object-report <path> --result <path> "
               "[--container-report <path>] [--stl <path>] [--stop-file <path>]\n"
@@ -162,12 +181,8 @@ int run_engine(int argc, Character** argv) {
   try {
     if (argc == 3 && equals_ascii(View(argv[1]), "capabilities") &&
         equals_ascii(View(argv[2]), "--json")) {
-      std::cout << spectrapack::service::capabilities(kBuild).dump() << '\n' << std::flush;
+      std::cout << capabilities().dump() << '\n' << std::flush;
       return std::cout ? 0 : 4;
-    }
-    if (argc == 3 && equals_ascii(View(argv[1]), "serve") &&
-        equals_ascii(View(argv[2]), "--stdio")) {
-      return spectrapack::service::run_stdio(std::cin, std::cout, std::cerr, kBuild);
     }
     if (argc >= 2 && equals_ascii(View(argv[1]), "inspect")) {
       spectrapack::io::InspectRequest request;
@@ -322,12 +337,6 @@ int run_engine(int argc, Character** argv) {
         return run_solve_command(arguments, kBuild.engine_version, kBuild.engine_commit);
     }
 
-    if (argc >= 2 &&
-        (equals_ascii(View(argv[1]), "pack") || equals_ascii(View(argv[1]), "validate") ||
-         equals_ascii(View(argv[1]), "benchmark"))) {
-      return machine_error(
-          "METHOD_UNSUPPORTED", "This command is not implemented in this engine build.", 3);
-    }
     return machine_error("INVALID_REQUEST", "Command line arguments are invalid.", 2);
   } catch (const std::bad_alloc&) {
     return emergency_error(

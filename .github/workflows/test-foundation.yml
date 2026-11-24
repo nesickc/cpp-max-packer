@@ -107,13 +107,11 @@ jobs:
           $runtimePython = (python -c "import sys; print(sys.executable)").Trim()
           if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $runtimePython -PathType Leaf)) { throw 'Could not resolve the active Python executable' }
           $engine = Join-Path $packageRoot 'bin/spectrapack-engine.exe'
-          $serviceTest = Join-Path $PWD 'tests/protocol/service_subprocess_test.py'
           $importTest = Join-Path $PWD 'tests/protocol/import_subprocess_test.py'
           $solveTest = Join-Path $PWD 'tests/protocol/solve_subprocess_test.py'
           $resultContractValidator = Join-Path $PWD 'out/build/windows-ninja-release/bin/spectrapack_result_contract_check.exe'
           $solveControlsTest = Join-Path $PWD 'tests/protocol/solve_controls_subprocess_test.py'
           $cliMemoryHelper = Join-Path $PWD 'out/build/windows-ninja-release/bin/spectrapack_cli_memory_check.exe'
-          $serviceLog = Join-Path $PWD '.local/ci/staged-protocol.log'
           $importLog = Join-Path $PWD '.local/ci/staged-import.log'
           $solveLog = Join-Path $PWD '.local/ci/staged-solve.log'
           $solveControlsLog = Join-Path $PWD '.local/ci/staged-solve-controls.log'
@@ -129,8 +127,6 @@ jobs:
               & $diagnostic --runtime-report $runtimeReport *> $diagnosticLog
               $diagnosticResult = $LASTEXITCODE
               if ($diagnosticResult -ne 0) { exit $diagnosticResult }
-              & $runtimePython $serviceTest $engine *> $serviceLog
-              if ($LASTEXITCODE -ne 0) { Get-Content $serviceLog; exit $LASTEXITCODE }
               & $runtimePython $importTest $engine *> $importLog
               if ($LASTEXITCODE -ne 0) { Get-Content $importLog; exit $LASTEXITCODE }
               & $runtimePython $solveTest $engine --contract-validator $resultContractValidator *> $solveLog
@@ -164,10 +160,6 @@ jobs:
           path: bin/installer/*.exe
           if-no-files-found: error
           retention-days: 14
-      - name: Bounded service replay timings
-        run: |
-          python tests/protocol/service_replay_perf.py out/build/windows-ninja-release/bin/spectrapack-engine.exe --samples 5 --requests 1000 > .local/ci/service-replay.json 2> .local/ci/service-replay.log
-          exit $LASTEXITCODE
       - name: Retain test and timing evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
