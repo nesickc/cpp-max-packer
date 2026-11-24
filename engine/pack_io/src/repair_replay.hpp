@@ -10,7 +10,6 @@ namespace spectrapack::io::detail {
 struct ReplayedRepair {
     std::shared_ptr<const geometry::AcceptedSolid> solid;
     std::map<std::string, std::vector<std::byte>> artifacts;
-    std::uint64_t native_bound {};
 };
 // Recreate the proposal from original source geometry. Require the retained
 // recipe's exact canonical bytes and explicit acceptance; PLY is only evidence.
