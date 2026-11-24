@@ -477,24 +477,6 @@ struct PhaseContext {
         publish(raw, context.current);
     }
 };
-// Reported as retained_native_bytes: the shell sizes its helper commands with it.
-std::optional<std::uint64_t> retained_native_bytes(const Session& session)
-{
-    std::uint64_t total {};
-    if (session.asset) {
-        total += session.asset->bytes;
-    }
-    if (session.previous_asset && (!session.asset || session.previous_asset->verified != session.asset->verified)) {
-        total += session.previous_asset->bytes;
-    }
-    if (const auto& solution = session.retained_solution) {
-        total += solution->resident_buffer_bytes().value_or(0) + solution->context()->resident_buffer_bytes().value_or(0);
-    }
-    if (total > session.host_cap) {
-        return {};
-    }
-    return total;
-}
 std::variant<Json, io::Error> create_preview(PreparedAsset& prepared, const std::filesystem::path& output,
                                              const runtime::OperationControl& control, std::uint64_t host_cap)
 {
@@ -1055,10 +1037,6 @@ int run_desktop_session(std::string engine_version, std::string engine_commit)
                     request, released,
                     released ? Json::object()
                              : io::error_json(error("ASSET_TOKEN_EXPIRED", "No native asset has that token.")));
-                if (const auto bytes = retained_native_bytes(session)) {
-                    reply["retained_native_bytes"] = *bytes;
-                    reply["admitted_host_cap_bytes"] = session.host_cap;
-                }
                 session.last_request_id = request_id;
                 session.last_canonical.replace(std::move(canonical));
                 session.last_response = std::move(reply);
@@ -1075,10 +1053,6 @@ int run_desktop_session(std::string engine_version, std::string engine_commit)
                     const auto& request = document.value();
                     auto reply = operate(session, request, source);
                     std::lock_guard lock(session.state_mutex);
-                    if (const auto bytes = retained_native_bytes(session)) {
-                        reply["retained_native_bytes"] = *bytes;
-                        reply["admitted_host_cap_bytes"] = session.host_cap;
-                    }
                     session.last_request_id = request_id;
                     session.last_canonical.replace(std::move(canonical));
                     session.last_response = std::move(reply);

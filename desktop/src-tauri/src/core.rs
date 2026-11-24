@@ -932,57 +932,22 @@ impl Core {
         );
         Ok(Some(value))
     }
+    /// Helper commands (inspect, desktop-prepare, desktop-restore) get half of
+    /// the available RAM, the same policy as native preparation.
     fn auxiliary_host_allowance(&self) -> Outcome<u64> {
-        // Before a retained session exists, use the same half-available-RAM
-        // policy as native preparation, rather than an unrelated 512 MiB cap.
         #[cfg(windows)]
-        let initial_cap = unsafe {
+        let available = unsafe {
             use windows_sys::Win32::System::SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX};
             let mut memory: MEMORYSTATUSEX = std::mem::zeroed();
             memory.dwLength = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
             if GlobalMemoryStatusEx(&mut memory) == 0 {
                 return Err(error("MEMORY_LIMIT", "Available physical RAM could not be queried."));
             }
-            memory.ullAvailPhys / 2
+            memory.ullAvailPhys
         };
         #[cfg(not(windows))]
-        let initial_cap = 512 << 20;
-        const ADAPTER: u64 = 16 << 20;
-        let (retained, session_live, cap) = {
-            let mut native = self.native.lock().unwrap();
-            if let Some(child) = native.as_mut() {
-                if child.is_alive()? {
-                    let cap = child.admitted_host_cap_bytes.filter(|cap| *cap > 0)
-                        .ok_or_else(|| error("MEMORY_LIMIT", "Native admitted host ceiling is unavailable."))?;
-                    (child.retained_native_bytes.filter(|bytes|*bytes<=cap)
-                        .ok_or_else(||error("MEMORY_LIMIT","Retained native residency is unavailable; helper admission cannot proceed."))?,true,cap)
-                } else {
-                    native.take();
-                    (0, false, initial_cap)
-                }
-            } else {
-                (0, false, initial_cap)
-            }
-        };
-        let inner = self.inner.lock().unwrap();
-        let viewer = if inner.state.object.is_some() || inner.state.result.is_some() {
-            64 << 20
-        } else {
-            0
-        };
-        let live = retained
-            .checked_add(viewer)
-            .and_then(|bytes| bytes.checked_add(ADAPTER))
-            .and_then(|bytes| bytes.checked_add(if session_live { ADAPTER } else { 0 }))
-            .ok_or_else(|| error("MEMORY_LIMIT", "Helper retained-owner admission overflows."))?;
-        cap.checked_sub(live)
-            .filter(|bytes| *bytes > 0)
-            .ok_or_else(|| {
-                error(
-                    "MEMORY_LIMIT",
-                    "Retained native owners, viewer and adapters exhaust the helper allowance.",
-                )
-            })
+        let available: u64 = 1 << 30;
+        Ok((available / 2).max(1))
     }
     fn native_request(
         &self,
@@ -2070,7 +2035,7 @@ mod tests {
         );
     }
     #[test]
-    fn t015_public_binding_gate_keeps_exact_poses_and_resets_only_for_current_run() {
+    fn public_binding_gate_keeps_exact_poses_and_resets_only_for_current_run() {
         use crate::native_session::Publication;
         let binding = Publication {
             version: 1,
@@ -2177,7 +2142,7 @@ mod tests {
         ));
     }
     #[test]
-    fn t015_terminal_equal_count_pose_change_is_a_publication_error() {
+    fn terminal_equal_count_pose_change_is_a_publication_error() {
         let settings = settings();
         let live = json!({"count":1,"solution_revision":2,"placements":[{"copy_id":"first","translation_mm":[1,2,3],"quaternion_xyzw":[0,0,0,1]}]});
         let mut document = json!({"count":1,"solution_revision":2,"placements":live["placements"],
@@ -2196,7 +2161,7 @@ mod tests {
     }
 
     #[test]
-    fn t015_canonical_fixed_settings_preserve_exact_public_placement_matching() {
+    fn canonical_fixed_settings_preserve_exact_public_placement_matching() {
         let live = json!({"count":1,"solution_revision":1,"placements":[{"copy_id":"one",
             "translation_mm":[1,2,3],"quaternion_xyzw":[0,0,0,1]}]});
         let mut requested = settings();
@@ -2226,7 +2191,7 @@ mod tests {
     }
 
     #[test]
-    fn t015_delivery_failure_keeps_real_public_poses_and_disables_old_file_fallback() {
+    fn delivery_failure_keeps_real_public_poses_and_disables_old_file_fallback() {
         use crate::native_session::Publication;
         let (root, core) = fixture();
         import_fixture(&core);

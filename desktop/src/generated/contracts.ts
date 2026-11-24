@@ -5730,7 +5730,6 @@ export type Response = {
     [k: string]: unknown;
   };
   error?: Error;
-  retained_native_bytes?: number;
 };
 /**
  * @minItems 3
