@@ -225,13 +225,11 @@ The control suite also uses a test-only CLI build to exercise a lower result-bui
 memory cap with the same retained inputs. Neither helper is installed in the
 engine package or built with `BUILD_TESTING=OFF`.
 
-## Bounded performance checks
+## Measuring packing
 
-```powershell
-python benchmarks/run_reference.py --executable out/build/windows-ninja-release/bin/spectrapack_reference_benchmark.exe --output .local/reference-release.json --samples 5 --warmup 1 --timeout-seconds 60
-```
-
-These timings measure deterministic direct correlation and analytic fixture construction. They are not solver or GPU benchmarks. Keep a new baseline when changing the CRT/toolchain; do not compare to the prior dynamic-CRT build. See [benchmark instructions](../benchmarks/README.md) for compatible-baseline comparisons.
+`python tools/scoreboard.py` runs the fixed cases of spec section 9 through `inspect`,
+`desktop-prepare` and `solve` and prints count, time and validity; `--record` appends
+a row to [SCOREBOARD.md](../benchmarks/SCOREBOARD.md).
 
 T-002 also measures bounded process-level capability replay:
 
@@ -242,19 +240,6 @@ python tests/protocol/service_replay_perf.py out/build/windows-ninja-release/bin
 One warmup precedes five fixed-work samples. The watchdog rejects a stalled run;
 times are informational and include process/transport overhead. This does not
 measure solver performance or qualify stop latency.
-
-T-003 adds inspection of all ten pinned STLs and three Release samples of the
-largest source after one warmup:
-
-```powershell
-python benchmarks/run_import.py --executable out/build/windows-ninja-release/bin/spectrapack-engine.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --output .local/import-release.json --samples 3 --warmup 1 --timeout-seconds 120 --overall-timeout-seconds 600
-```
-
-Qualification requires the reviewed fixture expectations and determinate outcomes.
-The runner independently checks source/frame/mesh artifacts and container volumes,
-retains per-process diagnostics and reports informational median/p95 inspection
-times. `--discover` retains unqualified observations for review and cannot approve
-its own baseline. See T-003 for outstanding gates.
 
 ## Fuzzing hostile files
 

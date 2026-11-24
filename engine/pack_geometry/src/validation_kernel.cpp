@@ -1,5 +1,4 @@
 #include "validation_kernel.hpp"
-#include "field_profile.hpp"
 #include "raster_execution_internal.hpp"
 
 #include "exact_predicates.hpp"
@@ -3251,7 +3250,6 @@ std::optional<KernelFailure> rasterize_boundary(const PlacedSolid& solid, const 
                                                 std::uint64_t& cell_visits, std::uint64_t max_cell_visits,
                                                 bool skip_existing_boundary, RasterExecution* execution)
 {
-    detail::FieldProfileTimer profile(detail::FieldProfilePhase::raster, budget, cell_visits);
     struct FailureJoin {
         RasterExecution* execution;
         bool complete {};

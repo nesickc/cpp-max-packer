@@ -17,7 +17,6 @@
 #include <vector>
 
 #include "exact_predicates.hpp"
-#include "import_profile.hpp"
 #include "operation_checks.hpp"
 
 namespace spectrapack::geometry::detail {
@@ -229,7 +228,6 @@ SolidAnalysis analyze_solid(MeshView mesh, const ImportLimits& limits, exact::Wo
     SolidAnalysis result;
     const auto& control = predicate_budget.control();
     operation_checkpoint(control);
-    ImportProfileTimer profile(ImportProfilePhase::topology, predicate_budget);
     auto& report = result.report;
     const auto finish = [&]() {
         report.predicate_work = predicate_budget.used();
@@ -365,7 +363,6 @@ SolidAnalysis analyze_solid(MeshView mesh, const ImportLimits& limits, exact::Wo
     return finish();
   }
 
-  profile.phase(ImportProfilePhase::intersection);
   fcl::BVHModel<fcl::AABBd> model;
   if (!build_bvh(mesh, model, control)) {
       report.intersection_check = CheckState::indeterminate;
@@ -420,7 +417,6 @@ SolidAnalysis analyze_solid(MeshView mesh, const ImportLimits& limits, exact::Wo
     return finish();
   }
 
-  profile.phase(ImportProfilePhase::volume);
   for (auto& shell : shells) {
       operation_checkpoint(control);
       const auto volume = exact::signed_volume6(mesh, shell.faces, result.flip_faces, predicate_budget);
@@ -443,7 +439,6 @@ SolidAnalysis analyze_solid(MeshView mesh, const ImportLimits& limits, exact::Wo
     }
   }
 
-  profile.phase(ImportProfilePhase::containment);
   std::vector<std::optional<std::uint32_t>> parent(shells.size());
   for (std::uint32_t child = 0; child != shells.size(); ++child) {
       operation_checkpoint(control);
@@ -512,7 +507,6 @@ SolidAnalysis analyze_solid(MeshView mesh, const ImportLimits& limits, exact::Wo
         material_faces.end(), shells[shell].faces.begin(), shells[shell].faces.end());
   }
 
-  profile.phase(ImportProfilePhase::material);
   const auto material_volume = exact::material_volume(
       mesh, material_faces, result.flip_faces, predicate_budget);
   report.predicate_work = predicate_budget.used();

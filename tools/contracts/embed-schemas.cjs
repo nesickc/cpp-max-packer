@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const root = path.resolve(__dirname, '..', '..');
-const names = ['common', 'settings', 'assets', 'results', 'protocol', 'benchmark-summary', 'desktop', 'desktop-runtime'];
+const names = ['common', 'settings', 'assets', 'results', 'protocol', 'desktop', 'desktop-runtime'];
 const body = names.map(name => {
   const text = fs.readFileSync(path.join(root, 'spec/schemas', `${name}.schema.json`), 'utf8').replace(/\r\n/g, '\n');
   return `    {"${name.replaceAll('-', '_')}", R"schema(${text})schema"},`;

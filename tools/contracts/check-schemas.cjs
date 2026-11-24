@@ -12,7 +12,7 @@ const fixtures = JSON.parse(fs.readFileSync(path.join(root, 'tests/contracts/sch
 let failed = 0;
 const names = new Set();
 for (const item of fixtures) {
-  if (!item || typeof item.name !== 'string' || names.has(item.name) || !['settings','assets','results','protocol','benchmark-summary'].includes(item.kind) || typeof item.schema_valid !== 'boolean' || typeof item.semantic_valid !== 'boolean' || !Object.prototype.hasOwnProperty.call(item, 'value')) {
+  if (!item || typeof item.name !== 'string' || names.has(item.name) || !['settings','assets','results','protocol'].includes(item.kind) || typeof item.schema_valid !== 'boolean' || typeof item.semantic_valid !== 'boolean' || !Object.prototype.hasOwnProperty.call(item, 'value')) {
     console.error(`invalid fixture record: ${item && item.name}`); failed++; continue;
   }
   names.add(item.name);
@@ -22,7 +22,7 @@ for (const item of fixtures) {
   if (!item.schema_valid && item.semantic_valid) { console.error(`${item.name}: semantic_valid cannot be true when schema_valid is false`); failed++; }
 }
 if (failed) process.exit(1);
-const counts = Object.fromEntries(['settings','assets','results','protocol','benchmark-summary'].map(k => [k, fixtures.filter(x => x.kind === k).length]));
+const counts = Object.fromEntries(['settings','assets','results','protocol'].map(k => [k, fixtures.filter(x => x.kind === k).length]));
 console.log(`${fixtures.length} fixture records passed (${JSON.stringify(counts)})`);
 
 const desktopFixtures = JSON.parse(fs.readFileSync(path.join(root, 'tests/contracts/desktop-fixtures.json'), 'utf8'));

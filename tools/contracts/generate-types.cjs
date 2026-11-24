@@ -11,7 +11,6 @@ const files = [
   ['Assets', 'assets'],
   ['Results', 'results'],
   ['Protocol', 'protocol'],
-  ['BenchmarkSummary', 'benchmark-summary'],
   ['Desktop', 'desktop'],
   ['DesktopRuntime', 'desktop-runtime'],
 ];

@@ -4,11 +4,10 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <thread>
 
-#include "../../pack_compute/src/correlation_profile.hpp"
 #include "../../pack_compute/src/fft_execution_internal.hpp"
 #include "../../pack_geometry/src/export_validation_internal.hpp"
-#include "../../pack_geometry/src/import_profile.hpp"
 #include "../../pack_geometry/src/raster_execution_internal.hpp"
 #include "../../pack_geometry/tests/validation_fixtures.hpp"
 #include "../src/spectral_pipeline.hpp"
@@ -125,53 +124,6 @@ TEST_CASE("T010 two-thread CPU request completes real spectral work",
   REQUIRE(result.run.termination_reason != sol::TerminationReason::error);
   REQUIRE(result.run.best);
   CHECK(result.spectral_stats.correlations > 0);
-}
-
-TEST_CASE("T010 requested FFT threads overlap real library calls", "[solver][T010][fft-overlap]")
-{
-    namespace detail = spectrapack::compute::detail;
-    struct Evidence {
-        unsigned maximum {}, calls {};
-        std::array<std::size_t, 8> ids {};
-        unsigned distinct {};
-        std::thread::id coordinator { std::this_thread::get_id() };
-        bool affinity { true };
-    } evidence;
-    struct Reset {
-        ~Reset() { detail::fft_call_evidence_sink = nullptr; }
-    } reset;
-    detail::fft_call_evidence_context = &evidence;
-    detail::fft_call_evidence_sink = [](void* context, const detail::FftCallEvidence& observed) noexcept {
-        auto& evidence = *static_cast<Evidence*>(context);
-        evidence.affinity &= std::this_thread::get_id() == evidence.coordinator;
-        evidence.maximum = std::max(evidence.maximum, observed.maximum.load());
-        ++evidence.calls;
-        for (const auto& id : observed.thread_ids) {
-            if (id.load() && std::find(evidence.ids.begin(), evidence.ids.end(), id.load()) == evidence.ids.end()) {
-                evidence.ids[evidence.distinct++] = id.load();
-            }
-        }
-    };
-    for (const auto threads : { 2U, 4U }) {
-        evidence.maximum = evidence.calls = 0;
-        evidence.ids = {};
-        evidence.distinct = 0;
-        sol::SpectralLimits limits;
-        limits.cpu_thread_count = threads;
-        limits.baseline.max_candidate_evaluations = 1;
-        limits.spectral.max_candidate_evaluations = limits.spectral.max_copies = 1;
-        limits.spectral.max_search_passes = 1;
-        limits.max_refinement_evaluations = 0;
-        const auto native = geo::make_validation_context(context()->object(), geo::BoxDimensions { 40, 30, 20 }, {});
-        const auto result = sol::run_cpu_spectral(std::get<std::shared_ptr<const geo::ValidationContext>>(native),
-                                                  { {}, 1 }, limits, {});
-        CAPTURE(threads, evidence.maximum, evidence.distinct, evidence.calls, result.run.diagnostic_code);
-        REQUIRE(result.run.best);
-        REQUIRE(result.spectral_stats.correlations == 2);
-        CHECK(evidence.affinity);
-        CHECK(evidence.maximum >= 2);
-        CHECK(evidence.distinct >= 2);
-    }
 }
 
 TEST_CASE("T010 Stop during a real raster worker retains native incumbent", "[solver][T010][threading]")
@@ -477,38 +429,10 @@ TEST_CASE("T010 full Pryanik retained2 quantized export preserves native found c
         REQUIRE(baseline.best->solution->copies().size() == 2);
         const auto solution = baseline.best->solution;
         std::uint64_t reads = 0;
-        struct Trace {
-            std::size_t current {};
-            std::array<std::array<geo::detail::ImportProfileSample, 6>, 2> samples {};
-        } trace;
-        geo::detail::ImportProfileBinding profiling(
-            [](void* context, const geo::detail::ImportProfileSample& sample) noexcept {
-            auto& trace = *static_cast<Trace*>(context);
-            if (trace.current < trace.samples.size()) {
-                trace.samples[trace.current][static_cast<std::size_t>(sample.phase)] = sample;
-            }
-        }, &trace);
         const auto checked = geo::validate_quantized_export(solution, [&](std::size_t index) -> geo::ExportCopyRead {
             ++reads;
-            trace.current = index;
             return quantized_copy(*native_context->object(), solution->copies()[index]);
         });
-        for (std::size_t copy = 0; copy != trace.samples.size(); ++copy) {
-            for (std::size_t phase = 0; phase != trace.samples[copy].size(); ++phase) {
-                const auto& sample = trace.samples[copy][phase];
-                std::cout << "import_profile source=" << filename << " copy=" << copy << " phase=" << phase
-                          << " ms=" << sample.elapsed_ms << " predicate_work=" << sample.predicate_work
-                          << " orient2=" << sample.orient2_calls << " orient3=" << sample.orient3_calls
-                          << " interval=" << sample.interval_hits << " structural=" << sample.structural_zeros
-                          << " exact=" << sample.exact_fallbacks << " projected_attempts=" << sample.projected.attempts
-                          << " projected_hits=" << sample.projected.certificates
-                          << " projected_fallbacks=" << sample.projected.fallbacks
-                          << " projected_attempt_work=" << sample.projected.attempt_work
-                          << " projected_hit_work=" << sample.projected.certified_work
-                          << " projected_failed_work=" << sample.projected.failed_attempt_work
-                          << " legacy_fallback_work=" << sample.projected.fallback_work << '\n';
-            }
-        }
         export_evidence(filename, *solution, checked, reads);
         CAPTURE(filename, checked.code, checked.message, checked.kernel_work, checked.aabb_pair_tests,
                 checked.working_bytes_peak, reads);

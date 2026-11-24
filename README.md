@@ -16,7 +16,7 @@ are tracked separately from the remaining full-product acceptance gates.
 - [Packing algorithm design](docs/ALGORITHM.md) and [scoreboard](benchmarks/SCOREBOARD.md) (`python tools/scoreboard.py`)
 - [Initial architecture](doc/ARCHITECTURE.md) and [architecture decision](spec/decisions/0001-initial-architecture.md)
 - [Executable fixture checks](tests/README.md) and [spec-linked TDD plan](tests/TEST_PLAN.md)
-- [Native build instructions](docs/BUILDING.md), [CPU dependency inventory](docs/DEPENDENCIES.md), and [reference timings](benchmarks/README.md)
+- [Native build instructions](docs/BUILDING.md), [CPU dependency inventory](docs/DEPENDENCIES.md)
 - [Desktop workflow](docs/DESKTOP.md) and [T-008 scope/evidence](doc/T-008.md)
 - [Original setup guide](doc/codex-local-agent-setup-guide.md)
 

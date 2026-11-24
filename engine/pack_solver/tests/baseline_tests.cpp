@@ -10,7 +10,6 @@
 
 #include "../../pack_geometry/tests/validation_fixtures.hpp"
 #include "../src/allocation_fault.hpp"
-#include "../src/pipeline_profile.hpp"
 #include "spectrapack/geometry/validation.hpp"
 #include "spectrapack/solver/baseline.hpp"
 

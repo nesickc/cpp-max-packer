@@ -425,7 +425,7 @@ Continue creates a new run segment within the same logical job and adds budget. 
 
 ### 8.3 Authoritative result contract
 
-Implement versioned JSON Schemas for settings, assets, results, protocol records, and benchmark summaries. Generate TypeScript types from those schemas; validate both CLI and service inputs against the same contracts. JSON contains no NaN/Infinity. Schema validation is followed by semantic validation of units, normalized quaternions, hashes, bounds, and array lengths.
+Implement versioned JSON Schemas for settings, assets, results and protocol records; benchmark summaries join them with the Later `benchmark` command. Generate TypeScript types from those schemas; validate both CLI and service inputs against the same contracts. JSON contains no NaN/Infinity. Schema validation is followed by semantic validation of units, normalized quaternions, hashes, bounds, and array lengths.
 
 | Result field | Required content |
 | --- | --- |

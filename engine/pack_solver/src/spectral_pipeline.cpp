@@ -17,7 +17,6 @@
 
 #include "field_proximity.hpp"
 #include "orientation_cube.hpp"
-#include "pipeline_profile.hpp"
 #include "spectrapack/solver/orientations.hpp"
 #include "storage_accounting.hpp"
 
@@ -966,7 +965,6 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                                                const CandidatePageQuery& query,
                                                BinaryObservationSink binary_observation, const RunControl& control)
 {
-    PipelineProfileTimer profile;
     SpectralPipelineResult result;
     if (!admit_pipeline_metadata(result, limits)) {
         return result;
@@ -1137,7 +1135,6 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                 return result;
             }
         }
-        profile.phase(PipelineProfilePhase::prepare);
         if (!state.geometry) {
             control.phase(runtime::Phase::voxelizing);
             geometry::RepresentationAttemptStats attempt;
@@ -1155,7 +1152,6 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             state.geometry = owners.geometry;
         }
 
-        profile.phase(PipelineProfilePhase::container);
         std::array<geometry::RepresentationResidency, 1> mask_inputs {};
         std::size_t mask_input_count {};
         if (const auto* solid = std::get_if<std::shared_ptr<const geometry::AcceptedSolid>>(&context->container())) {
@@ -1307,7 +1303,6 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                     return result;
                 }
             }
-            profile.phase(PipelineProfilePhase::placed);
             for (const auto& pose : incoming) {
                 const bool retained = find_old(pose);
                 if (!work_ok || interrupted()) {
@@ -1362,7 +1357,6 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                 }
                 owners.placed.reset();
             }
-            profile.phase(PipelineProfilePhase::occupancy);
             const auto environment_cells = *cells(environment->shape);
             if (!admit()) {
                 return result;
@@ -1389,7 +1383,6 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                     }
                 }
             }
-            profile.phase(PipelineProfilePhase::proximity);
             const auto proximity_start = std::chrono::steady_clock::now();
             auto live = current_bytes(owners, limits);
             if (!live || !add(*live, proximity_scratch_bytes(environment->shape)) || !observe(result, limits, *live) ||
@@ -1463,7 +1456,6 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             owners.ranked = nullptr;
             state.correlation_revision = 0;
         }
-        profile.phase(PipelineProfilePhase::object);
         std::size_t kernel_index = state.kernels.size();
         for (std::size_t index = 0; index != state.kernels.size(); ++index) {
             const auto& entry = state.kernels[index];
@@ -1571,7 +1563,6 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             correlation_limits.reserved_bytes = *live - (state.fft ? state.fft->reserved_bytes() : 0);
         }
         if (!current_binary) {
-            profile.phase(PipelineProfilePhase::binary_fft);
             control.phase(runtime::Phase::planning_fft);
             auto binary = compute::correlate_binary_cpu(spec, occupancy, owners.kernel->cells(), correlation_limits,
                                                         control, state.fft.get());
@@ -1612,7 +1603,6 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             }
         }
         if (!current_correlation) {
-            profile.phase(PipelineProfilePhase::proximity_fft);
             live = current_bytes(owners, limits);
             if (!live || !observe(result, limits, *live)) {
                 result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
@@ -1661,7 +1651,6 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                                  owners.binary->values, proximity, owners.ranked->values,
                                  owners.binary->translation_first, owners.binary->shape });
         }
-        profile.phase(PipelineProfilePhase::ranking);
         control.phase(runtime::Phase::placing);
         const auto kernel_cells = owners.kernel->cells();
         const auto occupied_kernel = state.kernels[0].occupied;

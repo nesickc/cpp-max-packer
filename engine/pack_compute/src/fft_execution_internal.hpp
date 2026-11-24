@@ -2,7 +2,6 @@
 
 #include <complex>
 
-#include "correlation_profile.hpp"
 #include "spectrapack/compute/correlation.hpp"
 
 namespace spectrapack::compute::detail {
@@ -17,7 +16,6 @@ void set_fft_test_options(FftTestOptions) noexcept;
 struct FftAccess {
     static void join(FftExecution*) noexcept;
     static std::optional<CorrelationFailure> run(FftExecution*, Shape3, std::size_t axis, bool forward,
-                                                 std::complex<double>*, double factor, const runtime::OperationControl&,
-                                                 FftCallEvidence*);
+                                                 std::complex<double>*, double factor, const runtime::OperationControl&);
 };
 }  // namespace spectrapack::compute::detail

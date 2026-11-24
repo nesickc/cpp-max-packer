@@ -505,8 +505,7 @@ ContractKind fixture_kind(const std::string& kind) {
   if (kind == "settings") return ContractKind::settings;
   if (kind == "assets") return ContractKind::assets;
   if (kind == "results") return ContractKind::results;
-  if (kind == "protocol") return ContractKind::protocol;
-  return ContractKind::benchmark_summary;
+  return ContractKind::protocol;
 }
 
 Json shared_fixture_value(std::string_view name) {
@@ -537,37 +536,6 @@ TEST_CASE("T009 retained failure details accept uint64 strings and reject malfor
       REQUIRE(std::holds_alternative<ContractFailure>(validator.validate(ContractKind::results, changed)));
     }
   }
-}
-
-Json mixed_benchmark_summary() {
-  Json report = shared_fixture_value("benchmark-completed-positive");
-  Json first = report["runs"][0];
-  first["count"] = 2;
-  first["timings"]["search_seconds"] = 1.0;
-  first["timings"]["cold_end_to_end_seconds"] = 1.0;
-  first["improvements"] = Json::array({
-      {{"count", 1}, {"elapsed_seconds", 0.25}},
-      {{"count", 2}, {"elapsed_seconds", 0.75}}});
-
-  Json second = first;
-  second["count"] = 5;
-  second["settings"]["search"]["deterministic"] = false;
-  second["settings"]["search"].erase("work_budget");
-  second["settings"]["search"]["budget_seconds"] = 1.0;
-  second["settings"]["compute"]["backend"] = "vulkan";
-  second["settings"]["resolved"]["backend"] = "vulkan";
-  second["result"]["path"] = "results/five.json";
-  second["result"]["sha256"] = std::string(64, 'e');
-  second["improvements"] = Json::array({
-      {{"count", 2}, {"elapsed_seconds", 0.2}},
-      {{"count", 5}, {"elapsed_seconds", 0.8}}});
-
-  Json failed = shared_fixture_value("benchmark-failed-positive")["runs"][0];
-  report["runs"] = Json::array({first, second, failed});
-  report["summary"] = {
-      {"successful_runs", 2}, {"failed_runs", 1}, {"best_count", 5},
-      {"median_count", 3.5}, {"worst_count", 2}};
-  return report;
 }
 
 Json one_placement_result() {
@@ -1382,162 +1350,17 @@ TEST_CASE("AT-14 validates ordered backend transition chains", "[contracts][resu
   }
 }
 
-TEST_CASE("QA-01 accepts benchmark aggregates over completed runs while retaining failures", "[contracts][benchmark]") {
-  ContractValidator validator;
-  CHECK(failure_of(validator.validate(ContractKind::benchmark_summary, mixed_benchmark_summary())) == nullptr);
-
-  Json failed = shared_fixture_value("benchmark-failed-positive");
-  failed["runs"][0]["error"]["details"] = {
-      {"path", "C:\\missing.stl"}, {"custom_id", std::string("x\0y", 3)}};
-  CHECK(failure_of(validator.validate(ContractKind::benchmark_summary, failed)) == nullptr);
-}
-
-TEST_CASE("DATA-01 accepts real UTC timestamps with optional fractional seconds", "[contracts][results][benchmark]") {
+TEST_CASE("DATA-01 accepts real UTC timestamps with optional fractional seconds", "[contracts][results]") {
   ContractValidator validator;
 
   Json result = zero_result();
   result["created_at"] = "2026-09-10T00:00:00.123Z";
   CHECK(failure_of(validator.validate(ContractKind::results, result)) == nullptr);
 
-  Json report = mixed_benchmark_summary();
-  report["created_at"] = "2026-09-10T00:00:00.123Z";
-  CHECK(failure_of(validator.validate(ContractKind::benchmark_summary, report)) == nullptr);
-
   result["created_at"] = "2026-02-30T00:00:00.123Z";
   CHECK(failure_of(validator.validate(ContractKind::results, result)) != nullptr);
-  report["created_at"] = "2026-09-10T00:00:00.Z";
-  CHECK(failure_of(validator.validate(ContractKind::benchmark_summary, report)) != nullptr);
-}
-
-TEST_CASE("QA-01 rejects inconsistent benchmark run totals and count aggregates", "[contracts][benchmark]") {
-  ContractValidator validator;
-  auto require_issue = [&validator](Json report, std::string_view code) {
-    const auto outcome = validator.validate(ContractKind::benchmark_summary, report);
-    const auto* failure = failure_of(outcome);
-    REQUIRE(failure != nullptr);
-    CHECK(has_issue(*failure, code));
-  };
-
-  SECTION("successful total") {
-    Json report = mixed_benchmark_summary();
-    report["summary"]["successful_runs"] = 1;
-    require_issue(std::move(report), "BENCHMARK_RUN_TOTAL_MISMATCH");
-  }
-  SECTION("failed total") {
-    Json report = mixed_benchmark_summary();
-    report["summary"]["failed_runs"] = 0;
-    require_issue(std::move(report), "BENCHMARK_RUN_TOTAL_MISMATCH");
-  }
-  SECTION("best count") {
-    Json report = mixed_benchmark_summary();
-    report["summary"]["best_count"] = 4;
-    require_issue(std::move(report), "BENCHMARK_AGGREGATE_MISMATCH");
-  }
-  SECTION("median count") {
-    Json report = mixed_benchmark_summary();
-    report["summary"]["median_count"] = 3.0;
-    require_issue(std::move(report), "BENCHMARK_AGGREGATE_MISMATCH");
-  }
-  SECTION("worst count") {
-    Json report = mixed_benchmark_summary();
-    report["summary"]["worst_count"] = 3;
-    require_issue(std::move(report), "BENCHMARK_AGGREGATE_MISMATCH");
-  }
-  SECTION("no successful runs have null aggregates") {
-    Json report = shared_fixture_value("benchmark-failed-positive");
-    report["summary"]["best_count"] = 0;
-    require_issue(std::move(report), "BENCHMARK_AGGREGATE_MISMATCH");
-  }
-}
-
-TEST_CASE("QA-01 validates benchmark settings seeds artifacts and timing histories", "[contracts][benchmark]") {
-  ContractValidator validator;
-  auto require_issue_at = [&validator](Json report, std::string_view code, std::string_view path) {
-    const auto outcome = validator.validate(ContractKind::benchmark_summary, report);
-    const auto* failure = failure_of(outcome);
-    REQUIRE(failure != nullptr);
-    CHECK(has_issue_at(*failure, code, path));
-  };
-
-  SECTION("configuration settings semantics") {
-    Json report = mixed_benchmark_summary();
-    report["configuration"]["settings"]["orientation"]["quaternion_xyzw"] =
-        Json::array({0.0, 0.0, 0.0, -1.0});
-    require_issue_at(std::move(report), "QUATERNION_NOT_CANONICAL",
-        "/configuration/settings/orientation/quaternion_xyzw");
-  }
-  SECTION("run settings semantics") {
-    Json report = mixed_benchmark_summary();
-    report["runs"][1]["settings"]["orientation"]["quaternion_xyzw"] =
-        Json::array({0.0, 0.0, 0.0, -1.0});
-    require_issue_at(std::move(report), "QUATERNION_NOT_CANONICAL",
-        "/runs/1/settings/orientation/quaternion_xyzw");
-  }
-  SECTION("run seed uint64 range") {
-    Json report = mixed_benchmark_summary();
-    report["runs"][0]["seed"] = "18446744073709551616";
-    require_issue_at(std::move(report), "SEED_OUT_OF_RANGE", "/runs/0/seed");
-  }
-  SECTION("run seed matches resolved settings") {
-    Json report = mixed_benchmark_summary();
-    report["runs"][0]["seed"] = "7";
-    require_issue_at(std::move(report), "RUN_SEED_MISMATCH", "/runs/0/seed");
-  }
-  SECTION("created timestamp names a real UTC date") {
-    Json report = mixed_benchmark_summary();
-    report["created_at"] = "2026-02-30T00:00:00Z";
-    const auto outcome = validator.validate(ContractKind::benchmark_summary, report);
-    REQUIRE(failure_of(outcome) != nullptr);
-  }
-  SECTION("result paths are portable") {
-    Json report = mixed_benchmark_summary();
-    report["runs"][1]["result"]["path"] = "results//five.json";
-    require_issue_at(std::move(report), "PORTABLE_PATH_INVALID", "/runs/1/result/path");
-  }
-  SECTION("failed count and result availability agree") {
-    Json report = mixed_benchmark_summary();
-    report["runs"][2]["count"] = 1;
-    require_issue_at(std::move(report), "BENCHMARK_RESULT_AVAILABILITY_MISMATCH", "/runs/2");
-  }
-  SECTION("recorded failed results require resolved settings") {
-    Json report = mixed_benchmark_summary();
-    report["runs"][2]["count"] = 1;
-    report["runs"][2]["result"] = report["runs"][0]["result"];
-    require_issue_at(std::move(report), "BENCHMARK_RESULT_AVAILABILITY_MISMATCH", "/runs/2");
-  }
-  SECTION("improvement counts increase strictly") {
-    Json report = mixed_benchmark_summary();
-    report["runs"][0]["improvements"][1]["count"] = 1;
-    require_issue_at(std::move(report), "IMPROVEMENT_HISTORY_INVALID", "/runs/0/improvements/1");
-  }
-  SECTION("improvement counts do not exceed a recorded final count") {
-    Json report = mixed_benchmark_summary();
-    report["runs"][0]["improvements"][1]["count"] = 3;
-    require_issue_at(std::move(report), "IMPROVEMENT_HISTORY_INVALID", "/runs/0/improvements/1");
-  }
-  SECTION("improvement times are ordered") {
-    Json report = mixed_benchmark_summary();
-    report["runs"][0]["improvements"][1]["elapsed_seconds"] = 0.1;
-    require_issue_at(std::move(report), "IMPROVEMENT_HISTORY_INVALID", "/runs/0/improvements/1");
-  }
-  SECTION("improvement times stay within search duration") {
-    Json report = mixed_benchmark_summary();
-    report["runs"][0]["improvements"][1]["elapsed_seconds"] = 1.1;
-    require_issue_at(std::move(report), "IMPROVEMENT_HISTORY_INVALID", "/runs/0/improvements/1");
-  }
-  SECTION("individual phase time does not exceed cold end to end") {
-    Json report = mixed_benchmark_summary();
-    report["runs"][0]["timings"]["validation_seconds"] = 1.1;
-    require_issue_at(std::move(report), "BENCHMARK_TIMING_INVALID", "/runs/0/timings/validation_seconds");
-  }
-  SECTION("deterministic benchmark runs cannot transition into Vulkan") {
-    Json report = mixed_benchmark_summary();
-    report["runs"][0]["backend_transitions"] = Json::array({
-        {{"segment_id", "segment-0"}, {"from", "cpu"}, {"to", "vulkan"},
-         {"reason", "device selected"}, {"elapsed_seconds", 0.5}}});
-    require_issue_at(std::move(report), "DETERMINISTIC_BACKEND_TRANSITION",
-        "/runs/0/backend_transitions/0");
-  }
+  result["created_at"] = "2026-09-10T00:00:00.Z";
+  CHECK(failure_of(validator.validate(ContractKind::results, result)) != nullptr);
 }
 
 TEST_CASE("shared schema corpus distinguishes structural and semantic contract validity", "[contracts][corpus]") {
