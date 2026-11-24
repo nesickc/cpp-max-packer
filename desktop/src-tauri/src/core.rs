@@ -22,6 +22,9 @@ const REPORT_LIMIT: u64 = 16 << 20;
 const RESULT_LIMIT: u64 = 64 << 20;
 const SOURCE_LIMIT: u64 = 256 << 20;
 const PREVIEW_LIMIT: u64 = 64 << 20;
+// A viewer image: an 8K canvas at twice the pixel density stays well below this.
+pub const PNG_LIMIT: usize = 64 << 20;
+const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n'];
 // Hash of the canonical native version-1 cube45 catalog, checked by the
 // real-engine Start/Save/Open/export test below.
 const CUBE45_CATALOG_HASH: &str = "7434d4e2eb8cd12e6a67af3a5d636a7435a4e50da043777586ff0fbff9eae4ef";
@@ -139,6 +142,11 @@ struct Inner {
     protected_sources: Vec<PathBuf>,
     operation_started: Option<std::time::Instant>,
     transitioning: bool,
+    // The project Save writes to without asking: set by a successful Save As or
+    // Open, forgotten by New.
+    project: Option<PathBuf>,
+    // The file the last successful save or export wrote, for Show in folder.
+    output: Option<PathBuf>,
 }
 
 fn accept_live(
@@ -284,9 +292,84 @@ pub struct Core {
 }
 
 fn write_json(path: &Path, value: &Value) -> Outcome<()> {
-    use std::io::Write;
     let bytes =
         serde_json::to_vec_pretty(value).map_err(|e| error("INVALID_DOCUMENT", e.to_string()))?;
+    write_new(path, &bytes)
+}
+// Replaces an image and its companion as a pair. Both are written beside their
+// targets first; the previous companion is moved aside, the new one put in place,
+// and the image replaced last in one step. Any failure puts the previous companion
+// back beside the untouched image and removes every temporary file.
+fn replace_pair(image: &Path, image_bytes: &[u8], companion: &Path, companion_bytes: &[u8]) -> Outcome<()> {
+    let folder = image
+        .parent()
+        .ok_or_else(|| error("PATH_INVALID", "Output has no folder."))?;
+    let temporary = || folder.join(format!(".{}.tmp", id("spectrapack")));
+    let (staged_image, staged_companion, previous) = (temporary(), temporary(), temporary());
+    let failed = |e: std::io::Error| error("OUTPUT_WRITE_FAILED", e.to_string());
+    let outcome = (|| {
+        write_new(&staged_image, image_bytes)?;
+        write_new(&staged_companion, companion_bytes)?;
+        let kept = companion.exists();
+        if kept {
+            fs::rename(companion, &previous).map_err(failed)?;
+        }
+        let placed = fs::rename(&staged_companion, companion).and_then(|()| fs::rename(&staged_image, image));
+        if let Err(cause) = placed {
+            let restored = if kept { fs::rename(&previous, companion) } else { fs::remove_file(companion) };
+            return Err(match restored {
+                Err(e) if kept || e.kind() != std::io::ErrorKind::NotFound => error(
+                    "OUTPUT_WRITE_FAILED",
+                    format!("{cause} The previous {} could not be put back ({e}); it is {}.", companion.display(), previous.display()),
+                ),
+                _ => failed(cause),
+            });
+        }
+        if kept {
+            let _ = fs::remove_file(&previous);
+        }
+        Ok(())
+    })();
+    // Placed files are gone from here; anything left is a partial or unused write.
+    for staged in [&staged_image, &staged_companion] {
+        let _ = fs::remove_file(staged);
+    }
+    outcome
+}
+// Show in folder: Explorer opening the file's folder with the file selected.
+// Explorer parses its own command line, so the path goes in quotes as one raw
+// argument (a Windows path cannot contain a quote). The system Windows folder is
+// asked for directly: under Remote Desktop the per-user Windows folder has no Explorer.
+#[cfg(windows)]
+pub fn explorer_select(file: &Path) -> Outcome<Command> {
+    use std::os::windows::{ffi::OsStringExt, process::CommandExt};
+    use windows_sys::Win32::System::SystemInformation::GetSystemWindowsDirectoryW;
+    let mut buffer = [0_u16; 260];
+    let length =
+        unsafe { GetSystemWindowsDirectoryW(buffer.as_mut_ptr(), buffer.len() as u32) } as usize;
+    if length == 0 || length >= buffer.len() {
+        return Err(error("FILE_ACCESS", "The Windows folder is unavailable."));
+    }
+    let windows = PathBuf::from(OsString::from_wide(&buffer[..length]));
+    let mut argument = OsString::from("/select,\"");
+    argument.push(file);
+    argument.push("\"");
+    let mut command = Command::new(windows.join("explorer.exe"));
+    command.raw_arg(argument);
+    Ok(command)
+}
+// The image Export PNG writes must be a PNG of bounded size.
+pub fn check_png(bytes: &[u8]) -> Outcome<()> {
+    if bytes.len() > PNG_LIMIT {
+        return Err(error("MEMORY_LIMIT", "The view image exceeds 64 MiB."));
+    }
+    if !bytes.starts_with(&PNG_SIGNATURE) {
+        return Err(error("INVALID_REQUEST", "The view image is not a PNG."));
+    }
+    Ok(())
+}
+fn write_new(path: &Path, bytes: &[u8]) -> Outcome<()> {
+    use std::io::Write;
     let mut output = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -457,6 +540,8 @@ impl Core {
                 protected_sources: Vec::new(),
                 operation_started: None,
                 transitioning: false,
+                project: None,
+                output: None,
             })),
         };
         core.run(&arguments(&["capabilities", "--json"]), &core.root)?;
@@ -1106,6 +1191,8 @@ impl Core {
             let mut inner = core.inner.lock().unwrap(); inner.state.cpu_runtime=object.cpu_runtime.clone(); inner.object = Some(object.clone());
             prepared_guard.committed=true;
             inner.protected_sources.push(source.clone());
+            // Another object is not the opened or saved project: Save asks again.
+            inner.project = None;
             inner.state.live_result=None;
             inner.repair=None; inner.state.repair=None;
             inner.result=None; inner.state.result=None;
@@ -1474,6 +1561,8 @@ impl Core {
         inner.object = None;
         inner.repair = None; inner.state.repair = None;
         inner.result = None;
+        inner.project = None;
+        inner.output = None;
         inner.previews.clear();
         inner.stop_file = None;
         inner.stop_requested = None;
@@ -1587,6 +1676,9 @@ impl Core {
             ));
         }
         security::directory(target)?;
+        // Messages and Show in folder use the folder as chosen; Explorer does not
+        // take the canonical \\?\ form.
+        let chosen = target.to_path_buf();
         let target = fs::canonicalize(target).map_err(|e| error("FILE_ACCESS", e.to_string()))?;
         let format = format.to_owned();
         let (receipt, root, result) = self.begin_with("export", None, |inner| {
@@ -1606,7 +1698,8 @@ impl Core {
             .unwrap()
             .result_id = Some(result.id.clone());
         self.spawn(&receipt, move |core, op| {
-            let output = target.join(id("SpectraPack-export"));
+            let name = id("SpectraPack-export");
+            let output = target.join(&name);
             fs::create_dir(&output).map_err(|e| error("OUTPUT_WRITE_FAILED", e.to_string()))?;
             core.phase(&op, "validating");
             let mut args = arguments(&["desktop-restore"]);
@@ -1627,17 +1720,123 @@ impl Core {
                     ),
                 });
             }
-            core.inner
-                .lock()
-                .unwrap()
-                .state
-                .operation
-                .as_mut()
-                .unwrap()
-                .detail = Some(format!("Output: {}", output.display()));
+            let folder = chosen.join(&name);
+            let main = if format == "stl" { "packed.stl" } else { "result.json" };
+            core.wrote(folder.join(main), format!("Output: {}", folder.display()));
             Ok(())
         });
         Ok(receipt)
+    }
+    // Records a finished save or export: the file Show in folder selects, and
+    // the operation's message.
+    fn wrote(&self, file: PathBuf, detail: String) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.output = Some(file);
+        inner.state.operation.as_mut().unwrap().detail = Some(detail);
+    }
+    // The file the last successful save or export wrote, for Show in folder.
+    pub fn last_output(&self) -> Outcome<PathBuf> {
+        let output = self.inner.lock().unwrap().output.clone().ok_or_else(|| {
+            error("OUTPUT_REQUIRED", "Nothing has been saved or exported yet.")
+        })?;
+        if !output.exists() {
+            return Err(error(
+                "FILE_ACCESS",
+                format!("{} was moved or deleted.", output.display()),
+            ));
+        }
+        Ok(output)
+    }
+    // Export PNG: the viewer's image of the displayed result, with
+    // `<name>.png.json` beside it carrying that result's count and settings. The
+    // webview sends only the image and the id of the result it shows.
+    pub fn export_png(&self, target: &Path, result_id: &str, png: Vec<u8>) -> Outcome<Receipt> {
+        check_png(&png)?;
+        if !target
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("png"))
+        {
+            return Err(error("PATH_INVALID", "Choose a file name ending in .png."));
+        }
+        let mut companion = target.as_os_str().to_owned();
+        companion.push(".json");
+        let companion = PathBuf::from(companion);
+        security::directory(
+            target
+                .parent()
+                .ok_or_else(|| error("PATH_INVALID", "Image destination has no folder."))?,
+        )?;
+        for file in [target, &companion] {
+            if file.exists() {
+                security::regular_file(file)?;
+            }
+        }
+        // The save dialog confirms replacing the image only: a JSON file of the
+        // companion's name with no image beside it is someone else's.
+        if companion.exists() && !target.exists() {
+            return Err(error(
+                "PATH_INVALID",
+                format!("{} already exists without its image; choose another name or move that file.", companion.display()),
+            ));
+        }
+        let (receipt, _, facts) = self.begin_with("export", None, |inner| {
+            for source in &inner.protected_sources {
+                for file in [target, &companion] {
+                    if security::aliases(source, file)? {
+                        return Err(error("PATH_INVALID", "Export would overwrite an original imported STL."));
+                    }
+                }
+            }
+            match (&inner.result, &inner.state.result) {
+                (Some(files), Some(shown)) if files.id == result_id && shown["id"] == result_id => {
+                    let document = &shown["document"];
+                    Ok(json!({
+                        "count": document["count"],
+                        "validation_status": document["validation"]["status"],
+                        "solution_revision": document["solution_revision"],
+                        "settings": document["search"]["resolved_settings"],
+                    }))
+                }
+                _ => Err(error(
+                    "RESULT_REQUIRED",
+                    "The view no longer shows the current result; export it again.",
+                )),
+            }
+        })?;
+        self.inner.lock().unwrap().state.operation.as_mut().unwrap().result_id =
+            Some(result_id.to_owned());
+        let target = target.to_path_buf();
+        self.spawn(&receipt, move |core, op| {
+            core.phase(&op, "saving");
+            // Shaped like the STL export's companion: a schema version, units and
+            // the hash of the file it describes.
+            let mut metadata = json!({
+                "schema_version": 1,
+                "image": target.file_name().unwrap_or_default().to_string_lossy(),
+                "image_sha256": security::hash(&png),
+                "units": "mm",
+                "saved_at": now(),
+            });
+            if let Value::Object(facts) = facts {
+                metadata.as_object_mut().unwrap().extend(facts);
+            }
+            let metadata = serde_json::to_vec_pretty(&metadata)
+                .map_err(|e| error("INVALID_DOCUMENT", e.to_string()))?;
+            replace_pair(&target, &png, &companion, &metadata)?;
+            core.wrote(target.clone(), format!("Output: {}", target.display()));
+            Ok(())
+        });
+        Ok(receipt)
+    }
+    // The project Save writes to, for the Save As dialog to start from.
+    pub fn project_path(&self) -> Option<PathBuf> {
+        self.inner.lock().unwrap().project.clone()
+    }
+    // Save: writes the current project without asking. None when there is no
+    // current project, so the caller asks for a file as Save As does.
+    pub fn save(&self, settings: Value) -> Outcome<Option<Receipt>> {
+        let project = self.project_path();
+        project.map(|path| self.save_to(&path, settings)).transpose()
     }
     pub fn save_to(&self, target: &Path, settings: Value) -> Outcome<Receipt> {
         validate_settings(&settings)?;
@@ -1698,7 +1897,10 @@ impl Core {
                     .unwrap()
                     .result_id = Some(result.id.clone());
             }
-            crate::archive::save(&snapshot, &target, &settings, result.is_some())
+            crate::archive::save(&snapshot, &target, &settings, result.is_some())?;
+            core.inner.lock().unwrap().project = Some(target.clone());
+            core.wrote(target.clone(), format!("Saved to {}", target.display()));
+            Ok(())
         });
         Ok(receipt)
     }
@@ -1744,6 +1946,7 @@ impl Core {
             let old_object=core.inner.lock().unwrap().object.clone();
             if let Some(old)=old_object {core.release_native(old.native_token,old.native_epoch.as_deref())?;}
             let mut inner = core.inner.lock().unwrap(); inner.state.cpu_runtime=object.cpu_runtime.clone(); inner.object = Some(object.clone()); inner.result = result_files;
+            inner.project = Some(path.clone());
             prepared_guard.committed=true;
             inner.state.live_result=None;
             inner.repair=None; inner.state.repair=None;
@@ -1919,6 +2122,8 @@ mod tests {
             protected_sources: Vec::new(),
             operation_started: None,
             transitioning: false,
+            project: None,
+            output: None,
         };
         let value = |count: u32, revision, sequence| {
             json!({"operation_id":"operation","settings_id":"settings","native_epoch":"native",
