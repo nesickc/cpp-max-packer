@@ -25,8 +25,6 @@ pub(crate) struct NativeSession {
     pending_writer: Option<thread::JoinHandle<()>>,
     diagnostic: Arc<Mutex<String>>,
     pub epoch: String,
-    pub retained_native_bytes: Option<u64>,
-    pub admitted_host_cap_bytes: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -42,8 +40,6 @@ struct Record {
     sequence: Option<u64>,
     phase: Option<String>,
     native_elapsed_seconds: Option<f64>,
-    retained_native_bytes: Option<u64>,
-    admitted_host_cap_bytes: Option<u64>,
     resource_status: Option<ResourceStatus>,
     publication: Option<Publication>,
     packing: Option<Packing>,
@@ -261,8 +257,6 @@ impl NativeSession {
             pending_writer: None,
             diagnostic,
             epoch: id("native"),
-            retained_native_bytes: None,
-            admitted_host_cap_bytes: None,
         })
     }
 
@@ -340,11 +334,9 @@ impl NativeSession {
         }
         let timeout = Duration::try_from_secs_f64(timeout_seconds)
             .map_err(|_| error("INVALID_SETTINGS", "Runtime timeout overflows."))?;
-        let mut deadline = request_started
+        let deadline = request_started
             .checked_add(timeout)
             .ok_or_else(|| error("INVALID_SETTINGS", "Runtime deadline overflows."))?;
-        let fixed_work =
-            method == "run" && request["params"]["settings"]["search"]["deterministic"] == true;
         let mut bytes =
             serde_json::to_vec(&request).map_err(|e| error("INVALID_REQUEST", e.to_string()))?;
         if bytes.len() > RECORD_LIMIT {
@@ -440,8 +432,6 @@ impl NativeSession {
                         || record.result.is_some()
                         || record.error.is_some()
                         || record.phase.is_some()
-                        || record.retained_native_bytes.is_some()
-                        || record.admitted_host_cap_bytes.is_some()
                         || record.resource_status.is_some()
                         || !seconds.is_finite()
                         || seconds < 0.0
@@ -481,8 +471,6 @@ impl NativeSession {
                         || record.error.is_some()
                         || record.publication.is_some()
                         || record.packing.is_some()
-                        || record.retained_native_bytes.is_some()
-                        || record.admitted_host_cap_bytes.is_some()
                         || ![
                             "loading",
                             "preparing",
@@ -502,13 +490,6 @@ impl NativeSession {
                         ));
                     }
                     sequence = next;
-                    if fixed_work {
-                        deadline = Instant::now()
-                            .checked_add(Duration::from_secs(60))
-                            .ok_or_else(|| {
-                                error("ENGINE_TRANSPORT", "Progress timeout overflows.")
-                            })?;
-                    }
                     if let Some(status) = &record.resource_status { status.validate()?; }
                     phase(next, &name, seconds, record.resource_status.as_ref());
                 }
@@ -520,21 +501,6 @@ impl NativeSession {
                         && record.resource_status.is_none()
                         && record.packing.is_none() =>
                 {
-                    if ["prepare", "run", "release"].contains(&method) {
-                        let cap = record.admitted_host_cap_bytes.filter(|cap| *cap > 0)
-                            .ok_or_else(|| error("ENGINE_TRANSPORT", "Native admitted host ceiling is missing or invalid."))?;
-                        let bytes = record
-                            .retained_native_bytes
-                            .filter(|bytes| *bytes <= cap)
-                            .ok_or_else(|| {
-                                error(
-                                    "ENGINE_TRANSPORT",
-                                    "Native retained residency is missing or invalid.",
-                                )
-                            })?;
-                        self.retained_native_bytes = Some(bytes);
-                        self.admitted_host_cap_bytes = Some(cap);
-                    }
                     match (record.ok, record.result, record.error) {
                         (Some(true), Some(result), None) => return Ok(result),
                         (Some(false), None, Some(failure)) => return Err(failure),
@@ -561,7 +527,7 @@ impl NativeSession {
 mod tests {
     use super::*;
     #[test]
-    fn t015_complete_native_packing_record_decodes() {
+    fn complete_native_packing_record_decodes() {
         let value = serde_json::json!({"runtime_version":1,"request_id":"request-live","operation_id":"op-live",
             "kind":"packing","publication":{"version":1,"session_id":"session-live","native_epoch":"native-live","settings_id":"settings-live"},
             "sequence":1,"native_elapsed_seconds":0.1,"packing":{"solution_revision":1,"count":1,"validation_status":"valid",

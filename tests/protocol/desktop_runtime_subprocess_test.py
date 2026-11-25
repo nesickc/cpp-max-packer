@@ -97,7 +97,6 @@ class RuntimeTests(unittest.TestCase):
                 prepared, _ = session.request({'runtime_version':1,'request_id':'prepare-cap','operation_id':'prepare-cap',
                     'method':'prepare','params':{'object_report':str(report),'output_directory':str(preview)}})
                 self.assertTrue(prepared['ok'], prepared)
-                self.assertGreater(prepared['admitted_host_cap_bytes'], 0)
                 for index, cap in enumerate((128 << 20, 96 << 20)):
                     ticks, frequency = qpc()
                     output = root/f'result-{index}.json'
@@ -123,8 +122,6 @@ class RuntimeTests(unittest.TestCase):
                                  if 'estimated_working_bytes' in status]
                     self.assertTrue(estimates, statuses)
                     self.assertTrue(all(0 < estimate <= cap for estimate in estimates), estimates)
-                    self.assertEqual(terminal['admitted_host_cap_bytes'], cap)
-                    self.assertLessEqual(terminal['retained_native_bytes'], cap)
                     self.assertEqual(result['validation']['status'], 'valid')
             finally:
                 session.close()
@@ -483,11 +480,9 @@ class RuntimeTests(unittest.TestCase):
                 released, _ = session.request({'runtime_version': 1, 'request_id': 'rollback-b',
                     'method': 'release', 'params': {'asset_token': second['result']['asset_token']}})
                 self.assertTrue(released['ok'], released)
-                self.assertEqual(released['retained_native_bytes'], first['retained_native_bytes'])
                 third = prepare('prepare-c')
                 self.assertTrue(third['ok'], third)
                 self.assertNotEqual(third['result']['asset_token'], first_token)
-                self.assertEqual(third['retained_native_bytes'], first['retained_native_bytes'])
             finally:
                 session.close()
 
@@ -592,7 +587,6 @@ class RuntimeTests(unittest.TestCase):
                     self.assertFalse(reply['ok'],reply)
                     self.assertEqual(reply['error']['code'],'OPERATION_CANCELLED',reply)
                     self.assertLessEqual(time.perf_counter()-began,5)
-                    self.assertEqual(reply['retained_native_bytes'],0)
                     if eof:self.assertEqual(session.child.wait(timeout=5),0)
                     else:
                         reply,_=session.request({'runtime_version':1,'request_id':'after-phase-stop','method':'shutdown','params':{}})
@@ -666,7 +660,6 @@ class RuntimeTests(unittest.TestCase):
                 reused,_=session.request(repeated)
                 self.assertTrue(reused['ok'],reused)
                 self.assertTrue(reused['result']['preparation_reused'])
-                self.assertEqual(reused['retained_native_bytes'],prepared['retained_native_bytes'])
                 self.assertNotEqual(reused['result']['asset_token'],token)
                 session.request({'runtime_version':1,'request_id':'release-old','method':'release','params':{'asset_token':token}})
                 token=reused['result']['asset_token']
