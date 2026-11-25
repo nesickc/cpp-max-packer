@@ -13,10 +13,9 @@ namespace io = spectrapack::io;
 extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size)
 {
     static io::ContractValidator validator;
-    static constexpr io::ContractKind kinds[] = { io::ContractKind::settings,          io::ContractKind::assets,
-                                                  io::ContractKind::results,           io::ContractKind::protocol,
-                                                  io::ContractKind::benchmark_summary, io::ContractKind::desktop,
-                                                  io::ContractKind::desktop_runtime };
+    static constexpr io::ContractKind kinds[] = { io::ContractKind::settings, io::ContractKind::assets,
+                                                  io::ContractKind::results,  io::ContractKind::protocol,
+                                                  io::ContractKind::desktop,  io::ContractKind::desktop_runtime };
     // The command-line readers bound their diagnostics like this.
     static constexpr io::ContractDiagnosticLimits limits { 16, 256 };
     const std::string_view text(reinterpret_cast<const char*>(data), size);

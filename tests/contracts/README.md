@@ -1,7 +1,7 @@
 # Version-1 contract fixtures
 
 The shared corpus covers requested/resolved settings, inspected/accepted assets,
-zero/one-copy results, protocol envelopes, and completed/failed benchmark records.
+zero/one-copy results and protocol envelopes.
 These are small synthetic records with explicit expected outcomes. Their hashes
 are illustrative identities; no referenced file or authoritative solid is verified.
 

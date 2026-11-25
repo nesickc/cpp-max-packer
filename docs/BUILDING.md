@@ -1,7 +1,7 @@
 # Windows CPU build
 
 [T-001](../doc/T-001.md) supplies the C++20 reference tests and CPU dependency diagnostic.
-[T-002](../doc/T-002.md) adds versioned contracts and the capability CLI/stdio service.
+[T-002](../doc/T-002.md) adds versioned contracts and the capability CLI.
 [T-003](../doc/T-003.md) adds STL inspection and immutable accepted geometry;
 packing and the desktop application follow in later tasks. See
 [ADR 0005](../spec/decisions/0005-stl-import-and-acceptance.md) for the import boundary
@@ -139,14 +139,12 @@ Stage the engine with its runtime-library notices separately:
 ```powershell
 cmake --install out/build/windows-ninja-release --prefix $packageRoot --component engine
 & "$packageRoot/bin/spectrapack-engine.exe" capabilities --json
-python tests/protocol/service_subprocess_test.py "$packageRoot/bin/spectrapack-engine.exe"
 python tests/protocol/import_subprocess_test.py "$packageRoot/bin/spectrapack-engine.exe"
 ```
 
-The process test runs the engine outside the checkout and checks that it responds
-before stdin closes. The executable embeds its contract catalog. The auxiliary
-`solve` command exposes the T-007 CPU packing slice; service jobs remain later
-integration work. CI also runs the staged inspection and solve tests
+The process test runs the engine outside the checkout. The executable embeds its
+contract catalog. The `solve` command exposes the CPU packing slice; the stdio
+service is Later (spec §8.1). CI also runs the staged inspection and solve tests
 with developer directories removed from `PATH`.
 
 ## Inspect an STL
@@ -225,36 +223,11 @@ The control suite also uses a test-only CLI build to exercise a lower result-bui
 memory cap with the same retained inputs. Neither helper is installed in the
 engine package or built with `BUILD_TESTING=OFF`.
 
-## Bounded performance checks
+## Measuring packing
 
-```powershell
-python benchmarks/run_reference.py --executable out/build/windows-ninja-release/bin/spectrapack_reference_benchmark.exe --output .local/reference-release.json --samples 5 --warmup 1 --timeout-seconds 60
-```
-
-These timings measure deterministic direct correlation and analytic fixture construction. They are not solver or GPU benchmarks. Keep a new baseline when changing the CRT/toolchain; do not compare to the prior dynamic-CRT build. See [benchmark instructions](../benchmarks/README.md) for compatible-baseline comparisons.
-
-T-002 also measures bounded process-level capability replay:
-
-```powershell
-python tests/protocol/service_replay_perf.py out/build/windows-ninja-release/bin/spectrapack-engine.exe --samples 5 --requests 1000
-```
-
-One warmup precedes five fixed-work samples. The watchdog rejects a stalled run;
-times are informational and include process/transport overhead. This does not
-measure solver performance or qualify stop latency.
-
-T-003 adds inspection of all ten pinned STLs and three Release samples of the
-largest source after one warmup:
-
-```powershell
-python benchmarks/run_import.py --executable out/build/windows-ninja-release/bin/spectrapack-engine.exe --build-metadata out/build/windows-ninja-release/build-metadata.json --output .local/import-release.json --samples 3 --warmup 1 --timeout-seconds 120 --overall-timeout-seconds 600
-```
-
-Qualification requires the reviewed fixture expectations and determinate outcomes.
-The runner independently checks source/frame/mesh artifacts and container volumes,
-retains per-process diagnostics and reports informational median/p95 inspection
-times. `--discover` retains unqualified observations for review and cannot approve
-its own baseline. See T-003 for outstanding gates.
+`python tools/scoreboard.py` runs the fixed cases of spec section 9 through `inspect`,
+`desktop-prepare` and `solve` and prints count, time and validity; `--record` appends
+a row to [SCOREBOARD.md](../benchmarks/SCOREBOARD.md).
 
 ## Fuzzing hostile files
 
@@ -266,7 +239,6 @@ MSVC's libFuzzer, and one target per reader of untrusted input (`tests/fuzz`):
 | `fuzz_stl_import` | STL import: admission, parsing, cleanup, solid analysis, welding |
 | `fuzz_envelope` | STL bytes through the packing envelope to an accepted solid |
 | `fuzz_contracts` | every JSON contract kind (`ContractValidator::parse`) |
-| `fuzz_protocol` | the stdio service's record framing, limits and replies |
 | `fuzz_project_archive` | `.spectrapack` open (the Rust reader in `desktop/src-tauri`) |
 
 ```powershell

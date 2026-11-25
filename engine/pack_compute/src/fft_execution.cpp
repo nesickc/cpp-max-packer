@@ -46,7 +46,6 @@ struct AxisJob {
     std::atomic<bool> abort {};
     std::stop_token stop;
     const runtime::OperationControl* coordinator {};
-    detail::FftCallEvidence* evidence {};
     detail::FftTestOptions options;
     std::array<CorrelationFailure, 8> failures {};
     void signal(detail::FftPoint point, std::uint32_t worker) noexcept
@@ -72,16 +71,7 @@ struct AxisJob {
                     abort.store(true);
                     return;
                 }
-                if (evidence) {
-                    const auto values = extent[0] * extent[1] * extent[2];
-                    ++evidence->calls[worker];
-                    evidence->maximum_group_lines[worker] =
-                        std::max(evidence->maximum_group_lines[worker], values / shape[axis]);
-                    evidence->maximum_group_values[worker] = std::max(evidence->maximum_group_values[worker], values);
-                }
-                detail::observed_fft_call(evidence, worker, [&] {
-                    pocketfft::c2c(extent, strides, strides, axes, forward, first, first, factor, 1);
-                });
+                pocketfft::c2c(extent, strides, strides, axes, forward, first, first, factor, 1);
                 signal(detail::FftPoint::after_call, worker);
             };
             if (count == 1) {
@@ -266,7 +256,7 @@ void FftAccess::join(FftExecution* execution) noexcept
 }
 std::optional<CorrelationFailure> FftAccess::run(FftExecution* execution, Shape3 shape, std::size_t axis, bool forward,
                                                  std::complex<double>* data, double factor,
-                                                 const runtime::OperationControl& control, FftCallEvidence* evidence)
+                                                 const runtime::OperationControl& control)
 {
     AxisJob serial;
     auto& job = execution ? execution->storage_->job : serial;
@@ -280,7 +270,6 @@ std::optional<CorrelationFailure> FftAccess::run(FftExecution* execution, Shape3
     job.factor = factor;
     job.coordinator = &control;
     job.stop = control.stop;
-    job.evidence = evidence;
     job.failures = {};
     job.abort.store(false);
     if (!execution) {

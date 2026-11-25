@@ -11,7 +11,6 @@
 #include <type_traits>
 #include <utility>
 
-#include "correlation_profile.hpp"
 #include "correlation_test_hook.hpp"
 #include "fft_execution_internal.hpp"
 
@@ -402,8 +401,6 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
         return *interrupted;
     }
     try {
-        detail::FftCallEvidence evidence;
-        auto* observed = detail::fft_call_evidence_sink ? &evidence : nullptr;
         std::vector<Complex> blocked(static_cast<std::size_t>(padded_count));
         std::vector<Complex> occupied(static_cast<std::size_t>(padded_count));
         // Join a failed operation before either transform buffer is destroyed.
@@ -433,15 +430,9 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
             }
         }
 
-        const auto transform = [&](unsigned which, std::size_t axis, bool forward, Complex* data,
+        const auto transform = [&](std::size_t axis, bool forward, Complex* data,
                                    double factor) -> std::optional<CorrelationFailure> {
-            std::optional<CorrelationFailure> issue;
-            detail::profile_fft_axis(binary, which, axis, [&] {
-                issue = detail::FftAccess::run(execution, padded, axis, forward, data, factor, control, observed);
-            });
-            if (observed) {
-                detail::fft_call_evidence_sink(detail::fft_call_evidence_context, evidence);
-            }
+            auto issue = detail::FftAccess::run(execution, padded, axis, forward, data, factor, control);
             if (issue) {
                 issue->stats = stats;
             }
@@ -451,13 +442,13 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
             if (auto interrupted = interruption(stats)) {
                 return *interrupted;
             }
-            if (auto issue = transform(0, axis, true, blocked.data(), 1.0)) {
+            if (auto issue = transform(axis, true, blocked.data(), 1.0)) {
                 return *issue;
             }
             if (auto interrupted = interruption(stats)) {
                 return *interrupted;
             }
-            if (auto issue = transform(1, axis, true, occupied.data(), 1.0)) {
+            if (auto issue = transform(axis, true, occupied.data(), 1.0)) {
                 return *issue;
             }
             if (auto interrupted = interruption(stats)) {
@@ -478,7 +469,7 @@ CorrelationOutcome correlate(const CorrelationSpec& spec, std::span<const Enviro
             if (auto interrupted = interruption(stats)) {
                 return *interrupted;
             }
-            if (auto issue = transform(2, axis, false, blocked.data(), axis == 0 ? inverse_factor : 1.0)) {
+            if (auto issue = transform(axis, false, blocked.data(), axis == 0 ? inverse_factor : 1.0)) {
                 return *issue;
             }
             if (auto interrupted = interruption(stats)) {

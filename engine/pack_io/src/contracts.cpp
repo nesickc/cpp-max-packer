@@ -26,7 +26,6 @@ std::string name(ContractKind kind) {
     case ContractKind::assets: return "assets";
     case ContractKind::results: return "results";
     case ContractKind::protocol: return "protocol";
-    case ContractKind::benchmark_summary: return "benchmark_summary";
     case ContractKind::desktop:
         return "desktop";
     case ContractKind::desktop_runtime:
@@ -37,7 +36,7 @@ std::string name(ContractKind kind) {
 
 std::string id_for(const std::string& key) {
   return "https://spectrapack.invalid/schemas/v1/" +
-      (key == "benchmark_summary" ? "benchmark-summary" : key == "desktop_runtime" ? "desktop-runtime" : key) + ".schema.json";
+      (key == "desktop_runtime" ? "desktop-runtime" : key) + ".schema.json";
 }
 
 class Issues final : public nlohmann::json_schema::error_handler {
@@ -788,120 +787,6 @@ std::vector<ValidationIssue> semantics(ContractKind kind, const Json& value) {
         candidates != search.at("work_counts").at("candidate_evaluations").get<std::uint64_t>() ||
         passes != search.at("work_counts").at("search_passes").get<std::uint64_t>())
       semantic_issue(issues, "/search", "SEARCH_TOTAL_MISMATCH", "Search totals must equal run segment totals.");
-  }
-  if (kind == ContractKind::benchmark_summary) {
-    append_prefixed_issues(issues, "/configuration/settings",
-        semantics(ContractKind::settings, value.at("configuration").at("settings")));
-    if (!utc_calendar_valid(value.at("created_at").get<std::string>()))
-      semantic_issue(issues, "/created_at", "UTC_CALENDAR_INVALID",
-          "Timestamp must name a real UTC date with an optional fractional second component.");
-
-    std::uint64_t successful_runs = 0;
-    std::uint64_t failed_runs = 0;
-    std::vector<std::uint64_t> completed_counts;
-    const auto& runs = value.at("runs");
-    for (std::size_t run_index = 0; run_index < runs.size(); ++run_index) {
-      const auto& run = runs.at(run_index);
-      const std::string base = "/runs/" + std::to_string(run_index);
-      const auto seed = run.at("seed").get<std::string>();
-      if (!seed_in_range(seed))
-        semantic_issue(issues, base + "/seed", "SEED_OUT_OF_RANGE", "Seed exceeds uint64 maximum.");
-
-      const bool has_settings = !run.at("settings").is_null();
-      const bool has_count = !run.at("count").is_null();
-      const bool has_result = !run.at("result").is_null();
-      if (has_count != has_result || ((has_count || has_result) && !has_settings))
-        semantic_issue(issues, base, "BENCHMARK_RESULT_AVAILABILITY_MISMATCH",
-            "A recorded count and result must appear together with resolved settings.");
-
-      if (has_settings) {
-        const auto& settings = run.at("settings");
-        append_prefixed_issues(issues, base + "/settings", semantics(ContractKind::settings, settings));
-        if (run.at("seed") != settings.at("search").at("seed"))
-          semantic_issue(issues, base + "/seed", "RUN_SEED_MISMATCH",
-              "A benchmark run seed must match its resolved settings.");
-      }
-      if (has_result && has_invalid_portable_path(run.at("result")))
-        semantic_issue(issues, base + "/result/path", "PORTABLE_PATH_INVALID",
-            "Result paths must use nonempty relative components.");
-
-      if (run.at("status") == "completed") {
-        ++successful_runs;
-        completed_counts.push_back(run.at("count").get<std::uint64_t>());
-      } else {
-        ++failed_runs;
-      }
-
-      const auto& timings = run.at("timings");
-      const double cold_end_to_end = timings.at("cold_end_to_end_seconds").get<double>();
-      static constexpr std::string_view phase_names[] = {
-          "preprocessing_seconds", "search_seconds", "validation_seconds", "export_seconds"};
-      for (const auto phase : phase_names) {
-        if (timings.at(phase).get<double>() > cold_end_to_end)
-          semantic_issue(issues, base + "/timings/" + std::string(phase), "BENCHMARK_TIMING_INVALID",
-              "Each benchmark phase time must not exceed cold end-to-end time.");
-      }
-
-      bool first_improvement = true;
-      std::uint64_t previous_count = 0;
-      double previous_elapsed = 0;
-      const double search_seconds = timings.at("search_seconds").get<double>();
-      const auto& improvements = run.at("improvements");
-      for (std::size_t improvement_index = 0; improvement_index < improvements.size(); ++improvement_index) {
-        const auto& improvement = improvements.at(improvement_index);
-        const auto count = improvement.at("count").get<std::uint64_t>();
-        const double improvement_elapsed = improvement.at("elapsed_seconds").get<double>();
-        if ((!first_improvement && (count <= previous_count || improvement_elapsed < previous_elapsed)) ||
-            improvement_elapsed > search_seconds ||
-            (has_count && count > run.at("count").get<std::uint64_t>()))
-          semantic_issue(issues, base + "/improvements/" + std::to_string(improvement_index),
-              "IMPROVEMENT_HISTORY_INVALID",
-              "Improvement counts must increase strictly without exceeding a recorded final count, and times must be ordered within search duration.");
-        first_improvement = false;
-        previous_count = count;
-        previous_elapsed = improvement_elapsed;
-      }
-
-      if (has_settings && run.at("settings").at("search").at("deterministic").get<bool>()) {
-        const auto& transitions = run.at("backend_transitions");
-        for (std::size_t transition_index = 0; transition_index < transitions.size(); ++transition_index) {
-          const auto& transition = transitions.at(transition_index);
-          if (transition.at("from") == "vulkan" || transition.at("to") == "vulkan")
-            semantic_issue(issues, base + "/backend_transitions/" + std::to_string(transition_index),
-                "DETERMINISTIC_BACKEND_TRANSITION",
-                "A deterministic CPU benchmark run cannot transition to or from Vulkan.");
-        }
-      }
-    }
-
-    const auto& summary = value.at("summary");
-    if (summary.at("successful_runs").get<std::uint64_t>() != successful_runs ||
-        summary.at("failed_runs").get<std::uint64_t>() != failed_runs)
-      semantic_issue(issues, "/summary", "BENCHMARK_RUN_TOTAL_MISMATCH",
-          "Summary success and failure totals must match the recorded runs.");
-
-    const bool best_null = summary.at("best_count").is_null();
-    const bool median_null = summary.at("median_count").is_null();
-    const bool worst_null = summary.at("worst_count").is_null();
-    if (completed_counts.empty()) {
-      if (!best_null || !median_null || !worst_null)
-        semantic_issue(issues, "/summary", "BENCHMARK_AGGREGATE_MISMATCH",
-            "Count aggregates must all be null when no run completed.");
-    } else {
-      std::sort(completed_counts.begin(), completed_counts.end());
-      const auto expected_worst = completed_counts.front();
-      const auto expected_best = completed_counts.back();
-      const std::size_t middle = completed_counts.size() / 2;
-      const double expected_median = completed_counts.size() % 2 == 0
-          ? completed_counts.at(middle - 1) / 2.0 + completed_counts.at(middle) / 2.0
-          : static_cast<double>(completed_counts.at(middle));
-      if (best_null || median_null || worst_null ||
-          (!best_null && summary.at("best_count").get<std::uint64_t>() != expected_best) ||
-          (!worst_null && summary.at("worst_count").get<std::uint64_t>() != expected_worst) ||
-          (!median_null && !derived_equal(summary.at("median_count").get<double>(), expected_median)))
-        semantic_issue(issues, "/summary", "BENCHMARK_AGGREGATE_MISMATCH",
-            "Best, median and worst counts must aggregate completed runs only.");
-    }
   }
   return issues;
 }

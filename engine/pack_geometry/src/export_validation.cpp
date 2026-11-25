@@ -17,7 +17,6 @@
 
 #include "export_validation_internal.hpp"
 #include "field_kernel.hpp"
-#include "import_profile.hpp"
 #include "solid_analysis.hpp"
 
 namespace spectrapack::geometry {
@@ -129,10 +128,6 @@ BakedWorldOutcome inspect_baked_world_stl(std::span<const std::byte> bytes, cons
     }
     if (attempt_stats.candidate_pair_tests > limits.max_candidate_pairs) {
         return unresolved("EXPORT_IMPORT_PAIR_LIMIT", "Per-copy import candidate-pair work was exhausted.");
-    }
-    if (import_profile_sink) {
-        import_profile_sink(import_profile_context, { ImportProfilePhase::total, 0, attempt_stats.predicate_work, 0, 0,
-                                                      0, 0, 0, attempt_stats.projected });
     }
     if (const auto* failure = std::get_if<ImportFailure>(&inspected)) {
         if (failure->code == "OPERATION_CANCELLED" || failure->code == "DEADLINE_EXCEEDED") {

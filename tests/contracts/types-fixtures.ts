@@ -1,5 +1,4 @@
 import type {
-  BenchmarkSummary,
   Common,
   Desktop,
   Protocol,
@@ -176,43 +175,6 @@ const { metrics: omittedMetrics, ...resultWithoutMetrics } = result;
 // @ts-expect-error results require complete metrics metadata
 const invalidResult: Results.HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson = resultWithoutMetrics;
 
-const benchmark: BenchmarkSummary.HttpsSpectrapackInvalidSchemasV1BenchmarkSummarySchemaJson = {
-  schema_version: 1,
-  suite_id: 'synthetic',
-  created_at: '2026-09-10T00:00:00Z',
-  engine: { version: 'test', commit: '0000000' },
-  host: { cpu: 'test', gpu: null, driver: null, os_build: 'test', thread_count: 1 },
-  dependency_revisions: { pocketfft: 'test' },
-  configuration: { method: 'full_search', settings: resolved, cache_state: 'cold' },
-  runs: [
-    {
-      seed: '0',
-      status: 'completed',
-      settings: resolved,
-      count: 0,
-      result: { path: 'results/result.json', sha256: hash },
-      validation_failures: 0,
-      timings: {
-        preprocessing_seconds: 0,
-        search_seconds: 0,
-        validation_seconds: 0,
-        export_seconds: 0,
-        cold_end_to_end_seconds: 0,
-      },
-      peak_host_bytes: 0,
-      peak_device_bytes: 0,
-      improvements: [],
-      backend_transitions: [],
-    },
-  ],
-  summary: { successful_runs: 1, failed_runs: 0, best_count: 0, median_count: 0, worst_count: 0 },
-};
-
-const { host: omittedHost, ...benchmarkWithoutHost } = benchmark;
-// @ts-expect-error benchmark summaries require host provenance metadata
-const invalidBenchmark: BenchmarkSummary.HttpsSpectrapackInvalidSchemasV1BenchmarkSummarySchemaJson =
-  benchmarkWithoutHost;
-
 void point;
 void rotation;
 void malformedPoint;
@@ -226,8 +188,6 @@ void invalidSuccess;
 void invalidFailure;
 void omittedMetrics;
 void invalidResult;
-void omittedHost;
-void invalidBenchmark;
 
 const desktopSettings: Desktop.Settings = { desktop_version: 1, box_dimensions_mm: [10,20,30], clearance_mm: { pair: 1, wall: 1 }, orientation: { mode: 'fixed', quaternion_xyzw: rotation }, pitch_mm: 1, budget_seconds: 60, seed: '18446744073709551615' };
 const savePending: Desktop.SaveRequest = { settings: desktopSettings };

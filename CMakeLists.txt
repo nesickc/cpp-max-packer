@@ -81,15 +81,12 @@ add_subdirectory(engine/pack_geometry)
 add_subdirectory(engine/pack_compute)
 add_subdirectory(engine/pack_solver)
 add_subdirectory(engine/pack_io)
-add_subdirectory(engine/service)
 add_subdirectory(engine/cli)
 add_subdirectory(tests)
-add_subdirectory(benchmarks)
 if(SPECTRAPACK_FUZZING)
   add_subdirectory(tests/fuzz)
 endif()
 
-set_target_properties(pack_geometry pack_compute pack_solver pack_io pack_service
+set_target_properties(pack_geometry pack_compute pack_solver pack_io
   PROPERTIES FOLDER "Libs")
 set_target_properties(spectrapack-engine PROPERTIES FOLDER "SpectraPack")
-set_target_properties(spectrapack_service_replay_perf PROPERTIES FOLDER "Benchmarks")

@@ -45,8 +45,8 @@ save/export(immutable_result, accepted_assets, destination) -> ArtifactReport
 [ADR 0004](../spec/decisions/0004-versioned-contracts.md) freezes the initial
 schema/stdio implementation. `pack_io` consumes embedded Draft-07 schemas and
 checks serialization semantics independently of physical validation. Its T-003
-inspection publisher consumes `pack_geometry` results. `pack_service`
-owns framing, dispatch and replay; `spectrapack-engine` is its CLI adapter.
+inspection publisher consumes `pack_geometry` results. `spectrapack-engine` is the
+CLI over these libraries; the stdio service is Later (spec §8.1).
 Contract-valid metadata does not establish accepted physical geometry.
 
 [ADR 0005](../spec/decisions/0005-stl-import-and-acceptance.md) fixes T-003's native

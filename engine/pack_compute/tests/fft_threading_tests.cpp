@@ -39,8 +39,6 @@ struct Reset {
     {
         detail::set_fft_test_options({});
         detail::set_numeric_fault_for_test(detail::NumericFault::none);
-        detail::fft_call_evidence_sink = nullptr;
-        detail::fft_axis_profile_sink = nullptr;
         fail_next_allocation = false;
         std::fesetround(FE_TONEAREST);
     }
@@ -188,17 +186,6 @@ TEST_CASE("T010 one long FFT line and rectangle tails retain exact field identit
     const std::vector<std::uint8_t> kernel { 1 };
     for (const auto count : { 1U, 2U, 4U, 8U }) {
         auto execution = team(count);
-        struct Bounds {
-            std::uint64_t lines {}, values {};
-        } bounds;
-        detail::fft_call_evidence_context = &bounds;
-        detail::fft_call_evidence_sink = [](void* context, const detail::FftCallEvidence& evidence) noexcept {
-            auto& bounds = *static_cast<Bounds*>(context);
-            for (unsigned worker = 0; worker != 8; ++worker) {
-                bounds.lines = std::max(bounds.lines, evidence.maximum_group_lines[worker]);
-                bounds.values = std::max(bounds.values, evidence.maximum_group_values[worker]);
-            }
-        };
         const auto outcome = compute::correlate_binary_cpu(spec, field, kernel, {}, {}, execution.get());
         CAPTURE(count);
         if (count == 8) {
@@ -214,10 +201,6 @@ TEST_CASE("T010 one long FFT line and rectangle tails retain exact field identit
         const auto& result = std::get<compute::CorrelationResult>(outcome);
         CHECK(result.values == expected);
         CHECK((result.translation_first == compute::Index3 { 11, -5, 1 }));
-        if (count > 1) {
-            CHECK(bounds.lines <= 64);
-            CHECK(bounds.values == 65537);
-        }
     }
 }
 
@@ -321,7 +304,7 @@ TEST_CASE("T010 FFT numerical rejection remains enforced for every count", "[com
     }
 }
 
-TEST_CASE("T010 active FFT Stop and deadline join with coordinator-only clocks and sinks", "[compute][T010][fft]")
+TEST_CASE("T010 active FFT Stop and deadline join with coordinator-only clocks", "[compute][T010][fft]")
 {
     Reset reset;
     namespace runtime = spectrapack::runtime;
@@ -354,13 +337,6 @@ TEST_CASE("T010 active FFT Stop and deadline join with coordinator-only clocks a
                 state.affinity = false;
             }
             return runtime::Clock::time_point {} + std::chrono::seconds(state.active.load() ? 2 : 0);
-        };
-        detail::fft_axis_profile_context = &state;
-        detail::fft_axis_profile_sink = [](void* context, const detail::FftAxisProfileSample&) noexcept {
-            auto& state = *static_cast<State*>(context);
-            if (std::this_thread::get_id() != state.coordinator) {
-                state.affinity = false;
-            }
         };
         // Request user Stop from a real worker's first library entry; deadline uses only coordinator clock reads.
         if (!deadline) {

@@ -13,7 +13,6 @@ volumes match an independent exact signed determinant sum over the original STL
 coordinates, rounded once after division by six. Source bytes remain unchanged.
 
 The compact records retain physical results, diagnostic completion, cleanup and
-work counts, and full-resolution mesh hashes. Discovery never updates this file.
-Use [the import qualification runner](../../benchmarks/README.md) to compare a
-Release build with these expectations; record and review any baseline change in
-[T-003 evidence](../../doc/T-003.md) or its successor ticket.
+work counts, and full-resolution mesh hashes.
+`tests/protocol/t009_practical_journey.py` checks a Release build against these
+expectations.

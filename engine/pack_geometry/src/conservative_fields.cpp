@@ -11,7 +11,6 @@
 #include <vector>
 
 #include "field_kernel.hpp"
-#include "field_profile.hpp"
 #include "placed_field_test_support.hpp"
 
 namespace spectrapack::geometry {
@@ -257,7 +256,6 @@ bool initialize_cells(std::vector<std::uint8_t>& cells, std::size_t count, kerne
 
 std::optional<RepresentationFailure> fill_components(
     RawField& raw, kernel::Budget& budget, const RepresentationLimits& limits) {
-  detail::FieldProfileTimer profile(detail::FieldProfilePhase::fill, budget, raw.cell_visits);
   const auto count = raw.cells.size();
   std::uint64_t scratch{};
   if (!checked_bytes(scratch, count, sizeof(std::uint8_t)) ||
@@ -440,7 +438,6 @@ std::variant<std::vector<std::uint8_t>, RepresentationFailure> dilate_and_crop(
     std::span<const CellIndex> stencil, bool invert_material,
     kernel::Budget& budget, const RepresentationLimits& limits,
     std::uint64_t& cell_visits) {
-  detail::FieldProfileTimer profile(detail::FieldProfilePhase::clearance, budget, cell_visits);
   RepresentationFailure error;
   const auto count = window_cells(requested, limits, error);
   if (!count) return error;
