@@ -213,15 +213,12 @@ The process suites exercise the real staged executable:
 ```powershell
 $resultContractValidator = "out/build/windows-ninja-release/bin/spectrapack_result_contract_check.exe"
 python tests/protocol/solve_subprocess_test.py "$packageRoot/bin/spectrapack-engine.exe" --contract-validator $resultContractValidator
-$cliMemoryHelper = "out/build/windows-ninja-release/bin/spectrapack_cli_memory_check.exe"
-python tests/protocol/solve_controls_subprocess_test.py "$packageRoot/bin/spectrapack-engine.exe" --memory-helper $cliMemoryHelper
+python tests/protocol/solve_controls_subprocess_test.py "$packageRoot/bin/spectrapack-engine.exe"
 ```
 
 The first suite uses the test-only result checker built with `BUILD_TESTING=ON`
-to pass emitted JSON through the shared native schema and semantic validator.
-The control suite also uses a test-only CLI build to exercise a lower result-build
-memory cap with the same retained inputs. Neither helper is installed in the
-engine package or built with `BUILD_TESTING=OFF`.
+to pass emitted JSON through the shared native schema and semantic validator. The
+checker is not installed in the engine package or built with `BUILD_TESTING=OFF`.
 
 ## Measuring packing
 

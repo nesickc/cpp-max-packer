@@ -5,7 +5,6 @@
 #include <spectrapack/solver/orientations.hpp>
 #include <spectrapack/solver/spectral.hpp>
 
-#include "host_admission.hpp"
 #include "operation_channel.hpp"
 #include "resource_policy.hpp"
 
@@ -34,7 +33,6 @@ namespace io = spectrapack::io;
 namespace solver = spectrapack::solver;
 using io::Json;
 using Asset = std::shared_ptr<const io::VerifiedAsset>;
-using spectrapack::cli::HostAdmission;
 
 std::optional<io::Error> unsupported_threads(const Json& request)
 {
@@ -79,8 +77,7 @@ std::string path_text(const std::filesystem::path& path)
     return { reinterpret_cast<const char*>(value.data()), value.size() };
 }
 
-std::optional<Json> read_json(const std::filesystem::path& path, std::uint64_t limit, io::ContractKind kind,
-                              HostAdmission& budget)
+std::optional<Json> read_json(const std::filesystem::path& path, std::uint64_t limit, io::ContractKind kind)
 {
     std::ifstream input(path, std::ios::binary);
     if (!input) {
@@ -92,14 +89,8 @@ std::optional<Json> read_json(const std::filesystem::path& path, std::uint64_t l
         return {};
     }
     input.seekg(0);
-    budget.repeated(static_cast<std::uint64_t>(size), 2);
-    budget.lexer(static_cast<std::uint64_t>(size));
     std::string bytes(static_cast<size_t>(size), '\0');
     if (!bytes.empty() && !input.read(bytes.data(), size)) {
-        return {};
-    }
-    spectrapack::cli::HostJsonAdmission admission(budget);
-    if (!Json::sax_parse(bytes, &admission)) {
         return {};
     }
     io::ContractValidator validator;
@@ -143,27 +134,19 @@ std::optional<std::string> sha256(const std::string& bytes)
     return hash;
 }
 
-std::string ply(geo::MeshView mesh, HostAdmission& budget)
+std::optional<std::string> ply(geo::MeshView mesh)
 {
     std::ostringstream header;
     header << "ply\nformat binary_little_endian 1.0\nelement vertex " << mesh.vertices.size()
            << "\nproperty double x\nproperty double y\nproperty double z\nelement face " << mesh.triangles.size()
            << "\nproperty list uchar uint vertex_indices\nend_header\n";
     auto bytes = header.str();
-    std::uint64_t capacity = bytes.size();
-    const auto add = [&](std::uint64_t count, std::uint64_t width) {
-        if (count > UINT64_MAX / width || count * width > UINT64_MAX - capacity) {
-            throw spectrapack::cli::HostMemoryLimit {};
-        }
-        capacity += count * width;
-    };
-    add(mesh.vertices.size(), 24);
-    add(mesh.triangles.size(), 13);
-    if (capacity > SIZE_MAX || capacity > (64ULL << 20)) {
-        throw spectrapack::cli::HostMemoryLimit {};
+    // The preview is a display LOD; its file stays under 64 MiB.
+    const auto capacity = bytes.size() + 24 * mesh.vertices.size() + 13 * mesh.triangles.size();
+    if (capacity > (64ULL << 20)) {
+        return {};
     }
-    budget.charge(capacity);
-    bytes.reserve(static_cast<std::size_t>(capacity));
+    bytes.reserve(capacity);
     const auto append = [&bytes](auto value) {
         const auto encoded = std::bit_cast<std::array<char, sizeof(value)>>(value);
         bytes.append(encoded.data(), encoded.size());
@@ -208,8 +191,8 @@ std::optional<geo::OrientationPolicy> policy(const Json& value)
     return out;
 }
 
-int prepare(const std::map<std::string, std::filesystem::path>& options, const Asset& asset, HostAdmission& budget,
-            std::uint64_t available, const Json& request, std::uint64_t sampled_ram)
+int prepare(const std::map<std::string, std::filesystem::path>& options, const Asset& asset, std::uint64_t available,
+            const Json& request, std::uint64_t sampled_ram)
 {
     io::ContractValidator validator;
     const auto resolved = resolve_desktop_settings(request, asset, sampled_ram);
@@ -221,22 +204,16 @@ int prepare(const std::map<std::string, std::filesystem::path>& options, const A
     Json preview = nullptr, preview_path = nullptr, warnings = Json::array();
     geo::RepresentationLimits representation;
     representation.max_working_bytes = available;
-    representation.reserved_bytes = budget.used() - *asset->solid()->resident_buffer_bytes();
     auto lod = geo::make_display_lod(asset->solid(), {}, representation);
     if (const auto* mesh = std::get_if<std::shared_ptr<const geo::DisplayLod>>(&lod)) {
-        const auto resident = (*mesh)->resident_buffer_bytes();
-        if (!resident) {
-            throw spectrapack::cli::HostMemoryLimit {};
-        }
-        budget.charge(*resident);
-        auto bytes = ply((*mesh)->mesh(), budget);
-        const auto hash = sha256(bytes);
-        if (hash && bytes.size() <= (64ULL << 20) && write_file(output / "preview.ply", bytes)) {
+        const auto bytes = ply((*mesh)->mesh());
+        const auto hash = bytes ? sha256(*bytes) : std::nullopt;
+        if (hash && write_file(output / "preview.ply", *bytes)) {
             preview_path = path_text(output / "preview.ply");
             preview = {
                 { "format",           "ply"                            },
                 { "sha256",           *hash                            },
-                { "byte_length",      bytes.size()                     },
+                { "byte_length",      bytes->size()                    },
                 { "triangle_count",   (*mesh)->mesh().triangles.size() },
                 { "coordinate_frame", "object_local_mm"                }
             };
@@ -258,10 +235,10 @@ int prepare(const std::map<std::string, std::filesystem::path>& options, const A
     return std::cout ? 0 : 4;
 }
 
-int restore(const std::map<std::string, std::filesystem::path>& options, const Asset& asset, HostAdmission& budget,
-            const spectrapack::runtime::OperationControl& control)
+int restore(const std::map<std::string, std::filesystem::path>& options, const Asset& asset,
+            std::uint64_t available, const spectrapack::runtime::OperationControl& control)
 {
-    auto stored = read_json(options.at("--result"), 64ULL << 20, io::ContractKind::results, budget);
+    auto stored = read_json(options.at("--result"), 64ULL << 20, io::ContractKind::results);
     if (!stored) {
         return fail("INVALID_RESULT", "Stored result does not satisfy the complete result contract.");
     }
@@ -292,16 +269,7 @@ int restore(const std::map<std::string, std::filesystem::path>& options, const A
         return fail("INVALID_SETTINGS", "Stored physical constraints are invalid.");
     }
     auto ctx = std::get<std::shared_ptr<const geo::ValidationContext>>(context);
-    const auto context_resident = ctx->resident_buffer_bytes();
-    if (!context_resident) {
-        throw spectrapack::cli::HostMemoryLimit {};
-    }
-    budget.charge(*context_resident);
     std::vector<geo::CopyPose> poses;
-    budget.repeated(stored->at("placements").size(), 2 * sizeof(geo::CopyPose));
-    for (const auto& p : stored->at("placements")) {
-        budget.repeated(p.at("copy_id").get_ref<const std::string&>().size(), 2);
-    }
     poses.reserve(stored->at("placements").size());
     for (const auto& p : stored->at("placements")) {
         poses.push_back({ p.at("copy_id").get<std::string>(), p.at("translation_mm").get<geo::Vec3>(),
@@ -312,7 +280,7 @@ int restore(const std::map<std::string, std::filesystem::path>& options, const A
         return fail("INVALID_RESULT", "Stored poses are not canonical.");
     }
     geo::ValidationLimits validation_limits;
-    validation_limits.max_working_bytes = budget.remaining();
+    validation_limits.max_working_bytes = available;
     control.progress("Validating the packing");
     auto fresh =
         geo::validate(ctx, std::get<std::shared_ptr<const geo::Candidate>>(candidate), validation_limits, control);
@@ -356,7 +324,7 @@ int restore(const std::map<std::string, std::filesystem::path>& options, const A
                                        stl,
                                        validation_limits,
                                        {},
-                                       budget.remaining() };
+                                       available };
     export_request.diagnostic_limits = { 16, 256 };
     auto published = io::export_result(export_request, control);
     if (const auto* error = std::get_if<io::Error>(&published)) {
@@ -411,9 +379,8 @@ int run_desktop_command(const std::string& command, const std::vector<std::strin
         }
         std::optional<Json> request;
         std::optional<std::uint64_t> sampled_ram;
-        HostAdmission request_budget(32ULL << 20);
         if (command == "desktop-prepare") {
-            request = read_json(options.at("--request"), 1ULL << 20, io::ContractKind::desktop, request_budget);
+            request = read_json(options.at("--request"), 1ULL << 20, io::ContractKind::desktop);
             if (!request || !request->contains("orientation")) {
                 return fail("INVALID_SETTINGS", "Desktop settings do not satisfy version 1.");
             }
@@ -427,8 +394,6 @@ int run_desktop_command(const std::string& command, const std::vector<std::strin
             }
             available = options.contains("--available-host-bytes") ? std::min(available, *cap) : *cap;
         }
-        HostAdmission budget(available);
-        budget.charge(request_budget.used() - (16ULL << 20));
         const auto stop = std::make_shared<std::stop_source>();
         spectrapack::cli::StopMarkerWatcher watcher(
             options.contains("--stop-file") ? std::optional(options.at("--stop-file")) : std::nullopt, stop);
@@ -450,26 +415,16 @@ int run_desktop_command(const std::string& command, const std::vector<std::strin
             printer.attach(control);
         }
         control.progress("Loading the packing geometry");
-        auto loaded = io::load_accepted_asset(options.at("--object-report"), control, { budget.remaining(), { 16, 256 } });
+        auto loaded = io::load_accepted_asset(options.at("--object-report"), control, { available, { 16, 256 } });
         if (const auto* problem = std::get_if<io::Error>(&loaded)) {
             return fail(problem->code, problem->message, 3, problem->details);
         }
         const auto asset = std::get<Asset>(loaded);
-        const auto pins = asset->resident_buffer_bytes(), solid = asset->solid()->resident_buffer_bytes();
-        if (!pins || !solid) {
-            throw spectrapack::cli::HostMemoryLimit {};
-        }
-        budget.charge(*pins);
-        budget.charge(*solid);
         if (asset->solid()->role() != geo::AssetRole::object) {
             return fail("ASSET_MISMATCH", "Desktop object report has the wrong role.");
         }
-        return command == "desktop-prepare" ? prepare(options, asset, budget, available, *request, *sampled_ram)
-                                            : restore(options, asset, budget, control);
-    }
-    catch (const spectrapack::cli::HostMemoryLimit&) {
-        return fail("MEMORY_LIMIT",
-                    "Desktop helper inputs, retained owners and scratch exceed the available host allowance.", 3);
+        return command == "desktop-prepare" ? prepare(options, asset, available, *request, *sampled_ram)
+                                            : restore(options, asset, available, control);
     }
     catch (const std::bad_alloc&) {
         return fail("MEMORY_LIMIT", "Desktop helper exhausted bounded memory allocation.", 3);

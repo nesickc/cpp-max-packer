@@ -23,7 +23,6 @@ import unittest
 
 
 ENGINE: pathlib.Path
-MEMORY_HELPER: pathlib.Path
 FIXED_CATALOG_SHA256 = "4d25494e47fc0db63a4cc9905ac9ddac8980f37ef95cf71ed0cd325af9583240"
 NEAR_UNIT_CUSTOM_SHA256 = "15cb4952f292b8f531d9bf01aefda8ce2998eb8b9cf4a4675d35282861c0a999"
 FACES = (
@@ -35,18 +34,6 @@ FACES = (
 def run_engine(*arguments: pathlib.Path | str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [str(ENGINE), *(str(argument) for argument in arguments)],
-        capture_output=True,
-        encoding="utf-8",
-        text=True,
-        timeout=25,
-    )
-
-
-def run_memory_helper(build_max_bytes: int, export_max_bytes: int,
-                      *arguments: pathlib.Path | str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        [str(MEMORY_HELPER), str(build_max_bytes), str(export_max_bytes),
-         *(str(argument) for argument in arguments)],
         capture_output=True,
         encoding="utf-8",
         text=True,
@@ -372,7 +359,6 @@ class SolveControls(unittest.TestCase):
         self.assertIn("baseline", diagnostics["phase_ceilings"])
         self.assertIn("spectral", diagnostics["phase_ceilings"])
         self.assertIn("candidate_evaluations", diagnostics["work"])
-        self.assertGreater(diagnostics["caller_reserved_bytes"], 0)
         self.assertGreater(diagnostics["tracked_working_bytes_peak"], 0)
         self.assertTrue(diagnostics["diagnostic_code"])
         retained = json.loads(result_path.read_text(encoding="utf-8"))
@@ -382,136 +368,6 @@ class SolveControls(unittest.TestCase):
         self.assertEqual(evidence["diagnostic_code"], diagnostics["diagnostic_code"])
         self.assertEqual(retained["search"]["run_segments"][0]["diagnostics"], evidence)
         self.assertEqual(self.source.read_bytes(), self.original_source)
-
-    def test_caller_reserve(self) -> None:
-        small, small_result = self.solve("small", "small")
-        large, large_result = self.solve("bounded-large-preset-" + "x" * 64, "large")
-        self.assertEqual(small.returncode, 3, (small.stdout, small.stderr))
-        self.assertEqual(large.returncode, 3, (large.stdout, large.stderr))
-        small_response = json.loads(small.stdout)
-        large_response = json.loads(large.stdout)
-        self.assertEqual(small_response["error"]["code"], "RESOURCE_LIMIT")
-        self.assertEqual(large_response["error"]["code"], "RESOURCE_LIMIT")
-        self.assertIn("diagnostics", small_response["error"]["details"])
-        self.assertIn("diagnostics", large_response["error"]["details"])
-        self.assertEqual(
-            json.loads(small_result.read_text(encoding="utf-8"))["placements"],
-            json.loads(large_result.read_text(encoding="utf-8"))["placements"],
-        )
-        self.assertGreater(
-            large_response["error"]["details"]["diagnostics"]["caller_reserved_bytes"],
-            small_response["error"]["details"]["diagnostics"]["caller_reserved_bytes"],
-        )
-
-        fixed = self.settings("x")
-        custom = self.settings("x")
-        custom["orientation"] = {"mode": "custom", "quaternions_xyzw": [[0, 0, 0, 1]]}
-        size_delta = len(json.dumps(custom)) - len(json.dumps(fixed))
-        self.assertGreater(size_delta, 0)
-        fixed["search"]["preset"] = "x" * (1 + size_delta)
-        self.assertEqual(len(json.dumps(fixed)), len(json.dumps(custom)))
-        fixed_run, _ = self.solve_settings(fixed, "equal-text-fixed")
-        custom_run, _ = self.solve_settings(custom, "equal-text-custom")
-        self.assertEqual(fixed_run.returncode, 3, (fixed_run.stdout, fixed_run.stderr))
-        self.assertEqual(custom_run.returncode, 3, (custom_run.stdout, custom_run.stderr))
-        fixed_reserve = json.loads(fixed_run.stdout)["error"]["details"]["diagnostics"]["caller_reserved_bytes"]
-        custom_reserve = json.loads(custom_run.stdout)["error"]["details"]["diagnostics"]["caller_reserved_bytes"]
-        self.assertGreater(custom_reserve, fixed_reserve)
-
-        builder = self.settings("builder-owner")
-        builder["resolution"]["pitch_mm"] = 10
-        builder["resolved"]["pitch_mm"] = 10
-        builder_root = self.root / "builder-owner"
-        builder_root.mkdir()
-        builder_settings = builder_root / "settings.json"
-        high_result = builder_root / "high-result.json"
-        low_result = builder_root / "low--result.json"
-        builder_settings.write_text(json.dumps(builder), encoding="utf-8")
-        report = json.loads(self.object_report.read_text(encoding="utf-8"))
-        accepted = self.object_report.parent / pathlib.Path(report["accepted_solid"]["path"])
-        inputs = {
-            path.resolve(): path.read_bytes()
-            for path in (self.source, builder_settings, self.object_report, accepted)
-        }
-        solve_arguments = (
-            "solve", "--settings", builder_settings, "--object-report", self.object_report,
-        )
-        high = run_memory_helper(512 << 20, 512 << 20, *solve_arguments, "--result", high_result)
-        self.assertEqual(high.returncode, 0, (high.stdout, high.stderr))
-        self.assertTrue(high_result.is_file())
-
-        probe = run_memory_helper(1, 512 << 20, *solve_arguments, "--result", low_result)
-        self.assertEqual(probe.returncode, 3, (probe.stdout, probe.stderr))
-        probe_error = json.loads(probe.stdout)["error"]
-        self.assertEqual(probe_error["code"], "MEMORY_LIMIT")
-        probe_details = probe_error["details"]
-        self.assertEqual(probe_details["phase"], "result_build_admission")
-        live_bytes = probe_details["live_bytes"]
-        native_bytes = probe_details["native_input_bytes"]
-        self.assertGreater(native_bytes, 1)
-        targeted_limit = live_bytes - native_bytes // 2
-        self.assertGreater(targeted_limit, live_bytes - native_bytes)
-        self.assertLess(targeted_limit, live_bytes)
-
-        refused = run_memory_helper(targeted_limit, 512 << 20, *solve_arguments, "--result", low_result)
-        self.assertEqual(refused.returncode, 3, (refused.stdout, refused.stderr))
-        refused_error = json.loads(refused.stdout)["error"]
-        self.assertEqual(refused_error["code"], "MEMORY_LIMIT")
-        self.assertEqual(refused_error["details"]["phase"], "result_build_admission")
-        self.assertEqual(refused_error["details"]["native_input_bytes"], native_bytes)
-        self.assertFalse(low_result.exists())
-        for path, before in inputs.items():
-            self.assertEqual(path.read_bytes(), before, path)
-
-        export_settings = self.settings("export-context-owner")
-        export_settings["resolution"]["pitch_mm"] = 10
-        export_settings["resolved"]["pitch_mm"] = 10
-        export_settings["orientation"] = {
-            "mode": "custom",
-            "quaternions_xyzw": [[0.5000000000000001] * 4, [0, 0, 0, 1]],
-        }
-        export_settings["resolved"]["orientation_catalog_sha256"] = NEAR_UNIT_CUSTOM_SHA256
-        export_root = self.root / "export-context-owner"
-        export_root.mkdir()
-        export_settings_path = export_root / "settings.json"
-        export_high_result = export_root / "high-result.json"
-        export_low_result = export_root / "low-result.json"
-        export_settings_path.write_text(json.dumps(export_settings), encoding="utf-8")
-        export_inputs = {
-            path.resolve(): path.read_bytes()
-            for path in (self.source, export_settings_path, self.object_report, accepted)
-        }
-        export_arguments = (
-            "solve", "--settings", export_settings_path, "--object-report", self.object_report,
-        )
-        export_high = run_memory_helper(
-            512 << 20, 512 << 20, *export_arguments, "--result", export_high_result)
-        self.assertEqual(export_high.returncode, 0, (export_high.stdout, export_high.stderr))
-        self.assertTrue(export_high_result.is_file())
-
-        export_probe = run_memory_helper(
-            512 << 20, 1, *export_arguments, "--result", export_low_result)
-        self.assertEqual(export_probe.returncode, 3, (export_probe.stdout, export_probe.stderr))
-        probe_error = json.loads(export_probe.stdout)["error"]
-        self.assertEqual(probe_error["code"], "MEMORY_LIMIT")
-        probe_details = probe_error["details"]
-        self.assertEqual(probe_details["phase"], "result_export_admission")
-        non_context_bytes = probe_details["non_context_live_bytes"]
-        context_bytes = probe_details["context_catalog_bytes"]
-        self.assertGreater(context_bytes, 1)
-        export_target = non_context_bytes + context_bytes // 2
-        self.assertGreater(export_target, non_context_bytes)
-        self.assertLess(export_target, non_context_bytes + context_bytes)
-
-        export_refused = run_memory_helper(
-            512 << 20, export_target, *export_arguments, "--result", export_low_result)
-        self.assertEqual(export_refused.returncode, 3, (export_refused.stdout, export_refused.stderr))
-        refused_error = json.loads(export_refused.stdout)["error"]
-        self.assertEqual(refused_error["code"], "MEMORY_LIMIT")
-        self.assertEqual(refused_error["details"]["phase"], "result_export_admission")
-        self.assertFalse(export_low_result.exists())
-        for path, before in export_inputs.items():
-            self.assertEqual(path.read_bytes(), before, path)
 
     def test_deadline(self) -> None:
         output = self.root / "deadline"
@@ -618,7 +474,6 @@ class SolveControls(unittest.TestCase):
 
 CASES = {
     "solve_retained_resource": "test_retained_resource",
-    "solve_caller_reserve": "test_caller_reserve",
     "solve_deadline": "test_deadline",
     "solve_console_stop": "test_console_stop",
 }
@@ -628,7 +483,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("engine", nargs="?")
     parser.add_argument("--case", choices=CASES)
-    parser.add_argument("--memory-helper")
     parser.add_argument("--console-helper", nargs=4, metavar=("ENGINE", "SETTINGS", "REPORT", "RESULT"))
     parser.add_argument("--console-helper-no-readiness", metavar="PID_PATH")
     arguments = parser.parse_args()
@@ -638,10 +492,9 @@ if __name__ == "__main__":
                                         pathlib.Path(helper_report), pathlib.Path(helper_result)))
     if arguments.console_helper_no_readiness:
         raise SystemExit(no_readiness_helper(pathlib.Path(arguments.console_helper_no_readiness)))
-    if not arguments.engine or not arguments.memory_helper:
-        parser.error("engine and --memory-helper are required outside helper modes")
+    if not arguments.engine:
+        parser.error("engine is required outside helper modes")
     ENGINE = pathlib.Path(arguments.engine)
-    MEMORY_HELPER = pathlib.Path(arguments.memory_helper)
     suite = (unittest.TestSuite([SolveControls(CASES[arguments.case])])
              if arguments.case else unittest.defaultTestLoader.loadTestsFromTestCase(SolveControls))
     raise SystemExit(not unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful())

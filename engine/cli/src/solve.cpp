@@ -5,7 +5,6 @@
 #include <spectrapack/solver/spectral.hpp>
 
 #include "count_publication.hpp"
-#include "host_admission.hpp"
 #include "operation_channel.hpp"
 #include "resource_policy.hpp"
 #include "result_publication.hpp"
@@ -49,17 +48,6 @@ struct FailureTiming {
     double budget {};
     bool empty { true };
 };
-
-#ifdef SPECTRAPACK_CLI_TESTING
-std::atomic_uint64_t result_build_max_working_bytes_for_test {};
-std::atomic_uint64_t result_export_max_working_bytes_for_test {};
-std::atomic_uint64_t baseline_validation_max_kernel_work_for_test {};
-std::atomic<spectrapack::cli::test::AvailableRamHook> available_ram_hook_for_test {};
-std::atomic<spectrapack::cli::test::PublicationHook> publication_hook_for_test {};
-std::atomic<void*> publication_hook_context_for_test {};
-std::atomic<spectrapack::cli::test::FinalizationHook> finalization_hook_for_test {};
-std::atomic<void*> finalization_hook_context_for_test {};
-#endif
 
 spectrapack::cli::SolveOutcome failure_outcome(FailureTiming& timing, std::string code, std::string message,
                                                int exit_code, Json details = Json::object())
@@ -277,193 +265,6 @@ std::optional<std::chrono::steady_clock::time_point> deadline_from_seconds(doubl
     return now + duration;
 }
 
-bool add_bytes(uint64_t& total, uint64_t value)
-{
-    if (value > std::numeric_limits<uint64_t>::max() - total) {
-        return false;
-    }
-    total += value;
-    return true;
-}
-
-bool add_repeated_bytes(uint64_t& total, uint64_t count, size_t element_size)
-{
-    if (element_size != 0 && count > std::numeric_limits<uint64_t>::max() / element_size) {
-        return false;
-    }
-    return add_bytes(total, count * static_cast<uint64_t>(element_size));
-}
-
-bool json_payload_bytes(const Json& value, uint64_t& total)
-{
-    if (value.is_string()) {
-        const auto& string = value.get_ref<const std::string&>();
-        return add_bytes(total, sizeof(std::string)) && add_bytes(total, string.capacity());
-    }
-    if (value.is_array()) {
-        const auto& array = value.get_ref<const Json::array_t&>();
-        if (!add_bytes(total, sizeof(Json::array_t)) || !add_repeated_bytes(total, array.capacity(), sizeof(Json))) {
-            return false;
-        }
-        for (const auto& item : array) {
-            if (!json_payload_bytes(item, total)) {
-                return false;
-            }
-        }
-    }
-    else if (value.is_object()) {
-        const auto& object = value.get_ref<const Json::object_t&>();
-        if (!add_bytes(total, sizeof(Json::object_t)) ||
-            !add_repeated_bytes(total, object.size(), sizeof(Json::object_t::value_type))) {
-            return false;
-        }
-        for (const auto& item : value.items()) {
-            if (!add_bytes(total, item.key().capacity()) || !json_payload_bytes(item.value(), total)) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-std::optional<uint64_t> input_resident_bytes(const Json& settings,
-                                             const std::shared_ptr<const io::VerifiedAsset>& object,
-                                             const std::shared_ptr<const io::VerifiedAsset>& container)
-{
-    uint64_t total {};
-    // The native solver separately charges accepted solids, validation context,
-    // and its exact catalog. These are the CLI-owned payloads still alive while
-    // the solver runs.
-    const auto object_payload = object->resident_buffer_bytes();
-    const auto container_payload = container ? container->resident_buffer_bytes() : std::optional<uint64_t> { 0 };
-    if (!object_payload || !container_payload || !json_payload_bytes(settings, total) ||
-        !add_bytes(total, *object_payload) || !add_bytes(total, *container_payload)) {
-        return {};
-    }
-    return total;
-}
-
-bool add_path_bytes(uint64_t& total, const std::filesystem::path& path)
-{
-    return add_bytes(total, sizeof(std::filesystem::path)) &&
-           add_repeated_bytes(total, path.native().capacity(), sizeof(std::filesystem::path::value_type));
-}
-
-std::optional<uint64_t> request_resident_bytes(const spectrapack::cli::SolveRequest& request, uint64_t adapter_reserve)
-{
-    uint64_t total = adapter_reserve;
-    if (!add_bytes(total, sizeof(request)) || !add_path_bytes(total, request.object_report) ||
-        !add_path_bytes(total, request.result_path) || !add_bytes(total, request.engine_version.capacity()) ||
-        !add_bytes(total, request.engine_commit.capacity())) {
-        return {};
-    }
-    for (const auto* path : { &request.container_report, &request.stl_path, &request.continue_from }) {
-        if (*path && !add_path_bytes(total, **path)) {
-            return {};
-        }
-    }
-    return total;
-}
-
-std::optional<uint64_t> solution_resident_bytes(const geo::ValidatedSolution& solution,
-                                                std::span<const geo::AcceptedSolid* const> already_charged = {})
-{
-    uint64_t total {};
-    const auto own = solution.resident_buffer_bytes();
-    const auto context_own = solution.context() ? solution.context()->resident_buffer_bytes() : std::nullopt;
-    if (!own || !context_own || !add_bytes(total, *own) || !add_bytes(total, *context_own)) {
-        return {};
-    }
-    std::array<const geo::AcceptedSolid*, 2> charged_solids {};
-    size_t charged_count {};
-    const auto charge_solid = [&](const std::shared_ptr<const geo::AcceptedSolid>& solid) {
-        if (!solid || std::find(already_charged.begin(), already_charged.end(), solid.get()) != already_charged.end() ||
-            std::find(charged_solids.begin(), charged_solids.begin() + charged_count, solid.get()) !=
-                charged_solids.begin() + charged_count) {
-            return true;
-        }
-        const auto bytes = solid->resident_buffer_bytes();
-        if (!bytes || !add_bytes(total, *bytes)) {
-            return false;
-        }
-        charged_solids[charged_count++] = solid.get();
-        return true;
-    };
-    const auto& context = solution.context();
-    if (!context || !charge_solid(context->object())) {
-        return {};
-    }
-    if (const auto* container = std::get_if<std::shared_ptr<const geo::AcceptedSolid>>(&context->container());
-        container && !charge_solid(*container)) {
-        return {};
-    }
-    return total;
-}
-
-uint64_t result_build_max_working_bytes(uint64_t default_value) noexcept
-{
-#ifdef SPECTRAPACK_CLI_TESTING
-    const auto override_value = result_build_max_working_bytes_for_test.load(std::memory_order_relaxed);
-    return override_value == 0 ? default_value : override_value;
-#else
-    return default_value;
-#endif
-}
-
-uint64_t result_export_max_working_bytes(uint64_t default_value) noexcept
-{
-#ifdef SPECTRAPACK_CLI_TESTING
-    const auto override_value = result_export_max_working_bytes_for_test.load(std::memory_order_relaxed);
-    return override_value == 0 ? default_value : override_value;
-#else
-    return default_value;
-#endif
-}
-
-struct ExportResidualBytes {
-    uint64_t non_context {};
-    uint64_t context_catalog {};
-};
-
-std::optional<ExportResidualBytes> export_residual_bytes(const spectrapack::cli::SolveRequest& request,
-                                                         uint64_t adapter_reserve, const Json& diagnostics,
-                                                         const Json& retained_diagnostics,
-                                                         const geo::ValidatedSolution& solution)
-{
-    ExportResidualBytes bytes;
-    const auto request_bytes = request_resident_bytes(request, adapter_reserve);
-    if (!request_bytes || !add_bytes(bytes.non_context, *request_bytes) ||
-        !json_payload_bytes(diagnostics, bytes.non_context) ||
-        !json_payload_bytes(retained_diagnostics, bytes.non_context)) {
-        return {};
-    }
-    const auto& context = solution.context();
-    if (!context ||
-        !add_repeated_bytes(bytes.context_catalog, context->constraints().orientations.catalog_xyzw.capacity(),
-                            sizeof(geo::Quaternion))) {
-        return {};
-    }
-    return bytes;
-}
-
-Json export_admission_details(uint64_t limit, uint64_t live, const ExportResidualBytes& bytes)
-{
-#ifdef SPECTRAPACK_CLI_TESTING
-    return {
-        { "phase",                  "result_export_admission" },
-        { "export_limit_bytes",     limit                     },
-        { "live_bytes",             live                      },
-        { "non_context_live_bytes", bytes.non_context         },
-        { "context_catalog_bytes",  bytes.context_catalog     }
-    };
-#else
-    (void)limit;
-    (void)live;
-    (void)bytes;
-    return Json::object();
-#endif
-}
-
 Json resource_diagnostics(const solver::ResourceRecovery& recovery)
 {
     Json transitions = Json::array();
@@ -493,7 +294,7 @@ Json resource_diagnostics(const solver::ResourceRecovery& recovery)
 }
 
 Json command_diagnostics(const solver::SpectralOutcome& outcome, const solver::SpectralLimits& limits,
-                         uint64_t caller_reserved, std::string_view time_to_best_basis)
+                         std::string_view time_to_best_basis)
 {
     return {
         { "resource_recovery",          resource_diagnostics(outcome.resource_recovery)                 },
@@ -516,7 +317,6 @@ Json command_diagnostics(const solver::SpectralOutcome& outcome, const solver::S
             { "spectral_correlations", outcome.spectral_stats.correlations },
             { "spectral_pages_examined", outcome.spectral_stats.pages_examined } }                      },
         { "time_to_best_basis",         std::string(time_to_best_basis)                                 },
-        { "caller_reserved_bytes",      caller_reserved                                                 },
         { "tracked_working_bytes_peak", outcome.run.stats.tracked_working_bytes_peak                    },
         { "diagnostic_code",            std::string(outcome.run.diagnostic_code)                        }
     };
@@ -597,11 +397,9 @@ std::variant<Continuation, io::Error> load_continuation(const std::filesystem::p
                                                         const spectrapack::runtime::OperationControl& control)
 {
     std::optional<io::ValidatedDocument> document;
-    try {
-        spectrapack::cli::HostAdmission admission(limits.max_working_bytes);
-        const auto source = spectrapack::cli::read_settings_file(path, admission, 64ULL << 20);
-        spectrapack::cli::HostJsonAdmission syntax_admission(admission);
-        if (!source || !Json::sax_parse(*source, &syntax_admission)) {
+    {
+        const auto source = spectrapack::cli::read_settings_file(path, 64ULL << 20);
+        if (!source) {
             return continuation_error("CONTINUE_RESULT_INVALID", "The result to continue from cannot be read.");
         }
         io::ContractValidator validator(io::ContractKind::results);
@@ -611,9 +409,6 @@ std::variant<Continuation, io::Error> load_continuation(const std::filesystem::p
                                       "The result to continue from does not satisfy the result contract.");
         }
         document.emplace(std::get<io::ValidatedDocument>(std::move(decoded)));
-    }
-    catch (const spectrapack::cli::HostMemoryLimit&) {
-        return continuation_error("MEMORY_LIMIT", "The result to continue from exceeds the remaining host allowance.");
     }
     const auto& parent = document->value();
     if (auto changed = changed_locked_settings(parent.at("search").at("resolved_settings"), settings);
@@ -695,37 +490,6 @@ bool spectrapack::cli::solve_paths_alias(const std::filesystem::path& a, const s
     return aliases(a, b);
 }
 
-#ifdef SPECTRAPACK_CLI_TESTING
-namespace spectrapack::cli::test {
-void set_publication_hook(PublicationHook hook, void* context) noexcept
-{
-    publication_hook_context_for_test.store(context);
-    publication_hook_for_test.store(hook);
-}
-void set_finalization_hook(FinalizationHook hook, void* context) noexcept
-{
-    finalization_hook_context_for_test.store(context);
-    finalization_hook_for_test.store(hook);
-}
-void set_result_build_max_working_bytes(std::uint64_t bytes) noexcept
-{
-    result_build_max_working_bytes_for_test.store(bytes, std::memory_order_relaxed);
-}
-void set_result_export_max_working_bytes(std::uint64_t bytes) noexcept
-{
-    result_export_max_working_bytes_for_test.store(bytes, std::memory_order_relaxed);
-}
-void set_baseline_validation_max_kernel_work(std::uint64_t work) noexcept
-{
-    baseline_validation_max_kernel_work_for_test.store(work, std::memory_order_relaxed);
-}
-void set_available_ram_hook(AvailableRamHook hook) noexcept
-{
-    available_ram_hook_for_test.store(hook, std::memory_order_relaxed);
-}
-}  // namespace spectrapack::cli::test
-#endif
-
 spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, const SolveRuntime& run_runtime)
 {
     const auto registered_start = run_runtime.native_start;
@@ -785,16 +549,9 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         }
         host_cap = *cap;
     }
-    std::uint64_t loading_reserve = run_runtime.retained_reserve_bytes;
-    const auto loading_request_bytes = request_resident_bytes(request, run_runtime.adapter_reserve_bytes);
-    if (!loading_request_bytes || !add_bytes(loading_reserve, *loading_request_bytes) ||
-        !json_payload_bytes(settings, loading_reserve) || loading_reserve >= host_cap) {
-        return fail("MEMORY_LIMIT", "Loading inputs exceed remaining host allowance.", 3);
-    }
     const io::AssetLoadOutcome loaded_object =
         request.object ? io::AssetLoadOutcome(request.object)
-                       : io::load_accepted_asset(object_report, control,
-                                                 { host_cap - loading_reserve, run_runtime.diagnostic_limits });
+                       : io::load_accepted_asset(object_report, control, { host_cap, run_runtime.diagnostic_limits });
     if (!std::holds_alternative<std::shared_ptr<const io::VerifiedAsset>>(loaded_object)) {
         const auto& error = std::get<io::Error>(loaded_object);
         return fail(error.code, error.message, 3, error.details);
@@ -815,13 +572,8 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         if (!container_report) {
             return fail("ASSET_MISMATCH", "STL container settings require a report.", 2);
         }
-        const auto pins = object->resident_buffer_bytes(), solid = object->solid()->resident_buffer_bytes();
-        if (!pins || !solid || !add_bytes(loading_reserve, *pins) || !add_bytes(loading_reserve, *solid) ||
-            loading_reserve >= host_cap) {
-            return fail("MEMORY_LIMIT", "Container loading exceeds remaining host allowance.", 3);
-        }
-        const auto loaded = io::load_accepted_asset(*container_report, control,
-                                                    { host_cap - loading_reserve, run_runtime.diagnostic_limits });
+        const auto loaded =
+            io::load_accepted_asset(*container_report, control, { host_cap, run_runtime.diagnostic_limits });
         if (!std::holds_alternative<std::shared_ptr<const io::VerifiedAsset>>(loaded)) {
             const auto& error = std::get<io::Error>(loaded);
             return fail(error.code, error.message, 3, error.details);
@@ -902,11 +654,6 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     orientation.reset();
     const auto started = std::chrono::steady_clock::now();
     solver::SpectralLimits limits;
-#ifdef SPECTRAPACK_CLI_TESTING
-    if (const auto work = baseline_validation_max_kernel_work_for_test.load(std::memory_order_relaxed)) {
-        limits.baseline.max_validation_kernel_work = work;
-    }
-#endif
     limits.cpu_thread_count = static_cast<std::uint32_t>(thread_count);
     limits.resource_status_sink = run_runtime.resource_status_sink;
     limits.resource_status_context = run_runtime.resource_status_context;
@@ -940,13 +687,6 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
            limits.spectral.max_search_passes != partition.spectral.max_search_passes)))) {
         return fail("UNSUPPORTED_RESOURCE_POLICY", "Resolved caps must match the effective fixed-work partition.", 3);
     }
-#ifdef SPECTRAPACK_CLI_TESTING
-    if (limits.resource_mode == solver::ResourceMode::timed) {
-        if (const auto hook = available_ram_hook_for_test.load(std::memory_order_relaxed)) {
-            limits.available_ram = hook;
-        }
-    }
-#endif
     std::optional<std::chrono::steady_clock::time_point> deadline;
     if (!search["deterministic"].get<bool>()) {
         deadline = control.deadline;
@@ -957,26 +697,12 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
             return fail("INVALID_SETTINGS", "budget_seconds cannot form a representable steady-clock deadline.", 2);
         }
     }
-    const auto input_reserve = input_resident_bytes(settings, object, container_asset);
-    const auto command_reserve = request_resident_bytes(request, run_runtime.adapter_reserve_bytes);
-    uint64_t caller_reserve {};
-    if (!input_reserve || !command_reserve || !add_bytes(caller_reserve, *input_reserve) ||
-        !add_bytes(caller_reserve, *command_reserve)) {
-        return fail("MEMORY_LIMIT", "CLI input residency cannot be represented.", 3);
-    }
-    if (!add_bytes(caller_reserve, run_runtime.retained_reserve_bytes) ||
-        !add_bytes(caller_reserve, run_runtime.publication_reserved_bytes)) {
-        return fail("MEMORY_LIMIT", "Retained session residency overflows.", 3);
-    }
-    limits.reserved_bytes = caller_reserve;
     std::shared_ptr<const geo::ValidatedSolution> initial;
     std::optional<Continuation> continued;
     if (request.continue_from) {
         control.phase(spectrapack::runtime::Phase::validating);
         auto start_limits = limits.spectral.per_validation;
-        start_limits.max_working_bytes =
-            std::min(start_limits.max_working_bytes,
-                     limits.max_working_bytes - std::min(limits.max_working_bytes, caller_reserve));
+        start_limits.max_working_bytes = std::min(start_limits.max_working_bytes, limits.max_working_bytes);
         auto loaded = load_continuation(*request.continue_from, settings,
                                         std::get<std::shared_ptr<const geo::ValidationContext>>(context_value),
                                         *native_catalog, start_limits, run_runtime.diagnostic_limits, control);
@@ -985,16 +711,8 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         }
         continued.emplace(std::get<Continuation>(std::move(loaded)));
         initial = continued->solution;
-        // The earlier run segments stay resident until the result is written.
-        if (!json_payload_bytes(continued->segments, caller_reserve)) {
-            return fail("MEMORY_LIMIT", "Continued run segments cannot be represented.", 3);
-        }
-        limits.reserved_bytes = caller_reserve;
     }
     CountPublication publication(continued ? continued->revision : 0);
-    if (run_runtime.publication_sink && run_runtime.publication_reserved_bytes < publication_reserve_bytes) {
-        return fail("PUBLICATION_RESOURCE_LIMIT", "Count publication reservation is insufficient.", 3);
-    }
     solver::SnapshotHandle last_snapshot;
     std::optional<double> last_snapshot_seconds;
     std::atomic_bool reported_snapshot {};
@@ -1005,9 +723,7 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
             return fail("SOLVE_FAILED", "Initial empty candidate could not be created.", 3);
         }
         auto empty_limits = limits.spectral.per_validation;
-        empty_limits.max_working_bytes =
-            std::min(empty_limits.max_working_bytes,
-                     limits.max_working_bytes - std::min(limits.max_working_bytes, caller_reserve));
+        empty_limits.max_working_bytes = std::min(empty_limits.max_working_bytes, limits.max_working_bytes);
         const auto checked =
             geo::validate(std::get<std::shared_ptr<const geo::ValidationContext>>(context_value),
                           std::get<std::shared_ptr<const geo::Candidate>>(empty), empty_limits, control);
@@ -1085,7 +801,7 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     }
     if (!outcome.run.retained_solution) {
         Json details {
-            { "diagnostics", command_diagnostics(outcome, limits, caller_reserve, "retained_return") }
+            { "diagnostics", command_diagnostics(outcome, limits, "retained_return") }
         };
         if (retained_diagnostics.contains("failure")) {
             details["failure"] = retained_diagnostics["failure"];
@@ -1094,13 +810,7 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         return fail(resource ? "RESOURCE_LIMIT" : "SOLVE_FAILED", "Search produced no validated solution.",
                     resource ? 3 : 4, std::move(details));
     }
-    const auto host = peak_rss();
-    if (!host) {
-        return fail("RESOURCE_MEASUREMENT_FAILED", "Peak RSS measurement failed.", 3,
-                    {
-                        { "diagnostics", command_diagnostics(outcome, limits, caller_reserve, "retained_return") }
-        });
-    }
+    const auto host = peak_rss().value_or(0);
     const bool final_snapshot = last_snapshot && last_snapshot->solution == outcome.run.retained_solution;
     // Totals of the run segments a continued result already has, summed as the
     // result contract sums them.
@@ -1124,7 +834,7 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
                           : continued          ? continued->revision + std::max<uint64_t>(native_revision, 1)
                                                : native_revision;
     const auto time_to_best_basis = final_snapshot ? "snapshot" : "retained_return";
-    const auto diagnostics = command_diagnostics(outcome, limits, caller_reserve, time_to_best_basis);
+    const auto diagnostics = command_diagnostics(outcome, limits, time_to_best_basis);
     const auto termination_reason =
         stop_monitor_error.failed ? solver::TerminationReason::error : outcome.run.termination_reason;
     if (request.object && run_runtime.preserve_previous_on_empty && outcome.run.retained_solution->copies().empty() &&
@@ -1209,7 +919,7 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
             { "elapsed_seconds", earlier_elapsed + elapsed } }                                                      },
         { "metrics",
          { { "time_to_best_seconds", time_to_best },
-            { "peak_host_bytes", *host },
+            { "peak_host_bytes", host },
             { "peak_device_bytes", 0 },
             { "termination_reason", reason(termination_reason) } }                                                  }
     };
@@ -1219,49 +929,10 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     metadata["search"]["runtime"] =
         timeline.record(budget_scope, time_budget, run_runtime.preparation_reused, retained_solution->copies().empty());
     metadata["search"]["run_segments"].back()["runtime"] = metadata["search"]["runtime"];
-    std::string().swap(engine_version);
-    std::string().swap(engine_commit);
-    uint64_t build_metadata_bytes {};
-    if (!json_payload_bytes(metadata, build_metadata_bytes)) {
-        return fail("MEMORY_LIMIT", "CLI result metadata residency cannot be represented.", 3,
-                    {
-                        { "diagnostics", diagnostics }
-        });
-    }
     io::ResultRequest result_request { retained_solution, object, container_asset, std::move(output_catalog),
                                        std::move(metadata) };
     result_request.diagnostic_limits = run_runtime.diagnostic_limits;
-    uint64_t build_catalog_bytes {};
-    if (!add_repeated_bytes(build_catalog_bytes, result_request.catalog.quaternions.capacity(),
-                            sizeof(geo::Quaternion)) ||
-        !add_bytes(build_metadata_bytes, build_catalog_bytes)) {
-        return fail("MEMORY_LIMIT", "CLI result catalog residency cannot be represented.", 3,
-                    {
-                        { "diagnostics", diagnostics }
-        });
-    }
-    const auto build_command_reserve = request_resident_bytes(request, run_runtime.adapter_reserve_bytes);
-    const auto build_native_reserve = solution_resident_bytes(*retained_solution);
-    uint64_t build_diagnostics_bytes {};
-    uint64_t build_live_bytes {};
-    const auto build_limit = result_build_max_working_bytes(limits.max_working_bytes);
-    if (!build_command_reserve || !build_native_reserve || !json_payload_bytes(diagnostics, build_diagnostics_bytes) ||
-        !json_payload_bytes(retained_diagnostics, build_diagnostics_bytes) ||
-        !add_bytes(build_live_bytes, *input_reserve) || !add_bytes(build_live_bytes, *build_command_reserve) ||
-        !add_bytes(build_live_bytes, build_diagnostics_bytes) || !add_bytes(build_live_bytes, build_metadata_bytes) ||
-        !add_bytes(build_live_bytes, run_runtime.retained_reserve_bytes) ||
-        !add_bytes(build_live_bytes, run_runtime.publication_reserved_bytes) ||
-        !add_bytes(build_live_bytes, *build_native_reserve) || build_live_bytes > build_limit) {
-        return fail("MEMORY_LIMIT", "CLI result live residency exceeds the checked build reservation.", 3,
-                    {
-                        { "phase",              "result_build_admission"         },
-                        { "diagnostics",        diagnostics                      },
-                        { "build_limit_bytes",  build_limit                      },
-                        { "live_bytes",         build_live_bytes                 },
-                        { "native_input_bytes", build_native_reserve.value_or(0) }
-        });
-    }
-    result_request.validation_limits.max_working_bytes = build_limit - build_live_bytes;
+    result_request.validation_limits.max_working_bytes = limits.max_working_bytes;
     auto cleanup_control = control;
     cleanup_control.stop = {};
     // Dense certified envelopes can need more than five seconds for fresh
@@ -1270,50 +941,20 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     // The desktop transport allows this interval plus one second for the reply.
     constexpr std::chrono::seconds cleanup_allowance { 30 };
     cleanup_control.deadline = spectrapack::runtime::Clock::now() + cleanup_allowance;
-#ifdef SPECTRAPACK_CLI_TESTING
-    if (const auto hook = finalization_hook_for_test.load()) {
-        hook(finalization_hook_context_for_test.load(), cleanup_control, run_runtime);
-    }
-#endif
     control.phase(spectrapack::runtime::Phase::cleanup);
     settings_owner.reset();
-    const auto export_reserve = export_residual_bytes(request, run_runtime.adapter_reserve_bytes, diagnostics,
-                                                      retained_diagnostics, *retained_solution);
-    const auto export_limit = result_export_max_working_bytes(limits.max_working_bytes);
-    uint64_t export_live_bytes {};
-    const bool export_representable = export_reserve && add_bytes(export_live_bytes, export_reserve->non_context) &&
-                                      add_bytes(export_live_bytes, export_reserve->context_catalog) &&
-                                      add_bytes(export_live_bytes, run_runtime.retained_reserve_bytes) &&
-                                      add_bytes(export_live_bytes, run_runtime.publication_reserved_bytes);
-    if (!export_representable || export_live_bytes > export_limit) {
-        auto details = export_reserve ? export_admission_details(export_limit, export_live_bytes, *export_reserve)
-                                      : Json::object();
-        details["diagnostics"] = diagnostics;
-        return fail("MEMORY_LIMIT", "CLI export residency cannot be represented.", 3, std::move(details));
-    }
     io::ResultPublicationRequest export_request { result_request, result_path, stl_path };
-    export_request.max_working_bytes = export_limit - export_live_bytes;
+    export_request.max_working_bytes = limits.max_working_bytes;
     struct FinalRuntime {
         spectrapack::cli::Timeline& timeline;
         const std::string& scope;
         double budget;
         bool reused, empty;
-#ifdef SPECTRAPACK_CLI_TESTING
-        std::stop_token operation_stop;
-#endif
     } final_runtime { timeline, budget_scope, time_budget, run_runtime.preparation_reused,
                       retained_solution->copies().empty() };
-#ifdef SPECTRAPACK_CLI_TESTING
-    final_runtime.operation_stop = control.stop;
-#endif
     export_request.runtime_context = &final_runtime;
     export_request.runtime_before_commit = [](void* context) {
         const auto& value = *static_cast<const FinalRuntime*>(context);
-#ifdef SPECTRAPACK_CLI_TESTING
-        if (const auto hook = publication_hook_for_test.load()) {
-            hook(publication_hook_context_for_test.load(), value.operation_stop);
-        }
-#endif
         return value.timeline.record(value.scope, value.budget, value.reused, value.empty);
     };
     auto published = io::build_and_export_result(std::move(export_request), cleanup_control);
@@ -1472,15 +1113,10 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
         runtime.stop_monitor_context = &stop_watcher;
         control.phase(spectrapack::runtime::Phase::loading);
         std::optional<io::ValidatedDocument> settings_document;
-        try {
-            spectrapack::cli::HostAdmission settings_admission(512ULL << 20);
-            auto source = spectrapack::cli::read_settings_file(*settings_path, settings_admission);
+        {
+            auto source = spectrapack::cli::read_settings_file(*settings_path);
             if (!source) {
                 return fail("SETTINGS_LOAD", "Settings file cannot be read.", 3);
-            }
-            spectrapack::cli::HostJsonAdmission syntax_admission(settings_admission);
-            if (!Json::sax_parse(*source, &syntax_admission)) {
-                return fail("INVALID_SETTINGS", "Settings JSON is malformed or too deeply nested.", 2);
             }
             io::ContractValidator validator;
             auto decoded = validator.parse(io::ContractKind::settings, *source, runtime.diagnostic_limits);
@@ -1502,23 +1138,6 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
             }
             settings_document.emplace(std::get<io::ValidatedDocument>(std::move(decoded)));
         }
-        catch (const spectrapack::cli::HostMemoryLimit&) {
-            return fail("MEMORY_LIMIT", "Settings parser scratch exceeds remaining host allowance.", 3);
-        }
-        // The argv and settings/Stop paths remain adapter-owned while solve runs.
-        std::uint64_t adapter_bytes = 16ULL << 20;
-        if (!add_bytes(adapter_bytes, sizeof(arguments)) ||
-            !add_repeated_bytes(adapter_bytes, arguments.capacity(), sizeof(std::string)) ||
-            !add_path_bytes(adapter_bytes, *settings_path) ||
-            (stop_file && !add_path_bytes(adapter_bytes, *stop_file))) {
-            return fail("MEMORY_LIMIT", "CLI input residency cannot be represented.", 3);
-        }
-        for (const auto& argument : arguments) {
-            if (!add_bytes(adapter_bytes, argument.capacity())) {
-                return fail("MEMORY_LIMIT", "CLI input residency cannot be represented.", 3);
-            }
-        }
-        runtime.adapter_reserve_bytes = adapter_bytes;
         runtime.initialize_valid_empty = stop_file.has_value();
         return spectrapack::cli::solve({ std::move(*settings_document),
                                          std::move(*object_report),
@@ -1546,9 +1165,4 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     }
     std::cout << terminal.dump() << '\n' << std::flush;
     return std::cout ? outcome.exit_code : 4;
-}
-std::optional<std::uint64_t> spectrapack::cli::retained_solution_bytes(
-    const geometry::ValidatedSolution& solution, std::span<const geometry::AcceptedSolid* const> already_charged)
-{
-    return solution_resident_bytes(solution, already_charged);
 }

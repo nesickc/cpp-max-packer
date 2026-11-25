@@ -46,12 +46,10 @@ if(BUILD_TESTING)
   foreach(control_case IN ITEMS
     solve_retained_resource
     solve_deadline
-    solve_console_stop
-    solve_caller_reserve)
+    solve_console_stop)
     add_test(NAME spectrapack_${control_case}_subprocess
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/solve_controls_subprocess_test.py"
         "$<TARGET_FILE:spectrapack-engine>"
-        --memory-helper "$<TARGET_FILE:spectrapack_cli_memory_check>"
         --case "${control_case}")
     set_tests_properties(spectrapack_${control_case}_subprocess PROPERTIES TIMEOUT 30)
   endforeach()

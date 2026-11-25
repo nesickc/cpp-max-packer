@@ -113,80 +113,24 @@ TEST_CASE("Validated compaction updates public poses without changing time to co
     CHECK_FALSE(gate.offer(incumbent.best(), 4));
 }
 
-TEST_CASE("AT-14 T015 charges actual pinned payload capacity and retains prior on refusal", "[publication][T015]")
+TEST_CASE("A live packing over 1 MiB is published whole", "[publication]")
 {
-    auto ctx = context();
-    const auto checked = [&](std::vector<geo::CopyPose> copies) {
-        return geo::validate(
-            ctx, std::get<std::shared_ptr<const geo::Candidate>>(geo::make_candidate(ctx, std::move(copies))));
-    };
-    auto first = checked({
-        { "one", { 1, 1, 1 }, { 0, 0, 0, 1 } }
-    });
-    auto oversized = checked({
-        { "one", { 1, 1, 1 }, { 0, 0, 0, 1 } },
-        { std::string(spectrapack::cli::publication_slot_bytes, 'x'), { 3, 1, 1 }, { 0, 0, 0, 1 } }
-    });
-    REQUIRE(first.validated_solution);
-    REQUIRE(oversized.validated_solution);
-    CHECK(*oversized.validated_solution->resident_buffer_bytes() > spectrapack::cli::publication_slot_bytes);
+    // 6,000 unit cubes 0.5 mm apart in one layer: about 1.1 MB of placements.
+    const auto ctx = std::get<std::shared_ptr<const geo::ValidationContext>>(geo::make_validation_context(
+        geo::test_support::accepted(geo::test_support::cuboid({ 0, 0, 0 }, { 1, 1, 1 }), geo::AssetRole::object),
+        geo::BoxDimensions { 151, 91, 2 }, {}));
+    std::vector<geo::CopyPose> poses;
+    for (int index = 0; index != 6000; ++index) {
+        poses.push_back({ "copy-" + std::to_string(index), { 1 + 1.5 * (index % 100), 1 + 1.5 * (index / 100), 1 }, { 0, 0, 0, 1 } });
+    }
+    const auto checked =
+        geo::validate(ctx, std::get<std::shared_ptr<const geo::Candidate>>(geo::make_candidate(ctx, std::move(poses))));
+    REQUIRE(checked.validated_solution);
     spectrapack::cli::CountPublication gate;
-    auto native =
-        std::make_shared<const solver::NativeSnapshot>(solver::NativeSnapshot { 1, first.validated_solution });
-    REQUIRE(gate.offer(native, 1));
-    const auto retained = gate.latest();
-    CHECK_FALSE(gate.offer(
-        std::make_shared<const solver::NativeSnapshot>(solver::NativeSnapshot { 2, oversized.validated_solution }), 2));
-    CHECK(gate.failed());
-    CHECK(gate.latest() == retained);
-    const auto bytes = spectrapack::cli::encode_packing_record(
-        {
-            { "kind", "packing" }
-    },
-        *retained);
-    auto parsed = spectrapack::io::Json::parse(bytes);
-    CHECK(parsed["packing"]["placements"][0]["translation_mm"] == spectrapack::io::Json::array({ 1, 1, 1 }));
-    CHECK(bytes.capacity() <= spectrapack::cli::runtime_wire_capacity_limit);
-}
-
-TEST_CASE("T015 public payload slots release obsolete owners and count wire escapes before allocation",
-          "[publication][T015]")
-{
-    auto ctx = context();
-    const auto make = [&](unsigned count, bool escaped = false) {
-        std::vector<geo::CopyPose> poses;
-        for (unsigned i = 0; i < count; ++i) {
-            poses.push_back({
-                (escaped ? std::string(4090, '\x01') : "copy-") + std::to_string(i),
-                { 1 + 1.5 * i, 1, 1 },
-                { 0, 0, 0, 1 }
-            });
-        }
-        return geo::validate(
-                   ctx, std::get<std::shared_ptr<const geo::Candidate>>(geo::make_candidate(ctx, std::move(poses))))
-            .validated_solution;
-    };
-    spectrapack::cli::CountPublication gate;
-    auto a = make(24);
-    REQUIRE(a);
-    std::weak_ptr<const geo::ValidatedSolution> old = a;
-    REQUIRE(gate.offer(std::make_shared<const solver::NativeSnapshot>(solver::NativeSnapshot { 1, a }), 1));
-    a.reset();
-    auto inflight = gate.latest();
-    auto b = make(25);
-    REQUIRE(b);
-    REQUIRE(gate.offer(std::make_shared<const solver::NativeSnapshot>(solver::NativeSnapshot { 2, b }), 2));
-    CHECK_FALSE(old.expired());
-    inflight.reset();
-    CHECK(old.expired());
-    auto large = make(44, true);
-    REQUIRE(large);
-    CHECK(*large->resident_buffer_bytes() < spectrapack::cli::publication_slot_bytes);
-    REQUIRE(gate.offer(std::make_shared<const solver::NativeSnapshot>(solver::NativeSnapshot { 3, large }), 3));
-    REQUIRE_THROWS_AS(spectrapack::cli::encode_packing_record(
-                          {
-                              { "kind", "packing" }
-    },
-                          *gate.latest()),
-                      std::length_error);
+    REQUIRE(gate.offer(std::make_shared<const solver::NativeSnapshot>(solver::NativeSnapshot { 1, checked.validated_solution }), 1));
+    const auto bytes = spectrapack::cli::encode_packing_record({ { "kind", "packing" } }, *gate.latest());
+    CHECK(bytes.size() > (1U << 20));
+    const auto parsed = spectrapack::io::Json::parse(bytes);
+    CHECK(parsed["packing"]["count"] == 6000);
+    CHECK(parsed["packing"]["placements"].size() == 6000);
 }
