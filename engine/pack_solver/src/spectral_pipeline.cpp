@@ -445,10 +445,6 @@ std::optional<geometry::RepresentationLimits> representation_limits(
     auto nested = limits.per_representation;
     nested.renewable_work_limits = limits.timed;
     nested.max_working_bytes = std::min(nested.max_working_bytes, limits.max_working_bytes);
-    nested.max_kernel_work = std::min(nested.max_kernel_work, remaining(limits.max_representation_kernel_work,
-                                                                        result.stats.representation_kernel_work));
-    nested.max_cell_visits = std::min(nested.max_cell_visits, remaining(limits.max_representation_cell_visits,
-                                                                        result.stats.representation_cell_visits));
     nested.reserved_bytes = *reserve;
     return nested;
 }
@@ -457,11 +453,7 @@ bool record_attempt(SpectralPipelineResult& result, const SpectralLimits& limits
                     const geometry::RepresentationLimits& nested,
                     const geometry::RepresentationAttemptStats& attempt) noexcept
 {
-    if (attempt.kernel_work >
-            remaining(limits.max_representation_kernel_work, result.stats.representation_kernel_work) ||
-        attempt.cell_visits >
-            remaining(limits.max_representation_cell_visits, result.stats.representation_cell_visits) ||
-        !record(result.stats, attempt) ||
+    if (!record(result.stats, attempt) ||
         nested.reserved_bytes > std::numeric_limits<std::uint64_t>::max() - attempt.working_bytes_peak) {
         return false;
     }
@@ -1040,14 +1032,6 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                 work_ok = false;
                 return false;
             }
-            if (units > remaining(limits.max_representation_kernel_work, result.stats.representation_kernel_work) ||
-                (visit && result.stats.representation_cell_visits >= limits.max_representation_cell_visits)) {
-                result.diagnostic = visit ? "FIELD_CELL_VISIT_LIMIT" : "FIELD_KERNEL_WORK_LIMIT";
-                result.failure_details =
-                    RunFailureDetails { TerminationReason::resource_limit, "workspace", result.diagnostic, {}, {} };
-                work_ok = false;
-                return false;
-            }
             result.stats.representation_kernel_work += units;
             if (visit) {
                 ++result.stats.representation_cell_visits;
@@ -1355,10 +1339,11 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                 return result;
             }
             result.admitted_bytes_upper_bound = std::max(result.admitted_bytes_upper_bound, *live);
-            if (!build_proximity(environment->shape, occupied, distances, limits.max_proximity_terms,
+            // Fails only when interrupted or for a grid too large for exact distances.
+            if (!build_proximity(environment->shape, occupied, distances, std::numeric_limits<std::uint64_t>::max(),
                                  result.stats.proximity_terms, control)) {
                 if (!interrupted()) {
-                    result.diagnostic = "SPECTRAL_PIPELINE_PROXIMITY_LIMIT";
+                    result.diagnostic = "SPECTRAL_PIPELINE_PROXIMITY_SHAPE";
                     result.failure_details =
                         RunFailureDetails { TerminationReason::resource_limit, "pipeline", result.diagnostic, {}, {} };
                 }
@@ -1488,8 +1473,6 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
         if (!current_correlation) {
             correlation_limits.max_working_bytes =
                 std::min(correlation_limits.max_working_bytes, limits.max_working_bytes);
-            correlation_limits.max_direct_terms = std::min(
-                correlation_limits.max_direct_terms, remaining(limits.max_direct_terms, result.stats.direct_terms));
             live = current_bytes(owners, limits);
             if (!live || !observe(result, limits, *live)) {
                 result.diagnostic = "SPECTRAL_PIPELINE_RESIDENCY";
@@ -1537,8 +1520,7 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             // bound, including reserve. Entry/input/cap failures return zero.
             result.admitted_bytes_upper_bound =
                 std::max(result.admitted_bytes_upper_bound, binary_stats.working_bytes_peak);
-            if (binary_stats.direct_terms > remaining(limits.max_direct_terms, result.stats.direct_terms) ||
-                !add(result.stats.direct_terms, binary_stats.direct_terms) ||
+            if (!add(result.stats.direct_terms, binary_stats.direct_terms) ||
                 !observe(result, limits, binary_stats.working_bytes_peak)) {
                 result.diagnostic = "SPECTRAL_PIPELINE_OVERFLOW";
                 result.failure_details = RunFailureDetails {
@@ -1577,9 +1559,6 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                 return result;
             }
             correlation_limits.reserved_bytes = *live - (state.fft ? state.fft->reserved_bytes() : 0);
-            correlation_limits.max_direct_terms =
-                std::min(limits.per_correlation.max_direct_terms,
-                         remaining(limits.max_proximity_terms, result.stats.proximity_terms));
             control.phase(runtime::Phase::planning_fft);
             auto ranked = compute::correlate_proximity_cpu(spec, proximity, owners.kernel->cells(), correlation_limits,
                                                            control, state.fft.get());
@@ -1587,8 +1566,7 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             const auto& ranked_stats = correlation_stats(ranked);
             result.admitted_bytes_upper_bound =
                 std::max(result.admitted_bytes_upper_bound, ranked_stats.working_bytes_peak);
-            if (ranked_stats.direct_terms > remaining(limits.max_proximity_terms, result.stats.proximity_terms) ||
-                !add(result.stats.proximity_terms, ranked_stats.direct_terms) ||
+            if (!add(result.stats.proximity_terms, ranked_stats.direct_terms) ||
                 !observe(result, limits, ranked_stats.working_bytes_peak)) {
                 result.diagnostic = "SPECTRAL_PIPELINE_OVERFLOW";
                 result.failure_details = RunFailureDetails {
@@ -1683,9 +1661,6 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             query_limits.max_kernel_work =
                 std::min(query_limits.max_kernel_work,
                          remaining(limits.spectral.max_geometry_kernel_work, result.ranking_bounds_stats.kernel_work));
-            query_limits.max_vertex_visits = std::min(
-                query_limits.max_vertex_visits,
-                remaining(limits.spectral.max_geometry_vertex_visits, result.ranking_bounds_stats.vertex_visits));
             const auto oriented =
                 geometry::oriented_bounds(context->object(), rotations[query.orientation_index], query_limits);
             const auto query_stats = [&]() -> geometry::PhysicalQueryStats {
@@ -1798,13 +1773,7 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                     if ((++polls & 255U) == 0 && interrupted()) {
                         return result;
                     }
-                    if (result.stats.direct_terms >= limits.max_direct_terms || !add(result.stats.direct_terms, 1)) {
-                        result.diagnostic = "SPECTRAL_PIPELINE_DIRECT_TERM_LIMIT";
-                        result.failure_details = RunFailureDetails {
-                            TerminationReason::resource_limit, "pipeline", "SPECTRAL_PIPELINE_DIRECT_TERM_LIMIT", {}, {}
-                        };
-                        return result;
-                    }
+                    ++result.stats.direct_terms;
                     const std::array<std::int64_t, 3> translation { first[0] + static_cast<std::int64_t>(x_offset),
                                                                     first[1] + static_cast<std::int64_t>(y_offset),
                                                                     first[2] + static_cast<std::int64_t>(z_offset) };
@@ -1862,16 +1831,7 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
                             if ((++polls & 255U) == 0 && interrupted()) {
                                 return result;
                             }
-                            if (result.stats.direct_terms >= limits.max_direct_terms ||
-                                !add(result.stats.direct_terms, 1)) {
-                                result.diagnostic = "SPECTRAL_PIPELINE_DIRECT_TERM_LIMIT";
-                                result.failure_details = RunFailureDetails { TerminationReason::resource_limit,
-                                                                             "pipeline",
-                                                                             "SPECTRAL_PIPELINE_DIRECT_TERM_LIMIT",
-                                                                             {},
-                                                                             {} };
-                                return result;
-                            }
+                            ++result.stats.direct_terms;
                             if (!kernel_cells[at(owners.kernel->window().shape, kx, ky, kz)]) {
                                 continue;
                             }

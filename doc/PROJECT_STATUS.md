@@ -113,10 +113,13 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    contracts' resource layer. Settings and results are version 2
    ([ADR 0023](../spec/decisions/0023-settings-and-results-v2.md)): every run is timed under one
    host memory cap, with no fixed-work mode, resource policy, work counts or recovery record, and
-   version 1 projects no longer open. Left: the per-phase work caps themselves (about 45 fields in
-   `SpectralLimits` and its parts). Timed recovery renews them as quanta and native tests bound
-   their work with them in about 800 places, so removing them means rewriting the timed
-   controller and those tests.
+   version 1 projects no longer open. #65 deletes the six cumulative work budgets that never end a
+   phase (vertex visits, pair tests, and the FFT page search's field work, cell visits, direct and
+   proximity terms) with the grants that renewed them. A scoreboard run that logged how each phase
+   ended kept the other two: the physical-query and validation work budgets end mixed interlocking
+   on pryanik2 and cut compaction short on pryanik2, yasya, bunny and benchy. They stay, with the
+   candidate, pass, orientation, copy and axis-cell caps; those shape the search, so removing them
+   would mean retuning it.
 
 **Finish the desktop**
 

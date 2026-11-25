@@ -26,10 +26,11 @@ struct BaselineLimits {
   std::uint64_t max_axis_cells{1'000'000};
   std::uint64_t max_working_bytes{512ULL << 20};
   std::uint64_t reserved_bytes{};
+  // Work each phase may spend on physical queries and on native validation. Both
+  // end phases on large layouts (pryanik2); the per-query and per-validation
+  // bounds below are the safety bounds for a single operation.
   std::uint64_t max_geometry_kernel_work{1'300'000'000};
-  std::uint64_t max_geometry_vertex_visits{200'000'000};
   std::uint64_t max_validation_kernel_work{1'300'000'000};
-  std::uint64_t max_validation_aabb_pair_tests{50'000'000};
   geometry::PhysicalQueryLimits per_query{};
   geometry::ValidationLimits per_validation{};
   // Grid pitch and FFT threads for compaction's gap filling; zero pitch disables it.

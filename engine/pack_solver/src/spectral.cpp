@@ -485,8 +485,6 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                                       "FIELD_INPUT_TRIANGLE_LIMIT",
                                       "CORRELATION_DIRECT_TERM_LIMIT",
                                       "CORRELATION_PADDED_CELL_LIMIT",
-                                      "SPECTRAL_PIPELINE_DIRECT_TERM_LIMIT",
-                                      "SPECTRAL_PIPELINE_PROXIMITY_LIMIT",
                                       "CORRELATION_ALLOCATION",
                                       "CORRELATION_MEMORY_LIMIT",
                                       "FIELD_ALLOCATION_FAILURE",
@@ -521,31 +519,25 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
         defer(cause, phase);
         return true;
     };
+    // Timed searches renew the query work cap so that one more query always fits.
     const auto query_headroom = [&] {
-        const auto renew = [&](std::uint64_t& cap, std::uint64_t quantum, std::uint64_t used) {
-            if (!timed || cap == 0 || quantum == 0 || remaining(cap, used) >= quantum) {
-                return true;
-            }
-            if (const auto stop = boundary(control); stop != Boundary::none) {
-                apply_boundary(outcome.run, stop);
-                return false;
-            }
-            if (quantum > UINT64_MAX - used) {
-                outcome.run.termination_reason = TerminationReason::resource_limit;
-                outcome.run.diagnostic_code = "SPECTRAL_COUNTER_LIMIT";
-                return false;
-            }
-            cap = used + quantum;
-            if (const auto stop = boundary(control); stop != Boundary::none) {
-                apply_boundary(outcome.run, stop);
-                return false;
-            }
+        auto& cap = limits.spectral.max_geometry_kernel_work;
+        const auto quantum = limits.spectral.per_query.max_kernel_work;
+        const auto used = outcome.run.stats.geometry_kernel_work - outcome.baseline_stats.geometry_kernel_work;
+        if (!timed || cap == 0 || quantum == 0 || remaining(cap, used) >= quantum) {
             return true;
-        };
-        return renew(limits.spectral.max_geometry_kernel_work, limits.spectral.per_query.max_kernel_work,
-                     outcome.run.stats.geometry_kernel_work - outcome.baseline_stats.geometry_kernel_work) &&
-               renew(limits.spectral.max_geometry_vertex_visits, limits.spectral.per_query.max_vertex_visits,
-                     outcome.run.stats.geometry_vertex_visits - outcome.baseline_stats.geometry_vertex_visits);
+        }
+        if (const auto stop = boundary(control); stop != Boundary::none) {
+            apply_boundary(outcome.run, stop);
+            return false;
+        }
+        if (quantum > UINT64_MAX - used) {
+            outcome.run.termination_reason = TerminationReason::resource_limit;
+            outcome.run.diagnostic_code = "SPECTRAL_COUNTER_LIMIT";
+            return false;
+        }
+        cap = used + quantum;
+        return true;
     };
     if (!context || !std::isfinite(lattice.pitch_mm) || lattice.pitch_mm <= 0) {
         outcome.run.termination_reason = TerminationReason::error;
@@ -846,10 +838,6 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 query_limits.max_kernel_work,
                 remaining(limits.spectral.max_geometry_kernel_work,
                           outcome.run.stats.geometry_kernel_work - outcome.baseline_stats.geometry_kernel_work));
-            query_limits.max_vertex_visits = std::min(
-                query_limits.max_vertex_visits,
-                remaining(limits.spectral.max_geometry_vertex_visits,
-                          outcome.run.stats.geometry_vertex_visits - outcome.baseline_stats.geometry_vertex_visits));
             std::uint64_t live = wrapper_live;
             if (!include_workspace(live) || !add(live, incumbent_dynamic_bytes) || !add(live, wrapper_dynamic_bytes)) {
                 outcome.run.termination_reason = TerminationReason::resource_limit;
@@ -954,15 +942,11 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             return used >= cap ? std::uint64_t {} : cap - used;
         };
         std::uint64_t spectral_validation_kernel_work { preparation_stats.validation_kernel_work };
-        std::uint64_t spectral_validation_aabb_pair_tests { preparation_stats.validation_aabb_pair_tests };
         const auto validation_limits = [&](std::uint64_t additional_live = 0) {
             auto nested = limits.spectral.per_validation;
             nested.max_kernel_work =
                 std::min(nested.max_kernel_work,
                          remaining(limits.spectral.max_validation_kernel_work, spectral_validation_kernel_work));
-            nested.max_aabb_pair_tests = std::min(
-                nested.max_aabb_pair_tests,
-                remaining(limits.spectral.max_validation_aabb_pair_tests, spectral_validation_aabb_pair_tests));
             std::uint64_t outside = wrapper_live;
             if (!include_workspace(outside) || !add(outside, incumbent_dynamic_bytes) ||
                 !add(outside, wrapper_dynamic_bytes) || !add(outside, additional_live)) {
@@ -987,11 +971,8 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 checked = geometry::validate(context, candidate, validation_limits(validation_extra), control);
                 validation_limit_exceeded =
                     checked.report.kernel_work >
-                        remaining(limits.spectral.max_validation_kernel_work, spectral_validation_kernel_work) ||
-                    checked.report.aabb_pair_tests >
-                        remaining(limits.spectral.max_validation_aabb_pair_tests, spectral_validation_aabb_pair_tests);
+                    remaining(limits.spectral.max_validation_kernel_work, spectral_validation_kernel_work);
                 if (!add(spectral_validation_kernel_work, checked.report.kernel_work) ||
-                    !add(spectral_validation_aabb_pair_tests, checked.report.aabb_pair_tests) ||
                     !add(outcome.run.stats.validation_kernel_work, checked.report.kernel_work) ||
                     !add(outcome.run.stats.validation_aabb_pair_tests, checked.report.aabb_pair_tests)) {
                     if (!honor_boundary()) {
@@ -1028,25 +1009,29 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                     break;
                 }
                 ++outcome.run.stats.indeterminate_candidates;
+                // Retry the candidate with twice, then four times the requested bounds.
                 const auto multiplier = 2ULL << validation_retries++;
-                const bool pairs = *cause == "VALIDATION_AABB_PAIR_LIMIT";
-                auto& cumulative =
-                    pairs ? limits.spectral.max_validation_aabb_pair_tests : limits.spectral.max_validation_kernel_work;
-                auto& per_call = pairs ? limits.spectral.per_validation.max_aabb_pair_tests
-                                       : limits.spectral.per_validation.max_kernel_work;
-                const auto quantum = pairs ? requested_limits.spectral.max_validation_aabb_pair_tests
-                                           : requested_limits.spectral.max_validation_kernel_work;
-                const auto call_quantum = pairs ? requested_limits.spectral.per_validation.max_aabb_pair_tests
-                                                : requested_limits.spectral.per_validation.max_kernel_work;
-                const auto used = pairs ? spectral_validation_aabb_pair_tests : spectral_validation_kernel_work;
-                const auto before = cumulative;
+                if (*cause == "VALIDATION_AABB_PAIR_LIMIT") {
+                    auto& per_call = limits.spectral.per_validation.max_aabb_pair_tests;
+                    const auto call_quantum = requested_limits.spectral.per_validation.max_aabb_pair_tests;
+                    if (call_quantum == 0 || call_quantum > UINT64_MAX / multiplier ||
+                        call_quantum * multiplier <= per_call) {
+                        break;
+                    }
+                    per_call = call_quantum * multiplier;
+                    continue;
+                }
+                auto& cumulative = limits.spectral.max_validation_kernel_work;
+                const auto quantum = requested_limits.spectral.max_validation_kernel_work;
+                const auto call_quantum = requested_limits.spectral.per_validation.max_kernel_work;
+                const auto used = spectral_validation_kernel_work;
                 if (quantum == 0 || call_quantum == 0 || quantum > UINT64_MAX / multiplier ||
                     call_quantum > UINT64_MAX / multiplier || quantum * multiplier > UINT64_MAX - used ||
-                    used + quantum * multiplier <= before) {
+                    used + quantum * multiplier <= cumulative) {
                     break;
                 }
                 cumulative = used + quantum * multiplier;
-                per_call = call_quantum * multiplier;
+                limits.spectral.per_validation.max_kernel_work = call_quantum * multiplier;
             }
             return true;
         };
@@ -1075,15 +1060,6 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
             phase.spectral.max_geometry_kernel_work =
                 remaining(limits.spectral.max_geometry_kernel_work,
                           outcome.run.stats.geometry_kernel_work - outcome.baseline_stats.geometry_kernel_work);
-            phase.spectral.max_geometry_vertex_visits =
-                remaining(limits.spectral.max_geometry_vertex_visits,
-                          outcome.run.stats.geometry_vertex_visits - outcome.baseline_stats.geometry_vertex_visits);
-            phase.max_representation_kernel_work =
-                remaining(limits.max_representation_kernel_work, outcome.spectral_stats.representation_kernel_work);
-            phase.max_representation_cell_visits =
-                remaining(limits.max_representation_cell_visits, outcome.spectral_stats.representation_cell_visits);
-            phase.max_direct_terms = remaining(limits.max_direct_terms, outcome.spectral_stats.direct_terms);
-            phase.max_proximity_terms = remaining(limits.max_proximity_terms, outcome.spectral_stats.proximity_terms);
             return phase;
         };
         const auto add_pipeline_stats = [&](const detail::SpectralPipelineResult& pipeline) {
@@ -1151,65 +1127,18 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 const auto cause = page.failure_details->cause_code();
                 const auto stage = page.failure_details->phase;
                 const bool work = cause == "FIELD_KERNEL_WORK_LIMIT" || cause == "FIELD_CELL_VISIT_LIMIT" ||
-                                  cause == "KERNEL_WORK_LIMIT" || cause == "CORRELATION_DIRECT_TERM_LIMIT" ||
-                                  cause == "SPECTRAL_PIPELINE_DIRECT_TERM_LIMIT" ||
-                                  cause == "SPECTRAL_PIPELINE_PROXIMITY_LIMIT";
+                                  cause == "KERNEL_WORK_LIMIT" || cause == "CORRELATION_DIRECT_TERM_LIMIT";
                 if (work && work_retries < 2) {
+                    // Retry the page with twice, then four times the requested per-operation work bounds.
                     const auto multiplier = 2ULL << work_retries++;
-                    const auto grow = [&](std::uint64_t quantum, std::uint64_t consumed, std::uint64_t& cap) {
-                        if (quantum > UINT64_MAX / multiplier || quantum * multiplier > UINT64_MAX - consumed) {
-                            return false;
-                        }
-                        cap = consumed + quantum * multiplier;
-                        return true;
+                    const auto grown = [&](std::uint64_t requested) {
+                        return requested > UINT64_MAX / multiplier ? requested : requested * multiplier;
                     };
-                    auto before = limits.max_representation_kernel_work;
-                    std::uint64_t* changed = &limits.max_representation_kernel_work;
-                    bool granted {};
-                    if (cause == "SPECTRAL_PIPELINE_PROXIMITY_LIMIT" || stage == "proximity_fft") {
-                        changed = &limits.max_proximity_terms;
-                        before = *changed;
-                        auto expanded = *changed;
-                        granted = grow(requested_limits.max_proximity_terms, outcome.spectral_stats.proximity_terms,
-                                       expanded);
-                        const auto attempted = page.failure_details->resource;
-                        if (cause == "CORRELATION_DIRECT_TERM_LIMIT" &&
-                            (!attempted || attempted->resource != "direct_terms" ||
-                             std::min(limits.per_correlation.max_direct_terms,
-                                      remaining(expanded, outcome.spectral_stats.proximity_terms)) <=
-                                 attempted->limit)) {
-                            granted = false;
-                        }
-                        if (granted) {
-                            *changed = expanded;
-                        }
-                    }
-                    else if (cause == "CORRELATION_DIRECT_TERM_LIMIT" ||
-                             cause == "SPECTRAL_PIPELINE_DIRECT_TERM_LIMIT") {
-                        changed = &limits.max_direct_terms;
-                        before = *changed;
-                        granted =
-                            grow(requested_limits.max_direct_terms, outcome.spectral_stats.direct_terms, *changed);
-                        limits.per_correlation.max_direct_terms =
-                            requested_limits.per_correlation.max_direct_terms > UINT64_MAX / multiplier
-                                ? requested_limits.per_correlation.max_direct_terms
-                                : requested_limits.per_correlation.max_direct_terms * multiplier;
-                    }
-                    else {
-                        granted = grow(requested_limits.max_representation_kernel_work,
-                                       outcome.spectral_stats.representation_kernel_work,
-                                       limits.max_representation_kernel_work) &&
-                                  grow(requested_limits.max_representation_cell_visits,
-                                       outcome.spectral_stats.representation_cell_visits,
-                                       limits.max_representation_cell_visits) &&
-                                  grow(requested_limits.per_representation.max_kernel_work, 0,
-                                       limits.per_representation.max_kernel_work) &&
-                                  grow(requested_limits.per_representation.max_cell_visits, 0,
-                                       limits.per_representation.max_cell_visits);
-                    }
-                    if (granted && *changed > before) {
-                        continue;
-                    }
+                    const auto& requested = requested_limits;
+                    limits.per_representation.max_kernel_work = grown(requested.per_representation.max_kernel_work);
+                    limits.per_representation.max_cell_visits = grown(requested.per_representation.max_cell_visits);
+                    limits.per_correlation.max_direct_terms = grown(requested.per_correlation.max_direct_terms);
+                    continue;
                 }
                 const bool memory = cause == "CORRELATION_ALLOCATION" || cause == "CORRELATION_MEMORY_LIMIT" ||
                                     cause == "FIELD_ALLOCATION_FAILURE" || cause == "FIELD_MEMORY_LIMIT" ||
@@ -1283,10 +1212,6 @@ SpectralOutcome run_with_catalog(std::shared_ptr<const geometry::ValidationConte
                 query_limits.max_kernel_work,
                 remaining(limits.spectral.max_geometry_kernel_work,
                           outcome.run.stats.geometry_kernel_work - outcome.baseline_stats.geometry_kernel_work));
-            query_limits.max_vertex_visits = std::min(
-                query_limits.max_vertex_visits,
-                remaining(limits.spectral.max_geometry_vertex_visits,
-                          outcome.run.stats.geometry_vertex_visits - outcome.baseline_stats.geometry_vertex_visits));
             std::uint64_t live = wrapper_live;
             if (!include_workspace(live) || !add(live, incumbent_dynamic_bytes) || !add(live, wrapper_dynamic_bytes)) {
                 outcome.run.termination_reason = TerminationReason::resource_limit;

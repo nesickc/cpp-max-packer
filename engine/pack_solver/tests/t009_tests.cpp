@@ -327,7 +327,6 @@ TEST_CASE("T010 Ulamok full cube field pass preserves 36", "[solver][T010][quali
     CHECK(value.run.termination_reason != sol::TerminationReason::resource_limit);
     CHECK(value.run.termination_reason != sol::TerminationReason::error);
     CHECK(value.spectral_stats.correlations >= 48);
-    CHECK(value.spectral_stats.representation_kernel_work <= limits.max_representation_kernel_work);
     CHECK(geo::revalidate(retained).validated_solution);
 
     const auto unsupported = sol::run_cpu_spectral(native_context, { {}, 1 }, limits, {}, {}, baseline.best->solution);
@@ -414,7 +413,6 @@ TEST_CASE("T010 full Pryanik field profiles preserve two native-valid copies", "
             CHECK(value.run.termination_reason != sol::TerminationReason::resource_limit);
             CHECK(value.run.termination_reason != sol::TerminationReason::error);
             CHECK(value.spectral_stats.correlations >= 2);
-            CHECK(value.spectral_stats.representation_kernel_work <= limits.max_representation_kernel_work);
             CHECK(geo::revalidate(retained).validated_solution);
         }
     }

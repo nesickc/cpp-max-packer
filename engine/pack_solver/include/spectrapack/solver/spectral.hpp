@@ -19,10 +19,6 @@ struct SpectralLimits {
     compute::CorrelationLimits per_correlation {};
     std::uint64_t max_working_bytes { 512ULL << 20 };
     std::uint64_t reserved_bytes {};
-    std::uint64_t max_representation_kernel_work { 1'300'000'000 };
-    std::uint64_t max_representation_cell_visits { 200'000'000 };
-    std::uint64_t max_direct_terms { 200'000'000 };
-    std::uint64_t max_proximity_terms { 200'000'000 };
     std::uint64_t max_refinement_evaluations { 128 };
     std::uint32_t cpu_thread_count { 1 };
     // With a deadline, a timed search renews its work caps as quanta until the

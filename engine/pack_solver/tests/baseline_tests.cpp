@@ -72,20 +72,17 @@ TEST_CASE("T010 box grid reaches64 within bounded complete-layout validation wor
     solver::BaselineLimits limits;
     limits.max_candidate_evaluations = limits.max_copies = 64;
     limits.max_search_passes = 1;
-    limits.max_validation_aabb_pair_tests = 3000;
     std::vector<std::size_t> published;
     const auto result = solver::run_aabb_baseline(context, limits, {}, [&](solver::SnapshotHandle snapshot) {
         if (snapshot->score.count) {
             published.push_back(snapshot->score.count);
         }
     });
-    CAPTURE(full->report().aabb_pair_tests, limits.max_validation_aabb_pair_tests,
-            result.stats.validation_aabb_pair_tests);
+    CAPTURE(full->report().aabb_pair_tests, result.stats.validation_aabb_pair_tests);
     REQUIRE(result.best);
     CHECK(result.best->score.count == 64);
     CHECK(result.stats.search_passes == 1);
     CHECK(result.stats.validation_kernel_work <= limits.max_validation_kernel_work);
-    CHECK(result.stats.validation_aabb_pair_tests <= limits.max_validation_aabb_pair_tests);
     REQUIRE_FALSE(published.empty());
     CHECK(published.front() == 1);
     CHECK(geo::revalidate(result.best->solution).validated_solution);
@@ -118,7 +115,7 @@ TEST_CASE("T010 a resource-exhausted batch never retries or replaces its valid p
     constraints.pair_clearance_mm = constraints.wall_clearance_mm = 1;
     const auto context = baseline_context(1, { 9, 9, 9 }, constraints);
     solver::BaselineLimits limits;
-    limits.max_validation_aabb_pair_tests = 10;
+    limits.per_validation.max_aabb_pair_tests = 10;
     const auto result = solver::run_aabb_baseline(context, limits, {});
     REQUIRE(result.best);
     CHECK(result.best->score.count == 1);

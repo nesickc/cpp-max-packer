@@ -940,50 +940,6 @@ TEST_CASE("AT-12 CPU spectral accepts a real L-prism improvement", "[solver][T00
     CHECK(outcome.run.best->solution->copies()[1].rotation_xyzw == geo::Quaternion { 0, 0, 1, 0 });
 }
 
-TEST_CASE("AT-16 T015 timed recovery reuses completed binary FFT after a proximity allowance denial",
-          "[solver][T015-P2][recovery]")
-{
-    const auto context = default_fixed_context();
-    const auto catalog =
-        std::get<solver::OrientationCatalog>(solver::make_orientation_catalog(context->constraints().orientations, 1));
-    solver::detail::SpectralWorkspace workspace;
-    solver::SpectralLimits limits;
-    limits.timed = true;
-    const auto reference = solver::detail::build_spectral_pipeline(context, { {}, .25 }, limits, {}, catalog);
-    REQUIRE(reference.complete);
-    REQUIRE(reference.stats.proximity_terms > 1);
-    limits.max_proximity_terms = reference.stats.proximity_terms - 1;
-    const auto denied =
-        solver::detail::build_spectral_pipeline(workspace, context, { {}, .25 }, limits, {}, catalog, {});
-    CAPTURE(denied.diagnostic);
-    REQUIRE_FALSE(denied.complete);
-    REQUIRE(denied.stats.correlations == 2);
-    REQUIRE(denied.failure_details);
-    REQUIRE(denied.failure_details->resource);
-    CHECK(denied.failure_details->resource->resource == "direct_terms");
-    CHECK(denied.failure_details->resource->limit < limits.max_proximity_terms);
-    limits.max_proximity_terms = 200'000'000;
-    const auto resumed =
-        solver::detail::build_spectral_pipeline(workspace, context, { {}, .25 }, limits, {}, catalog, {});
-    CAPTURE(resumed.diagnostic);
-    REQUIRE(resumed.complete);
-    REQUIRE(resumed.ranked_candidates);
-    CHECK(resumed.stats.correlations == 1);
-    CHECK(resumed.stats.direct_terms < reference.stats.direct_terms);
-    CHECK_FALSE(resumed.ranked_candidates->empty());
-    const auto& proposal = resumed.ranked_candidates->front();
-    const auto candidate = geo::make_candidate(
-        context, {
-                     { "recovered",
-                      { .25 * proposal.translation[0], .25 * proposal.translation[1], .25 * proposal.translation[2] },
-                      catalog.quaternions[proposal.orientation_index] }
-    });
-    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(candidate));
-    const auto checked = geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(candidate));
-    REQUIRE(checked.validated_solution);
-    CHECK(checked.report.validity == geo::Validity::valid);
-}
-
 TEST_CASE("AT-16 T015 parallel raster work denial recreates its closed owner before FFT evaluation",
           "[solver][T015-P2][recovery][raster-retry]")
 {
@@ -996,13 +952,13 @@ TEST_CASE("AT-16 T015 parallel raster work denial recreates its closed owner bef
     limits.cpu_thread_count = std::min(2U, solver::cpu_supported_thread_count());
     const auto reference = solver::detail::build_spectral_pipeline(context, { {}, .25 }, limits, {}, catalog);
     REQUIRE(reference.complete);
-    limits.max_representation_kernel_work = reference.stats.representation_kernel_work / 2;
+    limits.per_representation.max_kernel_work = reference.stats.representation_kernel_work / 2;
     const auto denied =
         solver::detail::build_spectral_pipeline(workspace, context, { {}, .25 }, limits, {}, catalog, {});
     REQUIRE_FALSE(denied.complete);
     REQUIRE(denied.failure_details);
     CHECK(denied.failure_details->cause_code() == "FIELD_KERNEL_WORK_LIMIT");
-    limits.max_representation_kernel_work = 1'300'000'000;
+    limits.per_representation.max_kernel_work = 1'300'000'000;
     const auto resumed =
         solver::detail::build_spectral_pipeline(workspace, context, { {}, .25 }, limits, {}, catalog, {});
     CAPTURE(resumed.diagnostic, resumed.failure_details ? resumed.failure_details->cause_code() : "");
@@ -1189,7 +1145,6 @@ TEST_CASE("AT-16 T015 timed refinement and query quanta retain native validity",
     limits.spectral.max_search_passes = 1;
     limits.max_refinement_evaluations = 1;
     limits.spectral.max_geometry_kernel_work = 1;
-    limits.spectral.max_geometry_vertex_visits = 1;
     solver::RunControl control;
     control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
     const auto outcome = solver::run_cpu_spectral(context, { {}, .5 }, limits, control);
@@ -2489,46 +2444,6 @@ TEST_CASE("AT-12 spectral wrapper avoids an initial generated copy-id collision"
     CHECK(outcome.run.stats.invalid_candidates == 0);
 }
 
-TEST_CASE("AT-12 spectral wrapper clamps direct correlation work across rebuilds", "[solver][T007][AT-12][wrapper]")
-{
-    const auto context = cuboid_context(
-        {
-            -.25, -.25, -.25
-    },
-        { .25, .25, .25 }, { 2, 2, 2 }, { { 0, 0, 0, 1 } });
-    solver::SpectralLimits limits;
-    limits.baseline.max_candidate_evaluations = 0;
-    limits.baseline.max_search_passes = 0;
-    limits.spectral.max_candidate_evaluations = 2;
-    limits.spectral.max_search_passes = 1;
-    limits.spectral.max_copies = 2;
-    limits.max_refinement_evaluations = 0;
-    limits.per_representation.max_cells = 10'000;
-    limits.per_correlation.max_padded_cells = 10'000;
-    const auto generous = solver::run_cpu_spectral(context,
-                                                   {
-                                                       { 0, 0, 0 },
-                                                       .5
-    },
-                                                   limits, {});
-    REQUIRE(generous.spectral_stats.direct_terms > 1);
-    REQUIRE(fft_candidates(generous) == 2);
-    REQUIRE(generous.run.best);
-    REQUIRE(generous.run.best->solution->copies().size() == 2);
-
-    limits.max_direct_terms = generous.spectral_stats.direct_terms - 1;
-    const auto limited = solver::run_cpu_spectral(context,
-                                                  {
-                                                      { 0, 0, 0 },
-                                                      .5
-    },
-                                                  limits, {});
-
-    CHECK(limited.run.termination_reason == solver::TerminationReason::resource_limit);
-    CHECK(limited.spectral_stats.direct_terms <= limits.max_direct_terms);
-    CHECK(limited.run.best);
-}
-
 TEST_CASE("AT-16 spectral wrapper clamps validation work across native proposals", "[solver][T007][AT-16][wrapper]")
 {
     const auto context = cuboid_context(
@@ -3242,14 +3157,6 @@ TEST_CASE("AT-12 pipeline returns a bounded stable ordinary candidate page", "[s
     CHECK(collision_candidate.binary_overlap > 0.);
     CHECK(collision_candidate.translation == first_collision->translation);
 
-    auto lower_cap = limits;
-    lower_cap.max_direct_terms = first.stats.direct_terms - 1;
-    const auto exhausted = solver::detail::build_spectral_pipeline(context, oracle.lattice, lower_cap, {}, catalog,
-                                                                   solver::detail::CandidatePageQuery {});
-    CHECK_FALSE(exhausted.complete);
-    CHECK(exhausted.diagnostic == "SPECTRAL_PIPELINE_DIRECT_TERM_LIMIT");
-    CHECK(exhausted.stats.direct_terms <= lower_cap.max_direct_terms);
-
     auto physical_limit = limits;
     REQUIRE(first.ranking_bounds_stats.kernel_work > 1);
     physical_limit.spectral.per_query.max_kernel_work = first.ranking_bounds_stats.kernel_work - 1;
@@ -3423,20 +3330,6 @@ TEST_CASE("AT-12 stage A distinguishes correlation resource and numeric failures
     },
                                                                   limits, {}, explicit_catalog);
     REQUIRE(measured.complete);
-    REQUIRE(measured.stats.proximity_terms > measured.stats.direct_terms);
-    auto proximity_limits = limits;
-    proximity_limits.max_proximity_terms = measured.stats.proximity_terms - measured.stats.direct_terms;
-    const auto proximity_resource = solver::detail::build_spectral_pipeline(context,
-                                                                            {
-                                                                                { -.5, .25, -.5 },
-                                                                                .5
-    },
-                                                                            proximity_limits, {}, explicit_catalog);
-    REQUIRE_FALSE(proximity_resource.complete);
-    CHECK(proximity_resource.stats.correlations == 2);
-    CHECK(proximity_resource.diagnostic == "CORRELATION_DIRECT_TERM_LIMIT");
-    CHECK(proximity_resource.stats.unreliable_passes == 0);
-
     spectrapack::compute::detail::set_numeric_fault_for_test(
         spectrapack::compute::detail::NumericFault::bad_normalization);
     const auto numeric = solver::detail::build_spectral_pipeline(context,
@@ -3779,7 +3672,7 @@ TEST_CASE("T010 manual2mm fixed FFT buffers remain an explicit memory refusal", 
     CHECK(refusal->resource->limit == limits.max_working_bytes);
 }
 
-TEST_CASE("AT-12 stage A clamps cumulative representation and proximity work", "[solver][T007][AT-12][pipeline]")
+TEST_CASE("AT-12 stage A charges its caller reserve to the working-set peak", "[solver][T007][AT-12][pipeline]")
 {
     geo::Constraints constraints;
     constraints.pair_clearance_mm = .125;
@@ -3796,9 +3689,6 @@ TEST_CASE("AT-12 stage A clamps cumulative representation and proximity work", "
     },
                                                                   generous, {}, explicit_catalog);
     REQUIRE(measured.complete);
-    REQUIRE(measured.stats.representation_kernel_work > 1);
-    REQUIRE(measured.stats.representation_cell_visits > 1);
-    REQUIRE(measured.stats.proximity_terms > 1);
     REQUIRE(measured.working_bytes_peak > 0);
     CHECK(measured.working_bytes_peak <= generous.max_working_bytes);
 
@@ -3812,39 +3702,6 @@ TEST_CASE("AT-12 stage A clamps cumulative representation and proximity work", "
                                                                       reserved, {}, explicit_catalog);
     REQUIRE(with_reserve.complete);
     CHECK(with_reserve.working_bytes_peak == measured.working_bytes_peak + reserved.reserved_bytes);
-
-    auto work_limited = generous;
-    work_limited.max_representation_kernel_work = measured.stats.representation_kernel_work - 1;
-    const auto work = solver::detail::build_spectral_pipeline(context,
-                                                              {
-                                                                  { -.5, .25, -.5 },
-                                                                  .5
-    },
-                                                              work_limited, {}, explicit_catalog);
-    CHECK_FALSE(work.complete);
-    CHECK(work.stats.representation_kernel_work <= work_limited.max_representation_kernel_work);
-
-    auto visit_limited = generous;
-    visit_limited.max_representation_cell_visits = measured.stats.representation_cell_visits - 1;
-    const auto visits = solver::detail::build_spectral_pipeline(context,
-                                                                {
-                                                                    { -.5, .25, -.5 },
-                                                                    .5
-    },
-                                                                visit_limited, {}, explicit_catalog);
-    CHECK_FALSE(visits.complete);
-    CHECK(visits.stats.representation_cell_visits <= visit_limited.max_representation_cell_visits);
-
-    auto proximity_limited = generous;
-    proximity_limited.max_proximity_terms = measured.stats.proximity_terms - 1;
-    const auto proximity = solver::detail::build_spectral_pipeline(context,
-                                                                   {
-                                                                       { -.5, .25, -.5 },
-                                                                       .5
-    },
-                                                                   proximity_limited, {}, explicit_catalog);
-    CHECK_FALSE(proximity.complete);
-    CHECK(proximity.stats.proximity_terms <= proximity_limited.max_proximity_terms);
 }
 
 TEST_CASE("AT-12 stage A rejects an out-of-range signed grid window before conversion",
@@ -3866,7 +3723,7 @@ TEST_CASE("AT-12 stage A rejects an out-of-range signed grid window before conve
     CHECK(pipeline.stats.representation_cell_visits == 0);
 }
 
-TEST_CASE("T010 workspace reuses exact fields and correlation for a bounded second page", "[solver][T010][workspace]")
+TEST_CASE("T010 workspace reuses exact fields and correlation for a second page", "[solver][T010][workspace]")
 {
     geo::Constraints constraints;
     constraints.pair_clearance_mm = .125;
@@ -3901,13 +3758,11 @@ TEST_CASE("T010 workspace reuses exact fields and correlation for a bounded seco
     REQUIRE_FALSE(first.ranked_candidates->empty());
     const auto revision = workspace.layout_revision();
     CHECK(revision > 0);
-    auto bounded = limits;
-    bounded.max_representation_kernel_work = first.stats.representation_kernel_work / 4;
     BinaryOracleCapture second_capture;
     binary_capture_target = &second_capture;
     const solver::detail::CandidatePageQuery query { 0, first.ranked_candidates->back(),
                                                      solver::detail::CandidatePageMode::ordinary };
-    const auto second = solver::detail::build_spectral_pipeline(workspace, context, lattice, bounded, seed, catalog,
+    const auto second = solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, seed, catalog,
                                                                 query, &capture_binary_oracle);
     binary_capture_target = nullptr;
     CAPTURE(second.diagnostic, second.stats.representation_kernel_work);
@@ -4094,7 +3949,7 @@ TEST_CASE("T010 workspace reports admitted constructor payload freed by a later 
     const auto context = default_fixed_context();
     const solver::OrientationCatalog catalog { 1, { { 0, 0, 0, 1 } } };
     solver::SpectralLimits limits;
-    limits.max_representation_kernel_work = 0;
+    limits.per_representation.max_kernel_work = 0;
     solver::detail::SpectralWorkspace measured;
     const auto first = solver::detail::build_spectral_pipeline(measured, context, { {}, .5 }, limits, {}, catalog, {});
     REQUIRE_FALSE(first.complete);
