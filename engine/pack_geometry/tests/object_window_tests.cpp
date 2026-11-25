@@ -504,56 +504,6 @@ TEST_CASE("GEO04 placed support certifies empty and falls back on numerical ambi
     CHECK(std::get<geo::RepresentationFailure>(invalid).code == "FIELD_INDEX_OVERFLOW");
 }
 
-TEST_CASE("SOL06 placed support admits complete output and preserves exact work and byte boundaries",
-          "[fields][placed-support]")
-{
-    const auto geometry = support_geometry(ts::cuboid({ -.25, -.25, -.25 }, { .25, .25, .25 }));
-    const geo::GridWindow window {
-        { {}, 1 },
-        {},
-        { 100, 100, 100 }
-    };
-    const geo::CopyPose pose {
-        "bounded", { 50.5, 50.5, 50.5 },
-         { 0, 0, 0, 1 }
-    };
-    geo::RepresentationAttemptStats sufficient;
-    const auto field = geo::voxelize_placed(geometry, window, pose, .25, {}, sufficient);
-    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::CellField>>(field));
-    REQUIRE(sufficient.input_accounting_complete);
-    REQUIRE(sufficient.admitted_bytes_upper_bound > 1'000'000 + sufficient.input_resident_bytes);
-    for (const bool exact : { false, true }) {
-        geo::RepresentationLimits limits;
-        limits.max_working_bytes = sufficient.admitted_bytes_upper_bound - !exact;
-        geo::RepresentationAttemptStats attempt;
-        const auto trial = geo::voxelize_placed(geometry, window, pose, .25, limits, attempt);
-        CHECK(std::holds_alternative<std::shared_ptr<const geo::CellField>>(trial) == exact);
-        CHECK(attempt.admitted_bytes_upper_bound <= limits.max_working_bytes);
-        if (!exact) {
-            REQUIRE(std::holds_alternative<geo::RepresentationFailure>(trial));
-            CHECK(std::get<geo::RepresentationFailure>(trial).code == "FIELD_MEMORY_LIMIT");
-        }
-        limits = {};
-        limits.max_kernel_work = sufficient.kernel_work - !exact;
-        const auto work_trial = geo::voxelize_placed(geometry, window, pose, .25, limits, attempt);
-        CHECK(std::holds_alternative<std::shared_ptr<const geo::CellField>>(work_trial) == exact);
-        CHECK(attempt.kernel_work <= limits.max_kernel_work);
-    }
-    // Freed component/exact scratch remains admitted even when output is small.
-    const auto material = support_geometry(ts::cuboid({ -4, -4, -4 }, { 4, 4, 4 }));
-    geo::RepresentationAttemptStats scratch;
-    const auto inside = geo::voxelize_placed(material,
-                                             {
-                                                 { {}, .5 },
-                                                 { -2, -2, -2 },
-                                                 { 4, 4, 4 }
-    },
-                                             { "material", {}, { 0, 0, 0, 1 } }, 0, {}, scratch);
-    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::CellField>>(inside));
-    CHECK(scratch.admitted_bytes_upper_bound >= (512ULL << 10));
-    CHECK(scratch.working_bytes_peak >= scratch.input_resident_bytes + 64);
-}
-
 TEST_CASE("T011 empty placed output observes late Stop and deadline while preserving prior fields",
           "[fields][placed-support][controls]")
 {

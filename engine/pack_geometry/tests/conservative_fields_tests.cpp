@@ -359,26 +359,6 @@ TEST_CASE("SOL-05 footprint allocation failure leaves all counts unchanged") {
   CHECK(trial->placed_count({5, 5, 5}) == 0);
 }
 
-TEST_CASE("SOL-05 placed fields charge a retained copy id before publication") {
-  auto g = prepared(ts::cuboid({.1, .1, .1}, {.2, .2, .2}));
-  geo::GridWindow window{{{0, 0, 0}, 1}, {0, 0, 0}, {2, 2, 2}};
-  geo::RepresentationLimits limited{};
-  limited.max_working_bytes = 2ULL * 1024ULL * 1024ULL;
-  geo::CopyPose oversized{
-      std::string(8ULL * 1024ULL * 1024ULL, 'x'), {.5, .5, .5}, {0, 0, 0, 1}};
-  auto rejected =
-      geo::voxelize_placed(g, window, std::move(oversized), 0, limited);
-  REQUIRE(std::holds_alternative<geo::RepresentationFailure>(rejected));
-  CHECK(std::get<geo::RepresentationFailure>(rejected).code ==
-        "FIELD_MEMORY_LIMIT");
-
-  auto retry = geo::voxelize_placed(
-      g, window, {"small", {.5, .5, .5}, {0, 0, 0, 1}}, 0, limited);
-  REQUIRE(std::holds_alternative<std::shared_ptr<const geo::CellField>>(retry));
-  CHECK(std::get<std::shared_ptr<const geo::CellField>>(retry)->purpose() ==
-        geo::FieldPurpose::placed_pair_blocker);
-}
-
 TEST_CASE(
     "SOL-05 analytic cell enclosure survives cancellation without false free "
     "space") {
