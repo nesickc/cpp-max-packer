@@ -172,7 +172,6 @@ public:
     std::uint64_t bytes {};
     std::uint64_t ceiling {};
     std::uint64_t external_bytes {};
-    std::uint64_t admitted_peak {};
     SpectralPipelineResult* operation {};
 
 private:
@@ -188,7 +187,6 @@ private:
         if (!add(admitted, bytes) || !add(admitted, size)) {
             throw std::bad_alloc {};
         }
-        admitted_peak = std::max(admitted_peak, admitted);
         if (operation) {
             operation->admitted_bytes_upper_bound = std::max(operation->admitted_bytes_upper_bound, admitted);
         }
@@ -242,7 +240,6 @@ struct WorkspaceState {
     geometry::Quaternion correlation_rotation {};
     std::optional<compute::CorrelationResult> binary;
     std::optional<compute::CorrelationResult> ranked;
-    std::optional<CpuFieldAdmissionEstimate> admission;
     std::unique_ptr<geometry::RasterExecution> raster;
     std::unique_ptr<compute::FftExecution> fft;
     WorkspaceState(std::uint64_t allowance, std::uint64_t external, SpectralPipelineResult& attempt) :
@@ -446,7 +443,7 @@ std::optional<geometry::RepresentationLimits> representation_limits(
         return {};
     }
     auto nested = limits.per_representation;
-    nested.renewable_work_limits = limits.resource_mode == ResourceMode::timed;
+    nested.renewable_work_limits = limits.timed;
     nested.max_working_bytes = std::min(nested.max_working_bytes, limits.max_working_bytes);
     nested.max_kernel_work = std::min(nested.max_kernel_work, remaining(limits.max_representation_kernel_work,
                                                                         result.stats.representation_kernel_work));
@@ -477,41 +474,6 @@ bool record_attempt(SpectralPipelineResult& result, const SpectralLimits& limits
     }
     return observe(result, limits, nested.reserved_bytes + attempt.working_bytes_peak);
 }
-
-class AdmissionPublication final {
-public:
-    AdmissionPublication(SpectralPipelineResult& result, WorkspaceState& state, const SpectralLimits& limits,
-                         std::uint64_t copies) noexcept :
-        result_(result),
-        state_(state),
-        basis_ { 0, copies, limits.max_working_bytes, limits.cpu_thread_count,
-                 cpu_scheduling_policy(limits.cpu_thread_count) }
-    {
-    }
-    ~AdmissionPublication()
-    {
-        retain_checked();
-        state_.memory.operation = nullptr;
-    }
-    void publish() noexcept
-    {
-        retain_checked();
-        result_.field_admission = state_.admission;
-    }
-
-private:
-    void retain_checked() noexcept
-    {
-        basis_.working_bytes_upper_bound = std::max(result_.admitted_bytes_upper_bound, state_.memory.admitted_peak);
-        if (basis_.working_bytes_upper_bound &&
-            (!state_.admission || basis_.working_bytes_upper_bound > state_.admission->working_bytes_upper_bound)) {
-            state_.admission = basis_;
-        }
-    }
-    SpectralPipelineResult& result_;
-    WorkspaceState& state_;
-    CpuFieldAdmissionEstimate basis_;
-};
 
 class AttemptRecorder final {
 public:
@@ -1056,11 +1018,14 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             workspace.storage_->lattice = lattice;
         }
         else {
-            workspace.storage_->memory.admitted_peak = 0;
             workspace.storage_->memory.operation = &result;
         }
         auto& state = *workspace.storage_;
-        AdmissionPublication admission_publication(result, state, limits, baseline ? baseline->copies().size() : 0);
+        // The workspace outlives this result: stop charging its allocations here on every exit.
+        struct DetachOperation {
+            WorkspaceMemory& memory;
+            ~DetachOperation() { memory.operation = nullptr; }
+        } detach_operation { state.memory };
         owners.workspace = &state;
         owners.additional_metadata = 0;
         owners.geometry = state.geometry;
@@ -1439,7 +1404,7 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
 
         const auto& rotation = rotations[query.orientation_index];
         bool current_binary = state.binary && state.correlation_revision == state.revision &&
-                              (limits.resource_mode == ResourceMode::timed || state.ranked);
+                              (limits.timed || state.ranked);
         for (std::size_t axis = 0; axis != 4 && current_binary; ++axis) {
             current_binary = charge() && same_value(rotation[axis], state.correlation_rotation[axis]);
         }
@@ -1669,7 +1634,6 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
             if (environment->shape[axis] < owners.kernel->window().shape[axis]) {
                 result.complete = true;
                 result.diagnostic = "SPECTRAL_PIPELINE_COMPLETE";
-                admission_publication.publish();
                 return result;
             }
         }
@@ -1937,7 +1901,6 @@ SpectralPipelineResult build_spectral_pipeline(SpectralWorkspace& workspace,
         ++result.stats.pages_examined;
         result.complete = true;
         result.diagnostic = "SPECTRAL_PIPELINE_COMPLETE";
-        admission_publication.publish();
         return result;
     }
     catch (const std::bad_alloc&) {

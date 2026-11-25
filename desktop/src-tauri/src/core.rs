@@ -853,9 +853,9 @@ impl Core {
                 value.as_array().is_some_and(|a| a.contains(expected))
             };
             if !includes(&record["protocol_versions"], &json!(1))
-                || ["settings", "assets", "results"]
+                || [("settings", 2), ("assets", 1), ("results", 2)]
                     .iter()
-                    .any(|name| !includes(&record["schema_versions"][name], &json!(1)))
+                    .any(|(name, version)| !includes(&record["schema_versions"][name], &json!(version)))
                 || ["inspect", "solve", "desktop-prepare", "desktop-restore"]
                     .iter()
                     .any(|name| !includes(&record["implemented_commands"], &json!(name)))

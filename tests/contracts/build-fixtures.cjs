@@ -27,7 +27,6 @@ add('accepted-asset-missing-solid','assets',asset,v=>delete v.accepted_solid,fal
 add('result-negative-count','results',result1,v=>v.count=-1,false,false);
 add('result-quaternion-wrong-length','results',result1,v=>v.placements[0].quaternion_xyzw=[0,0,1],false,false);
 add('protocol-request-unknown-field','protocol',{protocol_version:1,request_id:'req-1',method:'pack',params:{}},v=>v.extra_field=true,false,false);
-add('requested-unsafe-work-counter','settings',requested,v=>v.search.work_budget={max_candidate_evaluations:9007199254740992,max_search_passes:1},false,false);
 add('resolved-thread-count-unsafe','settings',rs,v=>v.resolved.thread_count=9007199254740992,false,false);
 // T009-A1: one existing positive result carries retained evidence; zero result stays legacy.
 const diagnostics={diagnostic_code:'ENVIRONMENT_PREFLIGHT_RESOURCE',failure:{phase:'spectral_preflight',cause_code:'GRID_CELL_LIMIT',resource:{name:'grid_cells',required:'18446744073709551615',limit:'16777216'},suggested_pitch_mm:5}};

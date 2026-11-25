@@ -351,7 +351,7 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
       "required": [
         "preset",
         "seed",
-        "deterministic"
+        "budget_seconds"
       ],
       "properties": {
         "preset": {
@@ -361,31 +361,8 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "seed": {
           "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"
         },
-        "deterministic": {
-          "type": "boolean"
-        },
         "budget_seconds": {
           "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/positive"
-        },
-        "work_budget": {
-          "type": "object",
-          "required": [
-            "max_candidate_evaluations",
-            "max_search_passes"
-          ],
-          "properties": {
-            "max_candidate_evaluations": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
-            },
-            "max_search_passes": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
-            }
-          },
-          "additionalProperties": false
         },
         "budget_scope": {
           "enum": [
@@ -473,7 +450,7 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
       ],
       "properties": {
         "settings_version": {
-          "const": 1
+          "const": 2
         },
         "object_asset_id": {
           "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/runtime_id"
@@ -521,7 +498,7 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
       ],
       "properties": {
         "settings_version": {
-          "const": 1
+          "const": 2
         },
         "object_asset": {
           "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/content_ref"
@@ -600,309 +577,11 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
                 }
               },
               "additionalProperties": false
-            },
-            "resource_policy": {
-              "$ref": "#/definitions/resource_policy"
             }
           },
           "additionalProperties": false
         }
       },
-      "additionalProperties": false
-    },
-    "resource_policy": {
-      "type": "object",
-      "properties": {
-        "version": {
-          "const": 1
-        },
-        "available_ram_bytes": {
-          "type": "string",
-          "pattern": "^[1-9][0-9]{0,19}$"
-        },
-        "host_cap_bytes": {
-          "type": "string",
-          "pattern": "^[1-9][0-9]{0,19}$"
-        },
-        "work_mode": {
-          "enum": [
-            "timed",
-            "fixed_work"
-          ]
-        },
-        "search_order": {
-          "enum": [
-            "catalog-merge-v1",
-            "completed-page-round-robin-v1"
-          ]
-        },
-        "limits": {
-          "type": "object",
-          "properties": {
-            "max_working_bytes": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "max_representation_kernel_work": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "max_representation_cell_visits": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "max_direct_terms": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "max_proximity_terms": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "max_refinement_evaluations": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_max_candidate_evaluations": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_max_search_passes": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_max_orientations": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_max_copies": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_max_axis_cells": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_max_working_bytes": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_max_geometry_kernel_work": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_max_geometry_vertex_visits": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_max_validation_kernel_work": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_max_validation_aabb_pair_tests": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_per_query_max_working_bytes": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_per_query_max_kernel_work": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_per_query_max_vertex_visits": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_per_validation_max_copy_count": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_per_validation_max_working_bytes": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_per_validation_max_aabb_pair_tests": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_per_validation_max_kernel_work": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "baseline_per_validation_max_diagnostic_examples": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_max_candidate_evaluations": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_max_search_passes": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_max_orientations": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_max_copies": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_max_axis_cells": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_max_working_bytes": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_max_geometry_kernel_work": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_max_geometry_vertex_visits": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_max_validation_kernel_work": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_max_validation_aabb_pair_tests": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_per_query_max_working_bytes": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_per_query_max_kernel_work": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_per_query_max_vertex_visits": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_per_validation_max_copy_count": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_per_validation_max_working_bytes": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_per_validation_max_aabb_pair_tests": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_per_validation_max_kernel_work": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "spectral_per_validation_max_diagnostic_examples": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "per_representation_max_working_bytes": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "per_representation_max_cells": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "per_representation_max_kernel_work": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "per_representation_max_cell_visits": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "per_representation_max_input_triangles": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "per_correlation_max_working_bytes": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "per_correlation_max_padded_cells": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "per_correlation_max_direct_terms": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            }
-          },
-          "required": [
-            "max_working_bytes",
-            "max_representation_kernel_work",
-            "max_representation_cell_visits",
-            "max_direct_terms",
-            "max_proximity_terms",
-            "max_refinement_evaluations",
-            "baseline_max_candidate_evaluations",
-            "baseline_max_search_passes",
-            "baseline_max_orientations",
-            "baseline_max_copies",
-            "baseline_max_axis_cells",
-            "baseline_max_working_bytes",
-            "baseline_max_geometry_kernel_work",
-            "baseline_max_geometry_vertex_visits",
-            "baseline_max_validation_kernel_work",
-            "baseline_max_validation_aabb_pair_tests",
-            "baseline_per_query_max_working_bytes",
-            "baseline_per_query_max_kernel_work",
-            "baseline_per_query_max_vertex_visits",
-            "baseline_per_validation_max_copy_count",
-            "baseline_per_validation_max_working_bytes",
-            "baseline_per_validation_max_aabb_pair_tests",
-            "baseline_per_validation_max_kernel_work",
-            "baseline_per_validation_max_diagnostic_examples",
-            "spectral_max_candidate_evaluations",
-            "spectral_max_search_passes",
-            "spectral_max_orientations",
-            "spectral_max_copies",
-            "spectral_max_axis_cells",
-            "spectral_max_working_bytes",
-            "spectral_max_geometry_kernel_work",
-            "spectral_max_geometry_vertex_visits",
-            "spectral_max_validation_kernel_work",
-            "spectral_max_validation_aabb_pair_tests",
-            "spectral_per_query_max_working_bytes",
-            "spectral_per_query_max_kernel_work",
-            "spectral_per_query_max_vertex_visits",
-            "spectral_per_validation_max_copy_count",
-            "spectral_per_validation_max_working_bytes",
-            "spectral_per_validation_max_aabb_pair_tests",
-            "spectral_per_validation_max_kernel_work",
-            "spectral_per_validation_max_diagnostic_examples",
-            "per_representation_max_working_bytes",
-            "per_representation_max_cells",
-            "per_representation_max_kernel_work",
-            "per_representation_max_cell_visits",
-            "per_representation_max_input_triangles",
-            "per_correlation_max_working_bytes",
-            "per_correlation_max_padded_cells",
-            "per_correlation_max_direct_terms"
-          ],
-          "additionalProperties": false
-        }
-      },
-      "required": [
-        "version",
-        "available_ram_bytes",
-        "host_cap_bytes",
-        "work_mode",
-        "search_order",
-        "limits"
-      ],
       "additionalProperties": false
     }
   },
@@ -1369,99 +1048,6 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         },
         "failure": {
           "$ref": "#/definitions/failure"
-        },
-        "resource_recovery": {
-          "type": "object",
-          "properties": {
-            "version": {
-              "const": 1
-            },
-            "actual_final_threads": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 8
-            },
-            "grants": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "recoveries": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "deferred": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "fft_candidate_evaluations": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "native_validations": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "omitted_records": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "transitions": {
-              "type": "array",
-              "maxItems": 16,
-              "items": {
-                "type": "object",
-                "properties": {
-                  "sequence": {
-                    "type": "string",
-                    "pattern": "^(0|[1-9][0-9]{0,19})$"
-                  },
-                  "before": {
-                    "type": "string",
-                    "pattern": "^(0|[1-9][0-9]{0,19})$"
-                  },
-                  "after": {
-                    "type": "string",
-                    "pattern": "^(0|[1-9][0-9]{0,19})$"
-                  },
-                  "consumed": {
-                    "type": "string",
-                    "pattern": "^(0|[1-9][0-9]{0,19})$"
-                  },
-                  "cause": {
-                    "type": "string"
-                  },
-                  "phase": {
-                    "type": "string"
-                  },
-                  "action": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "sequence",
-                  "before",
-                  "after",
-                  "consumed",
-                  "cause",
-                  "phase",
-                  "action"
-                ],
-                "additionalProperties": false
-              }
-            }
-          },
-          "required": [
-            "version",
-            "actual_final_threads",
-            "grants",
-            "recoveries",
-            "deferred",
-            "fft_candidate_evaluations",
-            "native_validations",
-            "omitted_records",
-            "transitions"
-          ],
-          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -1478,22 +1064,6 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
     "hash": {
       "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/sha256"
     },
-    "work": {
-      "type": "object",
-      "required": [
-        "candidate_evaluations",
-        "search_passes"
-      ],
-      "properties": {
-        "candidate_evaluations": {
-          "$ref": "#/definitions/c"
-        },
-        "search_passes": {
-          "$ref": "#/definitions/c"
-        }
-      },
-      "additionalProperties": false
-    },
     "segment": {
       "type": "object",
       "required": [
@@ -1502,7 +1072,6 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "seed",
         "backend",
         "elapsed_seconds",
-        "work_counts",
         "search_state_reset",
         "rng",
         "resolved_settings"
@@ -1537,9 +1106,6 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "elapsed_seconds": {
           "type": "number",
           "minimum": 0
-        },
-        "work_counts": {
-          "$ref": "#/definitions/work"
         },
         "search_state_reset": {
           "type": "boolean"
@@ -1762,7 +1328,7 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
   ],
   "properties": {
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "label": {
       "const": "best_found"
@@ -1884,7 +1450,6 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         "resolved_settings",
         "pitch_levels_mm",
         "seed",
-        "work_counts",
         "run_segments",
         "backend_transitions",
         "elapsed_seconds"
@@ -1906,9 +1471,6 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
         },
         "seed": {
           "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"
-        },
-        "work_counts": {
-          "$ref": "#/definitions/work"
         },
         "run_segments": {
           "type": "array",
@@ -3008,26 +2570,11 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
           "type": "integer",
           "minimum": 1,
           "maximum": 8
-        },
-        "recovery_count": {
-          "type": "string",
-          "pattern": "^(0|[1-9][0-9]{0,19})$"
-        },
-        "last_cause": {
-          "type": "string",
-          "maxLength": 95
-        },
-        "last_action": {
-          "type": "string",
-          "maxLength": 95
         }
       },
       "required": [
         "admitted_host_cap_bytes",
-        "actual_threads",
-        "recovery_count",
-        "last_cause",
-        "last_action"
+        "actual_threads"
       ]
     },
     "RepairPreview": {

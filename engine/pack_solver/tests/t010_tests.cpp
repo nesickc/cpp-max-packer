@@ -287,12 +287,10 @@ TEST_CASE("T010 solver admits both parked teams and creates FFT only after whole
     REQUIRE(refused.failure_details);
     CHECK(refused.failure_details->cause_code() == "CORRELATION_MEMORY_LIMIT");
     CHECK(starts == 0);
-    CHECK_FALSE(refused.field_admission);
     limits.per_correlation.max_working_bytes = 512ULL << 20;
     sol::detail::SpectralWorkspace workspace;
     const auto admitted = sol::detail::build_spectral_pipeline(workspace, native, { {}, 1 }, limits, {}, catalog, {});
     REQUIRE(admitted.complete);
-    REQUIRE(admitted.field_admission);
     CHECK(starts == 3);
     REQUIRE(workspace.resident_bytes());
     CHECK(*workspace.resident_bytes() >= 2 * *spectrapack::compute::estimate_fft_execution_bytes(4));
@@ -338,13 +336,11 @@ TEST_CASE("T010 interrupted FFT workspace recreates its failed owner for a fresh
     REQUIRE_FALSE(interrupted.complete);
     REQUIRE(interrupted.failure_details);
     CHECK(interrupted.failure_details->cause_code() == "OPERATION_CANCELLED");
-    CHECK_FALSE(interrupted.field_admission);
     CHECK(joined == 3);
     detail::set_fft_test_options({});
     const auto retry = sol::detail::build_spectral_pipeline(workspace, native, { {}, 1 }, limits, {}, catalog, {});
     REQUIRE(retry.complete);
     CHECK(retry.stats.correlations == 2);
-    CHECK(retry.field_admission);
 }
 
 TEST_CASE("T011 native injected Start deadline forbids baseline work", "[solver][T011]")

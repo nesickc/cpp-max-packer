@@ -431,65 +431,17 @@ std::vector<ValidationIssue> semantics(ContractKind kind, const Json& value) {
     }
     const auto seed = search.at("seed").get<std::string>();
     if (!seed_in_range(seed)) semantic_issue(issues, "/search/seed", "SEED_OUT_OF_RANGE", "Seed exceeds uint64 maximum.");
-    const bool deterministic = search.at("deterministic").get<bool>();
-    const bool has_seconds = search.contains("budget_seconds");
-    const bool has_work = search.contains("work_budget");
-    if ((deterministic && (!has_work || has_seconds)) || (!deterministic && (!has_seconds || has_work)))
-      semantic_issue(issues, "/search", "SEARCH_BUDGET_MODE", "Search budget does not match deterministic mode.");
     const auto compute_backend = value.at("compute").at("backend").get<std::string>();
-    if (deterministic && compute_backend == "vulkan")
-      semantic_issue(issues, "/compute/backend", "DETERMINISTIC_BACKEND_INVALID",
-          "Deterministic work-budget settings must use CPU or resolve auto to CPU.");
     const auto& orientation = value.at("orientation");
     if (orientation.contains("quaternion_xyzw") && !unit_quaternion(orientation.at("quaternion_xyzw"), false))
       semantic_issue(issues, "/orientation/quaternion_xyzw", "QUATERNION_NOT_NORMALIZED", "Requested quaternion must be unit length.");
     if (orientation.contains("quaternions_xyzw")) for (std::size_t i=0;i<orientation.at("quaternions_xyzw").size();++i)
       if (!unit_quaternion(orientation.at("quaternions_xyzw")[i], false)) semantic_issue(issues,"/orientation/quaternions_xyzw/"+std::to_string(i),"QUATERNION_NOT_NORMALIZED","Requested quaternion must be unit length.");
     if (value.contains("resolved")) {
-        if (value.at("resolved").contains("resource_policy")) {
-            const auto& policy = value.at("resolved").at("resource_policy");
-            bool numeric = true;
-            for (const auto name : { "available_ram_bytes", "host_cap_bytes" }) {
-                numeric =
-                    numeric && seed_in_range(policy.at(name).get_ref<const std::string&>()) && policy.at(name) != "0";
-            }
-            for (const auto& limit : policy.at("limits")) {
-                numeric = numeric && seed_in_range(limit.get_ref<const std::string&>());
-            }
-            if (!numeric) {
-                semantic_issue(issues, "/resolved/resource_policy", "RESOURCE_LIMIT_INVALID",
-                               "Resolved limits must fit uint64.");
-            }
-            else {
-                const auto available = std::stoull(policy.at("available_ram_bytes").get<std::string>());
-                const auto cap = std::stoull(policy.at("host_cap_bytes").get<std::string>());
-                if (cap > available / 2 ||
-                    (value.at("compute").contains("host_memory_limit_bytes") &&
-                     seed_in_range(value.at("compute").at("host_memory_limit_bytes").get<std::string>()) &&
-                     cap > std::stoull(value.at("compute").at("host_memory_limit_bytes").get<std::string>()))) {
-                    semantic_issue(issues, "/resolved/resource_policy/host_cap_bytes", "HOST_CAP_MISMATCH",
-                                   "Host cap exceeds admission.");
-                }
-                for (const auto& [name, limit] : policy.at("limits").items()) {
-                    if (name.ends_with("max_working_bytes") && std::stoull(limit.get<std::string>()) != cap) {
-                        semantic_issue(issues, "/resolved/resource_policy/limits", "NESTED_CAP_MISMATCH",
-                                       "Nested host caps must agree.");
-                    }
-                }
-            }
-            if ((policy.at("work_mode") == "fixed_work") != deterministic ||
-                policy.at("search_order") != (deterministic ? "catalog-merge-v1" : "completed-page-round-robin-v1")) {
-                semantic_issue(issues, "/resolved/resource_policy", "RESOURCE_MODE_MISMATCH",
-                               "Work mode and ordering disagree.");
-            }
-        }
       const auto resolved_backend = value.at("resolved").at("backend").get<std::string>();
       if (compute_backend != "auto" && compute_backend != resolved_backend)
         semantic_issue(issues, "/resolved/backend", "BACKEND_RESOLUTION_MISMATCH",
             "An explicit compute backend must equal the initial resolved backend.");
-      if (deterministic && resolved_backend != "cpu")
-        semantic_issue(issues, "/resolved/backend", "DETERMINISTIC_BACKEND_INVALID",
-            "Deterministic work-budget settings must resolve to CPU.");
       if (orientation.contains("quaternion_xyzw") && !unit_quaternion(orientation.at("quaternion_xyzw"), true))
         semantic_issue(issues, "/orientation/quaternion_xyzw", "QUATERNION_NOT_CANONICAL", "Resolved quaternion must be normalized and canonical.");
       if (orientation.contains("quaternions_xyzw")) {
@@ -683,14 +635,10 @@ std::vector<ValidationIssue> semantics(ContractKind kind, const Json& value) {
     };
     check_failure_counters(search, "/search");
     double elapsed = 0;
-    std::uint64_t candidates = 0;
-    std::uint64_t passes = 0;
-    bool totals_overflow = false;
     std::set<std::string> segment_ids;
     struct BackendState {
       std::string current;
       double segment_elapsed;
-      bool deterministic;
       double last_transition_elapsed = 0;
       bool has_transition = false;
     };
@@ -704,8 +652,7 @@ std::vector<ValidationIssue> semantics(ContractKind kind, const Json& value) {
         semantic_issue(issues, base + "/segment_id", "SEGMENT_ID_DUPLICATE", "Run segment IDs must be unique.");
       } else {
         backend_states.emplace(segment_id, BackendState{
-            segment.at("backend").get<std::string>(), segment.at("elapsed_seconds").get<double>(),
-            segment.at("resolved_settings").at("search").at("deterministic").get<bool>()});
+            segment.at("backend").get<std::string>(), segment.at("elapsed_seconds").get<double>()});
       }
 
       if (segment.at("backend") != segment.at("resolved_settings").at("resolved").at("backend"))
@@ -723,24 +670,7 @@ std::vector<ValidationIssue> semantics(ContractKind kind, const Json& value) {
         semantic_issue(issues, base + "/seed", "SEGMENT_SEED_MISMATCH",
             "Each segment seed must match its own resolved settings.");
 
-      const auto segment_candidates = segment.at("work_counts").at("candidate_evaluations").get<std::uint64_t>();
-      const auto segment_passes = segment.at("work_counts").at("search_passes").get<std::uint64_t>();
-      if (segment_search.contains("work_budget")) {
-        const auto& budget = segment_search.at("work_budget");
-        if (segment_candidates > budget.at("max_candidate_evaluations").get<std::uint64_t>() ||
-            segment_passes > budget.at("max_search_passes").get<std::uint64_t>())
-          semantic_issue(issues, base + "/work_counts", "SEGMENT_WORK_BUDGET_EXCEEDED",
-              "Segment work counts must not exceed that segment's resolved work budget.");
-      }
-
       elapsed += segment.at("elapsed_seconds").get<double>();
-      if (segment_candidates > std::numeric_limits<std::uint64_t>::max() - candidates ||
-          segment_passes > std::numeric_limits<std::uint64_t>::max() - passes) {
-        totals_overflow = true;
-      } else {
-        candidates += segment_candidates;
-        passes += segment_passes;
-      }
     }
 
     for (std::size_t i = 0; i < search.at("backend_transitions").size(); ++i) {
@@ -762,10 +692,6 @@ std::vector<ValidationIssue> semantics(ContractKind kind, const Json& value) {
           transition.at("from").get<std::string>() != state.current)
         semantic_issue(issues, base, "TRANSITION_CHAIN_INVALID",
             "Backend transitions must change and continue from the segment's current backend.");
-      if (state.deterministic &&
-          (transition.at("from") == "vulkan" || transition.at("to") == "vulkan"))
-        semantic_issue(issues, base, "DETERMINISTIC_BACKEND_TRANSITION",
-            "A deterministic CPU segment cannot transition to or from Vulkan.");
       state.current = transition.at("to").get<std::string>();
       state.last_transition_elapsed = transition_elapsed;
       state.has_transition = true;
@@ -779,13 +705,10 @@ std::vector<ValidationIssue> semantics(ContractKind kind, const Json& value) {
       semantic_issue(issues, "/search/resolved_settings", "LATEST_SEGMENT_MISMATCH",
           "Result resolved settings must match the latest run segment.");
 
-    if (totals_overflow || !std::isfinite(elapsed))
+    if (!std::isfinite(elapsed))
       semantic_issue(issues, "/search", "DERIVED_ARITHMETIC_INVALID",
           "Derived search arithmetic must remain finite and representable.");
-    if (totals_overflow || !std::isfinite(elapsed) ||
-        !approximately_equal(elapsed, search.at("elapsed_seconds").get<double>()) ||
-        candidates != search.at("work_counts").at("candidate_evaluations").get<std::uint64_t>() ||
-        passes != search.at("work_counts").at("search_passes").get<std::uint64_t>())
+    if (!std::isfinite(elapsed) || !approximately_equal(elapsed, search.at("elapsed_seconds").get<double>()))
       semantic_issue(issues, "/search", "SEARCH_TOTAL_MISMATCH", "Search totals must equal run segment totals.");
   }
   return issues;
@@ -917,8 +840,11 @@ DecodeOutcome ContractValidator::validate(ContractKind kind, const Json& value, 
     const char* version_key = kind == ContractKind::settings   ? "settings_version"
                               : kind == ContractKind::protocol ? "protocol_version"
                                                                : "schema_version";
+    // Settings and results are version 2 since the resource policy, fixed-work
+    // mode and work counts left them (ADR 0023); the other contracts are version 1.
+    const int version = kind == ContractKind::settings || kind == ContractKind::results ? 2 : 1;
     if (value.is_object() && value.contains(version_key) && value.at(version_key).is_number_integer() &&
-        value.at(version_key) != 1) {
+        value.at(version_key) != version) {
         return bound_failure(ContractFailure { kind,
                                                { { ValidationStage::schema, "/" + std::string(version_key),
                                                    "SCHEMA_UNSUPPORTED", "Document version is unsupported." } } },

@@ -199,9 +199,8 @@ resolve incomplete settings. See [ADR 0016](../spec/decisions/0016-cpu-raster-th
 for CPU execution and [ADR 0009](../spec/decisions/0009-cpu-spectral-placement-and-export.md#headless-integration-and-test-seams)
 for the exact boundary.
 
-Deterministic runs use explicit candidate/pass budgets. Time-budget runs use
-`budget_seconds`; Ctrl-C or Ctrl-Break requests a stop at a safe search boundary.
-The command reports actual phase ceilings, consumed work and termination reason.
+Every run is timed by `budget_seconds`; Ctrl-C or Ctrl-Break requests a stop at a safe
+search boundary. The command reports consumed work and the termination reason.
 Only independently validated placements enter the retained `best_found` result.
 Result JSON includes portable source/accepted-mesh artifacts. Optional binary STL
 and its `.stl.json` companion are published only after validating the reread

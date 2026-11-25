@@ -44,7 +44,6 @@ endif()
 
 if(BUILD_TESTING)
   foreach(control_case IN ITEMS
-    solve_retained_resource
     solve_deadline
     solve_console_stop)
     add_test(NAME spectrapack_${control_case}_subprocess

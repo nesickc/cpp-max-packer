@@ -38,8 +38,7 @@ containment is proved from a copy's bounds at zero wall clearance as well, so a 
 is expanded only when another check needs it.
 
 A staggered-row seed from T015-P1 used to follow the grid. Later phases always superseded it in timed runs, so it was
-removed on 2026-11-16 with its `diagnostics.stagger` record; fixed-work runs now go
-from the grid straight to the spectral greedy search.
+removed on 2026-11-16 with its `diagnostics.stagger` record.
 
 Zero-clearance validation uses the same authoritative bounds as positive clearance.
 For cardinal poses, exact dyadic comparisons keep source extrema and translations
@@ -65,7 +64,7 @@ region dimensions/depth with a bounded cache (at most 32,768 nodes, also limited
 available scratch). Only complete proposals exceeding the retained count enter
 full native validation. This rearranges the layout without changing manual pitch.
 Positive pair/wall distances receive a small additional proposal margin, never a
-reduction; zero pair clearance remains zero. The fixed-work path is unchanged.
+reduction; zero pair clearance remains zero.
 
 The unchanged 60-second benchmark improves the positive-clearance Pryanik result
 from 340 to 343 at both 2 and 4 mm manual pitch. Both saved layouts pass fresh
@@ -97,7 +96,7 @@ same tiny inward margin as mixed layouts whenever an axis has room for it, so
 rounding cannot push the far-wall column outside the box; an exact single fit is
 unchanged.
 The search uses no asset names, saved poses or altered physical constraints, and
-does not change manual voxel pitch or the fixed-work path. Mixed rows (below) now
+does not change manual voxel pitch. Mixed rows (below) now
 reach every count these rows reached in the scoreboard and practical cases; each
 of the two single-orientation planners is kept because it alone packs its own
 test fixture (wings across layers; diamonds in one fixed rotation).
@@ -123,8 +122,7 @@ The two envelopes share the remaining work/vertex allowance, with a 64-million
 work cap each for mixed proposals and 32 million for single-orientation proposals.
 Neighbor screens cover both orientations and nearby layers. Only
 an improving complete layout that passes the independent native validator replaces
-the incumbent. Fixed/catalog rotation permissions and the fixed-work path remain
-unchanged.
+the incumbent. Fixed/catalog rotation permissions remain unchanged.
 
 Deep interlocking also needs an efficient independent native proof. Validator v5
 can partition the authoritative solid into 64 closed slabs along its shortest
@@ -420,7 +418,7 @@ for timed runs, validate improving residual-block proposals (depths 1–3)
 for timed runs, validate improving mesh-envelope stagger proposals
 for timed runs, compact, FFT-gap-fill, then grow in one more copy while one
     fits and time remains
-if fixed-work, or no seeded phase placed a copy, and FFT admission is affordable:
+if no seeded phase placed a copy (or the run is not timed) and FFT admission is affordable:
     greedily insert from an empty layout using cached spectral pages
     on stall, try bounded physical face alignments and low-overlap candidates
     if the first trial completes, try insertion into the retained layout
@@ -436,9 +434,11 @@ continuous local pose refinement. Extra time can evaluate more candidates but do
 not guarantee an improved retained count. These remain possible future changes,
 not descriptions of current behavior.
 
-Fixed-work mode preserves its candidate/pass limits and ordering. Timed recovery
-can renew cumulative work allowances; per-operation safety bounds, finite retry
-ladders, memory admission and cancellation remain enforced. Publication exposes
+Every CLI and desktop run is timed: it has a deadline, and its cumulative work
+allowances are quanta that recovery renews until the deadline passes; per-operation
+safety bounds, finite retry ladders, memory admission and cancellation remain
+enforced. The fixed-work mode was removed with settings version 2 (ADR 0023);
+native tests still run the solver with final caps by leaving `SpectralLimits::timed` unset. Publication exposes
 only strictly higher counts through the existing count-publication adapter.
 
 ### Continued runs
@@ -472,9 +472,8 @@ correlations. The same path used a fixed 512 MiB fallback; the 2 mm preflight
 estimated about 710 MB and refused admission. Neither result established physical
 infeasibility.
 
-Policy-less timed CLI runs now select the same measured-RAM-share policy as
-desktop Start, honoring an explicit host-memory cap. Explicit resolved policies
-and fixed-work behavior remain intact. Existing recovery retains completed
+Every run now takes one host memory cap, half of the free RAM at Start or the
+lower explicit host-memory cap, and every phase may use all of it. Recovery retains completed
 geometry, masks, kernels and correlation pages, can evict disposable state/reduce
 threads, and grants bounded additional work. Incomplete raster operations can
 still restart on a larger allowance; resumable raster cursors across failed calls

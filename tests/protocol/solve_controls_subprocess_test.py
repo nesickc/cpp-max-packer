@@ -272,7 +272,7 @@ class SolveControls(unittest.TestCase):
     def settings(self, preset: str) -> dict:
         asset = json.loads(self.object_report.read_text(encoding="utf-8"))
         return {
-            "settings_version": 1,
+            "settings_version": 2,
             "object_asset": {
                 "source_sha256": asset["source"]["sha256"],
                 "accepted_solid_sha256": asset["accepted_solid"]["sha256"],
@@ -281,13 +281,7 @@ class SolveControls(unittest.TestCase):
             "container": {"kind": "box", "dimensions_mm": [10, 10, 10]},
             "clearance_mm": {"pair": 0, "wall": 0},
             "orientation": {"mode": "fixed", "quaternion_xyzw": [0, 0, 0, 1]},
-            "search": {
-                "preset": preset,
-                "seed": "0",
-                "deterministic": True,
-                # CLI apportionment: baseline2, seed1, original FFT1 passes.
-                "work_budget": {"max_candidate_evaluations": 2, "max_search_passes": 4},
-            },
+            "search": {"preset": preset, "seed": "0", "budget_seconds": 5},
             "resolution": {"mode": "manual", "pitch_mm": 1e-9},
             "compute": {"backend": "cpu"},
             "resolved": {
@@ -304,7 +298,6 @@ class SolveControls(unittest.TestCase):
         settings["search"] = {
             "preset": "deadline",
             "seed": "0",
-            "deterministic": False,
             "budget_seconds": budget_seconds,
         }
         settings["resolution"]["pitch_mm"] = 1
@@ -314,10 +307,7 @@ class SolveControls(unittest.TestCase):
 
     def stopping_settings(self) -> dict:
         settings = self.settings("console-stop")
-        settings["search"]["work_budget"] = {
-            "max_candidate_evaluations": 512,
-            "max_search_passes": 4,
-        }
+        settings["search"]["budget_seconds"] = 60
         settings["resolution"]["pitch_mm"] = 1
         settings["resolved"]["pitch_mm"] = 1
         settings["container"]["dimensions_mm"] = [20, 10, 10]
@@ -337,37 +327,6 @@ class SolveControls(unittest.TestCase):
             "--result", result_path,
         )
         return completed, result_path
-
-    def test_retained_resource(self) -> None:
-        completed, result_path = self.solve("retained-resource", "retained-resource")
-        self.assertNotEqual(completed.returncode, 0, (completed.stdout, completed.stderr))
-        response = json.loads(completed.stdout)
-        self.assertFalse(response["ok"])
-        self.assertEqual(response["error"]["code"], "RESOURCE_LIMIT")
-        self.assertEqual(response["error"]["details"]["result_path"], result_path.as_posix())
-        # T009-A1/A3: the native cause survives the transport and the portable result.
-        failure = response["error"]["details"]["failure"]
-        self.assertEqual(failure["cause_code"], "FIELD_INDEX_OVERFLOW")
-        self.assertTrue(failure["phase"])
-        self.assertTrue(failure["cause_code"])
-        self.assertTrue(failure["resource"]["name"])
-        self.assertGreater(int(failure["resource"]["required"]), int(failure["resource"]["limit"]))
-        self.assertIsInstance(failure["resource"]["required"], str)
-        self.assertGreater(failure["suggested_pitch_mm"], 1e-9)
-        diagnostics = response["error"]["details"]["diagnostics"]
-        self.assertEqual(diagnostics["time_to_best_basis"], "snapshot")
-        self.assertIn("baseline", diagnostics["phase_ceilings"])
-        self.assertIn("spectral", diagnostics["phase_ceilings"])
-        self.assertIn("candidate_evaluations", diagnostics["work"])
-        self.assertGreater(diagnostics["tracked_working_bytes_peak"], 0)
-        self.assertTrue(diagnostics["diagnostic_code"])
-        retained = json.loads(result_path.read_text(encoding="utf-8"))
-        self.assertEqual((retained["label"], retained["count"]), ("best_found", 1))
-        evidence = retained["search"]["diagnostics"]
-        self.assertEqual(evidence["failure"], failure)
-        self.assertEqual(evidence["diagnostic_code"], diagnostics["diagnostic_code"])
-        self.assertEqual(retained["search"]["run_segments"][0]["diagnostics"], evidence)
-        self.assertEqual(self.source.read_bytes(), self.original_source)
 
     def test_deadline(self) -> None:
         output = self.root / "deadline"
@@ -473,7 +432,6 @@ class SolveControls(unittest.TestCase):
 
 
 CASES = {
-    "solve_retained_resource": "test_retained_resource",
     "solve_deadline": "test_deadline",
     "solve_console_stop": "test_console_stop",
 }

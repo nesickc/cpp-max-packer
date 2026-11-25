@@ -337,8 +337,8 @@ fn validate_graph(
     if has_result {
         let result = load("result.json")?;
         let settings = load("settings.json")?;
-        if result["schema_version"] != 1
-            || settings["settings_version"] != 1
+        if result["schema_version"] != 2
+            || settings["settings_version"] != 2
             || result["search"].get("resolved_settings") != Some(&settings)
         {
             return Err(error(
@@ -881,8 +881,8 @@ mod tests {
             ),
         ];
         if result {
-            let settings = json!({"settings_version":1,"search":{"seed":"17"}});
-            let result = json!({"schema_version":1,"assets":{"object":report},
+            let settings = json!({"settings_version":2,"search":{"seed":"17"}});
+            let result = json!({"schema_version":2,"assets":{"object":report},
                 "search":{"resolved_settings":settings},"placements":[],"count":0});
             files.push((
                 "settings.json".into(),

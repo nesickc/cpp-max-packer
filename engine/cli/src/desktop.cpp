@@ -477,7 +477,7 @@ std::variant<spectrapack::io::Json, spectrapack::io::Error> resolve_desktop_sett
         container["tolerance_mm"] = request.at("box_tolerance_mm");
     }
     Json settings {
-        { "settings_version", 1                                                                           },
+        { "settings_version", 2                                                                           },
         { "object_asset",
          { { "source_sha256", record.at("source").at("sha256") },
             { "accepted_solid_sha256", record.at("accepted_solid").at("sha256") } }                       },
@@ -486,7 +486,6 @@ std::variant<spectrapack::io::Json, spectrapack::io::Error> resolve_desktop_sett
         { "orientation",      orientation                                                                 },
         { "search",
          { { "preset", "desktop-cpu-v1" },
-            { "deterministic", false },
             { "budget_seconds", request.at("budget_seconds") },
             { "seed", request.at("seed") } }                                                              },
         { "resolution",       { { "mode", "manual" }, { "pitch_mm", request.at("pitch_mm") } }            },
@@ -531,7 +530,6 @@ std::variant<spectrapack::io::Json, spectrapack::io::Error> resolve_desktop_sett
     if (user) {
         settings["compute"]["host_memory_limit_bytes"] = std::to_string(*user);
     }
-    settings["resolved"]["resource_policy"] = spectrapack::cli::resolve_resource_policy(*available, *cap, false);
     if (!std::holds_alternative<io::ValidatedDocument>(
             validator.validate(io::ContractKind::settings, settings, { 16, 256 }))) {
         return io::Error { "INVALID_SETTINGS", "Resolved settings are not valid; check the quaternion and uint64 seed.",

@@ -56,99 +56,6 @@
         },
         "failure": {
           "$ref": "#/definitions/failure"
-        },
-        "resource_recovery": {
-          "type": "object",
-          "properties": {
-            "version": {
-              "const": 1
-            },
-            "actual_final_threads": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 8
-            },
-            "grants": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "recoveries": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "deferred": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "fft_candidate_evaluations": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "native_validations": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "omitted_records": {
-              "type": "string",
-              "pattern": "^(0|[1-9][0-9]{0,19})$"
-            },
-            "transitions": {
-              "type": "array",
-              "maxItems": 16,
-              "items": {
-                "type": "object",
-                "properties": {
-                  "sequence": {
-                    "type": "string",
-                    "pattern": "^(0|[1-9][0-9]{0,19})$"
-                  },
-                  "before": {
-                    "type": "string",
-                    "pattern": "^(0|[1-9][0-9]{0,19})$"
-                  },
-                  "after": {
-                    "type": "string",
-                    "pattern": "^(0|[1-9][0-9]{0,19})$"
-                  },
-                  "consumed": {
-                    "type": "string",
-                    "pattern": "^(0|[1-9][0-9]{0,19})$"
-                  },
-                  "cause": {
-                    "type": "string"
-                  },
-                  "phase": {
-                    "type": "string"
-                  },
-                  "action": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "sequence",
-                  "before",
-                  "after",
-                  "consumed",
-                  "cause",
-                  "phase",
-                  "action"
-                ],
-                "additionalProperties": false
-              }
-            }
-          },
-          "required": [
-            "version",
-            "actual_final_threads",
-            "grants",
-            "recoveries",
-            "deferred",
-            "fft_candidate_evaluations",
-            "native_validations",
-            "omitted_records",
-            "transitions"
-          ],
-          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -165,22 +72,6 @@
     "hash": {
       "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/sha256"
     },
-    "work": {
-      "type": "object",
-      "required": [
-        "candidate_evaluations",
-        "search_passes"
-      ],
-      "properties": {
-        "candidate_evaluations": {
-          "$ref": "#/definitions/c"
-        },
-        "search_passes": {
-          "$ref": "#/definitions/c"
-        }
-      },
-      "additionalProperties": false
-    },
     "segment": {
       "type": "object",
       "required": [
@@ -189,7 +80,6 @@
         "seed",
         "backend",
         "elapsed_seconds",
-        "work_counts",
         "search_state_reset",
         "rng",
         "resolved_settings"
@@ -224,9 +114,6 @@
         "elapsed_seconds": {
           "type": "number",
           "minimum": 0
-        },
-        "work_counts": {
-          "$ref": "#/definitions/work"
         },
         "search_state_reset": {
           "type": "boolean"
@@ -449,7 +336,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "label": {
       "const": "best_found"
@@ -571,7 +458,6 @@
         "resolved_settings",
         "pitch_levels_mm",
         "seed",
-        "work_counts",
         "run_segments",
         "backend_transitions",
         "elapsed_seconds"
@@ -593,9 +479,6 @@
         },
         "seed": {
           "$ref": "https://spectrapack.invalid/schemas/v1/common.schema.json#/definitions/seed"
-        },
-        "work_counts": {
-          "$ref": "#/definitions/work"
         },
         "run_segments": {
           "type": "array",

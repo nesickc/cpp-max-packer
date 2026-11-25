@@ -109,13 +109,11 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
       operation:{id:'solve-0', kind:'solve', phase:'finished', started_at:'2026-11-14T00:00:00Z',
         finished_at:'2026-11-14T00:01:00Z', result_id:'result', detail:null},
       cpu_runtime:{version:1, supported_min:1, supported_max:8, default_thread_count:8,
-        resource_status:{admitted_host_cap_bytes:'5368709120', actual_threads:4, recovery_count:'3',
-          last_cause:'VALIDATION_KERNEL_WORK_LIMIT', last_action:'grant_work'}}};
+        resource_status:{admitted_host_cap_bytes:'5368709120', actual_threads:4}}};
     native.state.mockResolvedValue(initial);
     native.start.mockResolvedValue({operation_id:'next-start'});
     render(<App/>);
     await waitFor(()=>expect(screen.getByLabelText('Search status').textContent).toContain('Host ceiling5.00 GiB'));
-    expect(screen.getByLabelText('Search status').textContent).toContain('Recoveries3, last grant work (VALIDATION_KERNEL_WORK_LIMIT)');
     const ceiling = screen.getByLabelText('Host memory ceiling') as HTMLInputElement;
     fireEvent.change(ceiling, {target:{value:'0'}});
     expect(screen.getByRole('button',{name:'▶ Start packing'}).hasAttribute('disabled')).toBe(true);
@@ -209,7 +207,7 @@ describe('UI-01/UI-03 presentation bridge (not native acceptance)', () => {
         finished_at:null, result_id:null, detail:null};
       const status = (estimated: string): NonNullable<Desktop.State['cpu_runtime']> => ({version:1, supported_min:1, supported_max:8,
         default_thread_count:4, resource_status:{admitted_host_cap_bytes:'8589934592', estimated_working_bytes:estimated,
-          actual_threads:6, recovery_count:'0', last_cause:'', last_action:''}});
+          actual_threads:6}});
       // An empty live layout is not an improvement.
       const running: Desktop.State = {desktop_version:1, session_id:'search-panel', revision:1,
         object:{id:'object', display_name:'Cube.stl', report:document.assets.object, preview:null},

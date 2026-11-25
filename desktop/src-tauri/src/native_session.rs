@@ -52,9 +52,6 @@ pub(crate) struct ResourceStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     estimated_working_bytes: Option<String>,
     actual_threads: u32,
-    recovery_count: String,
-    last_cause: String,
-    last_action: String,
 }
 impl ResourceStatus {
     fn validate(&self) -> Outcome<()> {
@@ -62,9 +59,9 @@ impl ResourceStatus {
             text.parse::<u64>().is_ok_and(|n| !positive || n > 0)
                 && (text == "0" || (!text.starts_with('0') && text.bytes().all(|c| c.is_ascii_digit())))
         };
-        if !counter(&self.admitted_host_cap_bytes, true) || !counter(&self.recovery_count, false)
+        if !counter(&self.admitted_host_cap_bytes, true)
             || self.estimated_working_bytes.as_deref().is_some_and(|bytes| !counter(bytes, true))
-            || !(1..=8).contains(&self.actual_threads) || self.last_cause.len() > 95 || self.last_action.len() > 95 {
+            || !(1..=8).contains(&self.actual_threads) {
             return Err(error("ENGINE_TRANSPORT", "Native resource status is malformed."));
         }
         Ok(())

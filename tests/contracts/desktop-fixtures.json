@@ -529,10 +529,7 @@
         "resource_status": {
           "admitted_host_cap_bytes": "8589934592",
           "estimated_working_bytes": "905969664",
-          "actual_threads": 4,
-          "recovery_count": "0",
-          "last_cause": "",
-          "last_action": ""
+          "actual_threads": 4
         }
       }
     }
@@ -558,10 +555,7 @@
         "resource_status": {
           "admitted_host_cap_bytes": "8589934592",
           "estimated_working_bytes": "0",
-          "actual_threads": 4,
-          "recovery_count": "0",
-          "last_cause": "",
-          "last_action": ""
+          "actual_threads": 4
         }
       }
     }

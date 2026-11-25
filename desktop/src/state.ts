@@ -65,7 +65,7 @@ export function effectiveDimensions(settings: Desktop.Settings): [number, number
   const tolerance = Number.isFinite(settings.box_tolerance_mm) && settings.box_tolerance_mm! > 0 ? settings.box_tolerance_mm! : 0;
   return settings.box_dimensions_mm.map(v => v + tolerance) as [number, number, number];
 }
-export interface SearchFacts { pitch_mm: number; coarsened_to_mm?: number; threads: number; estimated_bytes?: string; host_cap_bytes?: string; recoveries?: string; remaining_seconds?: number; since_improvement_seconds?: number }
+export interface SearchFacts { pitch_mm: number; coarsened_to_mm?: number; threads: number; estimated_bytes?: string; host_cap_bytes?: string; remaining_seconds?: number; since_improvement_seconds?: number }
 // What the search panel shows. A running solve, or one that ended without a result,
 // is described by its Start settings, the engine's live resource status and the
 // desktop's clock (`improvedAt`: operation seconds when the count last rose). A
@@ -75,15 +75,14 @@ export interface SearchFacts { pitch_mm: number; coarsened_to_mm?: number; threa
 // (`solvedResultId`).
 export function searchFacts(state: Desktop.State | null, elapsed: number, improvedAt?: number, solvedResultId?: string | null): SearchFacts | null {
   const operation = state?.operation, result = state?.result, sent = state?.draft_settings, resource = state?.cpu_runtime?.resource_status;
-  const memory = { estimated_bytes: resource?.estimated_working_bytes, host_cap_bytes: resource?.admitted_host_cap_bytes,
-    recoveries: resource && resource.recovery_count !== '0' ? `${resource.recovery_count}${resource.last_action ? `, last ${resource.last_action.replaceAll('_', ' ')} (${resource.last_cause})` : ''}` : undefined };
+  const memory = { estimated_bytes: resource?.estimated_working_bytes, host_cap_bytes: resource?.admitted_host_cap_bytes };
   if (operation?.kind === 'solve' && sent && (!operation.finished_at || !result))
     return { pitch_mm: sent.pitch_mm, threads: resource?.actual_threads ?? sent.thread_count ?? 1, ...memory, remaining_seconds: Math.max(0, sent.budget_seconds - elapsed), since_improvement_seconds: improvedAt === undefined ? undefined : Math.max(0, elapsed - improvedAt) };
   if (!result) return null;
   const search = result.document.search, resolved = search.resolved_settings.resolved, budget = search.resolved_settings.search.budget_seconds;
   const coarsest = Math.max(...search.pitch_levels_mm);
   const used = search.resolved_settings.search.budget_scope === 'total_start' ? search.runtime?.total_elapsed_seconds ?? search.elapsed_seconds : search.elapsed_seconds;
-  return { pitch_mm: resolved.pitch_mm, ...(coarsest > resolved.pitch_mm ? { coarsened_to_mm: coarsest } : {}), threads: search.diagnostics?.resource_recovery?.actual_final_threads ?? resolved.thread_count,
+  return { pitch_mm: resolved.pitch_mm, ...(coarsest > resolved.pitch_mm ? { coarsened_to_mm: coarsest } : {}), threads: resolved.thread_count,
     ...(result.id === solvedResultId ? memory : {}), remaining_seconds: budget === undefined ? undefined : Math.max(0, budget - used),
     since_improvement_seconds: Math.max(0, search.elapsed_seconds - result.document.metrics.time_to_best_seconds) };
 }
