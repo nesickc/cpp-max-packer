@@ -16,10 +16,6 @@ if(WIN32)
 endif()
 target_compile_features(pack_io PUBLIC cxx_std_20)
 if(BUILD_TESTING)
-  target_compile_definitions(pack_io PRIVATE SPECTRAPACK_ASSET_LOADER_TESTING=1)
-endif()
-
-if(BUILD_TESTING)
   add_executable(spectrapack_contract_tests
     tests/contracts_tests.cpp
   )
@@ -44,9 +40,6 @@ if(BUILD_TESTING)
   target_compile_definitions(spectrapack_result_builder_tests PRIVATE
     SPECTRAPACK_CONTRACT_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures"
   )
-
-  target_compile_definitions(spectrapack_contract_tests PRIVATE SPECTRAPACK_ASSET_LOADER_TESTING=1)
-  target_compile_definitions(spectrapack_result_builder_tests PRIVATE SPECTRAPACK_ASSET_LOADER_TESTING=1)
 
   include(Catch)
   catch_discover_tests(spectrapack_contract_tests)

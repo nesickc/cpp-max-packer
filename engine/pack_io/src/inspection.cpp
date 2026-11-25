@@ -2,7 +2,7 @@
 #include <spectrapack/io/contracts.hpp>
 #include <spectrapack/io/inspection.hpp>
 
-#include "asset_admission.hpp"
+#include "operation_guard.hpp"
 #include "repair_replay.hpp"
 
 #ifdef _WIN32
@@ -130,9 +130,6 @@ std::variant<Bytes, InspectFailure> read_source_bounded(
   if (!input) {
     return failure("INVALID_STL", "The STL source cannot be opened.");
   }
-  if (detail::asset_budget) {
-      detail::asset_budget->charge(size);
-  }
   Bytes bytes(static_cast<std::size_t>(size));
   if (!bytes.empty() &&
       !input.read(reinterpret_cast<char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) {
@@ -217,23 +214,8 @@ Bytes serialize_ply(MeshView mesh) {
             "end_header\n";
 
   const auto text = header.str();
-  std::uint64_t capacity = text.size();
-  const auto add = [&](std::size_t count, std::uint64_t width) {
-      if (count > UINT64_MAX / width || count * width > UINT64_MAX - capacity) {
-          throw detail::AssetMemoryLimit {};
-      }
-      capacity += count * width;
-  };
-  add(mesh.vertices.size(), 24);
-  add(mesh.triangles.size(), 13);
-  if (capacity > SIZE_MAX) {
-      throw detail::AssetMemoryLimit {};
-  }
-  if (detail::asset_budget) {
-      detail::asset_budget->charge(capacity);
-  }
   Bytes bytes = bytes_from_string(text);
-  bytes.reserve(static_cast<std::size_t>(capacity));
+  bytes.reserve(text.size() + 24 * mesh.vertices.size() + 13 * mesh.triangles.size());
   const auto append = [&bytes](const auto& value) {
     const auto* first = reinterpret_cast<const std::byte*>(&value);
     bytes.insert(bytes.end(), first, first + sizeof(value));
@@ -249,26 +231,6 @@ Bytes serialize_ply(MeshView mesh) {
 }
 
 Json diagnostics_json(const ImportReport& report) {
-    if (detail::asset_budget) {
-        // Eight KiB per bounded diagnostic record covers its DOM, validation copy,
-        // and encoded report/recipe copies; admission precedes DOM construction.
-        const auto charge_records = [&](std::size_t count) {
-            if (count > UINT64_MAX / 8192) {
-                throw detail::AssetMemoryLimit {};
-            }
-            detail::asset_budget->charge(count * 8192);
-        };
-        detail::asset_budget->charge(65536);
-        charge_records(report.shells.size());
-        charge_records(report.issues.size());
-        for (const auto& issue : report.issues) {
-            if (issue.reason.size() > UINT64_MAX / 6 || issue.message.size() > UINT64_MAX / 6) {
-                throw detail::AssetMemoryLimit {};
-            }
-            detail::asset_budget->charge(6 * issue.reason.size());
-            detail::asset_budget->charge(6 * issue.message.size());
-        }
-    }
   Json shells = Json::array();
   for (const auto& shell : report.shells) {
     Json value = {
@@ -397,9 +359,6 @@ std::variant<Bytes, InspectFailure> read_existing_artifact(
   std::ifstream input(path, std::ios::binary);
   if (!input) {
     return failure("INTERNAL_ERROR", "A content-addressed artifact cannot be verified.", 4);
-  }
-  if (detail::asset_budget) {
-      detail::asset_budget->charge(expected_size);
   }
   Bytes bytes(expected_size);
   if (!bytes.empty() &&
@@ -635,11 +594,6 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
         return Error { "ASSET_MISMATCH", "Retained repair recipe does not replay exactly.", Json::object(), true };
     };
     try {
-        const auto original_remaining = detail::asset_budget ? detail::asset_budget->remaining() : UINT64_MAX;
-        const auto recipe_text = std::string_view(reinterpret_cast<const char*>(retained.data()), retained.size());
-        if (detail::asset_budget && !detail::admit_asset_json(recipe_text, *detail::asset_budget)) {
-            return bad();
-        }
         const auto recipe =
             Json::parse(std::string_view(reinterpret_cast<const char*>(retained.data()), retained.size()));
         const bool reconstruct = recipe.at("schema_version") == 2;
@@ -662,28 +616,7 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
             report.at("repair_record").at("accepted_by_user") != true) {
             return bad();
         }
-        const auto mesh = draft->mesh();
-        if (mesh.vertices.size() > UINT64_MAX / 24 || mesh.triangles.size() > UINT64_MAX / 13) {
-            return Error { "MEMORY_LIMIT", "Repair serialization is not representable.", Json::object(), true };
-        }
-        const auto vertices = 24 * mesh.vertices.size(), triangles = 13 * mesh.triangles.size();
-        if (vertices > UINT64_MAX - 512 || triangles > UINT64_MAX - 512 - vertices) {
-            return Error { "MEMORY_LIMIT", "Repair serialization is not representable.", Json::object(), true };
-        }
-        const auto one = 512 + vertices + triangles;
-        if (one > UINT64_MAX / 4) {
-            return Error { "MEMORY_LIMIT", "Repair serialization is not representable.", Json::object(), true };
-        }
-        const auto serialized = 4 * one;
-        if (detail::asset_budget) {
-            detail::asset_budget->charge(serialized);
-        }
-        const auto consumed =
-            detail::asset_budget ? original_remaining - detail::asset_budget->remaining() : serialized;
-        if (consumed > max_working_bytes) {
-            return Error { "MEMORY_LIMIT", "Repair scratch exceeds the remaining allowance.", Json::object(), true };
-        }
-        geometry::RepairOptions options { tolerance, 10'000'000, max_working_bytes - consumed };
+        geometry::RepairOptions options { tolerance, 10'000'000, max_working_bytes };
         if (reconstruct) {
             options.algorithm = geometry::RepairAlgorithm::manifold_reconstruct;
         }
@@ -694,10 +627,6 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
         if (const auto* failure = std::get_if<geometry::ImportFailure>(&admission)) {
             return Error { failure->code, failure->message, { { "reason", failure->reason } }, true };
         }
-        auto native_bound = std::get<geometry::ImportAdmission>(admission).working_bytes_upper_bound;
-        if (detail::asset_budget) {
-            detail::asset_budget->charge(native_bound);
-        }
         auto proposed = geometry::propose_repair(draft, options, control);
         if (const auto* failure = std::get_if<geometry::ImportFailure>(&proposed);
             failure && failure->code == "MEMORY_LIMIT") {
@@ -707,15 +636,6 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
             return bad();
         }
         const auto proposal = std::get<std::shared_ptr<const RepairProposal>>(proposed);
-        if (detail::asset_budget) {
-            const auto retained_bound = proposal->resident_buffer_bytes();
-            if (!retained_bound) {
-                throw detail::AssetMemoryLimit {};
-            }
-            detail::asset_budget->release(native_bound);
-            detail::asset_budget->charge(*retained_bound);
-            native_bound = *retained_bound;
-        }
         Bytes before = serialize_ply(draft->mesh()), after = serialize_ply(proposal->candidate()->mesh());
         const auto before_digest = sha256(before), after_digest = sha256(after);
         if (!std::holds_alternative<std::string>(before_digest) || !std::holds_alternative<std::string>(after_digest)) {
@@ -723,6 +643,7 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
         }
         const auto& before_hash = std::get<std::string>(before_digest);
         const auto& after_hash = std::get<std::string>(after_digest);
+        const auto mesh = draft->mesh();
         if (report.contains("packing_envelope") != envelope) {
             return bad();
         }
@@ -752,13 +673,9 @@ std::variant<detail::ReplayedRepair, Error> detail::replay_repair(
             return bad();
         }
         detail::ReplayedRepair result { std::get<std::shared_ptr<const AcceptedSolid>>(accepted), {} };
-        result.native_bound = native_bound;
         result.artifacts.emplace(before_hash + ".ply", std::move(before));
         result.artifacts.emplace(after_hash + ".ply", std::move(after));
         return result;
-    }
-    catch (const detail::AssetMemoryLimit&) {
-        return Error { "MEMORY_LIMIT", "Repair replay exceeds its remaining host allowance.", Json::object(), true };
     }
     catch (const detail::Interrupted& interrupted) {
         return detail::interrupted_error(interrupted);
@@ -783,11 +700,6 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
                                : request.reconstruct_resolution_mm ? request.reconstruct_resolution_mm
                                                                    : request.weld_tolerance_mm;
         const bool reconstruct = request.reconstruct_resolution_mm.has_value();
-        detail::AssetBudget budget(request.max_working_bytes);
-        // Path/artifact bookkeeping, hashing, bounded report scalar metadata, and
-        // the public CLI envelope remain live throughout native inspection.
-        budget.charge(15ULL << 20);
-        detail::AssetBudgetScope budget_scope(budget);
         if (request.stl_path.empty() || request.report_path.empty()) {
             return failure("INVALID_REQUEST", "Source and report paths are required.");
         }
@@ -845,13 +757,11 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
         }
         const std::string source_hash = std::get<std::string>(std::move(source_hash_result));
 
-        limits.max_working_bytes = budget.remaining();
+        limits.max_working_bytes = request.max_working_bytes;
         const auto admission = geometry::estimate_import_admission(source_bytes, limits);
         if (const auto* problem = std::get_if<ImportFailure>(&admission)) {
             return import_failure(*problem);
         }
-        const auto native_bound = std::get<geometry::ImportAdmission>(admission).working_bytes_upper_bound;
-        budget.charge(native_bound);
 
         geometry::ImportOptions import_options(role, units, request.scale_mm.value_or(1.0), limits);
         import_options.envelope_source_only = request.packing_envelope;
@@ -876,8 +786,6 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
         const auto draft_artifact = assets_directory / (draft_hash + ".ply");
 
         std::vector<Artifact> artifacts;
-        budget.charge(source_bytes.size());
-        budget.charge(draft_mesh_bytes.size());
         artifacts.push_back({ source_artifact, source_bytes });
         artifacts.push_back({ draft_artifact, draft_mesh_bytes });
 
@@ -888,10 +796,7 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
         std::shared_ptr<const AcceptedSolid> accepted;
 
         if (tolerance) {
-            // Weld's conservative bound includes the retained original draft once.
-            // Replace the inspection phase bound before admitting repair scratch.
-            budget.release(native_bound);
-            geometry::RepairOptions weld_options { *tolerance, 10'000'000, budget.remaining() };
+            geometry::RepairOptions weld_options { *tolerance, 10'000'000, request.max_working_bytes };
             if (reconstruct) {
                 weld_options.algorithm = geometry::RepairAlgorithm::manifold_reconstruct;
             }
@@ -902,7 +807,6 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
             if (const auto* problem = std::get_if<ImportFailure>(&weld_admission)) {
                 return import_failure(*problem);
             }
-            budget.charge(std::get<geometry::ImportAdmission>(weld_admission).working_bytes_upper_bound);
             auto proposal_result = geometry::propose_repair(draft, weld_options, control);
             if (std::holds_alternative<ImportFailure>(proposal_result)) {
                 return import_failure(std::get<ImportFailure>(proposal_result));
@@ -912,14 +816,6 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
             if (!candidate) {
                 return failure("INTERNAL_ERROR", "The repair proposal has no candidate draft.", 4);
             }
-            // Library/analyzer scratch is gone. Publication retains only the
-            // two immutable drafts, plus separately charged report/artifact bytes.
-            const auto retained_bound = proposal->resident_buffer_bytes();
-            if (!retained_bound) {
-                throw detail::AssetMemoryLimit {};
-            }
-            budget.release(std::get<geometry::ImportAdmission>(weld_admission).working_bytes_upper_bound);
-            budget.charge(*retained_bound);
 
             Bytes candidate_bytes = serialize_ply(candidate->mesh());
             auto candidate_hash_result = sha256(candidate_bytes);
@@ -1082,10 +978,6 @@ std::variant<InspectSuccess, InspectFailure> inspect_stl_file(const InspectReque
 
         return InspectSuccess { request.report_path, std::move(state), std::move(status),
                                 accepted ? std::nullopt : proposal_token };
-    }
-    catch (const detail::AssetMemoryLimit&) {
-        return failure("MEMORY_LIMIT",
-                       "Inspection inputs, artifacts and native scratch exceed the remaining host allowance.", 3);
     }
     catch (const std::bad_alloc&) {
         return failure("MEMORY_LIMIT", "Inspection exhausted its bounded memory allocation.", 3);

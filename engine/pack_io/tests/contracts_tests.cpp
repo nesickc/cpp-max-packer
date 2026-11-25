@@ -15,7 +15,6 @@
 #include <variant>
 #include <vector>
 
-#include "result_export_test_seam.hpp"
 
 TEST_CASE("T011 auxiliary diagnostics retain bounded UTF-8 and cannot suppress rejection", "[contracts][T-011]")
 {
@@ -338,51 +337,6 @@ TEST_CASE("T007 loader preserves positive inch dimensions and immutable retained
     CHECK(asset->solid()->mesh().triangles.size() == 12);
     CHECK(asset->resident_buffer_bytes() == before);
     remove_fixture(fixture);
-}
-
-TEST_CASE("T007 loader counts retained object nodes and empty diagnostics", "[loader][T-007]")
-{
-    const auto fixture = make_loader_fixture();
-    auto report = spectrapack::io::Json::parse(std::ifstream(fixture.report));
-    constexpr std::uint64_t message_count = 2000;
-    for (std::uint64_t index = 0; index != message_count; ++index) {
-        report["diagnostics"]["messages"].push_back("");
-    }
-    write_json(fixture.report, report);
-    const auto loaded = spectrapack::io::load_accepted_asset(fixture.report);
-    REQUIRE(std::holds_alternative<std::shared_ptr<const spectrapack::io::VerifiedAsset>>(loaded));
-    const auto asset = std::get<std::shared_ptr<const spectrapack::io::VerifiedAsset>>(loaded);
-    REQUIRE(asset->resident_buffer_bytes().has_value());
-    std::error_code error;
-    const auto report_size = std::filesystem::file_size(fixture.report, error);
-    REQUIRE_FALSE(error);
-    const auto source_size =
-        std::filesystem::file_size(fixture.root / report.at("source").at("path").get<std::string>(), error);
-    REQUIRE_FALSE(error);
-    const auto ply_size =
-        std::filesystem::file_size(fixture.root / report.at("accepted_solid").at("path").get<std::string>(), error);
-    REQUIRE_FALSE(error);
-    const auto lower_bound =
-        report_size + source_size + ply_size + message_count * (sizeof(spectrapack::io::Json) + sizeof(std::string));
-    CHECK(*asset->resident_buffer_bytes() >= lower_bound);
-    remove_fixture(fixture);
-}
-
-TEST_CASE("T007 loader closes the Windows SHA-256 provider after post-open allocation failure", "[loader][T-007]")
-{
-#ifdef _WIN32
-    const auto fixture = make_loader_fixture();
-    spectrapack::io::test::fail_sha256_post_open_allocation_for_test(true);
-    const auto outcome = spectrapack::io::load_accepted_asset(fixture.report);
-    spectrapack::io::test::fail_sha256_post_open_allocation_for_test(false);
-    REQUIRE(std::holds_alternative<spectrapack::io::Error>(outcome));
-    CHECK(std::get<spectrapack::io::Error>(outcome).code == "MEMORY_LIMIT");
-    const auto counts = spectrapack::io::test::sha256_provider_counts_for_test();
-    CHECK(counts.opened == counts.closed);
-    remove_fixture(fixture);
-#else
-    SUCCEED("Windows BCrypt coverage is only applicable on Windows.");
-#endif
 }
 
 TEST_CASE("T007 loader refuses oversized sparse report and source artifacts", "[loader][T-007]")

@@ -3,7 +3,6 @@
 
 #include "operation_guard.hpp"
 #include "result_builder_accounting.hpp"
-#include "result_export_test_seam.hpp"
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -24,9 +23,6 @@
 
 namespace spectrapack::io {
 namespace {
-#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
-std::atomic_bool result_build_fail_post_validation_allocation {};
-#endif
 Error bad(std::string c, std::string m) { return { std::move(c), std::move(m), Json::object(), false }; }
 bool canonical(const geometry::Quaternion& q)
 {
@@ -364,16 +360,6 @@ Json jm(const geometry::Matrix4& m)
     return a;
 }
 }  // namespace
-namespace test {
-void fail_result_build_post_validation_allocation_for_test(bool enabled) noexcept
-{
-#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
-    result_build_fail_post_validation_allocation.store(enabled);
-#else
-    (void)enabled;
-#endif
-}
-}  // namespace test
 std::variant<std::string, Error> result_catalog_sha256(const ResultCatalog& catalog,
                                                        const geometry::OrientationPolicy& policy)
 {
@@ -473,11 +459,6 @@ detail::ResultBuildAttempt detail::build_result_with_report(const ResultRequest&
             };
             return finish(std::move(error));
         }
-#ifdef SPECTRAPACK_ASSET_LOADER_TESTING
-        if (result_build_fail_post_validation_allocation.exchange(false)) {
-            throw std::bad_alloc {};
-        }
-#endif
         Json object = portable(*r.object_asset);
         Json result = {
             { "schema_version",    r.metadata["schema_version"]    },
