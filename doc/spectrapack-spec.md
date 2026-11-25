@@ -391,7 +391,7 @@ Illustrative request after a successful object import; the asset ID is supplied 
   "request_id": "request-42",
   "method": "job.start",
   "params": {
-    "settings_version": 1,
+    "settings_version": 2,
     "object_asset_id": "asset-0123456789abcdef0123456789abcdef-1",
     "container": {
       "kind": "box",
@@ -402,8 +402,7 @@ Illustrative request after a successful object import; the asset ID is supplied 
     "search": {
       "preset": "balanced-v1",
       "budget_seconds": 600,
-      "seed": "42",
-      "deterministic": false
+      "seed": "42"
     },
     "resolution": { "mode": "auto", "longest_object_axis_cells": 96 },
     "compute": { "backend": "auto" }
@@ -433,7 +432,7 @@ Implement versioned JSON Schemas for settings, assets, results and protocol reco
 | Assets | Source SHA-256, accepted-solid SHA-256, repair record reference, original unit scale, source-to-local mapping, portable asset path |
 | Container | Validated box interior (requested dimensions plus tolerance, both kept in resolved settings) or container asset reference and its source-to-world transform; interior-volume semantics |
 | Constraints | Pair/wall clearance, allowed orientation policy and catalog hash, unchanged physical dimensions |
-| Search | Fully resolved settings, pitch levels, seed, work counts, run segments, backend/device/driver transitions, elapsed times |
+| Search | Fully resolved settings, pitch levels, seed, run segments, backend/device/driver transitions, elapsed times |
 | Packing | `count` and exactly that many `{copy_id, translation_mm, quaternion_xyzw, local_to_world}` records |
 | Validation | `status`, tolerance, authoritative geometry hashes, validator/kernel version, pair/containment/clearance check summaries |
 | Metrics | Solid/container volume and utilization when valid, time to best count, peak host/device memory, termination reason |
@@ -490,7 +489,7 @@ Timed runs on one machine vary; compare repeated runs before claiming an improve
 
 These are required implementation tests, not results obtained while writing this document. Test names and fixtures become permanent regression identifiers. Each test must check an observable contract, not merely repeat an internal function's implementation.
 
-Tiers: AT-02 and the GPU parts of AT-12 and AT-16 are Later, as are AT-13's kill-during-checkpoint recovery, AT-15's AMD-host frame-time measurement and STL-container journey, AT-01's Windows 10 run and AT-17's Benchy suite. For Core, AT-17 is satisfied by the §9 scoreboard with every result validated. AT-11's exact-contact pair and its fixed-work reinsertion run are Later; for Core the same two L prisms must be found at 0.1 mm pair and wall clearance in a box with 0.05 mm of slack. For Core, AT-01 and AT-13 are exercised through `inspect`/`solve` and the desktop session, not `pack` or the stdio methods.
+Tiers: AT-02, the GPU and fixed-work parts of AT-12 and the GPU parts of AT-16 are Later, as are AT-13's kill-during-checkpoint recovery, AT-15's AMD-host frame-time measurement and STL-container journey, AT-01's Windows 10 run and AT-17's Benchy suite. For Core, AT-17 is satisfied by the §9 scoreboard with every result validated. AT-11's exact-contact pair and its fixed-work reinsertion run are Later; for Core the same two L prisms must be found at 0.1 mm pair and wall clearance in a box with 0.05 mm of slack. For Core, AT-01 and AT-13 are exercised through `inspect`/`solve` and the desktop session, not `pack` or the stdio methods.
 
 | ID | Scenario and passing condition |
 | --- | --- |

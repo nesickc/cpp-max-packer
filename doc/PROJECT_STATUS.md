@@ -106,11 +106,17 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    work budget (one billion piece visits, a few minutes; the largest local model needs
    nine million) that ends the build with an envelope-limit error. Envelopes of the
    nine local models are byte-identical.
-8. [ ] **Review and simplify**. Five stacked PRs (#59 to #63) remove 22,000 lines with tests
-   and scoreboard unchanged: the old benchmark harness, profile seams and `serve --stdio`; the
+8. [ ] **Review and simplify**. Six stacked PRs (#59 to #63, #64) remove 27,000 lines with
+   tests and scoreboard unchanged: the old benchmark harness, profile seams and `serve --stdio`; the
    CLI's and `pack_io`'s byte ledgers and test hooks (the tested library is the shipped one);
-   export's file pins; geometry accounting tests; the shell's copy of the arithmetic. Waiting on
-   a decision: the 45 caps, resource modes, fixed-work mode and `ResourceRecovery`.
+   export's file pins; geometry accounting tests; the shell's copy of the arithmetic; the
+   contracts' resource layer. Settings and results are version 2
+   ([ADR 0023](../spec/decisions/0023-settings-and-results-v2.md)): every run is timed under one
+   host memory cap, with no fixed-work mode, resource policy, work counts or recovery record, and
+   version 1 projects no longer open. Left: the per-phase work caps themselves (about 45 fields in
+   `SpectralLimits` and its parts). Timed recovery renews them as quanta and native tests bound
+   their work with them in about 800 places, so removing them means rewriting the timed
+   controller and those tests.
 
 **Finish the desktop**
 

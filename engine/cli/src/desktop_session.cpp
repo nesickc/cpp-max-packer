@@ -83,7 +83,7 @@ std::variant<ClockEnvelope, io::Error> clock_envelope(const Json& params, const 
     const auto earlier = static_cast<long double>(elapsed_ticks) / static_cast<long double>(*frequency);
     ClockEnvelope envelope { steady_before, static_cast<double>(earlier), {} };
     const auto& search = settings.at("search");
-    if (!search.at("deterministic").get<bool>() && search.value("budget_scope", "search_only") == "total_start") {
+    if (search.value("budget_scope", "search_only") == "total_start") {
         using Duration = runtime::Clock::duration;
         const auto lower = [](long double value) {
             return std::nextafter(value, -std::numeric_limits<long double>::infinity());
@@ -149,9 +149,8 @@ struct Session {
     HANDLE write_thread {};
     struct PhasePacket {
         struct ResourceStatus {
-            std::uint64_t cap {}, estimated {}, recoveries {};
+            std::uint64_t cap {}, estimated {};
             std::uint32_t threads {};
-            std::array<char, 96> cause {}, action {};
         };
         std::array<char, 129> request {}, operation {};
         std::uint64_t sequence {};
@@ -267,11 +266,8 @@ struct Session {
                         if (phase->resource) {
                             const auto& status = *phase->resource;
                             record["resource_status"] = {
-                                { "admitted_host_cap_bytes", std::to_string(status.cap)        },
-                                { "actual_threads",          status.threads                    },
-                                { "recovery_count",          std::to_string(status.recoveries) },
-                                { "last_cause",              status.cause.data()               },
-                                { "last_action",             status.action.data()              }
+                                { "admitted_host_cap_bytes", std::to_string(status.cap) },
+                                { "actual_threads",          status.threads             }
                             };
                             if (status.estimated) {
                                 record["resource_status"]["estimated_working_bytes"] = std::to_string(status.estimated);
@@ -459,20 +455,13 @@ struct PhaseContext {
         context.session.phase(packet);
     }
     static void resource_status(void* raw, std::uint64_t cap, std::uint64_t estimated,
-                                const solver::ResourceRecovery& recovery) noexcept
+                                std::uint32_t threads) noexcept
     {
         auto& context = *static_cast<PhaseContext*>(raw);
         Session::PhasePacket::ResourceStatus status;
         status.cap = cap;
         status.estimated = estimated;
-        status.threads = recovery.actual_final_threads;
-        status.recoveries = recovery.recoveries + recovery.grants;
-        if (recovery.transition_count) {
-            const auto& last = recovery.transitions[recovery.transition_count - 1];
-            std::copy_n(last.cause.begin(), std::min(last.cause.size(), status.cause.size() - 1), status.cause.begin());
-            std::copy_n(last.action.begin(), std::min(last.action.size(), status.action.size() - 1),
-                        status.action.begin());
-        }
+        status.threads = threads;
         context.resource = status;
         publish(raw, context.current);
     }
@@ -724,11 +713,6 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
             control.deadline = clock.deadline;
             const auto output = std::filesystem::u8path(params.at("result_path").get<std::string>());
             const auto resolved_thread_count = settings.at("resolved").at("thread_count").get<std::uint64_t>();
-            const auto admitted_cap =
-                settings["resolved"].contains("resource_policy")
-                    ? *cli::decimal_bytes(settings["resolved"]["resource_policy"]["host_cap_bytes"])
-                    : kHostCap;
-            session.host_cap = admitted_cap;
             settings = Json();
             cli::SolveRuntime runtime_run;
             runtime_run.diagnostic_limits = { 16, 256 };

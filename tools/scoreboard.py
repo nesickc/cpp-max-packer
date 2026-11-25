@@ -212,7 +212,7 @@ def block_reference(item, box, pair, wall):
 
 def settings_for(report, box, pair, wall, pitch, budget, threads):
     return {
-        'settings_version': 1,
+        'settings_version': 2,
         'clearance_mm': {'pair': pair, 'wall': wall},
         'compute': {'backend': 'cpu', 'thread_count': threads},
         'container': {'kind': 'box', 'dimensions_mm': list(box)},
@@ -229,7 +229,7 @@ def settings_for(report, box, pair, wall, pitch, budget, threads):
             'pitch_mm': pitch,
             'thread_count': threads,
         },
-        'search': {'budget_scope': 'total_start', 'budget_seconds': budget, 'deterministic': False,
+        'search': {'budget_scope': 'total_start', 'budget_seconds': budget,
                    'preset': 'desktop-cpu-v1', 'seed': '42'},
     }
 

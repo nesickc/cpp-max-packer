@@ -22,18 +22,18 @@ const malformedPoint: Common.Vec3 = [1, 2];
 const malformedRotation: Common.Quaternion = [0, 0, 1];
 
 const requested: Settings.Requested = {
-  settings_version: 1,
+  settings_version: 2,
   object_asset_id: 'asset-0123456789abcdef0123456789abcdef-1',
   container: { kind: 'box', dimensions_mm: [10, 10, 10] },
   clearance_mm: { pair: 0, wall: 0 },
   orientation: { mode: 'fixed' },
-  search: { preset: 'test-v1', seed: '0', deterministic: false, budget_seconds: 1 },
+  search: { preset: 'test-v1', seed: '0', budget_seconds: 1 },
   resolution: { mode: 'manual', pitch_mm: 1 },
   compute: { backend: 'auto' },
 };
 
 const resolved: Settings.Resolved = {
-  settings_version: 1,
+  settings_version: 2,
   object_asset: { source_sha256: hash, accepted_solid_sha256: hash },
   container: { kind: 'box', dimensions_mm: [10, 10, 10] },
   clearance_mm: { pair: 0, wall: 0 },
@@ -41,8 +41,7 @@ const resolved: Settings.Resolved = {
   search: {
     preset: 'test-v1',
     seed: '0',
-    deterministic: true,
-    work_budget: { max_candidate_evaluations: 1, max_search_passes: 1 },
+    budget_seconds: 1,
   },
   resolution: { mode: 'manual', pitch_mm: 1 },
   compute: { backend: 'cpu' },
@@ -114,21 +113,19 @@ const acceptedObject: Results.HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson[
   repair_record: null,
 };
 
-const work: Results.Work = { candidate_evaluations: 0, search_passes: 0 };
 const segment: Results.Segment = {
   segment_id: 'segment-0',
   parent_solution_revision: null,
   seed: '0',
   backend: 'cpu',
   elapsed_seconds: 0,
-  work_counts: work,
   search_state_reset: false,
   rng: { algorithm: 'synthetic', state: 'initial' },
   resolved_settings: resolved,
 };
 
 const result: Results.HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson = {
-  schema_version: 1,
+  schema_version: 2,
   label: 'best_found',
   job_id: 'job-1',
   solution_revision: 0,
@@ -145,7 +142,6 @@ const result: Results.HttpsSpectrapackInvalidSchemasV1ResultsSchemaJson = {
     resolved_settings: resolved,
     pitch_levels_mm: [1],
     seed: '0',
-    work_counts: work,
     run_segments: [segment],
     backend_transitions: [],
     elapsed_seconds: 0,

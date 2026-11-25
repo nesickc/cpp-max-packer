@@ -948,7 +948,7 @@ TEST_CASE("AT-16 T015 timed recovery reuses completed binary FFT after a proximi
         std::get<solver::OrientationCatalog>(solver::make_orientation_catalog(context->constraints().orientations, 1));
     solver::detail::SpectralWorkspace workspace;
     solver::SpectralLimits limits;
-    limits.resource_mode = solver::ResourceMode::timed;
+    limits.timed = true;
     const auto reference = solver::detail::build_spectral_pipeline(context, { {}, .25 }, limits, {}, catalog);
     REQUIRE(reference.complete);
     REQUIRE(reference.stats.proximity_terms > 1);
@@ -992,7 +992,7 @@ TEST_CASE("AT-16 T015 parallel raster work denial recreates its closed owner bef
         std::get<solver::OrientationCatalog>(solver::make_orientation_catalog(context->constraints().orientations, 1));
     solver::detail::SpectralWorkspace workspace;
     solver::SpectralLimits limits;
-    limits.resource_mode = solver::ResourceMode::timed;
+    limits.timed = true;
     limits.cpu_thread_count = std::min(2U, solver::cpu_supported_thread_count());
     const auto reference = solver::detail::build_spectral_pipeline(context, { {}, .25 }, limits, {}, catalog);
     REQUIRE(reference.complete);
@@ -1121,22 +1121,18 @@ TEST_CASE("AT-16 T015 timed baseline denial hands a raw valid incumbent to real 
     limits.spectral.max_copies = 2;
     solver::RunControl control;
     control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
-    for (const auto mode : { solver::ResourceMode::fixed_work, solver::ResourceMode::timed }) {
-        limits.resource_mode = mode;
+    for (const bool timed : { false, true }) {
+        limits.timed = timed;
         const auto outcome = solver::run_cpu_spectral(context, { {}, .25 }, limits, control, {}, initial);
-        CAPTURE(outcome.run.diagnostic_code);
+        CAPTURE(timed, outcome.run.diagnostic_code);
         const auto retained = outcome.run.best ? outcome.run.best->solution : outcome.run.retained_solution;
         REQUIRE(retained);
         CHECK(geo::revalidate(retained).validated_solution);
-        if (mode == solver::ResourceMode::timed) {
-            CHECK(outcome.resource_recovery.deferred >= 1);
-            CHECK(outcome.resource_recovery.fft_candidate_evaluations > 0);
-            CHECK(outcome.resource_recovery.native_validations > 0);
+        if (timed) {
             CHECK(retained->copies().size() == 2);
         }
         else {
             CHECK(retained == initial);
-            CHECK(outcome.resource_recovery.fft_candidate_evaluations == 0);
             CHECK(outcome.run.termination_reason == solver::TerminationReason::resource_limit);
         }
     }
@@ -1149,7 +1145,7 @@ TEST_CASE("AT-16 T015 timed handoff bootstraps only a native-valid empty layout 
     constraints.pair_clearance_mm = .125;
     const auto context = l_context({ 3.75, 2.75, 1.5 }, constraints);
     solver::SpectralLimits limits;
-    limits.resource_mode = solver::ResourceMode::timed;
+    limits.timed = true;
     limits.baseline.max_working_bytes = 1;
     limits.spectral.max_copies = 2;
     solver::RunControl control;
@@ -1157,7 +1153,6 @@ TEST_CASE("AT-16 T015 timed handoff bootstraps only a native-valid empty layout 
     const auto recovered = solver::run_cpu_spectral(context, { {}, .25 }, limits, control);
     REQUIRE(recovered.run.best);
     CHECK(recovered.run.best->score.count == 2);
-    CHECK(recovered.resource_recovery.fft_candidate_evaluations > 0);
     CHECK(geo::revalidate(recovered.run.best->solution).validated_solution);
     auto impossible = limits;
     impossible.spectral.per_validation.max_working_bytes = 1;
@@ -1165,43 +1160,11 @@ TEST_CASE("AT-16 T015 timed handoff bootstraps only a native-valid empty layout 
     CHECK_FALSE(refused.run.best);
     CHECK_FALSE(refused.run.retained_solution);
     CHECK(refused.run.termination_reason == solver::TerminationReason::resource_limit);
-    CHECK(refused.resource_recovery.fft_candidate_evaluations == 0);
     const auto initial = native_solution(context, {
                                                       { "original", { 1, 1, .5 }, { 0, 0, 0, 1 } }
     });
-    for (const bool deadline : { false, true }) {
-        struct Interrupt {
-            std::stop_source stop;
-            bool expired {}, deadline {};
-        } interrupt;
-        interrupt.deadline = deadline;
-        limits.resource_status_context = &interrupt;
-        limits.resource_status_sink = [](void* raw, std::uint64_t, std::uint64_t,
-                                         const solver::ResourceRecovery& recovery) noexcept {
-            if (recovery.deferred) {
-                auto& state = *static_cast<Interrupt*>(raw);
-                if (state.deadline) {
-                    state.expired = true;
-                }
-                else {
-                    state.stop.request_stop();
-                }
-            }
-        };
-        control.stop = interrupt.stop.get_token();
-        control.now_context = &interrupt;
-        control.now_fn = [](void* raw) noexcept {
-            return static_cast<Interrupt*>(raw)->expired ? spectrapack::runtime::Clock::time_point::max()
-                                                         : spectrapack::runtime::Clock::now();
-        };
-        const auto stopped = solver::run_cpu_spectral(context, { {}, .25 }, limits, control, {}, initial);
-        CHECK(stopped.run.termination_reason ==
-              (deadline ? solver::TerminationReason::budget_exhausted : solver::TerminationReason::user_stopped));
-        CHECK(stopped.run.retained_solution == initial);
-        CHECK(stopped.resource_recovery.fft_candidate_evaluations == 0);
-    }
     solver::SpectralLimits observer_limits;
-    observer_limits.resource_mode = solver::ResourceMode::timed;
+    observer_limits.timed = true;
     solver::RunControl observer_control;
     observer_control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
     const auto observer_failure =
@@ -1210,8 +1173,6 @@ TEST_CASE("AT-16 T015 timed handoff bootstraps only a native-valid empty layout 
     }, initial);
     CHECK(observer_failure.run.termination_reason == solver::TerminationReason::error);
     CHECK(observer_failure.run.diagnostic_code == "PHYSICAL_OBSERVER_ERROR");
-    CHECK(observer_failure.resource_recovery.deferred == 0);
-    CHECK(observer_failure.resource_recovery.fft_candidate_evaluations == 0);
 }
 
 TEST_CASE("AT-16 T015 timed refinement and query quanta retain native validity",
@@ -1222,7 +1183,7 @@ TEST_CASE("AT-16 T015 timed refinement and query quanta retain native validity",
     constraints.pair_clearance_mm = .125;
     const auto context = cuboid_context({ -.5, -.5, -.5 }, { .5, .5, .5 }, { 1, 1, 3.25 }, { identity }, constraints);
     solver::SpectralLimits limits;
-    limits.resource_mode = solver::ResourceMode::timed;
+    limits.timed = true;
     limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
     limits.spectral.max_copies = 3;
     limits.spectral.max_search_passes = 1;
@@ -1236,7 +1197,6 @@ TEST_CASE("AT-16 T015 timed refinement and query quanta retain native validity",
     REQUIRE(outcome.run.best);
     CHECK(outcome.run.best->score.count == 3);
     CHECK(outcome.spectral_stats.refinement_evaluations > 1);
-    CHECK(outcome.resource_recovery.grants > 0);
     CHECK(geo::revalidate(outcome.run.best->solution).validated_solution);
 }
 
@@ -1272,30 +1232,27 @@ TEST_CASE("AT-16 T015 review startup memory admission selects an affordable thre
     } reported;
     limits.resource_status_context = &reported;
     limits.resource_status_sink = [](void* raw, std::uint64_t cap, std::uint64_t estimate,
-                                     const solver::ResourceRecovery& recovery) noexcept {
-        *static_cast<Reported*>(raw) = { recovery.actual_final_threads, cap, estimate };
+                                     std::uint32_t threads) noexcept {
+        *static_cast<Reported*>(raw) = { threads, cap, estimate };
     };
-    for (const auto mode : { solver::ResourceMode::fixed_work, solver::ResourceMode::timed }) {
-        limits.resource_mode = mode;
+    for (const bool timed : { false, true }) {
+        limits.timed = timed;
         solver::RunControl control;
         control.deadline = spectrapack::runtime::Clock::now() + std::chrono::seconds(10);
         const auto outcome = solver::run_cpu_spectral(context, { {}, .25 }, limits, control, {}, initial);
         CAPTURE(outcome.run.diagnostic_code);
-        if (mode == solver::ResourceMode::timed) {
-            CHECK(outcome.resource_recovery.actual_final_threads < limits.cpu_thread_count);
+        if (timed) {
+            CHECK(outcome.final_thread_count < limits.cpu_thread_count);
             // SOL-05: the last status reports the reduced team with an estimate it can afford.
-            CHECK(reported.threads == outcome.resource_recovery.actual_final_threads);
+            CHECK(reported.threads == outcome.final_thread_count);
             CHECK(reported.estimate > 0);
             CHECK(reported.estimate <= reported.cap);
-            CHECK(outcome.resource_recovery.fft_candidate_evaluations > 0);
-            CHECK(outcome.resource_recovery.native_validations > 0);
             REQUIRE(outcome.run.best);
             CHECK(geo::revalidate(outcome.run.best->solution).validated_solution);
         }
         else {
             CHECK(outcome.run.retained_solution == initial);
-            CHECK(outcome.resource_recovery.recoveries == 0);
-            CHECK(outcome.resource_recovery.fft_candidate_evaluations == 0);
+            CHECK(outcome.final_thread_count == limits.cpu_thread_count);
         }
     }
 }
@@ -1726,7 +1683,6 @@ TEST_CASE("T010 exact cardinal admission survives adjacent pitch boundaries", "[
         REQUIRE(outcome.run.best);
         CHECK(outcome.run.best->solution->copies().size() == 1);
         CHECK(outcome.run.best->solution->copies().front().rotation_xyzw == z90);
-        REQUIRE(outcome.field_admission);
         CHECK(outcome.spectral_stats.correlations > 0);
     }
 }
@@ -2253,8 +2209,6 @@ TEST_CASE("AT-16 spectral wrapper accounts copied long ids during proposal valid
     REQUIRE(long_run.run.stats.candidate_evaluations == fresh.run.stats.candidate_evaluations + 1);
     REQUIRE(long_run.run.stats.validation_kernel_work > fresh.run.stats.validation_kernel_work);
     REQUIRE(fresh.spectral_stats.correlations > 0);
-    REQUIRE(long_run.field_admission);
-    REQUIRE(long_run.field_admission->footprint_copy_count == 1);  // Actual retained-ID trial.
     REQUIRE(fft_candidates(long_run) == fft_candidates(fresh) + 1);
     const auto id_capacity_delta =
         long_initial->copies().front().copy_id.capacity() - short_initial->copies().front().copy_id.capacity();
@@ -3732,8 +3686,6 @@ TEST_CASE("T010 fresh one-candidate spectral trial reaches FFT while baseline st
     CHECK(published.back() == 8);
     CHECK(outcome.run.best == last_published);
     CHECK(fft_candidates(outcome) == 1);
-    REQUIRE(outcome.field_admission);
-    CHECK(outcome.field_admission->footprint_copy_count == 0);
     CHECK(geo::revalidate(outcome.run.best->solution).validated_solution);
 }
 
@@ -4102,7 +4054,6 @@ TEST_CASE("T010 workspace evicts bounded orientations and rejects staged memory 
     const auto rejected =
         solver::detail::build_spectral_pipeline(workspace, context, lattice, rejected_limits, changed, catalog, {});
     CHECK_FALSE(rejected.complete);
-    CHECK_FALSE(rejected.field_admission);
     CHECK(workspace.layout_revision() == revision);
     for (std::int64_t ordinal = 0; ordinal != 4; ++ordinal) {
         fail_after_test_allocations.store(ordinal, std::memory_order_relaxed);
@@ -4111,7 +4062,6 @@ TEST_CASE("T010 workspace evicts bounded orientations and rejects staged memory 
         fail_after_test_allocations.store(-1, std::memory_order_relaxed);
         CAPTURE(ordinal, failed.diagnostic);
         CHECK_FALSE(failed.complete);
-        CHECK_FALSE(failed.field_admission);
         CHECK(workspace.layout_revision() == revision);
         const auto retained =
             solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, first_layout, catalog, {});
@@ -4129,16 +4079,12 @@ TEST_CASE("T010 workspace evicts bounded orientations and rejects staged memory 
     const auto stopped = solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, changed, catalog,
                                                                  {}, nullptr, control);
     CHECK_FALSE(stopped.complete);
-    CHECK_FALSE(stopped.field_admission);
     CHECK(polls >= 8);
     CHECK(workspace.layout_revision() == revision);
     const auto resumed =
         solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, first_layout, catalog, {});
     REQUIRE(resumed.complete);
     CHECK(resumed.stats.correlations == 0);
-    REQUIRE(resumed.field_admission);
-    CHECK(resumed.field_admission->working_bytes_upper_bound <= limits.max_working_bytes);
-    CHECK(resumed.field_admission->footprint_copy_count == 1);
     CHECK(workspace.layout_revision() == revision);
 }
 
@@ -4163,7 +4109,6 @@ TEST_CASE("T010 workspace reports admitted constructor payload freed by a later 
     REQUIRE(failed.diagnostic == "SPECTRAL_PIPELINE_ALLOCATION");
     CHECK(failed.working_bytes_peak == limits.max_working_bytes);
     CHECK(failed.admitted_bytes_upper_bound == limits.max_working_bytes);
-    CHECK_FALSE(failed.field_admission);
     CHECK(denied.layout_revision() == 0);
     CHECK(denied.resident_bytes() == 0);
 }
@@ -4207,7 +4152,6 @@ TEST_CASE("T010 correlation entry Stop cannot retain an unenforced admission", "
         CAPTURE(stop_at, stopped.working_bytes_peak, stopped.admitted_bytes_upper_bound);
         REQUIRE(entry.calls == stop_at);
         REQUIRE_FALSE(stopped.complete);
-        REQUIRE_FALSE(stopped.field_admission);
         REQUIRE(stopped.failure_details);
         CHECK(stopped.failure_details->cause_code() == "OPERATION_CANCELLED");
         CHECK(stopped.stats.correlations == stop_at);
@@ -4230,13 +4174,6 @@ TEST_CASE("T010 correlation entry Stop cannot retain an unenforced admission", "
             solver::detail::build_spectral_pipeline(workspace, context, lattice, limits, {}, catalog, { 1 });
         CAPTURE(retry.diagnostic);
         REQUIRE(retry.complete);
-        REQUIRE(retry.field_admission);
-        CHECK(retry.field_admission->working_bytes_upper_bound <= limits.max_working_bytes);
-        if (stop_at == 1) {
-            // The rotated kernel has smaller padding. The failed larger FFT
-            // must not inflate a later successful publication from this workspace.
-            CHECK(retry.field_admission->working_bytes_upper_bound < fft_bytes);
-        }
     }
 }
 
@@ -4862,7 +4799,6 @@ TEST_CASE("AT-16 refused lazy page admission does not raise observed peak", "[so
     CHECK(refused.diagnostic == "SPECTRAL_PIPELINE_RESIDENCY");
     CHECK_FALSE(refused.ranked_candidates);
     CHECK(refused.working_bytes_peak <= limits.max_working_bytes);
-    CHECK_FALSE(refused.field_admission);
 }
 
 TEST_CASE("AT-16 catalog payload moves throw safely and compact failures allocate nothing",
@@ -5155,7 +5091,7 @@ TEST_CASE("Timed search in an STL container still improves a resumed layout", "[
             .validated_solution;
     REQUIRE(initial);
     solver::SpectralLimits limits;
-    limits.resource_mode = solver::ResourceMode::timed;
+    limits.timed = true;
     solver::RunControl control;
     control.deadline = control.now() + std::chrono::seconds(30);
     const auto outcome = solver::run_cpu_spectral(context, { {}, .05 }, limits, control, {}, initial);

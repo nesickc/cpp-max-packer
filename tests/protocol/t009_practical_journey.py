@@ -79,8 +79,7 @@ def benchmark(engine, output, before=None):
                       "--object-report", report, "--result", result)
         document = json.loads(result.read_text(encoding="utf-8"))
         assert document["count"] >= 2 and document["validation"]["status"] == "valid"
-        samples.append({"seconds": seconds, "count": document["count"],
-                        "work": document["search"]["work_counts"], "placements": document["placements"]})
+        samples.append({"seconds": seconds, "count": document["count"], "placements": document["placements"]})
     assert hashlib.sha256(engine.read_bytes()).hexdigest() == provenance["engine_sha256"], "engine changed during samples"
     assert hashlib.sha256(source.read_bytes()).hexdigest() == provenance["source_sha256"], "source changed during samples"
     summary = {"profile": "t009-medium-cli-v1", "engine_sha256": provenance["engine_sha256"],

@@ -436,15 +436,14 @@ bool has_stage(const ContractFailure& failure, ValidationStage stage) {
   return false;
 }
 
-Json deterministic_requested_settings() {
+Json requested_settings() {
   return {
-      {"settings_version", 1},
+      {"settings_version", 2},
       {"object_asset_id", "asset-0123456789abcdef0123456789abcdef-1"},
       {"container", {{"kind", "box"}, {"dimensions_mm", Json::array({165.0, 165.0, 320.0})}}},
       {"clearance_mm", {{"pair", 1.0}, {"wall", 1.0}}},
       {"orientation", {{"mode", "free"}, {"catalog_size", 256}}},
-      {"search", {{"preset", "balanced-v1"}, {"seed", "42"}, {"deterministic", true},
-                    {"work_budget", {{"max_candidate_evaluations", 1000}, {"max_search_passes", 10}}}}},
+      {"search", {{"preset", "balanced-v1"}, {"seed", "42"}, {"budget_seconds", 10.0}}},
       {"resolution", {{"mode", "auto"}, {"longest_object_axis_cells", 96}}},
       {"compute", {{"backend", "cpu"}}},
   };
@@ -532,9 +531,6 @@ Json two_segment_result() {
   first["segment_id"] = "segment-42";
   first["seed"] = "42";
   first["resolved_settings"]["search"]["seed"] = "42";
-  first["resolved_settings"]["search"]["work_budget"] = {
-      {"max_candidate_evaluations", 1}, {"max_search_passes", 1}};
-  first["work_counts"] = {{"candidate_evaluations", 1}, {"search_passes", 1}};
   first["elapsed_seconds"] = 1.0;
 
   Json second = first;
@@ -547,8 +543,6 @@ Json two_segment_result() {
   result["search"]["run_segments"] = Json::array({first, second});
   result["search"]["resolved_settings"] = second["resolved_settings"];
   result["search"]["seed"] = "43";
-  result["search"]["work_counts"] = {
-      {"candidate_evaluations", 2}, {"search_passes", 2}};
   result["search"]["elapsed_seconds"] = 2.0;
   return result;
 }
@@ -601,14 +595,6 @@ Json mixed_volume_result() {
 
 Json result_with_backend_transitions() {
   Json result = two_segment_result();
-  for (auto& segment : result["search"]["run_segments"]) {
-    auto& segment_search = segment["resolved_settings"]["search"];
-    segment_search["deterministic"] = false;
-    segment_search.erase("work_budget");
-    segment_search["budget_seconds"] = 1.0;
-  }
-  result["search"]["resolved_settings"] =
-      result["search"]["run_segments"].back()["resolved_settings"];
   result["search"]["backend_transitions"] = Json::array({
       {{"segment_id", "segment-42"}, {"from", "cpu"}, {"to", "vulkan"},
        {"reason", "device selected"}, {"elapsed_seconds", 0.25}},
@@ -659,7 +645,7 @@ Json inspected_asset_with_custom_scale() {
 
 TEST_CASE("DATA-01 rejects a BOM-prefixed UTF-8 settings record before schema validation", "[contracts][parse][settings]") {
   ContractValidator validator;
-  const std::string text = "\xEF\xBB\xBF" + deterministic_requested_settings().dump();
+  const std::string text = "\xEF\xBB\xBF" + requested_settings().dump();
 
   const auto outcome = validator.parse(ContractKind::settings, text);
   const auto* failure = failure_of(outcome);
@@ -679,7 +665,7 @@ TEST_CASE("DATA-01 bounds parser errors with stable causes before schema validat
   }
 
   SECTION("duplicate object key") {
-    const auto outcome = validator.parse(ContractKind::settings, "{\"settings_version\":1,\"settings_version\":1}");
+    const auto outcome = validator.parse(ContractKind::settings, "{\"settings_version\":2,\"settings_version\":2}");
     const auto* failure = failure_of(outcome);
     REQUIRE(failure != nullptr);
     CHECK(has_issue(*failure, "DUPLICATE_KEY"));
@@ -723,7 +709,7 @@ TEST_CASE("DATA-01 rejects NUL-bearing requested asset identity and an out-of-ra
   ContractValidator validator;
 
   SECTION("runtime asset identity") {
-    Json settings = deterministic_requested_settings();
+    Json settings = requested_settings();
     settings["object_asset_id"] = std::string("asset-1\0suffix", 14);
     const auto outcome = validator.validate(ContractKind::settings, settings);
     const auto* failure = failure_of(outcome);
@@ -732,7 +718,7 @@ TEST_CASE("DATA-01 rejects NUL-bearing requested asset identity and an out-of-ra
   }
 
   SECTION("decimal uint64 seed") {
-    Json settings = deterministic_requested_settings();
+    Json settings = requested_settings();
     settings["search"]["seed"] = "18446744073709551616";
     const auto outcome = validator.validate(ContractKind::settings, settings);
     const auto* failure = failure_of(outcome);
@@ -754,7 +740,7 @@ TEST_CASE("DATA-01 accepts resolved STL settings without reading a runtime asset
 
 TEST_CASE("DATA-01 rejects nonunit quaternions in a requested custom catalog", "[contracts][settings][semantic]") {
   ContractValidator validator;
-  Json settings = deterministic_requested_settings();
+  Json settings = requested_settings();
   settings["orientation"] = {
       {"mode", "custom"},
       {"quaternions_xyzw", Json::array({Json::array({0.0, 0.0, 0.0, 2.0})})}};
@@ -765,45 +751,13 @@ TEST_CASE("DATA-01 rejects nonunit quaternions in a requested custom catalog", "
   CHECK(has_issue(*failure, "QUATERNION_NOT_NORMALIZED"));
 }
 
-TEST_CASE("SPEC-6.5 keeps deterministic work-budget settings on CPU", "[contracts][settings][semantic]") {
-  ContractValidator validator;
-
-  Json deterministic_vulkan = deterministic_requested_settings();
-  deterministic_vulkan["compute"]["backend"] = "vulkan";
-  auto outcome = validator.validate(ContractKind::settings, deterministic_vulkan);
-  const auto* failure = failure_of(outcome);
-  REQUIRE(failure != nullptr);
-  CHECK(has_issue(*failure, "DETERMINISTIC_BACKEND_INVALID"));
-
-  Json resolved_mismatch = zero_result()["search"]["resolved_settings"];
-  resolved_mismatch["resolved"]["backend"] = "vulkan";
-  outcome = validator.validate(ContractKind::settings, resolved_mismatch);
-  failure = failure_of(outcome);
-  REQUIRE(failure != nullptr);
-  CHECK(has_issue(*failure, "BACKEND_RESOLUTION_MISMATCH"));
-  CHECK(has_issue(*failure, "DETERMINISTIC_BACKEND_INVALID"));
-
-  Json wall_clock_vulkan = deterministic_requested_settings();
-  wall_clock_vulkan["search"]["deterministic"] = false;
-  wall_clock_vulkan["search"].erase("work_budget");
-  wall_clock_vulkan["search"]["budget_seconds"] = 1.0;
-  wall_clock_vulkan["compute"]["backend"] = "vulkan";
-  CHECK(failure_of(validator.validate(ContractKind::settings, wall_clock_vulkan)) == nullptr);
-
-  Json resolved_vulkan = zero_result()["search"]["resolved_settings"];
-  resolved_vulkan["search"] = wall_clock_vulkan["search"];
-  resolved_vulkan["compute"]["backend"] = "vulkan";
-  resolved_vulkan["resolved"]["backend"] = "vulkan";
-  CHECK(failure_of(validator.validate(ContractKind::settings, resolved_vulkan)) == nullptr);
-}
-
 TEST_CASE("DATA-01 compares resolved quaternion duplicates numerically while requested duplicates remain allowed", "[contracts][settings][semantic]") {
   ContractValidator validator;
   const Json numeric_duplicates = Json::array({
       Json::array({0, 0, 0, 1}),
       Json::array({0.0, -0.0, 0.0, 1.0})});
 
-  Json requested = deterministic_requested_settings();
+  Json requested = requested_settings();
   requested["orientation"] = {{"mode", "custom"}, {"quaternions_xyzw", numeric_duplicates}};
   CHECK(failure_of(validator.validate(ContractKind::settings, requested)) == nullptr);
 
@@ -817,7 +771,7 @@ TEST_CASE("DATA-01 compares resolved quaternion duplicates numerically while req
 
 TEST_CASE("DATA-01 rejects an internally constructed JSON string with malformed UTF-8 before schema validation", "[contracts][settings][semantic]") {
   ContractValidator validator;
-  Json settings = deterministic_requested_settings();
+  Json settings = requested_settings();
   settings["search"]["preset"] = std::string("\xC3\x28", 2);
 
   const auto outcome = validator.validate(ContractKind::settings, settings);
@@ -830,7 +784,7 @@ TEST_CASE("DATA-01 rejects raw NUL and overflowing numeric literals before docum
   ContractValidator validator;
 
   SECTION("raw NUL is never a record terminator") {
-    const std::string text = deterministic_requested_settings().dump() + std::string("\0junk", 5);
+    const std::string text = requested_settings().dump() + std::string("\0junk", 5);
     const auto outcome = validator.parse(ContractKind::settings, text);
     const auto* failure = failure_of(outcome);
     REQUIRE(failure != nullptr);
@@ -1020,21 +974,10 @@ TEST_CASE("AT-14 rejects inconsistent continuation segment provenance", "[contra
     result["search"]["run_segments"][1]["parent_solution_revision"] = 1;
     require_issue(std::move(result), "SEGMENT_PARENT_INVALID");
   }
-  SECTION("work totals equal the sum of segments") {
-    Json result = two_segment_result();
-    result["search"]["work_counts"]["candidate_evaluations"] = 1;
-    require_issue(std::move(result), "SEARCH_TOTAL_MISMATCH");
-  }
   SECTION("elapsed total equals the sum of segments") {
     Json result = two_segment_result();
     result["search"]["elapsed_seconds"] = 1.0;
     require_issue(std::move(result), "SEARCH_TOTAL_MISMATCH");
-  }
-  SECTION("work budget applies to each segment") {
-    Json result = two_segment_result();
-    result["search"]["run_segments"][0]["work_counts"]["search_passes"] = 2;
-    result["search"]["work_counts"]["search_passes"] = 3;
-    require_issue(std::move(result), "SEGMENT_WORK_BUDGET_EXCEEDED");
   }
 }
 
@@ -1292,15 +1235,6 @@ TEST_CASE("AT-14 validates ordered backend transition chains", "[contracts][resu
     Json result = result_with_backend_transitions();
     result["search"]["backend_transitions"][1]["elapsed_seconds"] = 0.1;
     require_issue(std::move(result), "TRANSITION_TIME_INVALID");
-  }
-  SECTION("deterministic CPU segments cannot transition into Vulkan") {
-    Json result = result_with_backend_transitions();
-    auto& segment_search = result["search"]["run_segments"][0]["resolved_settings"]["search"];
-    segment_search["deterministic"] = true;
-    segment_search.erase("budget_seconds");
-    segment_search["work_budget"] = {
-        {"max_candidate_evaluations", 1}, {"max_search_passes", 1}};
-    require_issue(std::move(result), "DETERMINISTIC_BACKEND_TRANSITION");
   }
 }
 

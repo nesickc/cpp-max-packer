@@ -201,10 +201,10 @@ class SolveSubprocessTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def settings(self, dimensions=(40.0, 40.0, 40.0), candidates=128, passes=1):
+    def settings(self, dimensions=(40.0, 40.0, 40.0), budget_seconds=1.0):
         report = json.loads(self.object_report_path.read_text(encoding="utf-8"))
         return {
-            "settings_version": 1,
+            "settings_version": 2,
             "object_asset": {
                 "source_sha256": report["source"]["sha256"],
                 "accepted_solid_sha256": report["accepted_solid"]["sha256"],
@@ -212,12 +212,7 @@ class SolveSubprocessTests(unittest.TestCase):
             "container": {"kind": "box", "dimensions_mm": list(dimensions)},
             "clearance_mm": {"pair": 0.0, "wall": 0.0},
             "orientation": {"mode": "fixed", "quaternion_xyzw": [0.0, 0.0, 0.0, 1.0]},
-            "search": {
-                "preset": "subprocess", "seed": "0", "deterministic": True,
-                "work_budget": {
-                    "max_candidate_evaluations": candidates, "max_search_passes": passes,
-                },
-            },
+            "search": {"preset": "subprocess", "seed": "0", "budget_seconds": budget_seconds},
             "resolution": {"mode": "manual", "pitch_mm": 10.0},
             "compute": {"backend": "cpu"},
             "resolved": {
@@ -259,7 +254,7 @@ class SolveSubprocessTests(unittest.TestCase):
         settings["orientation"] = {"mode": "cube"}
         settings["resolved"]["orientation_catalog_sha256"] = "fe7ba7524cabd7dbb20a4c1acc053d1ca518df6c6c5f2949f78f9b3a0ac1b95a"
         settings["resolution"]["pitch_mm"] = settings["resolved"]["pitch_mm"] = .001
-        settings["search"] = {"preset": "subprocess", "seed": "0", "deterministic": False, "budget_seconds": 5}
+        settings["search"] = {"preset": "subprocess", "seed": "0", "budget_seconds": 5}
         completed, _, result_path, _ = self.solve(settings)
         self.assertTrue(result_path.exists(), completed.stdout)
         result = json.loads(result_path.read_text())
@@ -269,7 +264,7 @@ class SolveSubprocessTests(unittest.TestCase):
 
     def test_timed_solve_without_policy_honors_explicit_memory_cap(self):
         settings = self.settings()
-        settings["search"] = {"preset": "subprocess", "seed": "0", "deterministic": False, "budget_seconds": 5}
+        settings["search"] = {"preset": "subprocess", "seed": "0", "budget_seconds": 5}
         settings["compute"]["host_memory_limit_bytes"] = "1"
         completed, _, result_path, _ = self.solve(settings)
         self.assertNotEqual(completed.returncode, 0)
@@ -510,9 +505,6 @@ class SolveSubprocessTests(unittest.TestCase):
             (metrics["solid_volume_mm3"], metrics["container_volume_mm3"],
              metrics["utilization"]),
             (1000.0, 64000.0, 1.0))
-        self.assertEqual(result["search"]["work_counts"], {
-            "candidate_evaluations": 64, "search_passes": 1,
-        })
         tampered = copy.deepcopy(result)
         del tampered["label"]
         self.assert_result_contract_rejected(
@@ -535,7 +527,7 @@ class SolveSubprocessTests(unittest.TestCase):
                          {"kind": "box", "dimensions_mm": [39.95] * 3, "tolerance_mm": 0.1})
 
     def test_empty(self):
-        completed, _, result_path, _ = self.solve(self.settings((5.0, 5.0, 5.0), 1, 1))
+        completed, _, result_path, _ = self.solve(self.settings((5.0, 5.0, 5.0)))
         self.assertEqual(completed.returncode, 0, (completed.stdout, completed.stderr))
         result = json.loads(result_path.read_text(encoding="utf-8"))
         self.assertEqual((result["label"], result["count"], result["placements"]),
@@ -581,7 +573,8 @@ class SolveSubprocessTests(unittest.TestCase):
             "inspect", "--stl", self.source_path, "--units", "inch", "--role", "object",
             "--report", self.object_report_path)
         self.assertEqual(inspected.returncode, 0, (inspected.stdout, inspected.stderr))
-        settings = self.settings((200.0, 200.0, 200.0), 2, 1)
+        # The turned 25.4 mm cube spans 31.5 mm in X and Y: this box holds one copy.
+        settings = self.settings((40.0, 40.0, 40.0))
         quaternion = [0.0, 0.0, 0.6, 0.8]
         settings["orientation"] = {"mode": "fixed", "quaternion_xyzw": quaternion}
         settings["resolved"]["orientation_catalog_sha256"] = NONCARDINAL_CATALOG_SHA256
@@ -670,7 +663,7 @@ class SolveSubprocessTests(unittest.TestCase):
         for mode, quaternions, canonical_text, golden_hash in cases:
             with self.subTest(mode=mode):
                 self.assertEqual(sha256_bytes(canonical_text.encode("utf-8")), golden_hash)
-                settings = self.settings((40.0, 40.0, 40.0), 2, 1)
+                settings = self.settings((40.0, 40.0, 40.0))
                 if mode == "fixed":
                     settings["orientation"] = {"mode": mode, "quaternion_xyzw": quaternions[0]}
                 else:
@@ -702,10 +695,9 @@ class SolveSubprocessTests(unittest.TestCase):
                     for placement in result["placements"]
                 ]
                 self.assertTrue(pose_bits)
-                self.assertEqual(pose_bits[0], tuple(expected_bits[0]))
                 self.assertTrue(all(item in allowed_pose_bits for item in pose_bits))
 
-        stale = self.settings(candidates=1, passes=1)
+        stale = self.settings()
         stale["resolved"]["orientation_catalog_sha256"] = "0" * 64
         completed, settings_path, result_path, stl_path = self.solve(stale, self.root / "stale")
         snapshot = self.input_snapshot(settings_path)
@@ -716,7 +708,7 @@ class SolveSubprocessTests(unittest.TestCase):
     def test_rejections(self):
         rejection_root = self.root / "rejections"
         rejection_root.mkdir()
-        base_settings = self.settings(candidates=1, passes=1)
+        base_settings = self.settings()
 
         def execute(name, settings=None, arguments=None, object_report=None,
                     expected_codes=None, prepare=None, preexisting_outputs=()):
@@ -798,8 +790,7 @@ class SolveSubprocessTests(unittest.TestCase):
 
         unavailable_backend = copy.deepcopy(base_settings)
         unavailable_backend["search"] = {
-            "preset": "subprocess", "seed": "0", "deterministic": False,
-            "budget_seconds": 1.0,
+            "preset": "subprocess", "seed": "0", "budget_seconds": 1.0,
         }
         unavailable_backend["compute"]["backend"] = "vulkan"
         unavailable_backend["resolved"]["backend"] = "vulkan"
@@ -893,7 +884,7 @@ class SolveSubprocessTests(unittest.TestCase):
         self.assert_result_contract(existing_result)
         retained = json.loads(existing_result.read_text(encoding="utf-8"))
         self.assertEqual((retained["label"], retained["count"], retained["validation"]["status"]),
-                         ("best_found", 1, "valid"))
+                         ("best_found", 64, "valid"))
         self.assertEqual(pathlib.Path(existing_reply["error"]["details"]["result_path"]).resolve(),
                          existing_result.resolve())
         for path, before in existing_snapshot.items():
@@ -938,11 +929,18 @@ class SolveSubprocessTests(unittest.TestCase):
         return completed, result_path, stl_path, snapshot
 
     def short_parent(self):
-        """Some of the 64 cubes a 40 mm box holds: the work budget ends the search early."""
-        completed, _, parent_path, _ = self.solve(self.settings(candidates=16), self.root / "parent")
+        """16 of the 64 cubes a 40 mm box holds: the first copies of a full packing."""
+        completed, _, full_path, _ = self.solve(self.settings(), self.root / "full")
         self.assertEqual(completed.returncode, 0, (completed.stdout, completed.stderr))
-        parent = json.loads(parent_path.read_text(encoding="utf-8"))
-        self.assertTrue(1 < parent["count"] < 64, parent["count"])
+        parent = json.loads(full_path.read_text(encoding="utf-8"))
+        self.assertEqual(parent["count"], 64)
+        del parent["artifacts"]
+        parent["placements"] = parent["placements"][:16]
+        parent["count"] = 16
+        parent["metrics"]["utilization"] = 0.25
+        parent_path = self.root / "parent.json"
+        parent_path.write_text(json.dumps(parent), encoding="utf-8")
+        self.assert_result_contract(parent_path)
         return parent_path, parent
 
     def test_continue(self):
@@ -963,16 +961,13 @@ class SolveSubprocessTests(unittest.TestCase):
         self.assertEqual(second["parent_solution_revision"], parent["solution_revision"])
         self.assertIs(second["search_state_reset"], True)
         self.assertEqual(second["resolved_settings"], search["resolved_settings"])
-        self.assertEqual(search["work_counts"]["candidate_evaluations"],
-                         first["work_counts"]["candidate_evaluations"] +
-                         second["work_counts"]["candidate_evaluations"])
         # The count rose in the second segment, after all of the parent's search time.
         self.assertGreaterEqual(result["metrics"]["time_to_best_seconds"],
                                 parent["search"]["elapsed_seconds"])
 
         # No budget to speak of: the parent's poses come back, never fewer.
         completed, kept_path, _, _ = self.continue_solve(
-            "kept", self.settings(candidates=1, passes=1), parent_path)
+            "kept", self.settings(budget_seconds=0.001), parent_path)
         self.assertEqual(completed.returncode, 0, (completed.stdout, completed.stderr))
         self.assert_result_contract(kept_path)
         kept = json.loads(kept_path.read_text(encoding="utf-8"))

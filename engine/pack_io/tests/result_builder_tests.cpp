@@ -173,7 +173,7 @@ spectrapack::io::Json metadata_for(const spectrapack::io::Json& fixture,
 {
     namespace io = spectrapack::io;
     io::Json metadata = {
-        { "schema_version",    1                                                       },
+        { "schema_version",    2                                                       },
         { "job_id",            "job-result-builder"                                    },
         { "solution_revision", 1                                                       },
         { "created_at",        "2026-09-21T00:00:00Z"                                  },
@@ -259,7 +259,7 @@ struct ResultBuilderFixture {
         io::Json fixture =
             io::Json::parse(std::ifstream(std::string(SPECTRAPACK_CONTRACT_FIXTURE_DIR) + "/zero-result.json"));
         io::Json metadata = {
-            { "schema_version",    1                      },
+            { "schema_version",    2                      },
             { "job_id",            "job-real-cube"        },
             { "solution_revision", 1                      },
             { "created_at",        "2026-09-21T00:00:00Z" },

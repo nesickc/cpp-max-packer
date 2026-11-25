@@ -1,6 +1,6 @@
 [
   {
-    "name": "native deterministic run",
+    "name": "native timed run",
     "valid": true,
     "value": {
       "runtime_version": 1,
@@ -10,7 +10,7 @@
       "params": {
         "asset_token": "asset-1",
         "settings": {
-          "settings_version": 1,
+          "settings_version": 2,
           "object_asset": {
             "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -39,11 +39,7 @@
           "search": {
             "preset": "synthetic-v1",
             "seed": "0",
-            "deterministic": true,
-            "work_budget": {
-              "max_candidate_evaluations": 1,
-              "max_search_passes": 1
-            }
+            "budget_seconds": 1
           },
           "resolution": {
             "mode": "manual",
@@ -108,9 +104,6 @@
       "resource_status": {
         "admitted_host_cap_bytes": "5558185984",
         "actual_threads": 4,
-        "recovery_count": "0",
-        "last_cause": "",
-        "last_action": "",
         "estimated_working_bytes": "704657162"
       }
     }
@@ -125,7 +118,7 @@
       "params": {
         "asset_token": "asset-1",
         "settings": {
-          "settings_version": 1,
+          "settings_version": 2,
           "object_asset": {
             "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -154,11 +147,7 @@
           "search": {
             "preset": "synthetic-v1",
             "seed": "0",
-            "deterministic": true,
-            "work_budget": {
-              "max_candidate_evaluations": 1,
-              "max_search_passes": 1
-            }
+            "budget_seconds": 1
           },
           "resolution": {
             "mode": "manual",
@@ -193,7 +182,7 @@
       "params": {
         "asset_token": "asset-1",
         "settings": {
-          "settings_version": 1,
+          "settings_version": 2,
           "object_asset": {
             "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -222,11 +211,7 @@
           "search": {
             "preset": "synthetic-v1",
             "seed": "0",
-            "deterministic": true,
-            "work_budget": {
-              "max_candidate_evaluations": 1,
-              "max_search_passes": 1
-            }
+            "budget_seconds": 1
           },
           "resolution": {
             "mode": "manual",
@@ -261,7 +246,7 @@
       "params": {
         "asset_token": "asset-1",
         "settings": {
-          "settings_version": 1,
+          "settings_version": 2,
           "object_asset": {
             "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -290,11 +275,7 @@
           "search": {
             "preset": "synthetic-v1",
             "seed": "0",
-            "deterministic": true,
-            "work_budget": {
-              "max_candidate_evaluations": 1,
-              "max_search_passes": 1
-            }
+            "budget_seconds": 1
           },
           "resolution": {
             "mode": "manual",
@@ -411,7 +392,7 @@
       "params": {
         "asset_token": "asset-1",
         "settings": {
-          "settings_version": 1,
+          "settings_version": 2,
           "object_asset": {
             "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -440,11 +421,7 @@
           "search": {
             "preset": "synthetic-v1",
             "seed": "0",
-            "deterministic": true,
-            "work_budget": {
-              "max_candidate_evaluations": 1,
-              "max_search_passes": 1
-            }
+            "budget_seconds": 1
           },
           "resolution": {
             "mode": "manual",
@@ -480,7 +457,7 @@
       "params": {
         "asset_token": "asset-1",
         "settings": {
-          "settings_version": 1,
+          "settings_version": 2,
           "object_asset": {
             "source_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "accepted_solid_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -509,11 +486,7 @@
           "search": {
             "preset": "synthetic-v1",
             "seed": "0",
-            "deterministic": true,
-            "work_budget": {
-              "max_candidate_evaluations": 1,
-              "max_search_passes": 1
-            }
+            "budget_seconds": 1
           },
           "resolution": {
             "mode": "manual",

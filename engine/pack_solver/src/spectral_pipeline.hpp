@@ -37,7 +37,6 @@ struct SpectralPipelineResult {
     using RankedPage = std::vector<RankedCandidate>;
     std::unique_ptr<RankedPage> ranked_candidates;
     geometry::PhysicalQueryStats ranking_bounds_stats {};
-    std::optional<CpuFieldAdmissionEstimate> field_admission;
     // Checked pre-allocation maxima while this generation is still private.
     std::uint64_t admitted_bytes_upper_bound {};
     bool allocation_refused {};

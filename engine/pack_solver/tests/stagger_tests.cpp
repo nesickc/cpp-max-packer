@@ -63,7 +63,7 @@ TEST_CASE("Timed stagger fits wings beneath neighboring bodies", "[solver][inter
     control.stop = stop.get_token();
     control.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     sol::SpectralLimits limits;
-    limits.resource_mode = sol::ResourceMode::timed;
+    limits.timed = true;
     std::vector<std::uint64_t> counts;
     std::vector<sol::SnapshotHandle> published;
     const auto run = sol::run_cpu_spectral(context, { {}, .001 }, limits, control, [&](sol::SnapshotHandle snapshot) {
@@ -100,7 +100,7 @@ TEST_CASE("Timed stagger searches row spacing beyond the fixed seed", "[solver][
     sol::RunControl control;
     control.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     auto timed = fixed;
-    timed.resource_mode = sol::ResourceMode::timed;
+    timed.timed = true;
     const auto improved = sol::run_cpu_spectral(context, { {}, .001 }, timed, control, {}, seed.run.best->solution);
     REQUIRE(improved.run.best);
     CHECK(improved.run.best->score.count >= 6);
@@ -118,7 +118,7 @@ TEST_CASE("Timed height stagger interlocks elevated wings across layers", "[solv
     const auto baseline = sol::run_aabb_baseline(context, {}, {});
     REQUIRE(baseline.best);
     sol::SpectralLimits limits;
-    limits.resource_mode = sol::ResourceMode::timed;
+    limits.timed = true;
     sol::RunControl control;
     control.deadline = control.now() + std::chrono::seconds(5);
     const auto result = sol::run_cpu_spectral(context, { {}, .001 }, limits, control, {}, baseline.best->solution);
@@ -182,7 +182,7 @@ TEST_CASE("Timed search repacks residual boxes when manual pitch cannot admit a 
     REQUIRE(baseline.best);
     REQUIRE(baseline.best->score.count == 2);
     sol::SpectralLimits limits;
-    limits.resource_mode = sol::ResourceMode::timed;
+    limits.timed = true;
     sol::RunControl control;
     control.stop = stop.get_token();
     control.deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -236,7 +236,7 @@ TEST_CASE("Timed mixed interlocking alternates permitted upside-down copies",
     REQUIRE(baseline.best);
     REQUIRE(baseline.best->score.count == 1);
     sol::SpectralLimits limits;
-    limits.resource_mode = sol::ResourceMode::timed;
+    limits.timed = true;
     sol::RunControl control;
     control.deadline = control.now() + std::chrono::seconds(5);
     const auto result = sol::run_cpu_spectral(context, { {}, .001 }, limits, control, {}, baseline.best->solution);
@@ -279,7 +279,7 @@ TEST_CASE("Relative paired layers nest sheared prisms at different physical scal
     REQUIRE(baseline.best);
     REQUIRE(baseline.best->score.count == 1);
     sol::SpectralLimits limits;
-    limits.resource_mode = sol::ResourceMode::timed;
+    limits.timed = true;
     sol::RunControl control;
     control.deadline = control.now() + std::chrono::seconds(5);
     const auto result = sol::run_cpu_spectral(context, { {}, .001 }, limits, control, {}, baseline.best->solution);
@@ -340,7 +340,7 @@ void check_concave_refill(double scale)
         REQUIRE(initial);
     }
     sol::SpectralLimits limits;
-    limits.resource_mode = sol::ResourceMode::timed;
+    limits.timed = true;
     limits.spectral.max_copies = 2;
     sol::RunControl control;
     control.deadline = control.now() + std::chrono::seconds(5);
@@ -392,7 +392,7 @@ TEST_CASE("Compaction removes diagonal slack between rigid sloping solids", "[so
     const auto initial = geo::validate(context, candidate).validated_solution;
     REQUIRE(initial);
     sol::SpectralLimits limits;
-    limits.resource_mode = sol::ResourceMode::timed;
+    limits.timed = true;
     limits.baseline.max_copies = limits.spectral.max_copies = 2;
     sol::RunControl control;
     control.deadline = control.now() + std::chrono::seconds(5);

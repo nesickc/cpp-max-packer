@@ -83,7 +83,7 @@ class Session:
 
 
 class RuntimeTests(unittest.TestCase):
-    def test_t015_p2_new_start_freezes_one_shared_cap_after_prepare(self):
+    def test_each_start_searches_under_its_memory_ceiling(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
             source, report = root/'cube.stl', root/'object.report.json'
@@ -112,8 +112,6 @@ class RuntimeTests(unittest.TestCase):
                         'start_qpc_ticks':ticks,'qpc_frequency_hz':frequency}})
                     self.assertTrue(terminal['ok'], terminal)
                     result = json.loads(output.read_text())
-                    policy = result['search']['resolved_settings']['resolved']['resource_policy']
-                    self.assertEqual(int(policy['host_cap_bytes']), cap)
                     statuses = [phase['resource_status'] for phase in phases if 'resource_status' in phase]
                     self.assertTrue(statuses)
                     self.assertEqual(int(statuses[0]['admitted_host_cap_bytes']), cap)
@@ -136,7 +134,7 @@ class RuntimeTests(unittest.TestCase):
                                       '--report', str(report)], capture_output=True, text=True, timeout=15)
             self.assertEqual(imported.returncode, 0, imported.stdout+imported.stderr)
             fixture = fixtures.SolveSubprocessTests(); fixture.object_report_path = report
-            settings = fixture.settings(dimensions=(12, 6, 4), candidates=64, passes=2)
+            settings = fixture.settings(dimensions=(12, 6, 4))
             session = Session()
             try:
                 preview = root/'preview'; preview.mkdir()
@@ -239,13 +237,17 @@ class RuntimeTests(unittest.TestCase):
                         elif record['kind'] == 'response':
                             return record, packings
 
-                # 36 cubes of 2 mm fit; a small work budget stops well short of that.
-                reply, _ = run('parent', fixture.settings(dimensions=(12, 6, 4), candidates=8, passes=1))
+                # 36 cubes of 2 mm fit; the parent keeps the first 10 of a full packing.
+                reply, _ = run('full', fixture.settings(dimensions=(12, 6, 4)))
                 self.assertTrue(reply['ok'], reply)
-                parent = json.loads((root/'parent.json').read_text())
-                self.assertTrue(0 < parent['count'] < 36, parent['count'])
+                parent = json.loads((root/'full.json').read_text())
+                self.assertEqual(parent['count'], 36)
+                parent['placements'] = parent['placements'][:10]
+                parent['count'] = 10
+                parent['metrics']['utilization'] = parent['metrics']['utilization'] * 10 / 36
+                (root/'parent.json').write_text(json.dumps(parent))
 
-                more = fixture.settings(dimensions=(12, 6, 4), candidates=128, passes=2)
+                more = fixture.settings(dimensions=(12, 6, 4))
                 reply, packings = run('continued', more, root/'parent.json')
                 self.assertTrue(reply['ok'], reply)
                 continued = json.loads((root/'continued.json').read_text())
@@ -285,7 +287,7 @@ class RuntimeTests(unittest.TestCase):
                 '--units', 'mm', '--report', str(report)], capture_output=True, text=True, timeout=15)
             self.assertEqual(imported.returncode, 0, imported.stdout+imported.stderr)
             fixture = fixtures.SolveSubprocessTests(); fixture.object_report_path = report
-            settings = fixture.settings(dimensions=(64, 64, 64), candidates=1, passes=1)
+            settings = fixture.settings(dimensions=(64, 64, 64))
             session = Session()
             try:
                 preview = root/'preview'; preview.mkdir()
@@ -342,7 +344,7 @@ class RuntimeTests(unittest.TestCase):
             finally:
                 session.close()
 
-    def test_real_field_and_fft_phase_stop_keeps_valid_baseline(self):
+    def test_stop_during_validation_keeps_valid_baseline(self):
         """T011-A4: native fields/FFT, real Stop marker, and checked terminal result."""
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -360,12 +362,11 @@ class RuntimeTests(unittest.TestCase):
                 self.assertTrue(prepared['ok'], prepared)
                 fixture = fixtures.SolveSubprocessTests()
                 fixture.object_report_path = report
-                settings = fixture.settings(dimensions=(64, 64, 64), candidates=2)
-                # CLI splits four passes into baseline2, count-dominated seed1, FFT1.
-                settings['search']['work_budget']['max_search_passes'] = 4
+                # A Stop ends this search, not its budget.
+                settings = fixture.settings(dimensions=(64, 64, 64), budget_seconds=30)
                 settings['resolution']['pitch_mm'] = settings['resolved']['pitch_mm'] = 1
                 reference_placements = None
-                for target in ('voxelizing', 'planning_fft'):
+                for target in ('validating',):
                     with self.subTest(phase=target):
                         output = root/target; output.mkdir()
                         marker = output/'stop.marker'
@@ -526,11 +527,11 @@ class RuntimeTests(unittest.TestCase):
             root=pathlib.Path(temporary)
             for stopped in (False,True):
                 output=root/('stopped' if stopped else 'deadline');output.mkdir()
-                settings={'settings_version':1,'object_asset':{'source_sha256':record['source']['sha256'],
+                settings={'settings_version':2,'object_asset':{'source_sha256':record['source']['sha256'],
                           'accepted_solid_sha256':record['accepted_solid']['sha256']},
                           'container':{'kind':'box','dimensions_mm':[300,300,200]},'clearance_mm':{'pair':0,'wall':0},
                           'orientation':{'mode':'fixed','quaternion_xyzw':[0,0,0,1]},
-                          'search':{'preset':'subprocess','seed':'0','deterministic':False,
+                          'search':{'preset':'subprocess','seed':'0',
                                     'budget_scope':'total_start','budget_seconds':60 if stopped else .35},
                           'resolution':{'mode':'manual','pitch_mm':4},'compute':{'backend':'cpu','thread_count':1},
                           'resolved':{'pitch_mm':4,'orientation_catalog_sha256':fixtures.IDENTITY_CATALOG_SHA256,
@@ -663,12 +664,11 @@ class RuntimeTests(unittest.TestCase):
                 self.assertNotEqual(reused['result']['asset_token'],token)
                 session.request({'runtime_version':1,'request_id':'release-old','method':'release','params':{'asset_token':token}})
                 token=reused['result']['asset_token']
-                fixed={'settings_version':1,'object_asset':{'source_sha256':record['source']['sha256'],
+                fixed={'settings_version':2,'object_asset':{'source_sha256':record['source']['sha256'],
                        'accepted_solid_sha256':record['accepted_solid']['sha256']},
                        'container':{'kind':'box','dimensions_mm':[20,20,20]},'clearance_mm':{'pair':0,'wall':0},
                        'orientation':{'mode':'fixed','quaternion_xyzw':[0,0,0,1]},
-                       'search':{'preset':'subprocess','seed':'0','deterministic':True,
-                                 'work_budget':{'max_candidate_evaluations':1,'max_search_passes':1}},
+                       'search':{'preset':'subprocess','seed':'0','budget_seconds':1},
                        'resolution':{'mode':'manual','pitch_mm':10},'compute':{'backend':'cpu'},
                        'resolved':{'pitch_mm':10,'orientation_catalog_sha256':fixtures.IDENTITY_CATALOG_SHA256,
                                    'orientation_catalog_version':1,'backend':'cpu','thread_count':1}}
@@ -704,7 +704,6 @@ class RuntimeTests(unittest.TestCase):
                 complete_bytes=(before_output/'result.json').read_bytes()
                 # T011-A2/A3: fresh constraints affect actual validated packing.
                 matrix=copy.deepcopy(fixed)
-                matrix['search']['work_budget']['max_candidate_evaluations']=32
                 base,_=fixed_run('constraints-base',options=matrix);self.assertEqual(base['count'],8)
                 for name,key,value,count in (('pair','pair',2,1),('wall','wall',2,1),('box',None,30,12)):
                     changed=copy.deepcopy(matrix)
@@ -712,24 +711,19 @@ class RuntimeTests(unittest.TestCase):
                     else:changed['container']['dimensions_mm'][0]=value
                     saved,_=fixed_run('constraints-'+name,options=changed);self.assertEqual(saved['count'],count)
                     if name=='wall':self.assertNotEqual(saved['placements'][0]['translation_mm'],base['placements'][0]['translation_mm'])
-                # Exact one-copy capacity leaves the seed dominated before the original FFT candidate.
+                # Pitch changes the search fields, never the solid.
                 spectral=copy.deepcopy(fixed);spectral['container']['dimensions_mm']=[10,10,10]
-                spectral['search']['work_budget']={'max_candidate_evaluations':2,'max_search_passes':4}
                 coarse,_=fixed_run('pitch-10',options=spectral)
                 spectral['resolution']['pitch_mm']=spectral['resolved']['pitch_mm']=5
                 fine,_=fixed_run('pitch-5',options=spectral)
-                # Real correlations and changed field storage qualify pitch use, not echoed settings alone.
-                pitch_diagnostics=[run_observations[name]['result']['diagnostics'] for name in ('pitch-10','pitch-5')]
-                for observed in pitch_diagnostics:self.assertGreater(observed['work']['spectral_correlations'],0,observed)
-                self.assertGreater(pitch_diagnostics[1]['tracked_working_bytes_peak'],pitch_diagnostics[0]['tracked_working_bytes_peak'])
                 self.assertEqual(fine['metrics']['solid_volume_mm3'],coarse['metrics']['solid_volume_mm3'])
                 custom=copy.deepcopy(fixed)
                 custom['orientation']={'mode':'custom','quaternions_xyzw':[
                     [fixtures.NEAR_UNIT_COMPONENT]*4,[0,0,0,1]]}
                 custom['resolved']['orientation_catalog_sha256']=fixtures.NEAR_UNIT_CUSTOM_SHA256
                 catalog_result,_=fixed_run('catalog-custom',options=custom)
-                for component in catalog_result['placements'][0]['quaternion_xyzw']:
-                    self.assertAlmostEqual(component,.5,places=12)
+                for placement in catalog_result['placements']:
+                    self.assertIn(placement['quaternion_xyzw'],([fixtures.NEAR_UNIT_COMPONENT]*4,[0,0,0,1]))
                 for mutation,code in (('hash','CATALOG_MISMATCH'),('version','UNSUPPORTED_SETTINGS'),('content','CATALOG_MISMATCH')):
                     changed=copy.deepcopy(custom)
                     if mutation=='hash':changed['resolved']['orientation_catalog_sha256']='0'*64

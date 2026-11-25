@@ -265,47 +265,9 @@ std::optional<std::chrono::steady_clock::time_point> deadline_from_seconds(doubl
     return now + duration;
 }
 
-Json resource_diagnostics(const solver::ResourceRecovery& recovery)
-{
-    Json transitions = Json::array();
-    for (std::size_t index = 0; index != recovery.transition_count; ++index) {
-        const auto& event = recovery.transitions[index];
-        transitions.push_back({
-            { "sequence", std::to_string(event.sequence) },
-            { "cause",    event.cause.data()             },
-            { "phase",    event.phase                    },
-            { "action",   event.action                   },
-            { "before",   std::to_string(event.before)   },
-            { "after",    std::to_string(event.after)    },
-            { "consumed", std::to_string(event.consumed) }
-        });
-    }
-    return {
-        { "version",                   1                                                  },
-        { "actual_final_threads",      recovery.actual_final_threads                      },
-        { "grants",                    std::to_string(recovery.grants)                    },
-        { "recoveries",                std::to_string(recovery.recoveries)                },
-        { "deferred",                  std::to_string(recovery.deferred)                  },
-        { "fft_candidate_evaluations", std::to_string(recovery.fft_candidate_evaluations) },
-        { "native_validations",        std::to_string(recovery.native_validations)        },
-        { "omitted_records",           std::to_string(recovery.omitted)                   },
-        { "transitions",               std::move(transitions)                             }
-    };
-}
-
-Json command_diagnostics(const solver::SpectralOutcome& outcome, const solver::SpectralLimits& limits,
-                         std::string_view time_to_best_basis)
+Json command_diagnostics(const solver::SpectralOutcome& outcome, std::string_view time_to_best_basis)
 {
     return {
-        { "resource_recovery",          resource_diagnostics(outcome.resource_recovery)                 },
-        { "phase_ceilings",
-         { { "baseline",
-              { { "candidate_evaluations", limits.baseline.max_candidate_evaluations },
-                { "search_passes", limits.baseline.max_search_passes },
-                { "validation_kernel_work", limits.baseline.max_validation_kernel_work } } },
-            { "spectral",
-              { { "candidate_evaluations", limits.spectral.max_candidate_evaluations },
-                { "search_passes", limits.spectral.max_search_passes } } } }                            },
         { "work",
          { { "candidate_evaluations", outcome.run.stats.candidate_evaluations },
             { "search_passes", outcome.run.stats.search_passes },
@@ -517,11 +479,11 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         return fail("UNSUPPORTED_SETTINGS", "solve requires resolved settings.", 3);
     }
     const auto budget_scope = settings["search"].value("budget_scope", "search_only");
-    const auto deterministic = settings["search"]["deterministic"].get<bool>();
+    const auto time_budget = settings["search"]["budget_seconds"].get<double>();
     timing.scope = budget_scope;
-    timing.budget = deterministic ? 0 : settings["search"]["budget_seconds"].get<double>();
-    if (!deterministic && budget_scope == "total_start" && !control.deadline) {
-        control.deadline = deadline_from_seconds(settings["search"]["budget_seconds"].get<double>(), registered_start);
+    timing.budget = time_budget;
+    if (budget_scope == "total_start" && !control.deadline) {
+        control.deadline = deadline_from_seconds(time_budget, registered_start);
         if (!control.deadline) {
             return fail("INVALID_SETTINGS", "Start deadline is not representable.", 2);
         }
@@ -535,20 +497,15 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
                 { "no_nonempty_incumbent", true }
         });
     }
-    std::uint64_t host_cap = 512ULL << 20;
-    if (settings["resolved"].contains("resource_policy")) {
-        host_cap = *spectrapack::cli::decimal_bytes(settings["resolved"]["resource_policy"]["host_cap_bytes"]);
+    // The search may use half of the free RAM, or less if the settings say so.
+    const auto user_cap = settings["compute"].contains("host_memory_limit_bytes")
+                              ? spectrapack::cli::decimal_bytes(settings["compute"]["host_memory_limit_bytes"])
+                              : std::nullopt;
+    const auto resolved_cap = spectrapack::cli::resolve_host_cap(spectrapack::cli::sample_available_ram(), user_cap);
+    if (!resolved_cap) {
+        return fail("MEMORY_SAMPLE_UNAVAILABLE", "Available physical RAM could not be resolved.", 3);
     }
-    else if (!deterministic) {
-        const auto user_cap = settings["compute"].contains("host_memory_limit_bytes")
-                                  ? spectrapack::cli::decimal_bytes(settings["compute"]["host_memory_limit_bytes"])
-                                  : std::nullopt;
-        const auto cap = spectrapack::cli::resolve_host_cap(spectrapack::cli::sample_available_ram(), user_cap);
-        if (!cap) {
-            return fail("MEMORY_SAMPLE_UNAVAILABLE", "Available physical RAM could not be resolved.", 3);
-        }
-        host_cap = *cap;
-    }
+    const auto host_cap = *resolved_cap;
     const io::AssetLoadOutcome loaded_object =
         request.object ? io::AssetLoadOutcome(request.object)
                        : io::load_accepted_asset(object_report, control, { host_cap, run_runtime.diagnostic_limits });
@@ -658,44 +615,12 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     limits.resource_status_sink = run_runtime.resource_status_sink;
     limits.resource_status_context = run_runtime.resource_status_context;
     const auto& search = settings["search"];
-    if (search["deterministic"].get<bool>()) {
-        const auto candidates = search["work_budget"]["max_candidate_evaluations"].get<uint64_t>();
-        const auto passes = search["work_budget"]["max_search_passes"].get<uint64_t>();
-        limits.baseline.max_candidate_evaluations = candidates / 2 + candidates % 2;
-        limits.spectral.max_candidate_evaluations = candidates - limits.baseline.max_candidate_evaluations;
-        limits.baseline.max_search_passes = passes / 2 + passes % 2;
-        limits.spectral.max_search_passes = passes - limits.baseline.max_search_passes;
-    }
-    // Hand-written timed settings use the same RAM-share policy as desktop Start.
-    // Fixed-work settings retain their recorded limits and ordering.
-    if (!deterministic && !settings["resolved"].contains("resource_policy")) {
-        limits.resource_mode = solver::ResourceMode::timed;
-        limits.available_ram = spectrapack::cli::sample_available_ram;
-        spectrapack::cli::visit_resource_limits(limits, [&](const std::string& name, auto& value) {
-            if (name.ends_with("max_working_bytes")) {
-                value = host_cap;
-            }
-        });
-    }
-    const auto partition = limits;
-    if (settings["resolved"].contains("resource_policy") &&
-        (!spectrapack::cli::apply_resource_policy(settings["resolved"]["resource_policy"], limits) ||
-         (search["deterministic"].get<bool>() &&
-          (limits.baseline.max_candidate_evaluations != partition.baseline.max_candidate_evaluations ||
-           limits.spectral.max_candidate_evaluations != partition.spectral.max_candidate_evaluations ||
-           limits.baseline.max_search_passes != partition.baseline.max_search_passes ||
-           limits.spectral.max_search_passes != partition.spectral.max_search_passes)))) {
-        return fail("UNSUPPORTED_RESOURCE_POLICY", "Resolved caps must match the effective fixed-work partition.", 3);
-    }
-    std::optional<std::chrono::steady_clock::time_point> deadline;
-    if (!search["deterministic"].get<bool>()) {
-        deadline = control.deadline;
-        if (!deadline) {
-            deadline = deadline_from_seconds(search["budget_seconds"].get<double>(), started);
-        }
-        if (!deadline) {
-            return fail("INVALID_SETTINGS", "budget_seconds cannot form a representable steady-clock deadline.", 2);
-        }
+    limits.timed = true;
+    limits.available_ram = spectrapack::cli::sample_available_ram;
+    spectrapack::cli::apply_host_cap(limits, host_cap);
+    auto deadline = control.deadline ? control.deadline : deadline_from_seconds(time_budget, started);
+    if (!deadline) {
+        return fail("INVALID_SETTINGS", "budget_seconds cannot form a representable steady-clock deadline.", 2);
     }
     std::shared_ptr<const geo::ValidatedSolution> initial;
     std::optional<Continuation> continued;
@@ -786,9 +711,6 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     Json retained_diagnostics {
         { "diagnostic_code", std::string(outcome.run.diagnostic_code) }
     };
-    if (limits.resource_mode != solver::ResourceMode::legacy) {
-        retained_diagnostics["resource_recovery"] = resource_diagnostics(outcome.resource_recovery);
-    }
     if (outcome.run.failure_details) {
         retained_diagnostics["failure"] = failure_details(*outcome.run.failure_details);
     }
@@ -801,7 +723,7 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     }
     if (!outcome.run.retained_solution) {
         Json details {
-            { "diagnostics", command_diagnostics(outcome, limits, "retained_return") }
+            { "diagnostics", command_diagnostics(outcome, "retained_return") }
         };
         if (retained_diagnostics.contains("failure")) {
             details["failure"] = retained_diagnostics["failure"];
@@ -815,12 +737,9 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     // Totals of the run segments a continued result already has, summed as the
     // result contract sums them.
     double earlier_elapsed {};
-    uint64_t earlier_candidates {}, earlier_passes {};
     if (continued) {
         for (const auto& segment : continued->segments) {
             earlier_elapsed += segment.at("elapsed_seconds").get<double>();
-            earlier_candidates += segment.at("work_counts").at("candidate_evaluations").get<uint64_t>();
-            earlier_passes += segment.at("work_counts").at("search_passes").get<uint64_t>();
         }
     }
     // A continued run that adds no copy keeps the time its count was first reached.
@@ -834,7 +753,7 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
                           : continued          ? continued->revision + std::max<uint64_t>(native_revision, 1)
                                                : native_revision;
     const auto time_to_best_basis = final_snapshot ? "snapshot" : "retained_return";
-    const auto diagnostics = command_diagnostics(outcome, limits, time_to_best_basis);
+    const auto diagnostics = command_diagnostics(outcome, time_to_best_basis);
     const auto termination_reason =
         stop_monitor_error.failed ? solver::TerminationReason::error : outcome.run.termination_reason;
     if (request.object && run_runtime.preserve_previous_on_empty && outcome.run.retained_solution->copies().empty() &&
@@ -857,11 +776,10 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
                      { "no_nonempty_incumbent", true },
                      { "preparation_reused", run_runtime.preparation_reused },
                      { "runtime",
-                        timeline.record(budget_scope, deterministic ? 0 : search["budget_seconds"].get<double>(),
+                        timeline.record(budget_scope, time_budget,
                                         run_runtime.preparation_reused, true, "before_terminal_response") } }
         };
     }
-    const auto run_stats = outcome.run.stats;
     const auto retained_solution = outcome.run.retained_solution;
     timing.empty = retained_solution->copies().empty();
     if (run_runtime.last_validated && !retained_solution->copies().empty()) {
@@ -894,15 +812,12 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         { "seed",                     search["seed"]                                                                },
         { "backend",                  "cpu"                                                                         },
         { "elapsed_seconds",          elapsed                                                                       },
-        { "work_counts",
-         { { "candidate_evaluations", run_stats.candidate_evaluations },
-            { "search_passes", run_stats.search_passes } }                                                          },
         { "search_state_reset",       continued.has_value()                                                         },
         { "rng",                      { { "algorithm", "none" }, { "state", "unused" } }                            },
         { "resolved_settings",        settings                                                                      }
     });
     Json metadata {
-        { "schema_version",    1                                                                                    },
+        { "schema_version",    2                                                                                    },
         { "job_id",            continued ? std::move(continued->job_id) : Json("cli-solve")                         },
         { "solution_revision", revision                                                                             },
         { "created_at",        utc_timestamp()                                                                      },
@@ -911,9 +826,6 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
          { { "resolved_settings", settings },
             { "pitch_levels_mm", Json::array({ settings["resolved"]["pitch_mm"] }) },
             { "seed", search["seed"] },
-            { "work_counts",
-              { { "candidate_evaluations", earlier_candidates + run_stats.candidate_evaluations },
-                { "search_passes", earlier_passes + run_stats.search_passes } } },
             { "run_segments", std::move(segments) },
             { "backend_transitions", Json::array() },
             { "elapsed_seconds", earlier_elapsed + elapsed } }                                                      },
@@ -925,7 +837,6 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     };
     metadata["search"]["diagnostics"] = retained_diagnostics;
     metadata["search"]["run_segments"].back()["diagnostics"] = retained_diagnostics;
-    const auto time_budget = deterministic ? 0 : search["budget_seconds"].get<double>();
     metadata["search"]["runtime"] =
         timeline.record(budget_scope, time_budget, run_runtime.preparation_reused, retained_solution->copies().empty());
     metadata["search"]["run_segments"].back()["runtime"] = metadata["search"]["runtime"];
