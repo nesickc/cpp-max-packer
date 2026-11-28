@@ -797,15 +797,7 @@ class SolveSubprocessTests(unittest.TestCase):
         execute("unsupported-backend", unavailable_backend,
                 expected_codes={"UNSUPPORTED_SETTINGS"})
 
-        box_root = rejection_root / "box-container-report"
-        execute(
-            "box-container-report",
-            arguments=self.solve_arguments(
-                box_root / "settings.json", box_root / "result.json", box_root / "packed.stl",
-                extra=("--container-report", self.object_report_path)),
-            expected_codes={"ASSET_MISMATCH"},
-        )
-
+        # STL containers are a later tier: the search packs boxes only.
         stl_container = copy.deepcopy(base_settings)
         object_report = json.loads(self.object_report_path.read_text(encoding="utf-8"))
         stl_container["container"] = {
@@ -815,19 +807,8 @@ class SolveSubprocessTests(unittest.TestCase):
                 "accepted_solid_sha256": object_report["accepted_solid"]["sha256"],
             },
         }
-        execute("missing-container-report", stl_container,
-                expected_codes={"ASSET_MISMATCH"})
-        mismatched_container = copy.deepcopy(stl_container)
-        mismatched_container["container"]["asset"]["source_sha256"] = "e" * 64
-        mismatch_root = rejection_root / "mismatched-container-report"
-        execute(
-            "mismatched-container-report", mismatched_container,
-            arguments=self.solve_arguments(
-                mismatch_root / "settings.json", mismatch_root / "result.json",
-                mismatch_root / "packed.stl",
-                extra=("--container-report", self.object_report_path)),
-            expected_codes={"ASSET_MISMATCH"},
-        )
+        execute("stl-container", stl_container,
+                expected_codes={"UNSUPPORTED_SETTINGS"})
 
         alias_root = rejection_root / "ordinary-alias"
         alias_settings, _, alias_stl = self.write_case_settings(alias_root, base_settings)

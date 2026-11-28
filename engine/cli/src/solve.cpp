@@ -275,9 +275,7 @@ Json command_diagnostics(const solver::SpectralOutcome& outcome, std::string_vie
             { "baseline_search_passes", outcome.baseline_stats.search_passes },
             { "validation_kernel_work", outcome.run.stats.validation_kernel_work },
             { "baseline_validation_kernel_work", outcome.baseline_stats.validation_kernel_work },
-            { "validation_aabb_pair_tests", outcome.run.stats.validation_aabb_pair_tests },
-            { "spectral_correlations", outcome.spectral_stats.correlations },
-            { "spectral_pages_examined", outcome.spectral_stats.pages_examined } }                      },
+            { "validation_aabb_pair_tests", outcome.run.stats.validation_aabb_pair_tests } }            },
         { "time_to_best_basis",         std::string(time_to_best_basis)                                 },
         { "tracked_working_bytes_peak", outcome.run.stats.tracked_working_bytes_peak                    },
         { "diagnostic_code",            std::string(outcome.run.diagnostic_code)                        }
@@ -470,7 +468,6 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     }
     const auto& settings = settings_owner->value();
     const auto& object_report = request.object_report;
-    const auto& container_report = request.container_report;
     const auto& result_path = request.result_path;
     const auto& stl_path = request.stl_path;
     auto& engine_version = request.engine_version;
@@ -517,30 +514,11 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     if (!matches(settings["object_asset"], object)) {
         return fail("ASSET_MISMATCH", "Object report does not match settings.", 3);
     }
-    std::shared_ptr<const io::VerifiedAsset> container_asset;
-    geo::Container container;
-    if (settings["container"]["kind"].get<std::string>() == "box") {
-        if (container_report) {
-            return fail("ASSET_MISMATCH", "Box settings cannot use a container report.", 2);
-        }
-        container = io::box_container(settings["container"]);
+    // The search packs boxes; STL containers are a later tier (spec section 2).
+    if (settings["container"]["kind"].get<std::string>() != "box") {
+        return fail("UNSUPPORTED_SETTINGS", "Only box containers are supported.", 3);
     }
-    else {
-        if (!container_report) {
-            return fail("ASSET_MISMATCH", "STL container settings require a report.", 2);
-        }
-        const auto loaded =
-            io::load_accepted_asset(*container_report, control, { host_cap, run_runtime.diagnostic_limits });
-        if (!std::holds_alternative<std::shared_ptr<const io::VerifiedAsset>>(loaded)) {
-            const auto& error = std::get<io::Error>(loaded);
-            return fail(error.code, error.message, 3, error.details);
-        }
-        container_asset = std::get<std::shared_ptr<const io::VerifiedAsset>>(loaded);
-        if (!matches(settings["container"]["asset"], container_asset)) {
-            return fail("ASSET_MISMATCH", "Container report does not match settings.", 3);
-        }
-        container = container_asset->solid();
-    }
+    geo::Container container = io::box_container(settings["container"]);
     if (settings["resolution"].value("mode", "") != "manual" ||
         settings["resolution"]["pitch_mm"].get<double>() != settings["resolved"]["pitch_mm"].get<double>() ||
         settings["resolved"].value("backend", "") != "cpu" ||
@@ -615,9 +593,10 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     limits.resource_status_sink = run_runtime.resource_status_sink;
     limits.resource_status_context = run_runtime.resource_status_context;
     const auto& search = settings["search"];
-    limits.timed = true;
-    limits.available_ram = spectrapack::cli::sample_available_ram;
-    spectrapack::cli::apply_host_cap(limits, host_cap);
+    // One memory cap for the whole search (SOL-05): every phase may use all of it.
+    limits.max_working_bytes = host_cap;
+    geo::ValidationLimits validation_limits;
+    validation_limits.max_working_bytes = host_cap;
     auto deadline = control.deadline ? control.deadline : deadline_from_seconds(time_budget, started);
     if (!deadline) {
         return fail("INVALID_SETTINGS", "budget_seconds cannot form a representable steady-clock deadline.", 2);
@@ -626,11 +605,9 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     std::optional<Continuation> continued;
     if (request.continue_from) {
         control.phase(spectrapack::runtime::Phase::validating);
-        auto start_limits = limits.spectral.per_validation;
-        start_limits.max_working_bytes = std::min(start_limits.max_working_bytes, limits.max_working_bytes);
         auto loaded = load_continuation(*request.continue_from, settings,
                                         std::get<std::shared_ptr<const geo::ValidationContext>>(context_value),
-                                        *native_catalog, start_limits, run_runtime.diagnostic_limits, control);
+                                        *native_catalog, validation_limits, run_runtime.diagnostic_limits, control);
         if (const auto* error = std::get_if<io::Error>(&loaded)) {
             return fail(error->code, error->message, error->code.starts_with("CONTINUE_") ? 2 : 3, error->details);
         }
@@ -647,11 +624,9 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
         if (!std::holds_alternative<std::shared_ptr<const geo::Candidate>>(empty)) {
             return fail("SOLVE_FAILED", "Initial empty candidate could not be created.", 3);
         }
-        auto empty_limits = limits.spectral.per_validation;
-        empty_limits.max_working_bytes = std::min(empty_limits.max_working_bytes, limits.max_working_bytes);
         const auto checked =
             geo::validate(std::get<std::shared_ptr<const geo::ValidationContext>>(context_value),
-                          std::get<std::shared_ptr<const geo::Candidate>>(empty), empty_limits, control);
+                          std::get<std::shared_ptr<const geo::Candidate>>(empty), validation_limits, control);
         if (!checked.validated_solution || checked.report.validity != geo::Validity::valid) {
             return fail("SOLVE_FAILED", "Initial empty candidate did not pass native validation.", 3);
         }
@@ -682,11 +657,8 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
             }
         }
     }, std::move(initial));
-    if (outcome.admitted_host_cap_bytes) {
-        limits.max_working_bytes = outcome.admitted_host_cap_bytes;
-        if (run_runtime.admitted_host_cap_bytes) {
-            *run_runtime.admitted_host_cap_bytes = outcome.admitted_host_cap_bytes;
-        }
+    if (run_runtime.admitted_host_cap_bytes) {
+        *run_runtime.admitted_host_cap_bytes = host_cap;
     }
     if (run_runtime.publication_sink && outcome.run.retained_solution) {
         const auto terminal =
@@ -840,7 +812,7 @@ spectrapack::cli::SolveOutcome spectrapack::cli::solve(SolveRequest request, con
     metadata["search"]["runtime"] =
         timeline.record(budget_scope, time_budget, run_runtime.preparation_reused, retained_solution->copies().empty());
     metadata["search"]["run_segments"].back()["runtime"] = metadata["search"]["runtime"];
-    io::ResultRequest result_request { retained_solution, object, container_asset, std::move(output_catalog),
+    io::ResultRequest result_request { retained_solution, object, {}, std::move(output_catalog),
                                        std::move(metadata) };
     result_request.diagnostic_limits = run_runtime.diagnostic_limits;
     result_request.validation_limits.max_working_bytes = limits.max_working_bytes;
@@ -947,8 +919,8 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
     control.phase_sink = spectrapack::cli::Timeline::phase_sink;
     control.phase_context = &timeline;
     const auto execute = [&]() -> spectrapack::cli::SolveOutcome {
-        std::optional<std::filesystem::path> settings_path, object_report, container_report, result_path, stl_path,
-            stop_file, continue_from;
+        std::optional<std::filesystem::path> settings_path, object_report, result_path, stl_path, stop_file,
+            continue_from;
         for (size_t index = 0; index < arguments.size(); ++index) {
             if (index + 1 == arguments.size()) {
                 return fail("INVALID_REQUEST", "solve options are invalid.", 2);
@@ -969,11 +941,6 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
             }
             else if (option == "--object-report") {
                 if (!set(object_report)) {
-                    return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
-                }
-            }
-            else if (option == "--container-report") {
-                if (!set(container_report)) {
                     return fail("INVALID_REQUEST", "Duplicate solve option.", 2);
                 }
             }
@@ -1012,7 +979,6 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
         }
         if (stop_file && (aliases(*stop_file, *settings_path) || aliases(*stop_file, *object_report) ||
                           aliases(*stop_file, *result_path) || (stl_path && aliases(*stop_file, *stl_path)) ||
-                          (container_report && aliases(*stop_file, *container_report)) ||
                           (continue_from && aliases(*stop_file, *continue_from)))) {
             return fail("INVALID_REQUEST", "Stop marker aliases an input or output.", 2);
         }
@@ -1053,7 +1019,6 @@ int run_solve_command(const std::vector<std::string>& arguments, std::string eng
         return spectrapack::cli::solve({ std::move(*settings_document),
                                          std::move(*object_report),
                                          std::move(*result_path),
-                                         std::move(container_report),
                                          std::move(stl_path),
                                          {},
                                          std::move(engine_version),

@@ -1,6 +1,6 @@
 # Project status
 
-Updated 2026-11-24. Details belong in PRs and `.local/` logs.
+Updated 2026-11-28. Details belong in PRs and `.local/` logs.
 
 ## What works
 
@@ -106,17 +106,21 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    work budget (one billion piece visits, a few minutes; the largest local model needs
    nine million) that ends the build with an envelope-limit error. Envelopes of the
    nine local models are byte-identical.
-8. [ ] **Review and simplify**. Six stacked PRs (#59 to #63, #64) remove 27,000 lines with
+8. [x] **Review and simplify**. PRs #59 to #64 remove 27,000 lines with
    tests and scoreboard unchanged: the old benchmark harness, profile seams and `serve --stdio`; the
    CLI's and `pack_io`'s byte ledgers and test hooks (the tested library is the shipped one);
    export's file pins; geometry accounting tests; the shell's copy of the arithmetic; the
    contracts' resource layer. Settings and results are version 2
    ([ADR 0023](../spec/decisions/0023-settings-and-results-v2.md)): every run is timed under one
    host memory cap, with no fixed-work mode, resource policy, work counts or recovery record, and
-   version 1 projects no longer open. Left: the per-phase work caps themselves (about 45 fields in
-   `SpectralLimits` and its parts). Timed recovery renews them as quanta and native tests bound
-   their work with them in about 800 places, so removing them means rewriting the timed
-   controller and those tests.
+   version 1 projects no longer open. A seventh PR removes the per-phase work caps and another
+   8,000 lines: a search ends at its deadline, on Stop or when nothing is left to try, phases
+   share out time, and `SpectralLimits` is a memory cap, a thread count and a status sink. One
+   bound stays, as a constant: compaction's slides end after 1.3 billion units of validator
+   work, without which the 46th benchy comes 7 s later. The greedy per-insertion FFT phase
+   that the caps mostly served went with them, since timed box runs had not reached it since
+   gap filling; it was the only search for STL containers, so `solve` now refuses those (a
+   Later tier). FFT stays in the lattice and gap-fill phases.
 
 **Finish the desktop**
 
@@ -163,8 +167,8 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    on 18 November the 24.6 mm cube gave 10 instead of 14 in one run of ten).
    The engine asks Windows not to throttle it while its app is in the background, but
    most of a search still runs on one core, so other busy programs slow it.
-8. The panel's RAM estimate is the engine's preflight for a box-wide correlation at the
-   run pitch, which timed box searches skip (Pryanik at 2 mm: 0.66 GiB estimated, 0.09 GiB
-   peak). Lattice and gap-fill phases choose their own cells and do not report them.
+8. The panel's RAM estimate covers the fields and FFT buffers of the lattice and gap-fill
+   phases, each reported before it allocates them (the largest so far is shown). The grid,
+   block and row phases and the validator are not in it.
 
 See [ALGORITHM.md](../docs/ALGORITHM.md) and [BUILDING.md](../docs/BUILDING.md).

@@ -18,23 +18,17 @@
 
 namespace spectrapack::solver {
 
+// A search phase is bounded by memory, the deadline and Stop in its control,
+// never by a work allowance.
 struct BaselineLimits {
-  std::uint64_t max_candidate_evaluations{4'096};
-  std::uint64_t max_search_passes{2'048};
-  std::uint64_t max_orientations{2'048};
-  std::uint64_t max_copies{4'096};
-  std::uint64_t max_axis_cells{1'000'000};
   std::uint64_t max_working_bytes{512ULL << 20};
   std::uint64_t reserved_bytes{};
-  std::uint64_t max_geometry_kernel_work{1'300'000'000};
-  std::uint64_t max_geometry_vertex_visits{200'000'000};
-  std::uint64_t max_validation_kernel_work{1'300'000'000};
-  std::uint64_t max_validation_aabb_pair_tests{50'000'000};
-  geometry::PhysicalQueryLimits per_query{};
-  geometry::ValidationLimits per_validation{};
   // Grid pitch and FFT threads for compaction's gap filling; zero pitch disables it.
   double gap_fill_pitch_mm{};
   std::uint32_t gap_fill_threads{1};
+  // Receives a phase's estimate of its fields and FFT buffers before it allocates them.
+  void (*working_set_estimate)(void*, std::uint64_t) noexcept {};
+  void* working_set_context{};
 };
 
 using RunControl = runtime::OperationControl;

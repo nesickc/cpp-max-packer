@@ -514,6 +514,12 @@ SlabLatticeStats plan_slab_lattices(const std::shared_ptr<const geometry::Valida
         }
     }
     stats.pitch_mm = pitch;
+    if (request.working_set_estimate) {
+        const auto grown = window_for(shapes.front(), gap, pitch);
+        request.working_set_estimate(
+            request.working_set_context,
+            fft_bytes + 2 * shapes.size() * (std::uint64_t { grown.shape[0] } * grown.shape[1] * grown.shape[2]));
+    }
 
     std::uint64_t held {};
     geometry::RepresentationLimits representation;

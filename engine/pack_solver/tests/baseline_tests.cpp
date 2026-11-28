@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <cfenv>
@@ -52,83 +53,21 @@ std::shared_ptr<const geo::ValidationContext> mesh_context(
 
 }  // namespace
 
-TEST_CASE("T010 box grid reaches64 within bounded complete-layout validation work", "[solver][T010][baseline-batches]")
+TEST_CASE("T010 box grid reaches 64 copies and publishes the first one alone", "[solver][T010][baseline-batches]")
 {
     geo::Constraints constraints;
     constraints.pair_clearance_mm = constraints.wall_clearance_mm = 1;
     const auto context = baseline_context(1, { 9, 9, 9 }, constraints);
-    std::vector<geo::CopyPose> witness;
-    for (const double z : { 1.5, 3.5, 5.5, 7.5 }) {
-        for (const double y : { 1.5, 3.5, 5.5, 7.5 }) {
-            for (const double x : { 1.5, 3.5, 5.5, 7.5 }) {
-                witness.push_back({
-                    "baseline-0-" + std::to_string(witness.size()), { x, y, z },
-                       { 0, 0, 0, 1 }
-                });
-            }
-        }
-    }
-    const auto full = validated(context, witness);
-    solver::BaselineLimits limits;
-    limits.max_candidate_evaluations = limits.max_copies = 64;
-    limits.max_search_passes = 1;
-    limits.max_validation_aabb_pair_tests = 3000;
     std::vector<std::size_t> published;
-    const auto result = solver::run_aabb_baseline(context, limits, {}, [&](solver::SnapshotHandle snapshot) {
+    const auto result = solver::run_aabb_baseline(context, {}, {}, [&](solver::SnapshotHandle snapshot) {
         if (snapshot->score.count) {
             published.push_back(snapshot->score.count);
         }
     });
-    CAPTURE(full->report().aabb_pair_tests, limits.max_validation_aabb_pair_tests,
-            result.stats.validation_aabb_pair_tests);
     REQUIRE(result.best);
     CHECK(result.best->score.count == 64);
-    CHECK(result.stats.search_passes == 1);
-    CHECK(result.stats.validation_kernel_work <= limits.max_validation_kernel_work);
-    CHECK(result.stats.validation_aabb_pair_tests <= limits.max_validation_aabb_pair_tests);
     REQUIRE_FALSE(published.empty());
     CHECK(published.front() == 1);
-    CHECK(geo::revalidate(result.best->solution).validated_solution);
-}
-
-TEST_CASE("T010 box batches flush exact candidate and copy limits", "[solver][T010][baseline-batches]")
-{
-    const auto cap = GENERATE(0ULL, 1ULL, 2ULL, 31ULL, 32ULL, 33ULL, 34ULL, 63ULL, 64ULL);
-    const bool copy_cap = GENERATE(false, true);
-    geo::Constraints constraints;
-    constraints.pair_clearance_mm = constraints.wall_clearance_mm = 1;
-    const auto context = baseline_context(1, { 9, 9, 9 }, constraints);
-    solver::BaselineLimits limits;
-    limits.max_search_passes = 1;
-    limits.max_candidate_evaluations = copy_cap ? 64 : cap;
-    limits.max_copies = copy_cap ? cap : 64;
-    const auto result = solver::run_aabb_baseline(context, limits, {});
-    CAPTURE(cap, copy_cap);
-    REQUIRE(result.best);
-    CHECK(result.best->score.count == cap);
-    CHECK(result.stats.candidate_evaluations == cap);
-    CHECK(result.stats.search_passes == (cap == 64 ? 1 : 0));
-    CHECK(geo::revalidate(result.best->solution).validated_solution);
-}
-
-TEST_CASE("T010 a resource-exhausted batch never retries or replaces its valid prefix",
-          "[solver][T010][baseline-batches]")
-{
-    geo::Constraints constraints;
-    constraints.pair_clearance_mm = constraints.wall_clearance_mm = 1;
-    const auto context = baseline_context(1, { 9, 9, 9 }, constraints);
-    solver::BaselineLimits limits;
-    limits.max_validation_aabb_pair_tests = 10;
-    const auto result = solver::run_aabb_baseline(context, limits, {});
-    REQUIRE(result.best);
-    CHECK(result.best->score.count == 1);
-    CHECK(result.stats.candidate_evaluations == 33);
-    CHECK(result.stats.validation_aabb_pair_tests == 10);
-    CHECK(result.stats.indeterminate_candidates == 1);
-    CHECK(result.stats.search_passes == 0);
-    CHECK(result.termination_reason == solver::TerminationReason::resource_limit);
-    REQUIRE(result.failure_details);
-    CHECK(result.failure_details->cause_code() == "VALIDATION_AABB_PAIR_LIMIT");
     CHECK(geo::revalidate(result.best->solution).validated_solution);
 }
 
@@ -137,9 +76,7 @@ TEST_CASE("T010 zero-clearance grid of binary-0.1 cubes keeps every cell", "[sol
     // Flush binary0.1 translations overlap by an exact sub-ULP amount at zero
     // clearance. Spreading the axis slack keeps all 39 cells valid.
     const auto context = baseline_context(.1, { 4, .1, .1 });
-    solver::BaselineLimits limits;
-    limits.max_search_passes = 1;
-    const auto result = solver::run_aabb_baseline(context, limits, {});
+    const auto result = solver::run_aabb_baseline(context, {}, {});
     REQUIRE(result.best);
     CHECK(result.best->score.count == 39);
     CHECK(result.best->solution->copies().front().copy_id == "baseline-0-0");
@@ -172,30 +109,20 @@ TEST_CASE("T010 deadline during pending generation never flushes unsubmitted pos
     CHECK(state.polls >= 32);
     REQUIRE(result.best);
     CHECK(result.best->score.count == 1);
-    CHECK(result.stats.candidate_evaluations == 1);
-    CHECK(result.stats.search_passes == 0);
     CHECK(result.diagnostic_code == "PHYSICAL_DEADLINE");
     CHECK(geo::revalidate(result.best->solution).validated_solution);
 }
 
 TEST_CASE("T006 baseline produces cube_exact 64 through authoritative validation", "[solver][T006][AT-10]") {
   const auto context = baseline_context(10, {40, 40, 40});
-  solver::BaselineLimits limits;
-  limits.max_candidate_evaluations = 64;
-  limits.max_copies = 64;
-  limits.max_search_passes = 1;
-  limits.max_orientations = 1;
-
-  const auto result = solver::run_aabb_baseline(context, limits, {});
+  const auto result = solver::run_aabb_baseline(context, {}, {});
   REQUIRE(result.best);
   CHECK(result.best->label == "best_found");
   CHECK(result.best->solution->copies().size() == 64);
   CHECK(result.best->score.count == 64);
   REQUIRE(result.best->volumes);
   CHECK(result.best->volumes->utilization == 1.0);
-  CHECK(result.stats.candidate_evaluations == 64);
-  CHECK(result.stats.search_passes == 1);
-  CHECK(result.termination_reason == solver::TerminationReason::budget_exhausted);
+  CHECK(result.termination_reason == solver::TerminationReason::search_stalled);
 
   std::set<std::array<double, 3>> actual;
   for (const auto& copy : result.best->solution->copies()) {
@@ -213,13 +140,7 @@ TEST_CASE("T006 baseline preserves exact clearance64 coordinates and independent
   constraints.pair_clearance_mm = 1;
   constraints.wall_clearance_mm = 1;
   const auto context = baseline_context(10, {45, 45, 45}, constraints);
-  solver::BaselineLimits limits;
-  limits.max_candidate_evaluations = 64;
-  limits.max_copies = 64;
-  limits.max_search_passes = 1;
-  limits.max_orientations = 1;
-
-  const auto result = solver::run_aabb_baseline(context, limits, {});
+  const auto result = solver::run_aabb_baseline(context, {}, {});
   REQUIRE(result.best);
   REQUIRE(result.best->solution->copies().size() == 64);
   const auto& copies = result.best->solution->copies();
@@ -269,8 +190,6 @@ TEST_CASE("T006 baseline completes a zero-X grid without enumerating the other a
   CHECK(result.best->label == "best_found");
   CHECK(result.best->solution->copies().empty());
   CHECK(result.best->score.count == 0);
-  CHECK(result.stats.candidate_evaluations == 0);
-  CHECK(result.stats.search_passes == 1);
   CHECK(result.termination_reason == solver::TerminationReason::search_stalled);
 }
 
@@ -283,51 +202,14 @@ TEST_CASE("T006 baseline searches exact canonical cube and upright cardinal seed
     constraints.orientations.mode = mode;
     const auto made = geo::make_validation_context(object, geo::BoxDimensions{10, 30, 5}, constraints);
     REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
-    solver::BaselineLimits limits;
-    limits.max_search_passes = 48;
-    limits.max_orientations = 48;
-    limits.max_candidate_evaluations = 48;
-    limits.max_copies = 1;
-
     const auto result = solver::run_aabb_baseline(
-        std::get<std::shared_ptr<const geo::ValidationContext>>(made), limits, {});
+        std::get<std::shared_ptr<const geo::ValidationContext>>(made), {}, {});
     CAPTURE(static_cast<int>(mode), static_cast<int>(result.termination_reason),
             result.diagnostic_code, result.stats.candidate_evaluations,
             result.stats.invalid_candidates, result.stats.indeterminate_candidates);
     REQUIRE(result.best);
     CHECK(result.best->score.count == 1);
   }
-}
-
-TEST_CASE("T006 baseline retains a supplied valid best when validation work is exhausted",
-          "[solver][T006][AT-16]") {
-  const auto context = baseline_context(10, {10, 10, 10});
-  const auto initial = validated(
-      context, {{"initial", {5, 5, 5}, {0, 0, 0, 1}}});
-  solver::BaselineLimits limits;
-  limits.max_validation_kernel_work = 0;
-  limits.per_validation.max_kernel_work = 0;
-
-  const auto result = solver::run_aabb_baseline(context, limits, {}, {}, initial);
-
-  REQUIRE(result.best);
-  CHECK(result.best->score.count == 1);
-  CHECK(result.retained_solution == result.best->solution);
-  CHECK(result.termination_reason == solver::TerminationReason::resource_limit);
-}
-
-TEST_CASE("T006 baseline bootstrap resource failure fabricates no best",
-          "[solver][T006][AT-16]") {
-  const auto context = baseline_context(10, {10, 10, 10});
-  solver::BaselineLimits limits;
-  limits.max_validation_kernel_work = 0;
-  limits.per_validation.max_kernel_work = 0;
-
-  const auto result = solver::run_aabb_baseline(context, limits, {});
-
-  CHECK_FALSE(result.best);
-  CHECK_FALSE(result.retained_solution);
-  CHECK(result.termination_reason == solver::TerminationReason::resource_limit);
 }
 
 TEST_CASE("T006 baseline observes a stop requested by the first admitted snapshot sink",
@@ -344,30 +226,6 @@ TEST_CASE("T006 baseline observes a stop requested by the first admitted snapsho
   REQUIRE(result.best);
   CHECK(calls >= 2);
   CHECK(result.best->score.count == 1);
-  CHECK(result.termination_reason == solver::TerminationReason::user_stopped);
-}
-
-TEST_CASE("T006 bootstrap publication observes stop before an orientation limit",
-          "[solver][T006][AT-16]") {
-  const auto context = baseline_context(10, {10, 10, 10});
-  solver::BaselineLimits limits;
-  limits.max_orientations = 0;
-  std::stop_source source;
-  std::uint64_t calls = 0;
-
-  const auto result = solver::run_aabb_baseline(
-      context, limits, {source.get_token()},
-      [&](solver::SnapshotHandle snapshot) {
-        ++calls;
-        REQUIRE(snapshot->score.count == 0);
-        source.request_stop();
-      });
-
-  REQUIRE(result.best);
-  CHECK(result.best->score.count == 0);
-  CHECK(result.retained_solution == result.best->solution);
-  CHECK(result.stats.orientations_started == 0);
-  CHECK(calls == 1);
   CHECK(result.termination_reason == solver::TerminationReason::user_stopped);
 }
 
@@ -453,33 +311,6 @@ TEST_CASE("T006 baseline accounts retained validated report and owner storage",
   CHECK(adequate_calls == 1);
 }
 
-TEST_CASE("T006 stop outranks a committed scoring resource issue",
-          "[solver][T006][AT-16]") {
-  const auto context = baseline_context(10, {10, 10, 10});
-  const auto initial = validated(
-      context, {{"initial", {5, 5, 5}, {0, 0, 0, 1}}});
-  solver::BaselineLimits limits;
-  limits.per_query.max_kernel_work = 0;
-  std::stop_source source;
-  std::uint64_t calls = 0;
-
-  const auto result = solver::run_aabb_baseline(
-      context, limits, {source.get_token()},
-      [&](solver::SnapshotHandle) {
-        ++calls;
-        source.request_stop();
-      },
-      initial);
-
-  REQUIRE(result.best);
-  CHECK(result.best->solution == initial);
-  CHECK(result.best->score.count == 1);
-  CHECK(result.retained_solution == initial);
-  CHECK(result.termination_reason == solver::TerminationReason::user_stopped);
-  CHECK(result.diagnostic_code == "PHYSICAL_USER_STOPPED");
-  CHECK(calls == 1);
-}
-
 TEST_CASE("T006 floating environment query failure is operational",
           "[solver][T006][AT-16]") {
   struct RoundingGuard {
@@ -518,8 +349,7 @@ TEST_CASE("T006 floating environment validation failure stops after retained bes
   };
 
   const auto context = baseline_context(10, {30, 10, 10});
-  solver::BaselineLimits limits;
-  limits.max_candidate_evaluations = 3;
+  const solver::BaselineLimits limits;
 
   const int original_rounding = std::fegetround();
   REQUIRE(original_rounding != -1);
@@ -581,25 +411,6 @@ TEST_CASE("T006 baseline retains its committed snapshot after a later allocation
   CHECK(result.diagnostic_code == "PHYSICAL_ALLOCATION_FAILURE");
 }
 
-TEST_CASE("T006 baseline applies the raw catalog cap before duplicate removal",
-          "[solver][T006][AT-08]") {
-  geo::Constraints constraints;
-  constraints.orientations.mode = geo::OrientationMode::catalog;
-  constraints.orientations.catalog_xyzw = {{0, 0, 0, 1}, {0, 0, 0, 1}};
-  const auto context = baseline_context(1, {1, 1, 1}, constraints);
-  solver::BaselineLimits limits;
-  limits.max_orientations = 1;
-
-  const auto result = solver::run_aabb_baseline(
-      context, limits, {}, {}, validated(context));
-
-  REQUIRE(result.best);
-  CHECK(result.best->score.count == 0);
-  CHECK(result.stats.orientations_started == 0);
-  CHECK(result.termination_reason == solver::TerminationReason::budget_exhausted);
-  CHECK(result.diagnostic_code == "PHYSICAL_ORIENTATION_LIMIT");
-}
-
 TEST_CASE("T006 tilted_bar distinguishes Cube from Free and a Z45 catalog",
           "[solver][T006][AT-08]") {
   const double sine = std::sin(std::numbers::pi / 8.0);
@@ -612,12 +423,7 @@ TEST_CASE("T006 tilted_bar distinguishes Cube from Free and a Z45 catalog",
     constraints.wall_clearance_mm = 0.1;
     constraints.orientations = std::move(orientations);
     const auto context = mesh_context(bar, geo::BoxDimensions{16, 16, 4}, constraints);
-    solver::BaselineLimits limits;
-    limits.max_candidate_evaluations = 64;
-    limits.max_search_passes = 64;
-    limits.max_orientations = 64;
-    limits.max_copies = 1;
-    return solver::run_aabb_baseline(context, limits, {});
+    return solver::run_aabb_baseline(context, {}, {});
   };
 
   const auto cube = run({geo::OrientationMode::cube, {}});
@@ -678,27 +484,6 @@ TEST_CASE("T006 tilted_bar distinguishes Cube from Free and a Z45 catalog",
             .validated_solution);
 }
 
-TEST_CASE("T006 baseline charges cumulative geometry work on a failed query",
-          "[solver][T006][AT-16]") {
-  const auto context = baseline_context(10, {10, 10, 10});
-  const auto measured = geo::oriented_bounds(context->object(), {0, 0, 0, 1}, {});
-  REQUIRE(std::holds_alternative<geo::OrientedBounds>(measured));
-  const auto exact_cap = std::get<geo::OrientedBounds>(measured).stats.kernel_work;
-  REQUIRE(exact_cap > 0);
-  solver::BaselineLimits limits;
-  limits.max_geometry_kernel_work = exact_cap;
-  const auto initial = validated(context);
-
-  const auto result = solver::run_aabb_baseline(
-      context, limits, {}, {}, initial);
-
-  REQUIRE(result.best);
-  CHECK(result.best->score.count == 0);
-  CHECK(result.retained_solution == result.best->solution);
-  CHECK(result.termination_reason == solver::TerminationReason::resource_limit);
-  CHECK(result.stats.geometry_kernel_work == exact_cap);
-}
-
 TEST_CASE("T006 baseline includes catalog storage above accepted resident buffers",
           "[solver][T006][AT-16]") {
   geo::Constraints constraints;
@@ -731,11 +516,7 @@ TEST_CASE("T006 baseline filters enclosing-box cells through concave STL contain
       geo::test_support::cuboid({-0.25, -0.25, -0.25},
                                 {0.25, 0.25, 0.25}),
       container, constraints);
-  solver::BaselineLimits limits;
-  limits.max_candidate_evaluations = 9;
-  limits.max_copies = 9;
-
-  const auto result = solver::run_aabb_baseline(context, limits, {});
+  const auto result = solver::run_aabb_baseline(context, {}, {});
 
   REQUIRE(result.best);
   CHECK(result.stats.candidate_evaluations == 9);
@@ -776,40 +557,31 @@ TEST_CASE("T006 baseline rejects an AABB cell enclosing an excluded STL cavity",
     REQUIRE(second == geo::Vec3 { 1.375, .375, .375 });
     const auto excluded_surface_gap_mm = std::min(.25 - (bounds.min[0] + first[0]), bounds.max[0] + first[0] - .5);
     REQUIRE(excluded_surface_gap_mm >= constraints.wall_clearance_mm);
-    solver::BaselineLimits limits;
-    // The first proposal encloses the excluded cavity despite satisfying every
-    // analytic surface-gap check; the next proposal is valid.
-    // Full grid traversal is covered by analytic cases.
-    limits.max_candidate_evaluations = 2;
-    limits.max_copies = 2;
-
-    const auto result = solver::run_aabb_baseline(context, limits, {});
+    // The first cell encloses the excluded cavity despite satisfying every
+    // analytic surface-gap check; the next one is valid.
+    const auto result = solver::run_aabb_baseline(context, {}, {});
 
     REQUIRE(result.best);
     REQUIRE(result.best->solution);
     const auto& copies = result.best->solution->copies();
-    REQUIRE(copies.size() == 1);
-    CHECK(copies.front().translation_mm == second);
-    for (const auto& copy : copies) {
-        CHECK(copy.translation_mm != first);
-    }
-    CHECK(result.stats.candidate_evaluations == 2);
-    CHECK(result.stats.invalid_candidates == 1);
-    CHECK(result.best->score.count == 1);
+    const auto at = [&](const geo::Vec3& translation) {
+        return std::any_of(copies.begin(), copies.end(), [&](const auto& copy) {
+            return copy.translation_mm == translation;
+        });
+    };
+    CHECK_FALSE(at(first));
+    CHECK(at(second));
+    CHECK(result.stats.invalid_candidates >= 1);
+    CHECK(geo::revalidate(result.best->solution).validated_solution);
 }
 
 TEST_CASE("T006 final safe boundaries distinguish deadline and explicit stop", "[solver][T006][AT-16]")
 {
     const auto context = baseline_context(10, { 10, 10, 10 });
-    solver::BaselineLimits limits;
-    limits.max_candidate_evaluations = 1;
-    limits.max_search_passes = 1;
-
-    const auto completed = solver::run_aabb_baseline(context, limits, {});
+    const auto completed = solver::run_aabb_baseline(context, {}, {});
     REQUIRE(completed.best);
     CHECK(completed.best->score.count == 1);
-    CHECK(completed.stats.search_passes == 1);
-    CHECK(completed.termination_reason == solver::TerminationReason::budget_exhausted);
+    CHECK(completed.termination_reason == solver::TerminationReason::search_stalled);
 
     const auto expired = std::chrono::steady_clock::now() - std::chrono::seconds(1);
     const auto deadline = solver::run_aabb_baseline(context, {}, { {}, expired }, {}, completed.best->solution);

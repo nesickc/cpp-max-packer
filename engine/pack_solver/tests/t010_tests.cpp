@@ -4,17 +4,15 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <thread>
+#include <string>
+#include <vector>
 
-#include "../../pack_compute/src/fft_execution_internal.hpp"
 #include "../../pack_geometry/src/export_validation_internal.hpp"
-#include "../../pack_geometry/src/raster_execution_internal.hpp"
 #include "../../pack_geometry/tests/validation_fixtures.hpp"
-#include "../src/spectral_pipeline.hpp"
 #include "spectrapack/geometry/display_lod.hpp"
 #include "spectrapack/geometry/export_validation.hpp"
 #include "spectrapack/geometry/rigid_transform.hpp"
-#include "spectrapack/solver/spectral.hpp"
+#include "spectrapack/solver/baseline.hpp"
 
 namespace geo = spectrapack::geometry;
 namespace sol = spectrapack::solver;
@@ -47,6 +45,20 @@ std::shared_ptr<const geo::AcceptedSolid> accepted_file(const char* filename)
     return std::get<std::shared_ptr<const geo::AcceptedSolid>>(accepted);
 }
 std::shared_ptr<const geo::AcceptedSolid> ulamok() { return accepted_file("ulamok_2kg_simplified.stl"); }
+// The first two copies the grid finds, validated on their own.
+std::shared_ptr<const geo::ValidatedSolution> first_two(const std::shared_ptr<const geo::ValidationContext>& context)
+{
+    const auto baseline = sol::run_aabb_baseline(context, {}, {});
+    REQUIRE(baseline.best);
+    auto copies = baseline.best->solution->copies();
+    REQUIRE(copies.size() >= 2);
+    copies.resize(2);
+    const auto candidate = geo::make_candidate(context, std::move(copies));
+    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(candidate));
+    const auto checked = geo::validate(context, std::get<std::shared_ptr<const geo::Candidate>>(candidate));
+    REQUIRE(checked.validated_solution);
+    return checked.validated_solution;
+}
 std::vector<std::byte> quantized_copy(const geo::AcceptedSolid& object, const geo::CopyPose& pose)
 {
     const auto mesh = object.mesh();
@@ -86,262 +98,6 @@ void export_evidence(const char* source, const geo::ValidatedSolution& solution,
     }
 }
 }  // namespace
-
-TEST_CASE("T010 native unsupported thread requests fail before work", "[solver][T010]")
-{
-    for (const auto threads : { 0U, sol::cpu_supported_thread_count() + 1U }) {
-        sol::SpectralLimits limits;
-        limits.cpu_thread_count = threads;
-        limits.baseline.max_candidate_evaluations = 1;
-        limits.spectral.max_candidate_evaluations = 1;
-        limits.max_refinement_evaluations = 0;
-        const auto result = sol::run_cpu_spectral(context(),
-                                                  {
-                                                      { 0, 0, 0 },
-                                                      1
-        },
-                                                  limits, {});
-        CAPTURE(threads, result.run.diagnostic_code);
-        CHECK(result.run.termination_reason == sol::TerminationReason::error);
-        CHECK(result.run.diagnostic_code == "CPU_THREAD_COUNT_UNSUPPORTED");
-        CHECK(result.run.stats.candidate_evaluations == 0);
-        CHECK_FALSE(result.run.best);
-    }
-}
-
-TEST_CASE("T010 two-thread CPU request completes real spectral work",
-          "[solver][T010][threading]") {
-  sol::SpectralLimits limits;
-  limits.cpu_thread_count = 2;
-  limits.baseline.max_candidate_evaluations = 1;
-  limits.spectral.max_candidate_evaluations = 1;
-  limits.spectral.max_copies = 1;
-  limits.spectral.max_search_passes = 1;
-  limits.max_refinement_evaluations = 0;
-  const auto result =
-      sol::run_cpu_spectral(context(), {{0, 0, 0}, 1}, limits, {});
-  CAPTURE(result.run.diagnostic_code);
-  REQUIRE(result.run.termination_reason != sol::TerminationReason::error);
-  REQUIRE(result.run.best);
-  CHECK(result.spectral_stats.correlations > 0);
-}
-
-TEST_CASE("T010 Stop during a real raster worker retains native incumbent", "[solver][T010][threading]")
-{
-    const auto native_context = context();
-    sol::BaselineLimits initial_limits;
-    initial_limits.max_candidate_evaluations = 1;
-    const auto initial = sol::run_aabb_baseline(native_context, initial_limits, {});
-    REQUIRE(initial.best);
-    std::stop_source stop;
-    struct State {
-        std::stop_source& stop;
-        std::atomic<unsigned> active {}, joins {};
-    } state { stop };
-    struct Reset {
-        ~Reset() { geo::detail::set_raster_test_options({}); }
-    } reset;
-    geo::detail::set_raster_test_options({
-        [](void* context, geo::detail::RasterPoint point, std::uint32_t worker) noexcept {
-            auto& state = *static_cast<State*>(context);
-            if (point == geo::detail::RasterPoint::joined) {
-                ++state.joins;
-            }
-            if (point == geo::detail::RasterPoint::active_row && worker != 0) {
-                ++state.active;
-                state.stop.request_stop();
-            }
-        }, &state
-    });
-    sol::SpectralLimits limits;
-    limits.cpu_thread_count = 4;
-    limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
-    limits.spectral.max_candidate_evaluations = 1;
-    limits.spectral.max_copies = initial.best->solution->copies().size();
-    limits.spectral.max_search_passes = 1;
-    limits.max_refinement_evaluations = 0;
-    const auto result = sol::run_cpu_spectral(native_context, { { 0, 0, 0 }, 1 }, limits,
-                                              { stop.get_token() }, {}, initial.best->solution);
-    REQUIRE(state.active > 0);
-    CHECK(state.joins == 3);
-    CHECK(result.run.termination_reason == sol::TerminationReason::user_stopped);
-    REQUIRE(result.run.best);
-    CHECK(result.run.best->solution->copies().size() == initial.best->solution->copies().size());
-    const auto candidate = geo::make_candidate(native_context, result.run.best->solution->copies());
-    REQUIRE(std::holds_alternative<std::shared_ptr<const geo::Candidate>>(candidate));
-    CHECK(geo::validate(native_context, std::get<std::shared_ptr<const geo::Candidate>>(candidate)).validated_solution);
-}
-
-TEST_CASE("T010 active FFT interruption preserves exact central incumbent", "[solver][T010][fft-controls]")
-{
-    namespace detail = spectrapack::compute::detail;
-    const auto native = context();
-    sol::BaselineLimits baseline;
-    baseline.max_candidate_evaluations = 1;
-    const auto initial = sol::run_aabb_baseline(native, baseline, {});
-    REQUIRE(initial.best);
-    for (const bool deadline : { false, true }) {
-        struct State {
-            std::stop_source stop;
-            std::atomic_bool active {}, affinity { true };
-            std::atomic<unsigned> joined {};
-            std::thread::id coordinator { std::this_thread::get_id() };
-            sol::SnapshotHandle published;
-            bool deadline {};
-        } state;
-        state.deadline = deadline;
-        struct Reset {
-            ~Reset() { detail::set_fft_test_options({}); }
-        } reset;
-        detail::set_fft_test_options({ [](void* context, detail::FftPoint point, std::uint32_t worker) noexcept {
-            auto& state = *static_cast<State*>(context);
-            if (point == detail::FftPoint::joined) {
-                ++state.joined;
-            }
-            if (point == detail::FftPoint::before_call && worker == 1) {
-                state.active = true;
-                if (!state.deadline) {
-                    state.stop.request_stop();
-                }
-            }
-        }, &state });
-        const auto now = [](void* context) noexcept {
-            auto& state = *static_cast<State*>(context);
-            if (std::this_thread::get_id() != state.coordinator) {
-                state.affinity = false;
-            }
-            return runtime::Clock::time_point {} + std::chrono::seconds(state.active ? 2 : 0);
-        };
-        const auto phase = [](void* context, runtime::Phase) noexcept {
-            auto& state = *static_cast<State*>(context);
-            if (std::this_thread::get_id() != state.coordinator) {
-                state.affinity = false;
-            }
-        };
-        sol::RunControl control { state.stop.get_token(),
-                                  deadline ? std::optional { runtime::Clock::time_point {} + std::chrono::seconds(1) }
-                                           : std::nullopt,
-                                  now,
-                                  &state,
-                                  phase,
-                                  &state };
-        sol::SpectralLimits limits;
-        limits.cpu_thread_count = 4;
-        limits.baseline.max_candidate_evaluations = limits.baseline.max_search_passes = 0;
-        limits.spectral.max_candidate_evaluations = 1;
-        limits.spectral.max_copies = initial.best->score.count;
-        limits.spectral.max_search_passes = 1;
-        limits.max_refinement_evaluations = 0;
-        const auto result =
-            sol::run_cpu_spectral(native, { {}, 1 }, limits, control, [&](sol::SnapshotHandle published) {
-            state.affinity = state.affinity && std::this_thread::get_id() == state.coordinator;
-            state.published = std::move(published);
-        }, initial.best->solution);
-        REQUIRE(state.active);
-        CHECK(state.joined == 3);
-        CHECK(state.affinity);
-        CHECK(result.run.termination_reason ==
-              (deadline ? sol::TerminationReason::budget_exhausted : sol::TerminationReason::user_stopped));
-        REQUIRE(result.run.best);
-        CHECK(result.run.best->solution == initial.best->solution);
-        CHECK(result.run.best == state.published);
-        CHECK(geo::revalidate(result.run.best->solution).validated_solution);
-    }
-}
-
-TEST_CASE("T010 solver admits both parked teams and creates FFT only after whole-live admission",
-          "[solver][T010][fft-admission]")
-{
-    namespace detail = spectrapack::compute::detail;
-    const auto native = context();
-    sol::SpectralLimits limits;
-    limits.cpu_thread_count = 4;
-    const auto catalog =
-        std::get<sol::OrientationCatalog>(sol::make_orientation_catalog(native->constraints().orientations, 24));
-    auto low = limits;
-    low.max_working_bytes = 1;
-    const auto measured = sol::detail::spectral_admission(native, { {}, 1 }, low, {}, &catalog);
-    REQUIRE(measured);
-    REQUIRE(measured->resource);
-    const auto required = measured->resource->required;
-    REQUIRE(required > 2 * *spectrapack::compute::estimate_fft_execution_bytes(4));
-    limits.max_working_bytes = required;
-    CHECK_FALSE(sol::detail::spectral_admission(native, { {}, 1 }, limits, {}, &catalog));
-    --limits.max_working_bytes;
-    CHECK(sol::detail::spectral_admission(native, { {}, 1 }, limits, {}, &catalog));
-    limits.max_working_bytes = 512ULL << 20;
-    std::atomic<unsigned> starts {};
-    struct Reset {
-        ~Reset() { detail::set_fft_test_options({}); }
-    } reset;
-    detail::set_fft_test_options({ [](void* context, detail::FftPoint point, std::uint32_t) noexcept {
-        if (point == detail::FftPoint::started) {
-            ++*static_cast<std::atomic<unsigned>*>(context);
-        }
-    }, &starts });
-    limits.per_correlation.max_working_bytes = 1ULL << 20;
-    sol::detail::SpectralWorkspace refused_workspace;
-    const auto refused =
-        sol::detail::build_spectral_pipeline(refused_workspace, native, { {}, 1 }, limits, {}, catalog, {});
-    REQUIRE_FALSE(refused.complete);
-    REQUIRE(refused.failure_details);
-    CHECK(refused.failure_details->cause_code() == "CORRELATION_MEMORY_LIMIT");
-    CHECK(starts == 0);
-    limits.per_correlation.max_working_bytes = 512ULL << 20;
-    sol::detail::SpectralWorkspace workspace;
-    const auto admitted = sol::detail::build_spectral_pipeline(workspace, native, { {}, 1 }, limits, {}, catalog, {});
-    REQUIRE(admitted.complete);
-    CHECK(starts == 3);
-    REQUIRE(workspace.resident_bytes());
-    CHECK(*workspace.resident_bytes() >= 2 * *spectrapack::compute::estimate_fft_execution_bytes(4));
-    const auto resident = workspace.resident_bytes();
-    const auto reused = sol::detail::build_spectral_pipeline(workspace, native, { {}, 1 }, limits, {}, catalog, {});
-    CAPTURE(reused.diagnostic);
-    REQUIRE(reused.complete);
-    CHECK(reused.stats.correlations == 0);
-    CHECK(starts == 3);
-    CHECK(workspace.resident_bytes() == resident);
-}
-
-TEST_CASE("T010 interrupted FFT workspace recreates its failed owner for a fresh operation",
-          "[solver][T010][fft-controls]")
-{
-    namespace detail = spectrapack::compute::detail;
-    const auto native = context();
-    sol::SpectralLimits limits;
-    limits.cpu_thread_count = 4;
-    const auto catalog =
-        std::get<sol::OrientationCatalog>(sol::make_orientation_catalog(native->constraints().orientations, 24));
-    std::stop_source stop;
-    std::atomic<unsigned> joined {};
-    struct State {
-        std::stop_source& stop;
-        std::atomic<unsigned>& joined;
-    } state { stop, joined };
-    struct Reset {
-        ~Reset() { detail::set_fft_test_options({}); }
-    } reset;
-    detail::set_fft_test_options({ [](void* context, detail::FftPoint point, std::uint32_t worker) noexcept {
-        auto& state = *static_cast<State*>(context);
-        if (point == detail::FftPoint::joined) {
-            ++state.joined;
-        }
-        if (point == detail::FftPoint::before_call && worker == 1) {
-            state.stop.request_stop();
-        }
-    }, &state });
-    sol::detail::SpectralWorkspace workspace;
-    const auto interrupted = sol::detail::build_spectral_pipeline(workspace, native, { {}, 1 }, limits, {}, catalog, {},
-                                                                  nullptr, { stop.get_token() });
-    REQUIRE_FALSE(interrupted.complete);
-    REQUIRE(interrupted.failure_details);
-    CHECK(interrupted.failure_details->cause_code() == "OPERATION_CANCELLED");
-    CHECK(joined == 3);
-    detail::set_fft_test_options({});
-    const auto retry = sol::detail::build_spectral_pipeline(workspace, native, { {}, 1 }, limits, {}, catalog, {});
-    REQUIRE(retry.complete);
-    CHECK(retry.stats.correlations == 2);
-}
 
 TEST_CASE("T011 native injected Start deadline forbids baseline work", "[solver][T011]")
 {
@@ -384,7 +140,7 @@ TEST_CASE("T011 controlled geometry cannot authorize expired preparation", "[sol
     CHECK_FALSE(checked.validated_solution);
 }
 
-TEST_CASE("T010 full36 independently quantized Ulamok export fits unchanged caps", "[solver][T010][qualification]")
+TEST_CASE("T010 full36 independently quantized Ulamok export is valid", "[solver][T010][qualification]")
 {
     geo::Constraints constraints;
     constraints.orientations.mode = geo::OrientationMode::cube;
@@ -418,12 +174,7 @@ TEST_CASE("T010 full Pryanik retained2 quantized export preserves native found c
             geo::make_validation_context(accepted_file(filename), geo::BoxDimensions { 100, 100, 50 }, constraints);
         REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
         const auto native_context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
-        sol::BaselineLimits limits;
-        limits.max_candidate_evaluations = 2;
-        const auto baseline = sol::run_aabb_baseline(native_context, limits, {});
-        REQUIRE(baseline.best);
-        REQUIRE(baseline.best->solution->copies().size() == 2);
-        const auto solution = baseline.best->solution;
+        const auto solution = first_two(native_context);
         std::uint64_t reads = 0;
         const auto checked = geo::validate_quantized_export(solution, [&](std::size_t index) -> geo::ExportCopyRead {
             ++reads;
@@ -448,12 +199,7 @@ TEST_CASE("T010 actual first quantized Pryanik2 copy completes within diagnostic
         geo::make_validation_context(accepted_file("pryanik_2.STL"), geo::BoxDimensions { 100, 100, 50 }, constraints);
     REQUIRE(std::holds_alternative<std::shared_ptr<const geo::ValidationContext>>(made));
     const auto native_context = std::get<std::shared_ptr<const geo::ValidationContext>>(made);
-    sol::BaselineLimits baseline_limits;
-    baseline_limits.max_candidate_evaluations = 2;
-    const auto baseline = sol::run_aabb_baseline(native_context, baseline_limits, {});
-    REQUIRE(baseline.best);
-    REQUIRE(baseline.best->solution->copies().size() == 2);
-    const auto bytes = quantized_copy(*native_context->object(), baseline.best->solution->copies().front());
+    const auto bytes = quantized_copy(*native_context->object(), first_two(native_context)->copies().front());
     geo::ImportLimits import_limits;
     // Diagnostic target: half of the default 1.3-billion per-copy allowance.
     import_limits.max_predicate_work = 650'000'000;

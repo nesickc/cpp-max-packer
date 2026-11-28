@@ -288,6 +288,10 @@ GapFillStats fill_gaps(const geometry::ValidationContext& context, std::span<con
         stats.outcome = "GAP_FILL_RESOLUTION";
         return stats;
     }
+    if (request.working_set_estimate) {
+        request.working_set_estimate(request.working_set_context,
+                                     fft_bytes + cell_count(window->shape) * (rotations.size() + 2));
+    }
     GapFillCache local;
     auto& kept = cache ? *cache->state : *local.state;
     if (kept.pitch != stats.pitch_mm) {

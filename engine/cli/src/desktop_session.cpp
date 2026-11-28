@@ -780,7 +780,6 @@ Json operate(Session& session, const Json& request, const std::shared_ptr<std::s
             auto native = cli::solve({ std::move(*validated_settings),
                                        prepared->report,
                                        output,
-                                       {},
                                        std::move(stl_path),
                                        prepared->verified,
                                        session.engine_version,

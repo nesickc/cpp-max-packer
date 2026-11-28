@@ -2859,7 +2859,7 @@ export interface Error {
 export interface ResourceStatus {
   admitted_host_cap_bytes: string;
   /**
-   * The engine's estimate of the search's dominant working set (fields, FFT buffers, resident owners) at the resolved pitch and thread count, made before they are allocated. Absent until estimated.
+   * The largest working set (fields and FFT buffers) a search phase has estimated so far, each estimate made before the phase allocates it. Absent until a phase has estimated one.
    */
   estimated_working_bytes?: string;
   actual_threads: number;
@@ -3163,7 +3163,7 @@ export interface Phase {
 export interface ResourceStatus {
   admitted_host_cap_bytes: string;
   /**
-   * The engine's estimate of the search's dominant working set (fields, FFT buffers, resident owners) at the resolved pitch and thread count, made before they are allocated. Absent until estimated.
+   * The largest working set (fields and FFT buffers) a search phase has estimated so far, each estimate made before the phase allocates it. Absent until a phase has estimated one.
    */
   estimated_working_bytes?: string;
   actual_threads: number;

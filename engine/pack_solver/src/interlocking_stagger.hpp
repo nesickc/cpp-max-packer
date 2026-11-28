@@ -106,10 +106,9 @@ public:
     }
 
     std::optional<InterlockingLayout> plan(const geometry::Bounds& container, double pair, double wall,
-                                           std::uint64_t incumbent, std::uint64_t max_copies,
-                                           std::uint64_t max_axis_cells)
+                                           std::uint64_t incumbent, std::uint64_t max_copies)
     {
-        max_axis_cells = std::min<std::uint64_t>({ max_axis_cells, max_copies, 1'000'000 });
+        const auto max_axis_cells = max_copies;
         InterlockingLayout best;
         best.column = column_;
         best.row = row_;
@@ -200,10 +199,9 @@ public:
     }
 
     std::optional<InterlockingLayout> plan_height(const geometry::Bounds& container, double pair, double wall,
-                                                  std::uint64_t incumbent, std::uint64_t max_copies,
-                                                  std::uint64_t max_axis_cells)
+                                                  std::uint64_t incumbent, std::uint64_t max_copies)
     {
-        max_axis_cells = std::min<std::uint64_t>({ max_axis_cells, max_copies, 1'000'000 });
+        const auto max_axis_cells = max_copies;
         const auto stop_before = work_ + (work_limit_ - work_) / 2;
         const double gap = pair + (pair > 0 ? std::min(.001, pair / 100) : 0);
         geometry::Vec3 span {}, extent {};
@@ -395,9 +393,9 @@ public:
 
     std::optional<InterlockingLayout> plan_mixed(const BasicStaggerEnvelope& other, const geometry::Bounds& container,
                                                  double pair, double wall, std::uint64_t incumbent,
-                                                 std::uint64_t max_copies, std::uint64_t max_axis_cells)
+                                                 std::uint64_t max_copies)
     {
-        max_axis_cells = std::min<std::uint64_t>({ max_axis_cells, max_copies, 1'000'000 });
+        const auto max_axis_cells = max_copies;
         const double gap = pair + (pair > 0 ? std::min(.001, pair / 100) : 0);
         geometry::Vec3 extent {}, span {};
         InterlockingLayout best;

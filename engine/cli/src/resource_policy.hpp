@@ -2,8 +2,10 @@
 
 #include <charconv>
 #include <limits>
+#include <algorithm>
+#include <cstdint>
 #include <optional>
-#include <spectrapack/solver/spectral.hpp>
+#include <string>
 
 #include <spectrapack/io/contracts.hpp>
 
@@ -41,19 +43,6 @@ inline std::optional<std::uint64_t> decimal_bytes(const io::Json& value) noexcep
     std::uint64_t result {};
     const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), result);
     return error == std::errc {} && end == text.data() + text.size() ? std::optional(result) : std::nullopt;
-}
-
-// One memory cap for the whole search (SOL-05): every phase may use all of it.
-inline void apply_host_cap(solver::SpectralLimits& limits, std::uint64_t cap) noexcept
-{
-    limits.max_working_bytes = cap;
-    limits.per_representation.max_working_bytes = cap;
-    limits.per_correlation.max_working_bytes = cap;
-    for (auto* part : { &limits.baseline, &limits.spectral }) {
-        part->max_working_bytes = cap;
-        part->per_query.max_working_bytes = cap;
-        part->per_validation.max_working_bytes = cap;
-    }
 }
 
 }  // namespace spectrapack::cli

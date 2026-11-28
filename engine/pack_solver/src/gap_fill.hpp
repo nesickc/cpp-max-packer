@@ -26,6 +26,9 @@ struct GapFillRequest {
     std::uint64_t max_working_bytes {};
     std::uint64_t max_padded_cells { 16'777'216 };
     std::uint64_t capacity {};
+    // Receives the fields, masks and FFT buffers of the chosen pitch before they are allocated.
+    void (*working_set_estimate)(void*, std::uint64_t) noexcept {};
+    void* working_set_context {};
 };
 
 struct GapFillStats {

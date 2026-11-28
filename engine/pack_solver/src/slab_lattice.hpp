@@ -19,6 +19,9 @@ struct SlabLatticeRequest {
     // Only layouts with more copies than this are returned.
     std::uint64_t to_beat {};
     std::size_t max_layouts { 4 };
+    // Receives the fields and FFT buffers of the chosen pitch before they are allocated.
+    void (*working_set_estimate)(void*, std::uint64_t) noexcept {};
+    void* working_set_context {};
 };
 
 struct SlabLatticeStats {

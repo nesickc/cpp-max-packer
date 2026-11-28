@@ -21,10 +21,7 @@ TEST_CASE("SOL-01 T015 baseline publishes valid prefixes before interruption", "
     std::stop_source stop;
     solver::RunControl control;
     control.stop = stop.get_token();
-    solver::SpectralLimits limits;
-    limits.baseline.max_candidate_evaluations = 32;
-    limits.baseline.max_search_passes = 1;
-    limits.spectral.max_candidate_evaluations = 0;
+    const solver::SpectralLimits limits;
     solver::SnapshotHandle delivered;
     auto outcome = solver::run_cpu_spectral(ctx,
                                             {
