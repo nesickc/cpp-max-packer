@@ -41,7 +41,7 @@ Release, eight threads; 10-second analytic and 60-second STL budgets; Pryanik in
 | tile5, tile10 (45° turns, 0.1/0.1 mm) | **5**, 9 | 5, 9 | 5, 10 |
 | tile5-0, tile10-0 (45° turns, 0/0.1 mm) | **5**, 9 | 5, 9 | 5, 10 |
 | yasya-0, -1, -wall0 (envelope, 400 x 240 x 200 mm) | **74**, 74, 74 | 74 | 74 |
-| bunny (envelope, 400 x 340 x 285 mm, local model) | **47** | 46 | 47 |
+| bunny (envelope, 400 x 340 x 285 mm, local model) | **47** (48 once, at 59 s) | 46 | 47 |
 | benchy (envelope, 240 x 170 x 90 mm, local model) | **47** | 46 | 47 |
 
 ## Current goal: Core v1.0
@@ -114,7 +114,7 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    ([ADR 0023](../spec/decisions/0023-settings-and-results-v2.md)): every run is timed under one
    host memory cap, with no fixed-work mode, resource policy, work counts or recovery record, and
    version 1 projects no longer open. A seventh PR removes the per-phase work caps and another
-   8,000 lines: a search ends at its deadline, on Stop or when nothing is left to try, phases
+   9,600 lines: a search ends at its deadline, on Stop or when nothing is left to try, phases
    share out time, and `SpectralLimits` is a memory cap, a thread count and a status sink. One
    bound stays, as a constant: compaction's slides end after 1.3 billion units of validator
    work, without which the 46th benchy comes 7 s later. The greedy per-insertion FFT phase
