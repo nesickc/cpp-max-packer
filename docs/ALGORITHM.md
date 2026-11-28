@@ -5,7 +5,7 @@ everything here is **tunable**: change weights, page sizes, catalogs, schedules 
 recovery behaviour freely when `python tools/scoreboard.py` shows an improvement and
 the validity rules in spec §5.3 and §6 still hold. Update this file with the change;
 no decision record is needed. This file began with spec v0.2 §6 and is updated
-through 2026-11-16. Historical rationale lives in
+through 2026-11-28. Historical rationale lives in
 `spec/decisions/` and `doc/T-*.md` (frozen).
 
 ## Desktop 45-degree orientations
@@ -88,7 +88,7 @@ gap. Extra proposal spacing is not an additional required clearance in the scree
 If no improving height proposal survives, try coplanar rows with 16 lateral
 phases, fractional pitches and alternating/progressive offsets as before.
 Work is bounded at 32 million units per orientation, with half the remaining work
-reserved for the coplanar fallback. Shared cancellation, deadline and memory
+reserved for the coplanar fallback (a bound on one envelope search, not on the phase). Shared cancellation, deadline and memory
 admission remain enforced. Only the highest improving proposal from each
 orientation enters native validation; invalid or indeterminate results cannot
 replace the incumbent. With zero wall clearance, all interlocking planners keep the
@@ -218,8 +218,8 @@ copy is checked against the container and all copies. Input and orientation chec
 still cover every copy, and saved results are always freshly validated in full.
 Failed trials roll back to the last validated working arrangement. Equal-count
 improvements use the existing enclosing-Z-span, then XY-span-sum ranking, so
-compaction is visible even when another copy does not fit. Shared work, memory,
-deadline and cancellation limits bound the pass. Interval filling remains
+compaction is visible even when another copy does not fit. The memory cap, the
+deadline and Stop bound the pass. Interval filling remains
 conservative and axis-wise motion can stop in a local minimum; this is not a
 claim that all remaining gaps are removable.
 
@@ -235,8 +235,7 @@ and validated incrementally; a rejection clears only that translation. An
 accepted copy clears the translations its field blocks, from cached offsets that
 depend only on the two rotations: for cube rotations the lattice maps onto itself,
 so the offsets for rotations A and B are A applied to those for the identity and
-A^T B, and at most 24 small correlations serve every pair. Gap-fill checks are
-bounded per check, not by the phase allowance that whole-layout trials consume.
+A^T B, and at most 24 small correlations serve every pair.
 Fields are conservative proposals: the native validator decides every insertion.
 
 The exact-contact L-prism case stays at one copy: its unresolved contact verdicts
@@ -245,7 +244,10 @@ are not bypassed by compaction.
 Slides and the refill that follows take at most half of the phase's time, also
 inside a whole-layout validation; inserting copies (next section) takes the rest.
 Before, slides on a dense layout could use the whole budget: 660 spheres spent
-30 s in them without a change.
+30 s in them without a change. They also end after 1.3 billion units of validator
+work (`kSlideValidationWork`): whole-layout
+trials on a heavy envelope take seconds each, and with only the time share the
+46th benchy came about 7 s later (the slides did 3.8 billion units in their half).
 
 ## One more copy
 
@@ -375,76 +377,76 @@ cube stay at 64. On parts whose rasters do not finish
 within the share, as for the exact Pryanik-2 mesh on one thread, the phase gives
 up without a layout.
 
-## Conservative fields and FFT placement
+## Conservative fields and FFT correlation
 
-Use one physical voxel pitch `h` and a common world grid per search level. Do not independently normalize the object and container into unrelated voxel scales.
+Two phases use fields: layered double lattices (pair no-fit maps) and gap filling
+(free translations in the box). Both follow the same rules.
 
-- `O_R`: conservative solid occupancy for the authoritative object rotated by catalog orientation `R` about its local anchor. Store the kernel's trimmed grid origin explicitly.
-- `B`: blocked environment cells. Block cells not wholly certified inside the container eroded by wall clearance. Also block cells intersecting placed solids dilated by the **full pair clearance**. This one-sided dilation enforces pair distances without coupling them to wall clearance.
-- Construct solid occupancy with conservative triangle/cell intersection and inside classification. Preserve cavities; surface-only voxelization is not sufficient. Any uncertain cell is blocked/occupied. Euclidean clearance offsets must be conservatively represented rather than rounded down to whole voxels.
+- One physical voxel pitch and a common world grid per field set. The object and
+  the container are never normalized into unrelated voxel scales.
+- Occupancy is conservative: triangle/cell intersection plus inside classification,
+  cavities preserved, any uncertain cell blocked or occupied. Container cells not
+  wholly inside the box eroded by the wall clearance are blocked; placed copies are
+  dilated by the **full pair clearance**, so pair distances never depend on the wall
+  clearance.
+- For integer translation `t` the overlap field is `K_R(t) = sum_x B(x) * O_R(x - t)`,
+  computed by FFT cross-correlation padded to at least
+  `environment_size + kernel_size - 1` per axis. Circular wraparound never creates an
+  apparent free placement, and probes against the direct sum check the numerics.
+- Before allocating, a phase estimates its fields and FFT buffers, coarsens its own
+  pitch until they fit the memory cap, and reports the estimate (the desktop's
+  Estimated RAM).
+- Fields only propose. Conservative occupancy can reject a valid contact and a zero
+  overlap proves nothing: the native validator decides every placement.
 
-For integer translation `t`, the overlap field is:
+The original design also inserted copies one at a time from box-wide correlations:
+ranked candidate pages per orientation, rechecks, bounded refinement. Timed box
+searches had not reached that phase since compaction's gap filling replaced it, so it
+was removed on 2026-11-28 with its pipeline, its cap-renewal controller and the
+STL-container search that only it served (STL containers are a Later tier).
 
-`K_R(t) = sum_x B(x) * O_R(x - t)`
-
-Implement it using FFT cross-correlation, with a documented reversal/conjugation and indexing convention. Pad each dimension to at least `environment_size + kernel_size - 1` before selecting an efficient FFT length. Include required geometry/clearance halos; discard all translations outside the legitimate world domain. Circular wraparound must never create an apparent free placement.
-
-Use the FFT to propose low-overlap candidates. Verify shortlisted positions using integer/bitset occupancy and then the authoritative validator. Floating-point near-zero thresholds affect proposal quality only; they cannot establish feasibility. The reference CPU implementation uses double FFTs. The GPU path may use single precision with a measured tolerance envelope and discrete rechecks. If a field fails its error check, recompute on CPU or mark the pass unreliable; do not report a negative feasibility conclusion from it.
-
-Specify cell boundary ownership explicitly and test exact grid alignment. Conservative occupancy can still reject a geometrically valid contact. When ordinary insertion stalls, allow a bounded refinement pass over low-overlap proposals and physical feature/AABB alignment candidates, using authoritative validation directly. Voxel overlap may reject a fast-path candidate; it is not proof that no continuous placement exists. This escape path is especially important for zero-clearance tilings.
-
-Rank collision-free candidates using a height term and a proximity correlation. Initial policy: minimize `0.65 * normalized_top_height - 0.35 * mean_proximity`, with proximity decaying as `exp(-distance / (2*h))` from blocked geometry. Normalize terms so scores are comparable across orientation kernels. These weights are application defaults, not a claim of exact paper reproduction. Tie-break by orientation index and world Z/Y/X. Return candidates in pages of 32 per orientation; expand the shortlist when validation rejects a page and budget remains.
-
-Cache the identical object's orientation kernels and spectra by geometry hash, pitch, orientation catalog/version, padding, numeric precision, and backend. Cache fixed container data separately. A pose change invalidates the affected environment data; changing units, clearances, or container invalidates incompatible fields.
-
-Maintain occupancy **reference counts** for placed, dilated copies, because their clearance regions can overlap. Removing a copy must not clear cells blocked by another copy. Combine these counts with the immutable container mask. Revoxelize after off-grid motion; never round a refined pose back to the grid silently.
-
-## Orientation catalogs and refinement
+## Orientation catalogs
 
 The free catalog begins with the 24 cube rotations, then their compositions with a 45-degree local-Z rotation, then deterministic low-discrepancy unit quaternions. Generate the latter from Halton triples in bases 2/3/5 and the standard unit-quaternion map; record the implementation version and resolved catalog hash. Deduplicate antipodal quaternions. Balanced uses 256 catalog orientations and Thorough 2,048. Sampling is not exhaustive coverage of continuous rotations.
 
 For implementation clarity, use Halton indices starting at 1 and map a triple `(u1,u2,u3)` to `[sqrt(1-u1)*sin(2*pi*u2), sqrt(1-u1)*cos(2*pi*u2), sqrt(u1)*sin(2*pi*u3), sqrt(u1)*cos(2*pi*u3)]` in XYZW order. Sort cube rotation matrices lexicographically, use composition `R_cube * R_z45`, canonicalize signs, and continue sampling until the requested number of unique orientations is reached. Orientation ordering/version is part of deterministic replay.
 
-Refine promising layouts by translation steps `h/2`, `h/4`, `h/8`, and, for free mode, local angular steps 5°, 2°, 1°, with decreasing-step improvement passes. Upright refinement only changes yaw. Fixed and discrete catalogs cannot drift into forbidden orientations. Every accepted move is revalidated and its environment field rebuilt or correctly updated. Repeated failures can end local refinement early; log that outcome.
-
 ## Count controller
 
-The current implementation is narrower than the original design:
-
 ```text
-retain the validated uniform-grid baseline
-for timed runs, validate improving layered double lattices
-for timed runs, validate improving residual-block proposals (depths 1–3)
-for timed runs, validate improving mesh-envelope stagger proposals
-for timed runs, compact, FFT-gap-fill, then grow in one more copy while one
-    fits and time remains
-if no seeded phase placed a copy (or the run is not timed) and FFT admission is affordable:
-    greedily insert from an empty layout using cached spectral pages
-    on stall, try bounded physical face alignments and low-overlap candidates
-    if the first trial completes, try insertion into the retained layout
+retain the validated uniform-grid baseline (every permitted rotation whose grid
+    has at least as many cells as the incumbent has copies)
+with a deadline, in a box:
+    validate improving layered double lattices
+    validate improving residual-block proposals (depths 1-3)
+    validate improving interlocking rows of one rotation, then of a rotation and its twin
+    compact, FFT-gap-fill, then grow in one more copy while one fits and time remains
 return the highest validated count with the actual termination reason
 ```
 
 Every phase shares the Start deadline and Stop control. Physical block and
 interlocking-row trials keep the entry incumbent while testing complete replacement
-layouts. The spectral
-controller does **not** yet perform the originally proposed spatial-neighborhood
-removal/reinsertion, equal-count pose exploration, multiple randomized restarts or
-continuous local pose refinement. Extra time can evaluate more candidates but does
-not guarantee an improved retained count. These remain possible future changes,
-not descriptions of current behavior.
+layouts. The controller does **not** perform spatial-neighborhood
+removal/reinsertion, equal-count pose exploration, randomized restarts or
+continuous rotation refinement. Extra time can evaluate more candidates but does
+not guarantee an improved retained count.
 
-Every CLI and desktop run is timed: it has a deadline, and its candidate, pass and
-refinement caps are quanta that recovery renews until the deadline passes. Each phase
-may also spend a fixed amount of physical-query work and of native-validation work
-(`max_geometry_kernel_work`, `max_validation_kernel_work`); on large layouts these end
-mixed interlocking and cut compaction's validations short, so they shape the search.
-The FFT page search has no cumulative work budget: each field, correlation and
-validation has a per-operation bound, which a timed run retries at twice and four
-times its size. Memory admission and cancellation remain enforced. The fixed-work
-mode was removed with settings version 2 (ADR 0023);
-native tests still run the solver with final caps by leaving `SpectralLimits::timed` unset. Publication exposes
-only strictly higher counts through the existing count-publication adapter.
+A search ends at its deadline, on Stop, or when no phase has anything left to try
+(dense lattices of simple parts end early as `search_stalled`). Memory is the only
+resource limit: one cap for the whole run. The candidate, pass, orientation and
+cumulative kernel-work caps of each phase, and the recovery that renewed them as
+quanta, were removed on 2026-11-28; phases share out the remaining time instead
+(lattice planning a fifth, slides half of compaction, insertion the rest). Two work
+bounds stay, as constants in the phases they shape: the validator work of
+compaction's slides (see above) and the envelope work of an interlocking phase's
+row searches (`kRowSearchWork`, also 1.3 billion units), without which mixed rows on
+pryanik2 search on for half a minute after their last improvement.
+What else stays bounded is a single operation: one geometry query, validation, raster or
+correlation keeps the geometry and compute modules' own safety bounds, so one
+runaway call ends as an indeterminate proposal rather than taking the whole budget,
+and a layout holds at most 4,096 copies. Without a deadline (native tests) only the
+grid runs. Publication exposes only strictly higher counts through the existing
+count-publication adapter.
 
 ### Continued runs
 
@@ -461,45 +463,19 @@ Nothing else is carried over: no fields, FFT plans, candidate pages or RNG state
 
 ## Resource handling
 
-Spec §6.6 governs: estimate the dominant live buffers, fit available memory, keep
-the incumbent and exhaust affordable work before reporting a resource limit.
-Manual pitch is never changed by this implementation.
+Spec §6.6 governs: estimate the dominant live buffers, fit available memory and keep
+the incumbent. Manual pitch is never changed by this implementation.
+
+Every run takes one host memory cap, half of the free RAM at Start or the lower
+explicit host-memory cap, and every phase may use all of it. Lattice planning and gap
+filling choose cells whose fields and FFT buffers fit under it and report that
+estimate before allocating; a phase whose fields cannot fit at any useful pitch is
+skipped, and the block and row phases need no fields at all.
 
 Finalization has a separate bounded 30-second allowance for fresh native validation
 and saving the retained result; it does not extend search. The desktop response
 watchdog includes that allowance plus one second. Actual elapsed time and budget
 overrun remain reported. A failed final validation still refuses publication.
-
-The early 340/360-copy benchmark stops had two separate causes. Hand-written CLI
-settings without `resolved.resource_policy` silently selected legacy execution,
-even for a timed job: cumulative raster work stopped 4 mm runs after four
-correlations. The same path used a fixed 512 MiB fallback; the 2 mm preflight
-estimated about 710 MB and refused admission. Neither result established physical
-infeasibility.
-
-Every run now takes one host memory cap, half of the free RAM at Start or the
-lower explicit host-memory cap, and every phase may use all of it. Recovery retains completed
-geometry, masks, kernels and correlation pages, can evict disposable state/reduce
-threads, and grants bounded additional work. Incomplete raster operations can
-still restart on a larger allowance; resumable raster cursors across failed calls
-are not implemented. The physical block phase is independent of field admission
-and provides useful rearrangement even when a field cannot fit.
-
-Before the interlocking-row extension, the 4 mm benchmark reached 18 correlations and nine FFT candidates submitted
-to native validation, compared with four correlations and no FFT candidates before
-the fix. It retained 343 and ran to the unchanged 60-second deadline. The 2 mm run
-passed memory admission and reached one correlation, but submitted no FFT
-candidates within 60 seconds; its count improvement came from physical blocks.
-Logs and budget-scaling measurements are in `.local/continued-packing/`.
-
-Explicit 180- and 300-second runs at 4 mm still retained 343, despite reaching
-76/138 correlations and 38/69 FFT candidates respectively. Each ended at its
-requested budget and passed fresh native validation. This demonstrates continued
-candidate evaluation, not continued count improvement or an optimality proof.
-At 2 mm, an explicit 180-second run also retained 343, reaching 12 correlations
-and six FFT candidates before budget exhaustion. Its peak host memory was about
-462 MiB, versus 341 MiB for 60 seconds at 2 mm and about 90-91 MiB for the 4 mm
-runs. Its saved layout also passed fresh native validation.
 
 
 ## Explicit import repair

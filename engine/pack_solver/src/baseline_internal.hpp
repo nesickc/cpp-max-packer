@@ -6,6 +6,10 @@
 
 namespace spectrapack::solver::detail {
 
+// The most copies a layout may hold, and the most grid cells along one axis.
+inline constexpr std::uint64_t kMaxCopies = 4'096;
+inline constexpr std::uint64_t kMaxAxisCells = 1'000'000;
+
 // The physical seeding and compaction phases, in the order timed runs use
 // them. All but the grid resume a prior phase's validated incumbent and replace
 // it only with a natively valid layout that ranks higher.

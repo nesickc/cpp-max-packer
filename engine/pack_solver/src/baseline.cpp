@@ -34,6 +34,16 @@ constexpr std::uint64_t kSeedScratchBytes =
     sizeof(std::array<Matrix, 24>) + sizeof(std::array<int, 3>);
 // A non-elided return can coexist with its source outcome and run control.
 constexpr std::uint64_t kBaselineMetadataBytes = 2 * sizeof(BaselineOutcome) + sizeof(RunControl);
+// Slides and their refill validate whole layouts, seconds each on a heavy
+// mesh. They end after this much validator work, so a dense enveloped layout
+// keeps most of its time for gap filling and insertion: without it the 46th
+// benchy comes about 7 s later, when the slides' half of the time runs out.
+constexpr std::uint64_t kSlideValidationWork = 1'300'000'000;
+// The row searches of an interlocking phase end after this much envelope and
+// bounds work. Mixed rows on a large exact mesh otherwise search on long after
+// their last improvement: on pryanik2 for half a minute, leaving compaction
+// and insertion three seconds.
+constexpr std::uint64_t kRowSearchWork = 1'300'000'000;
 constexpr std::uint64_t kPendingPoseMetadataBytes = sizeof(std::vector<geometry::CopyPose>)
 #if defined(_MSC_VER) && defined(_DEBUG)
                                                     + sizeof(std::_Container_proxy)
@@ -197,32 +207,18 @@ bool record_validation(RunStats& stats, const geometry::ValidationReport& report
   return update_peak(stats, peak, limits);
 }
 
-geometry::PhysicalQueryLimits query_limits(const BaselineLimits& limits,
-                                           const RunStats& stats,
-                                           std::uint64_t live) noexcept {
-  auto query = limits.per_query;
-  query.max_working_bytes =
-      std::min(query.max_working_bytes,
-               remaining(limits.max_working_bytes, live));
-  query.max_kernel_work =
-      std::min(query.max_kernel_work,
-               remaining(limits.max_geometry_kernel_work,
-                         stats.geometry_kernel_work));
+// One geometry query or validation gets the memory still free under the cap
+// and the geometry module's own per-operation bounds; the deadline and Stop end
+// the search, not a work allowance.
+geometry::PhysicalQueryLimits query_limits(const BaselineLimits& limits, std::uint64_t live) noexcept {
+  geometry::PhysicalQueryLimits query;
+  query.max_working_bytes = remaining(limits.max_working_bytes, live);
   return query;
 }
 
-geometry::ValidationLimits validation_limits(const BaselineLimits& limits,
-                                              const RunStats& stats,
-                                              std::uint64_t live) noexcept {
-  auto check = limits.per_validation;
-  check.max_copy_count = std::min(check.max_copy_count, limits.max_copies);
-  check.max_working_bytes =
-      std::min(check.max_working_bytes,
-               remaining(limits.max_working_bytes, live));
-  check.max_kernel_work =
-      std::min(check.max_kernel_work,
-               remaining(limits.max_validation_kernel_work,
-                         stats.validation_kernel_work));
+geometry::ValidationLimits validation_limits(const BaselineLimits& limits, std::uint64_t live) noexcept {
+  geometry::ValidationLimits check;
+  check.max_working_bytes = remaining(limits.max_working_bytes, live);
   return check;
 }
 
@@ -598,7 +594,7 @@ BaselineOutcome run_aabb_baseline_impl(
     };
     const auto offer = [&](std::shared_ptr<const geometry::ValidatedSolution> solution,
                            std::uint64_t live) {
-      auto scoring = query_limits(limits, out.stats, live);
+      auto scoring = query_limits(limits, live);
       const auto admitted = incumbent.offer(std::move(solution), scoring);
       if (!record_geometry(out.stats, admitted.scoring_work, live, limits)) {
         out.termination_reason = TerminationReason::resource_limit;
@@ -678,7 +674,7 @@ BaselineOutcome run_aabb_baseline_impl(
         return out;
       }
       auto checked =
-          geometry::validate(context, candidate, validation_limits(limits, out.stats, candidate_live), control);
+          geometry::validate(context, candidate, validation_limits(limits, candidate_live), control);
       if (!record_validation(out.stats, checked.report, candidate_live, limits)) {
         out.termination_reason = TerminationReason::resource_limit;
         out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
@@ -722,12 +718,6 @@ BaselineOutcome run_aabb_baseline_impl(
 
     const auto& policy = context->constraints().orientations;
     const auto raw_seed_count = maximum_seed_count(policy);
-    if (raw_seed_count > limits.max_orientations) {
-      retain_best();
-      out.termination_reason = TerminationReason::budget_exhausted;
-      out.diagnostic_code = "PHYSICAL_ORIENTATION_LIMIT";
-      return out;
-    }
     auto seed_bytes = checked_product(static_cast<std::size_t>(raw_seed_count),
                                       sizeof(geometry::Quaternion));
     std::uint64_t seed_preflight = *base;
@@ -743,19 +733,13 @@ BaselineOutcome run_aabb_baseline_impl(
     }
     if (!exact_seeds) detail::allocation_point();
     auto seeds = exact_seeds ? *exact_seeds : orientation_seeds(policy);
-    if (seeds.size() > limits.max_orientations) {
-      retain_best();
-      out.termination_reason = TerminationReason::budget_exhausted;
-      out.diagnostic_code = "PHYSICAL_ORIENTATION_LIMIT";
-      return out;
-    }
 
     if (phase == PhysicalPhase::compaction || phase == PhysicalPhase::slab_lattice) {
         if (!entry || entry->solution->copies().empty() ||
             !std::holds_alternative<geometry::BoxDimensions>(context->container())) {
             return finish("COMPACTION_UNAVAILABLE", TerminationReason::search_stalled);
         }
-        const auto capacity = std::min<std::uint64_t>(limits.max_copies, 4096);
+        const auto capacity = detail::kMaxCopies;
         if (entry->score.count > capacity) {
             return finish("COMPACTION_COPY_LIMIT", TerminationReason::search_stalled);
         }
@@ -782,13 +766,14 @@ BaselineOutcome run_aabb_baseline_impl(
             request.max_working_bytes = remaining(limits.max_working_bytes, live);
             request.capacity = capacity;
             request.to_beat = entry->score.count;
+            request.working_set_estimate = limits.working_set_estimate;
+            request.working_set_context = limits.working_set_context;
             std::vector<std::vector<geometry::CopyPose>> layouts;
             // Planning takes at most a fifth of the remaining time; validation and
             // the later phases keep the rest.
             detail::plan_slab_lattices(context, seeds, request, control, layouts);
             for (auto& layout : layouts) {
-                if (boundary(control) != Boundary::none ||
-                    out.stats.candidate_evaluations >= limits.max_candidate_evaluations) {
+                if (boundary(control) != Boundary::none) {
                     break;
                 }
                 const auto made = geometry::make_candidate(context, std::move(layout));
@@ -799,7 +784,7 @@ BaselineOutcome run_aabb_baseline_impl(
                 ++out.stats.candidate_evaluations;
                 control.phase(runtime::Phase::validating);
                 const auto checked =
-                    geometry::validate(context, *candidate, validation_limits(limits, out.stats, live), control);
+                    geometry::validate(context, *candidate, validation_limits(limits, live), control);
                 if (!record_validation(out.stats, checked.report, live, limits)) {
                     return finish("SLAB_LATTICE_VALIDATION_LIMIT", TerminationReason::resource_limit);
                 }
@@ -830,7 +815,7 @@ BaselineOutcome run_aabb_baseline_impl(
                 return finish("COMPACTION_ORIENTATION_LIMIT", TerminationReason::search_stalled);
             }
             const auto queried = geometry::oriented_bounds(context->object(), copy.rotation_xyzw,
-                                                           query_limits(limits, out.stats, live));
+                                                           query_limits(limits, live));
             const auto* shape = std::get_if<geometry::OrientedBounds>(&queried);
             if (!shape || !record_geometry(out.stats, shape->stats, live, limits)) {
                 return finish("COMPACTION_BOUNDS_LIMIT", TerminationReason::resource_limit);
@@ -844,7 +829,7 @@ BaselineOutcome run_aabb_baseline_impl(
                 continue;
             }
             const auto queried =
-                geometry::oriented_bounds(context->object(), rotation, query_limits(limits, out.stats, live));
+                geometry::oriented_bounds(context->object(), rotation, query_limits(limits, live));
             const auto* shape = std::get_if<geometry::OrientedBounds>(&queried);
             if (!shape || !record_geometry(out.stats, shape->stats, live, limits)) {
                 return finish("COMPACTION_BOUNDS_LIMIT", TerminationReason::resource_limit);
@@ -873,7 +858,7 @@ BaselineOutcome run_aabb_baseline_impl(
                    std::tuple { b != 2, shapes.front().max[b] - shapes.front().min[b] };
         });
         auto accepted = entry->solution;
-        bool stopped = false;
+        bool stopped = false, spent = false;
         // Slides and the refill that follows take at most half of the time
         // left; inserting copies keeps the rest.
         auto sliding = control;
@@ -887,10 +872,12 @@ BaselineOutcome run_aabb_baseline_impl(
             if (out_of_share()) {
                 return detail::CompactionVerdict::stop;
             }
-            if (boundary(control) != Boundary::none ||
-                out.stats.candidate_evaluations >= limits.max_candidate_evaluations ||
-                out.stats.validation_kernel_work >= limits.max_validation_kernel_work) {
+            if (boundary(control) != Boundary::none) {
                 stopped = true;
+                return detail::CompactionVerdict::stop;
+            }
+            if (out.stats.validation_kernel_work >= kSlideValidationWork) {
+                spent = true;
                 return detail::CompactionVerdict::stop;
             }
             const auto made = geometry::make_candidate(context, proposal);
@@ -902,15 +889,21 @@ BaselineOutcome run_aabb_baseline_impl(
             control.phase(runtime::Phase::validating);
             // Slides and refills keep copy order, so unmoved copies reuse
             // the last accepted arrangement's proofs.
-            const auto checked = geometry::validate_incremental(
-                accepted, *candidate, validation_limits(limits, out.stats, live), sliding);
+            auto check = validation_limits(limits, live);
+            check.max_kernel_work =
+                std::min(check.max_kernel_work, kSlideValidationWork - out.stats.validation_kernel_work);
+            const auto checked = geometry::validate_incremental(accepted, *candidate, check, sliding);
             const bool recorded = record_validation(out.stats, checked.report, live, limits);
             if (recorded && out_of_share()) {
                 return detail::CompactionVerdict::stop;
             }
-            if (!recorded || boundary(control) != Boundary::none ||
-                checked.report.code.find("LIMIT") != std::string::npos) {
+            if (!recorded || boundary(control) != Boundary::none) {
                 stopped = true;
+                return detail::CompactionVerdict::stop;
+            }
+            if (checked.report.code.find("LIMIT") != std::string::npos) {
+                // Cut short by the slides' bound, or by a limit of the check itself.
+                (out.stats.validation_kernel_work >= kSlideValidationWork ? spent : stopped) = true;
                 return detail::CompactionVerdict::stop;
             }
             if (checked.validated_solution) {
@@ -926,7 +919,7 @@ BaselineOutcome run_aabb_baseline_impl(
             return detail::CompactionVerdict::rejected;
         };
         // Gap filling inserts one copy per check, so each check is bounded on its
-        // own rather than by the phase allowance that whole-layout trials consume.
+        // own rather than by the work bound that the slides' whole-layout trials share.
         bool fill_failed = false;
         detail::GapFillCache fields;
         const auto fill = [&](std::shared_ptr<const geometry::ValidatedSolution> base, const RunControl& within) {
@@ -938,12 +931,13 @@ BaselineOutcome run_aabb_baseline_impl(
             request.threads = limits.gap_fill_threads;
             request.max_working_bytes = remaining(limits.max_working_bytes, live);
             request.capacity = capacity;
+            request.working_set_estimate = limits.working_set_estimate;
+            request.working_set_context = limits.working_set_context;
             // `base` advances with each insertion; keep the layout the filler reads alive.
             const auto start = base;
             const auto filled = detail::fill_gaps(
                 *context, start->copies(), seeds, request, within, [&](const geometry::CopyPose& pose) {
-                if (boundary(control) != Boundary::none ||
-                    out.stats.candidate_evaluations >= limits.max_candidate_evaluations) {
+                if (boundary(control) != Boundary::none) {
                     return detail::GapVerdict::stop;
                 }
                 auto proposal = base->copies();
@@ -955,11 +949,8 @@ BaselineOutcome run_aabb_baseline_impl(
                 }
                 ++out.stats.candidate_evaluations;
                 control.phase(runtime::Phase::validating);
-                auto check = limits.per_validation;
-                check.max_copy_count = std::min(check.max_copy_count, limits.max_copies);
-                check.max_working_bytes =
-                    std::min(check.max_working_bytes, remaining(limits.max_working_bytes, live));
-                const auto checked = geometry::validate_incremental(base, *candidate, check, control);
+                const auto checked =
+                    geometry::validate_incremental(base, *candidate, validation_limits(limits, live), control);
                 if (!record_validation(out.stats, checked.report, live, limits) ||
                     boundary(control) != Boundary::none) {
                     return detail::GapVerdict::stop;
@@ -981,19 +972,19 @@ BaselineOutcome run_aabb_baseline_impl(
                           !update_peak(out.stats, filled_live, limits);
             return base;
         };
-        for (unsigned sweep = 0; sweep != 4 && !stopped && sliding.poll() == runtime::StopCause::none; ++sweep) {
+        for (unsigned sweep = 0; sweep != 4 && !stopped && !spent && sliding.poll() == runtime::StopCause::none;
+             ++sweep) {
             for (std::size_t axis : axes) {
                 if (out_of_share()) {
                     break;
                 }
-                if (boundary(control) != Boundary::none || out.stats.search_passes >= limits.max_search_passes ||
-                    out.stats.candidate_evaluations >= limits.max_candidate_evaluations) {
+                if (boundary(control) != Boundary::none) {
                     return finish("COMPACTION_INTERRUPTED", TerminationReason::budget_exhausted);
                 }
                 ++out.stats.search_passes;
-                const auto query = query_limits(limits, out.stats, live);
+                const auto query = query_limits(limits, live);
                 detail::contract_axis(axis, rotations, shapes, copies, accept);
-                if (!stopped) {
+                if (!stopped && !spent) {
                     const auto work = detail::compact_axis(
                         context->object()->mesh(), *bounds, context->constraints().pair_clearance_mm,
                         context->constraints().wall_clearance_mm, axis, rotations, shapes, copies, capacity,
@@ -1006,13 +997,13 @@ BaselineOutcome run_aabb_baseline_impl(
                 if (accepted != incumbent.best()->solution && !offer(accepted, live)) {
                     return out;
                 }
-                if (stopped) {
+                if (stopped || spent) {
                     break;
                 }
             }
         }
         // Slides open space at the walls they moved away from, including sweeps
-        // cut short by the validation allowance.
+        // cut short by their share of the time or of validator work.
         accepted = fill(accepted, sliding);
         if (fill_failed) {
             return finish("COMPACTION_MEMORY_LIMIT", TerminationReason::resource_limit);
@@ -1027,8 +1018,7 @@ BaselineOutcome run_aabb_baseline_impl(
             bool unpublished = false;
             detail::insert_copies(*context, layout, seeds, capacity, limits.gap_fill_threads, control,
                                   [&](const std::vector<geometry::CopyPose>& proposal) {
-                if (boundary(control) != Boundary::none ||
-                    out.stats.candidate_evaluations >= limits.max_candidate_evaluations) {
+                if (boundary(control) != Boundary::none) {
                     return detail::CompactionVerdict::stop;
                 }
                 const auto made = geometry::make_candidate(context, proposal);
@@ -1038,11 +1028,9 @@ BaselineOutcome run_aabb_baseline_impl(
                 }
                 ++out.stats.candidate_evaluations;
                 control.phase(runtime::Phase::validating);
-                auto check = limits.per_validation;
-                check.max_copy_count = std::min(check.max_copy_count, limits.max_copies);
-                check.max_working_bytes = std::min(check.max_working_bytes, remaining(limits.max_working_bytes, live));
                 // A settled layout is rare enough to check under the run's own deadline.
-                const auto checked = geometry::validate_incremental(accepted, *candidate, check, control);
+                const auto checked =
+                    geometry::validate_incremental(accepted, *candidate, validation_limits(limits, live), control);
                 if (!record_validation(out.stats, checked.report, live, limits)) {
                     return detail::CompactionVerdict::stop;
                 }
@@ -1124,9 +1112,8 @@ BaselineOutcome run_aabb_baseline_impl(
             if (boundary(control) != Boundary::none) {
                 return finish("STAGGER_INTERRUPTED", TerminationReason::budget_exhausted);
             }
-            if (out.stats.search_passes >= limits.max_search_passes ||
-                out.stats.candidate_evaluations >= limits.max_candidate_evaluations) {
-                return finish("STAGGER_CANDIDATE_LIMIT", TerminationReason::budget_exhausted);
+            if (out.stats.geometry_kernel_work >= kRowSearchWork) {
+                return finish("INTERLOCKING_STAGGER_WORK_SPENT", TerminationReason::search_stalled);
             }
             auto live = persistent;
             if (!add_optional(live, solution_bytes(admitted_solution)) || !checked_add(live, incumbent_bytes) ||
@@ -1134,7 +1121,7 @@ BaselineOutcome run_aabb_baseline_impl(
                 return finish("STAGGER_MEMORY_LIMIT", TerminationReason::resource_limit);
             }
             const auto queried =
-                geometry::oriented_bounds(context->object(), seeds[seed], query_limits(limits, out.stats, live));
+                geometry::oriented_bounds(context->object(), seeds[seed], query_limits(limits, live));
             if (const auto* failure = std::get_if<geometry::PhysicalQueryFailure>(&queried)) {
                 record_geometry(out.stats, failure->stats, live, limits);
                 return finish(failure->code, TerminationReason::resource_limit);
@@ -1153,7 +1140,7 @@ BaselineOutcome run_aabb_baseline_impl(
             auto alternate_bounds = oriented.bounds_mm;
             if (mixed) {
                 const auto query_other =
-                    geometry::oriented_bounds(context->object(), seeds[partner], query_limits(limits, out.stats, live));
+                    geometry::oriented_bounds(context->object(), seeds[partner], query_limits(limits, live));
                 if (const auto* failure = std::get_if<geometry::PhysicalQueryFailure>(&query_other)) {
                     record_geometry(out.stats, failure->stats, live, limits);
                     return finish(failure->code, TerminationReason::resource_limit);
@@ -1164,7 +1151,9 @@ BaselineOutcome run_aabb_baseline_impl(
                 }
                 alternate_bounds = other.bounds_mm;
             }
-            const auto query = query_limits(limits, out.stats, live);
+            auto query = query_limits(limits, live);
+            query.max_kernel_work =
+                std::min(query.max_kernel_work, remaining(kRowSearchWork, out.stats.geometry_kernel_work));
             detail::StaggerEnvelope envelope(
                 control,
                 std::min<std::uint64_t>(mixed ? 64'000'000 : 32'000'000, query.max_kernel_work / (mixed ? 2 : 1)),
@@ -1182,7 +1171,7 @@ BaselineOutcome run_aabb_baseline_impl(
                         plan =
                             envelope.plan_mixed(alternate, *bounds, context->constraints().pair_clearance_mm,
                                                 context->constraints().wall_clearance_mm, incumbent.best()->score.count,
-                                                limits.max_copies, limits.max_axis_cells);
+                                                detail::kMaxCopies);
                         // Filled transverse bins can reject a tight diagonal
                         // layout before the mesh validator ever sees it. Seed
                         // with a little relative headroom, then contract only
@@ -1194,18 +1183,18 @@ BaselineOutcome run_aabb_baseline_impl(
                             plan = envelope.plan_mixed(
                                 alternate, proposal_bounds, context->constraints().pair_clearance_mm,
                                 context->constraints().wall_clearance_mm, incumbent.best()->score.count,
-                                limits.max_copies, limits.max_axis_cells);
+                                detail::kMaxCopies);
                         }
                     }
                 }
                 else {
                     plan = envelope.plan_height(*bounds, context->constraints().pair_clearance_mm,
                                                 context->constraints().wall_clearance_mm, incumbent.best()->score.count,
-                                                limits.max_copies, limits.max_axis_cells);
+                                                detail::kMaxCopies);
                     if (!plan) {
                         plan = envelope.plan(*bounds, context->constraints().pair_clearance_mm,
                                              context->constraints().wall_clearance_mm, incumbent.best()->score.count,
-                                             limits.max_copies, limits.max_axis_cells);
+                                             detail::kMaxCopies);
                     }
                 }
             }
@@ -1276,7 +1265,7 @@ BaselineOutcome run_aabb_baseline_impl(
             ++out.stats.candidate_evaluations;
             control.phase(runtime::Phase::validating);
             auto checked = geometry::validate(context, std::get<std::shared_ptr<const geometry::Candidate>>(made),
-                                              validation_limits(limits, out.stats, live), control);
+                                              validation_limits(limits, live), control);
             if (!record_validation(out.stats, checked.report, live, limits)) {
                 return finish("STAGGER_VALIDATION_LIMIT", TerminationReason::resource_limit);
             }
@@ -1326,7 +1315,7 @@ BaselineOutcome run_aabb_baseline_impl(
                 return out;
             }
             auto queried =
-                geometry::oriented_bounds(context->object(), rotation, query_limits(limits, out.stats, live));
+                geometry::oriented_bounds(context->object(), rotation, query_limits(limits, live));
             const auto* shape = std::get_if<geometry::OrientedBounds>(&queried);
             if (!shape) {
                 return fail("BLOCK_BOUNDS_LIMIT");
@@ -1359,18 +1348,12 @@ BaselineOutcome run_aabb_baseline_impl(
             if (!honor()) {
                 return out;
             }
-            if (out.stats.search_passes >= limits.max_search_passes ||
-                out.stats.candidate_evaluations >= limits.max_candidate_evaluations) {
-                retain_best();
-                out.termination_reason = TerminationReason::budget_exhausted;
-                return out;
-            }
             ++out.stats.search_passes;
             const auto allowance = remaining(limits.max_working_bytes, live);
             if (allowance < 8192) {
                 return fail("BLOCK_MEMORY_LIMIT");
             }
-            detail::BlockPlanner planner(shapes, gap, limits.max_copies, limits.max_axis_cells, allowance / 4,
+            detail::BlockPlanner planner(shapes, gap, detail::kMaxCopies, detail::kMaxAxisCells, allowance / 4,
                                          control);
             const auto root = planner.plan(space, depth);
             auto trial_live = live;
@@ -1399,7 +1382,7 @@ BaselineOutcome run_aabb_baseline_impl(
             ++out.stats.candidate_evaluations;
             control.phase(runtime::Phase::validating);
             auto checked = geometry::validate(context, std::get<std::shared_ptr<const geometry::Candidate>>(made),
-                                              validation_limits(limits, out.stats, trial_live), control);
+                                              validation_limits(limits, trial_live), control);
             if (!record_validation(out.stats, checked.report, trial_live, limits)) {
                 return fail("BLOCK_VALIDATION_LIMIT");
             }
@@ -1442,12 +1425,6 @@ BaselineOutcome run_aabb_baseline_impl(
             apply_boundary(out, at_start);
             return out;
         }
-      if (out.stats.search_passes >= limits.max_search_passes) {
-        retain_best();
-        out.termination_reason = TerminationReason::budget_exhausted;
-        out.diagnostic_code = "PHYSICAL_PASS_LIMIT";
-        return out;
-      }
       ++out.stats.orientations_started;
 
       // The last validated grid prefix; later batches validate incrementally against it.
@@ -1479,7 +1456,7 @@ BaselineOutcome run_aabb_baseline_impl(
           return out;
       }
 
-      auto oriented = geometry::oriented_bounds(context->object(), seeds[seed], query_limits(limits, out.stats, *live));
+      auto oriented = geometry::oriented_bounds(context->object(), seeds[seed], query_limits(limits, *live));
       if (const auto* failure =
               std::get_if<geometry::PhysicalQueryFailure>(&oriented)) {
         if (!record_geometry(out.stats, failure->stats, *live, limits)) {
@@ -1501,14 +1478,13 @@ BaselineOutcome run_aabb_baseline_impl(
       }
 
       std::array<geometry::RegularAxisGrid, 3> grid{};
-      bool skip_orientation = false;
       for (std::size_t axis = 0; axis != 3; ++axis) {
         auto plan = geometry::plan_regular_axis(
             shape.bounds_mm.min[axis], shape.bounds_mm.max[axis],
             bounds->min[axis], bounds->max[axis],
             context->constraints().pair_clearance_mm,
-            context->constraints().wall_clearance_mm, limits.max_axis_cells,
-            query_limits(limits, out.stats, *live));
+            context->constraints().wall_clearance_mm, detail::kMaxAxisCells,
+            query_limits(limits, *live));
         if (const auto* failure =
                 std::get_if<geometry::PhysicalQueryFailure>(&plan)) {
           if (!record_geometry(out.stats, failure->stats, *live, limits)) {
@@ -1555,7 +1531,7 @@ BaselineOutcome run_aabb_baseline_impl(
             if (std::isfinite(margin) && margin > 0) {
                 auto padded = geometry::plan_regular_axis(
                     shape.bounds_mm.min[axis], shape.bounds_mm.max[axis], bounds->min[axis], bounds->max[axis],
-                    pair + margin, wall + margin, limits.max_axis_cells, query_limits(limits, out.stats, *live));
+                    pair + margin, wall + margin, detail::kMaxAxisCells, query_limits(limits, *live));
                 if (const auto* value = std::get_if<geometry::RegularAxisGrid>(&padded)) {
                     if (!record_geometry(out.stats, value->stats, *live, limits)) {
                         retain_best();
@@ -1579,11 +1555,13 @@ BaselineOutcome run_aabb_baseline_impl(
             }
         }
       }
-      if (skip_orientation) continue;
-
       bool interrupted = false;
       const bool has_cells =
           grid[0].count != 0 && grid[1].count != 0 && grid[2].count != 0;
+      // A grid with fewer cells than the incumbent has copies cannot replace it.
+      if (incumbent.best() && grid[0].count * grid[1].count * grid[2].count < incumbent.best()->score.count) {
+        continue;
+      }
       const std::size_t batch_size = std::holds_alternative<geometry::BoxDimensions>(context->container()) ? 32 : 1;
       std::uint64_t generated_id = out.stats.candidate_evaluations;
       enum class Submission { accepted, rejected, terminal };
@@ -1592,10 +1570,9 @@ BaselineOutcome run_aabb_baseline_impl(
               apply_boundary(out, before);
               return Submission::terminal;
           }
-          if (additions.size() > remaining(limits.max_candidate_evaluations, out.stats.candidate_evaluations) ||
-              additions.size() > remaining(limits.max_copies, working().size())) {
+          if (additions.size() > remaining(detail::kMaxCopies, working().size())) {
               out.termination_reason = TerminationReason::budget_exhausted;
-              out.diagnostic_code = "PHYSICAL_CANDIDATE_LIMIT";
+              out.diagnostic_code = "PHYSICAL_COPY_LIMIT";
               return Submission::terminal;
           }
           const auto submission_live = live_bytes(*base, seeds, working(), admitted_solution, incumbent_bytes, &pending);
@@ -1629,7 +1606,7 @@ BaselineOutcome run_aabb_baseline_impl(
           auto candidate = std::get<std::shared_ptr<const geometry::Candidate>>(std::move(made));
           out.stats.candidate_evaluations += additions.size();
           auto checked = geometry::validate_incremental(working_solution, candidate,
-                                                        validation_limits(limits, out.stats, candidate_live), control);
+                                                        validation_limits(limits, candidate_live), control);
           if (!record_validation(out.stats, checked.report, candidate_live, limits)) {
               out.termination_reason = TerminationReason::resource_limit;
               out.diagnostic_code = "PHYSICAL_RESOURCE_LIMIT";
@@ -1694,11 +1671,9 @@ BaselineOutcome run_aabb_baseline_impl(
           pending.clear();
           return true;
       };
-      if (has_cells && limits.max_copies && out.stats.candidate_evaluations < limits.max_candidate_evaluations) {
+      if (has_cells) {
           auto pending_live = live;
-          const auto capacity =
-              std::min<std::uint64_t>({ batch_size, limits.max_copies,
-                                        remaining(limits.max_candidate_evaluations, out.stats.candidate_evaluations) });
+          const auto capacity = batch_size;
           if (!pending_live || !add_optional(*pending_live, checked_product(capacity, sizeof(geometry::CopyPose))) ||
               !update_peak(out.stats, *pending_live, limits)) {
               retain_best();
@@ -1718,11 +1693,9 @@ BaselineOutcome run_aabb_baseline_impl(
               interrupted = true;
               break;
             }
-            if (out.stats.candidate_evaluations >=
-                    limits.max_candidate_evaluations ||
-                working().size() >= limits.max_copies) {
+            if (working().size() >= detail::kMaxCopies) {
               out.termination_reason = TerminationReason::budget_exhausted;
-              out.diagnostic_code = "PHYSICAL_CANDIDATE_LIMIT";
+              out.diagnostic_code = "PHYSICAL_COPY_LIMIT";
               interrupted = true;
               break;
             }
@@ -1738,7 +1711,7 @@ BaselineOutcome run_aabb_baseline_impl(
             for (std::size_t axis = 0; axis != 3; ++axis) {
               const auto index = axis == 0 ? x : (axis == 1 ? y : z);
               auto translation = geometry::axis_translation(
-                  grid[axis], index, query_limits(limits, out.stats, *live));
+                  grid[axis], index, query_limits(limits, *live));
               if (const auto* failure =
                       std::get_if<geometry::PhysicalQueryFailure>(&translation)) {
                 if (!record_geometry(out.stats, failure->stats, *live, limits)) {
@@ -1776,9 +1749,7 @@ BaselineOutcome run_aabb_baseline_impl(
             detail::allocation_point();
             pending.push_back({ std::string(id.text.data(), id.size), point, seeds[seed] });
             const auto target = working().empty() ? 1 : batch_size;
-            if ((pending.size() >= target ||
-                 pending.size() >= remaining(limits.max_candidate_evaluations, out.stats.candidate_evaluations) ||
-                 pending.size() >= remaining(limits.max_copies, working().size())) &&
+            if ((pending.size() >= target || pending.size() >= remaining(detail::kMaxCopies, working().size())) &&
                 !flush()) {
                 interrupted = true;
                 break;
@@ -1800,12 +1771,6 @@ BaselineOutcome run_aabb_baseline_impl(
       if (after_grid != Boundary::none) {
         retain_best();
         apply_boundary(out, after_grid);
-        return out;
-      }
-      if (out.stats.candidate_evaluations >= limits.max_candidate_evaluations) {
-        retain_best();
-        out.termination_reason = TerminationReason::budget_exhausted;
-        out.diagnostic_code = "PHYSICAL_CANDIDATE_LIMIT";
         return out;
       }
     }

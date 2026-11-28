@@ -331,9 +331,10 @@ spectrapack-engine serve --stdio
 
 The T-007 CPU implementation slice also provides a synchronous diagnostic entry
 point, `spectrapack-engine solve --settings FILE --object-report FILE
-[--container-report FILE] --result FILE [--stl FILE]`, specified in
+--result FILE [--stl FILE]`, specified in
 [ADR 0009](../spec/decisions/0009-cpu-spectral-placement-and-export.md). It consumes
-resolved settings and existing accepted inspection reports. The required `pack`
+resolved settings and an existing accepted inspection report, and packs box
+containers only: STL-container settings are refused until that Later tier. The required `pack`
 job-file interface and asynchronous job methods remain their own integration
 gates. Capabilities distinguish implemented commands from implemented methods.
 

@@ -189,9 +189,9 @@ a resolved [settings document](../spec/schemas/settings.schema.json):
 & "$packageRoot/bin/spectrapack-engine.exe" solve --settings settings.json --object-report object.json --result output/result.json --stl output/assembly.stl
 ```
 
-For an STL interior-volume container, also pass `--container-report container.json`.
-A box container uses the dimensions in settings. Asset hashes must match the
-reports. Settings must already resolve manual pitch, a version-1 fixed/cube/custom
+The container is the box in settings; STL-container settings are refused
+(`UNSUPPORTED_SETTINGS`) until that Later tier. Asset hashes must match the
+report. Settings must already resolve manual pitch, a version-1 fixed/cube/custom
 orientation catalog and a supported CPU thread count. Count one uses `serial-v1`;
 larger counts use `raster-rows256-v1`, up to the engine-reported Windows maximum
 of eight. Existing serial settings remain executable. This command does not

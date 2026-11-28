@@ -61,7 +61,8 @@ fn t015_real_live_packing_stop_files_and_new_run_bind_exact_public_poses() {
     );
     let mut empty = settings(1.0);
     empty["box_dimensions_mm"] = json!([1, 1, 1]);
-    empty["pitch_mm"] = json!(1e-9);
+    // A search that cannot run under its memory ceiling fails and keeps the previous packing.
+    empty["host_memory_limit_bytes"] = json!("1");
     core.start(empty.clone()).unwrap();
     let failed_empty = wait(&core);
     assert!(failed_empty.last_error.is_some(), "{failed_empty:?}");
@@ -70,6 +71,7 @@ fn t015_real_live_packing_stop_files_and_new_run_bind_exact_public_poses() {
     core.new_project().unwrap();
     assert!(core.state().live_result.is_none());
     import(&core, &source);
+    empty.as_object_mut().unwrap().remove("host_memory_limit_bytes");
     empty["pitch_mm"] = json!(10);
     core.start(empty).unwrap();
     let first_empty = wait(&core);

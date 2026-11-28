@@ -63,7 +63,7 @@ void usage(std::ostream& stream) {
               "--report <path> [options] [--stop-file <path>] [--progress]\n"
               "       spectrapack-engine desktop-session\n"
               "       spectrapack-engine solve --settings <path> --object-report <path> --result <path> "
-              "[--container-report <path>] [--stl <path>] [--stop-file <path>]\n"
+              "[--stl <path>] [--stop-file <path>] [--continue <path>]\n"
               "       spectrapack-engine desktop-prepare --object-report <path> --request <path> --output <directory>\n"
               "       spectrapack-engine desktop-restore --object-report <path> --result <path> --output <directory> "
               "[--stl <path>] [--stop-file <path>] [--progress]\n";

@@ -2562,7 +2562,7 @@ inline const std::map<std::string, std::string> kEmbeddedSchemas = {
           "pattern": "^[1-9][0-9]{0,19}$"
         },
         "estimated_working_bytes": {
-          "description": "The engine's estimate of the search's dominant working set (fields, FFT buffers, resident owners) at the resolved pitch and thread count, made before they are allocated. Absent until estimated.",
+          "description": "The largest working set (fields and FFT buffers) a search phase has estimated so far, each estimate made before the phase allocates it. Absent until a phase has estimated one.",
           "type": "string",
           "pattern": "^[1-9][0-9]{0,19}$"
         },

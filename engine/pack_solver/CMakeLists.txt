@@ -3,7 +3,6 @@ add_library(pack_solver STATIC
   src/baseline.cpp
   src/orientations.cpp
   src/spectral.cpp
-  src/spectral_pipeline.cpp
   src/gap_fill.cpp
   src/slab_lattice.cpp
   src/insert_relax.cpp

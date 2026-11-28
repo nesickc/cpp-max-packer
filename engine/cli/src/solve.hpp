@@ -16,7 +16,7 @@ namespace spectrapack::cli {
 struct SolveRequest {
     io::ValidatedDocument settings;
     std::filesystem::path object_report, result_path;
-    std::optional<std::filesystem::path> container_report, stl_path;
+    std::optional<std::filesystem::path> stl_path;
     std::shared_ptr<const io::VerifiedAsset> object;
     std::string engine_version, engine_commit;
     // Continue (SOL-06, spec 8.2): a result of the same object, container, clearances
