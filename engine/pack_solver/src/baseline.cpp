@@ -208,10 +208,6 @@ geometry::PhysicalQueryLimits query_limits(const BaselineLimits& limits,
       std::min(query.max_kernel_work,
                remaining(limits.max_geometry_kernel_work,
                          stats.geometry_kernel_work));
-  query.max_vertex_visits =
-      std::min(query.max_vertex_visits,
-               remaining(limits.max_geometry_vertex_visits,
-                         stats.geometry_vertex_visits));
   return query;
 }
 
@@ -227,10 +223,6 @@ geometry::ValidationLimits validation_limits(const BaselineLimits& limits,
       std::min(check.max_kernel_work,
                remaining(limits.max_validation_kernel_work,
                          stats.validation_kernel_work));
-  check.max_aabb_pair_tests =
-      std::min(check.max_aabb_pair_tests,
-               remaining(limits.max_validation_aabb_pair_tests,
-                         stats.validation_aabb_pair_tests));
   return check;
 }
 

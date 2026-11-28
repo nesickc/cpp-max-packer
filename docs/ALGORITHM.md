@@ -434,10 +434,15 @@ continuous local pose refinement. Extra time can evaluate more candidates but do
 not guarantee an improved retained count. These remain possible future changes,
 not descriptions of current behavior.
 
-Every CLI and desktop run is timed: it has a deadline, and its cumulative work
-allowances are quanta that recovery renews until the deadline passes; per-operation
-safety bounds, finite retry ladders, memory admission and cancellation remain
-enforced. The fixed-work mode was removed with settings version 2 (ADR 0023);
+Every CLI and desktop run is timed: it has a deadline, and its candidate, pass and
+refinement caps are quanta that recovery renews until the deadline passes. Each phase
+may also spend a fixed amount of physical-query work and of native-validation work
+(`max_geometry_kernel_work`, `max_validation_kernel_work`); on large layouts these end
+mixed interlocking and cut compaction's validations short, so they shape the search.
+The FFT page search has no cumulative work budget: each field, correlation and
+validation has a per-operation bound, which a timed run retries at twice and four
+times its size. Memory admission and cancellation remain enforced. The fixed-work
+mode was removed with settings version 2 (ADR 0023);
 native tests still run the solver with final caps by leaving `SpectralLimits::timed` unset. Publication exposes
 only strictly higher counts through the existing count-publication adapter.
 
