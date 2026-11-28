@@ -113,11 +113,13 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    contracts' resource layer. Settings and results are version 2
    ([ADR 0023](../spec/decisions/0023-settings-and-results-v2.md)): every run is timed under one
    host memory cap, with no fixed-work mode, resource policy, work counts or recovery record, and
-   version 1 projects no longer open. A seventh PR removes the per-phase work caps and another
-   9,600 lines: a search ends at its deadline, on Stop or when nothing is left to try, phases
-   share out time, and `SpectralLimits` is a memory cap, a thread count and a status sink. One
-   bound stays, as a constant: compaction's slides end after 1.3 billion units of validator
-   work, without which the 46th benchy comes 7 s later. The greedy per-insertion FFT phase
+   version 1 projects no longer open. #65 deletes six cumulative work budgets that never end a
+   phase and measures that two do: physical-query work ends mixed interlocking on pryanik2, and
+   validation work cuts compaction short on pryanik2, yasya, bunny and benchy. #66 removes the
+   rest of the work caps and another 9,600 lines: a search ends at its deadline, on Stop or when
+   nothing is left to try, phases share out time, and `SpectralLimits` is a memory cap, a thread
+   count and a status sink. Those two budgets stay as constants in the two phases they shape
+   (without the second, the 46th benchy comes 7 s later). The greedy per-insertion FFT phase
    that the caps mostly served went with them, since timed box runs had not reached it since
    gap filling; it was the only search for STL containers, so `solve` now refuses those (a
    Later tier). FFT stays in the lattice and gap-fill phases.

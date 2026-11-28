@@ -245,7 +245,7 @@ Slides and the refill that follows take at most half of the phase's time, also
 inside a whole-layout validation; inserting copies (next section) takes the rest.
 Before, slides on a dense layout could use the whole budget: 660 spheres spent
 30 s in them without a change. They also end after 1.3 billion units of validator
-work (`kSlideValidationWork`), the one work bound a phase keeps: whole-layout
+work (`kSlideValidationWork`): whole-layout
 trials on a heavy envelope take seconds each, and with only the time share the
 46th benchy came about 7 s later (the slides did 3.8 billion units in their half).
 
@@ -433,12 +433,15 @@ not guarantee an improved retained count.
 
 A search ends at its deadline, on Stop, or when no phase has anything left to try
 (dense lattices of simple parts end early as `search_stalled`). Memory is the only
-resource limit: one cap for the whole run. There are no work allowances. The
-candidate, pass and kernel-work caps of each phase, and the recovery that renewed
-them as quanta, were removed on 2026-11-28; phases share out the remaining time
-instead (lattice planning a fifth, slides half of compaction, insertion the rest).
-The one exception is the validator work of compaction's slides (see above).
-What stays bounded is a single operation: one geometry query, validation, raster or
+resource limit: one cap for the whole run. The candidate, pass, orientation and
+cumulative kernel-work caps of each phase, and the recovery that renewed them as
+quanta, were removed on 2026-11-28; phases share out the remaining time instead
+(lattice planning a fifth, slides half of compaction, insertion the rest). Two work
+bounds stay, as constants in the phases they shape: the validator work of
+compaction's slides (see above) and the envelope work of an interlocking phase's
+row searches (`kRowSearchWork`, also 1.3 billion units), without which mixed rows on
+pryanik2 search on for half a minute after their last improvement.
+What else stays bounded is a single operation: one geometry query, validation, raster or
 correlation keeps the geometry and compute modules' own safety bounds, so one
 runaway call ends as an indeterminate proposal rather than taking the whole budget,
 and a layout holds at most 4,096 copies. Without a deadline (native tests) only the
