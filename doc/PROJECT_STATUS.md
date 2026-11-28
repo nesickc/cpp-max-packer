@@ -167,7 +167,7 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
 7. Timed searches still depend on machine load: the same settings can return a
    different count on a busy machine (the 40.6 mm sphere cube gave 66 once, 64 since;
    on 18 November the 24.6 mm cube gave 10 instead of 14 in one run of ten, and on
-   28 November in nine runs of thirty, as often with the engine from `main` as with #66).
+   28 November in 5 of 20 runs with the engine from `main` and 7 of 24 with #66).
    The engine asks Windows not to throttle it while its app is in the background, but
    most of a search still runs on one core, so other busy programs slow it.
 8. The panel's RAM estimate covers the fields and FFT buffers of the lattice and gap-fill
