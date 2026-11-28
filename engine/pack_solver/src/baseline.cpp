@@ -39,6 +39,11 @@ constexpr std::uint64_t kBaselineMetadataBytes = 2 * sizeof(BaselineOutcome) + s
 // keeps most of its time for gap filling and insertion: without it the 46th
 // benchy comes about 7 s later, when the slides' half of the time runs out.
 constexpr std::uint64_t kSlideValidationWork = 1'300'000'000;
+// The row searches of an interlocking phase end after this much envelope and
+// bounds work. Mixed rows on a large exact mesh otherwise search on long after
+// their last improvement: on pryanik2 for half a minute, leaving compaction
+// and insertion three seconds.
+constexpr std::uint64_t kRowSearchWork = 1'300'000'000;
 constexpr std::uint64_t kPendingPoseMetadataBytes = sizeof(std::vector<geometry::CopyPose>)
 #if defined(_MSC_VER) && defined(_DEBUG)
                                                     + sizeof(std::_Container_proxy)
@@ -1107,6 +1112,9 @@ BaselineOutcome run_aabb_baseline_impl(
             if (boundary(control) != Boundary::none) {
                 return finish("STAGGER_INTERRUPTED", TerminationReason::budget_exhausted);
             }
+            if (out.stats.geometry_kernel_work >= kRowSearchWork) {
+                return finish("INTERLOCKING_STAGGER_WORK_SPENT", TerminationReason::search_stalled);
+            }
             auto live = persistent;
             if (!add_optional(live, solution_bytes(admitted_solution)) || !checked_add(live, incumbent_bytes) ||
                 !update_peak(out.stats, live, limits)) {
@@ -1143,7 +1151,9 @@ BaselineOutcome run_aabb_baseline_impl(
                 }
                 alternate_bounds = other.bounds_mm;
             }
-            const auto query = query_limits(limits, live);
+            auto query = query_limits(limits, live);
+            query.max_kernel_work =
+                std::min(query.max_kernel_work, remaining(kRowSearchWork, out.stats.geometry_kernel_work));
             detail::StaggerEnvelope envelope(
                 control,
                 std::min<std::uint64_t>(mixed ? 64'000'000 : 32'000'000, query.max_kernel_work / (mixed ? 2 : 1)),
