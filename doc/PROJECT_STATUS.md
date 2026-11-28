@@ -116,7 +116,7 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
    version 1 projects no longer open. #65 deletes six cumulative work budgets that never end a
    phase and measures that two do: physical-query work ends mixed interlocking on pryanik2, and
    validation work cuts compaction short on pryanik2, yasya, bunny and benchy. #66 removes the
-   rest of the work caps and another 9,600 lines: a search ends at its deadline, on Stop or when
+   rest of the work caps and another 9,300 lines: a search ends at its deadline, on Stop or when
    nothing is left to try, phases share out time, and `SpectralLimits` is a memory cap, a thread
    count and a status sink. Those two budgets stay as constants in the two phases they shape
    (without the second, the 46th benchy comes 7 s later). The greedy per-insertion FFT phase
@@ -166,7 +166,8 @@ Windows 10, and the `pack`/`validate`/`benchmark` and stdio surface.
 6. Projects saved before the diagonal/2000 envelope offset need re-import.
 7. Timed searches still depend on machine load: the same settings can return a
    different count on a busy machine (the 40.6 mm sphere cube gave 66 once, 64 since;
-   on 18 November the 24.6 mm cube gave 10 instead of 14 in one run of ten).
+   on 18 November the 24.6 mm cube gave 10 instead of 14 in one run of ten, and on
+   28 November in nine runs of thirty, as often with the engine from `main` as with #66).
    The engine asks Windows not to throttle it while its app is in the background, but
    most of a search still runs on one core, so other busy programs slow it.
 8. The panel's RAM estimate covers the fields and FFT buffers of the lattice and gap-fill
